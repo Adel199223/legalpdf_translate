@@ -1,5 +1,6 @@
 import { fetchJson } from "./api.js";
 import { appState } from "./state.js";
+import { buildActionFailureFeedback } from "./action_feedback_presentation.js";
 import { runWithBusy } from "./busy_ui.js";
 import {
   buildSettingsActionFeedback,
@@ -450,6 +451,20 @@ function applySettingsActionFeedback(
   return feedback;
 }
 
+function applyActionFailureFeedback(
+  error,
+  { panelSlot = "power-tools", diagnosticsSlot = "power-tools-diagnostics", fallback = "" } = {},
+) {
+  const feedback = buildActionFailureFeedback(error, fallback, { panelSlot, diagnosticsSlot });
+  setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
+  if (feedback.diagnosticsSlot) {
+    setDiagnostics(feedback.diagnosticsSlot, error, {
+      hint: feedback.diagnosticsHint,
+      open: feedback.diagnosticsOpen,
+    });
+  }
+}
+
 async function handleTranslationKeySave() {
   const payload = await fetchJsonAllowFailed("/api/settings/translation-key/save", {
     method: "POST",
@@ -734,8 +749,11 @@ export function initializePowerToolsUi() {
       try {
         await refreshSettingsAdmin({ preserveStatus: false });
       } catch (error) {
-        setPanelStatus("settings", "bad", error.message || "Settings refresh failed.");
-        setDiagnostics("settings-admin", error, { hint: error.message || "Settings refresh failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "settings",
+          diagnosticsSlot: "settings-admin",
+          fallback: "Settings refresh failed.",
+        });
       }
     });
   });
@@ -745,8 +763,11 @@ export function initializePowerToolsUi() {
       try {
         await handleSettingsPreflight();
       } catch (error) {
-        setPanelStatus("settings", "bad", error.message || "Settings preflight failed.");
-        setDiagnostics("settings-test", error, { hint: error.message || "Settings preflight failed.", open: true });
+        applyActionFailureFeedback(error, {
+          panelSlot: "settings",
+          diagnosticsSlot: "settings-test",
+          fallback: "Settings preflight failed.",
+        });
       }
     });
   });
@@ -759,8 +780,11 @@ export function initializePowerToolsUi() {
         try {
           await handleSettingsSave();
         } catch (error) {
-          setPanelStatus("settings", "bad", error.message || "Settings save failed.");
-          setDiagnostics("settings-admin", error, { hint: error.message || "Settings save failed.", open: true });
+          applyActionFailureFeedback(error, {
+            panelSlot: "settings",
+            diagnosticsSlot: "settings-admin",
+            fallback: "Settings save failed.",
+          });
         }
       },
     );
@@ -774,8 +798,11 @@ export function initializePowerToolsUi() {
         try {
           await handleTranslationKeySave();
         } catch (error) {
-          setPanelStatus("settings", "bad", error.message || "Saving the translation key failed.");
-          setDiagnostics("settings-admin", error, { hint: error.message || "Saving the translation key failed.", open: true });
+          applyActionFailureFeedback(error, {
+            panelSlot: "settings",
+            diagnosticsSlot: "settings-admin",
+            fallback: "Saving the translation key failed.",
+          });
         }
       },
     );
@@ -789,8 +816,11 @@ export function initializePowerToolsUi() {
         try {
           await handleTranslationKeyClear();
         } catch (error) {
-          setPanelStatus("settings", "bad", error.message || "Clearing the translation key failed.");
-          setDiagnostics("settings-admin", error, { hint: error.message || "Clearing the translation key failed.", open: true });
+          applyActionFailureFeedback(error, {
+            panelSlot: "settings",
+            diagnosticsSlot: "settings-admin",
+            fallback: "Clearing the translation key failed.",
+          });
         }
       },
     );
@@ -804,8 +834,11 @@ export function initializePowerToolsUi() {
         try {
           await handleOcrKeySave();
         } catch (error) {
-          setPanelStatus("settings", "bad", error.message || "Saving the OCR key failed.");
-          setDiagnostics("settings-admin", error, { hint: error.message || "Saving the OCR key failed.", open: true });
+          applyActionFailureFeedback(error, {
+            panelSlot: "settings",
+            diagnosticsSlot: "settings-admin",
+            fallback: "Saving the OCR key failed.",
+          });
         }
       },
     );
@@ -819,8 +852,11 @@ export function initializePowerToolsUi() {
         try {
           await handleOcrKeyClear();
         } catch (error) {
-          setPanelStatus("settings", "bad", error.message || "Clearing the OCR key failed.");
-          setDiagnostics("settings-admin", error, { hint: error.message || "Clearing the OCR key failed.", open: true });
+          applyActionFailureFeedback(error, {
+            panelSlot: "settings",
+            diagnosticsSlot: "settings-admin",
+            fallback: "Clearing the OCR key failed.",
+          });
         }
       },
     );
@@ -834,8 +870,11 @@ export function initializePowerToolsUi() {
         try {
           await handleOcrTest();
         } catch (error) {
-          setPanelStatus("settings", "bad", error.message || "OCR provider test failed.");
-          setDiagnostics("settings-test", error, { hint: error.message || "OCR provider test failed.", open: true });
+          applyActionFailureFeedback(error, {
+            panelSlot: "settings",
+            diagnosticsSlot: "settings-test",
+            fallback: "OCR provider test failed.",
+          });
         }
       },
     );
@@ -849,8 +888,11 @@ export function initializePowerToolsUi() {
         try {
           await handleTranslationTest();
         } catch (error) {
-          setPanelStatus("settings", "bad", error.message || "Translation auth test failed.");
-          setDiagnostics("settings-test", error, { hint: error.message || "Translation auth test failed.", open: true });
+          applyActionFailureFeedback(error, {
+            panelSlot: "settings",
+            diagnosticsSlot: "settings-test",
+            fallback: "Translation auth test failed.",
+          });
         }
       },
     );
@@ -864,8 +906,11 @@ export function initializePowerToolsUi() {
         try {
           await handleNativeHostTest();
         } catch (error) {
-          setPanelStatus("settings", "bad", error.message || "Native-host test failed.");
-          setDiagnostics("settings-test", error, { hint: error.message || "Native-host test failed.", open: true });
+          applyActionFailureFeedback(error, {
+            panelSlot: "settings",
+            diagnosticsSlot: "settings-test",
+            fallback: "Native-host test failed.",
+          });
         }
       },
     );
@@ -879,8 +924,11 @@ export function initializePowerToolsUi() {
         try {
           await handleNativeHostRepair();
         } catch (error) {
-          setPanelStatus("settings", "bad", error.message || "Native-host repair failed.");
-          setDiagnostics("settings-admin", error, { hint: error.message || "Native-host repair failed.", open: true });
+          applyActionFailureFeedback(error, {
+            panelSlot: "settings",
+            diagnosticsSlot: "settings-admin",
+            fallback: "Native-host repair failed.",
+          });
         }
       },
     );
@@ -894,8 +942,11 @@ export function initializePowerToolsUi() {
         try {
           await handleWordPdfExportTest();
         } catch (error) {
-          setPanelStatus("settings", "bad", error.message || "Word PDF export test failed.");
-          setDiagnostics("settings-test", error, { hint: error.message || "Word PDF export test failed.", open: true });
+          applyActionFailureFeedback(error, {
+            panelSlot: "settings",
+            diagnosticsSlot: "settings-test",
+            fallback: "Word PDF export test failed.",
+          });
         }
       },
     );
@@ -909,8 +960,11 @@ export function initializePowerToolsUi() {
         try {
           await handleGmailPrereqs();
         } catch (error) {
-          setPanelStatus("settings", "bad", error.message || "Gmail prerequisite check failed.");
-          setDiagnostics("settings-test", error, { hint: error.message || "Gmail prerequisite check failed.", open: true });
+          applyActionFailureFeedback(error, {
+            panelSlot: "settings",
+            diagnosticsSlot: "settings-test",
+            fallback: "Gmail prerequisite check failed.",
+          });
         }
       },
     );
@@ -921,8 +975,9 @@ export function initializePowerToolsUi() {
       try {
         await refreshPowerTools({ preserveStatus: false });
       } catch (error) {
-        setPanelStatus("power-tools", "bad", error.message || "Advanced tools refresh failed.");
-        setDiagnostics("power-tools-diagnostics", error, { hint: error.message || "Advanced tools refresh failed.", open: true });
+        applyActionFailureFeedback(error, {
+          fallback: "Advanced tools refresh failed.",
+        });
       }
     });
   });
@@ -935,8 +990,10 @@ export function initializePowerToolsUi() {
         try {
           await handleGlossarySave();
         } catch (error) {
-          setPanelStatus("power-tools", "bad", error.message || "Glossary save failed.");
-          setDiagnostics("power-tools-glossary", error, { hint: error.message || "Glossary save failed.", open: true });
+          applyActionFailureFeedback(error, {
+            diagnosticsSlot: "power-tools-glossary",
+            fallback: "Glossary save failed.",
+          });
         }
       },
     );
@@ -950,8 +1007,10 @@ export function initializePowerToolsUi() {
         try {
           await handleGlossaryExport();
         } catch (error) {
-          setPanelStatus("power-tools", "bad", error.message || "Glossary markdown export failed.");
-          setDiagnostics("power-tools-glossary", error, { hint: error.message || "Glossary markdown export failed.", open: true });
+          applyActionFailureFeedback(error, {
+            diagnosticsSlot: "power-tools-glossary",
+            fallback: "Glossary markdown export failed.",
+          });
         }
       },
     );
@@ -965,8 +1024,10 @@ export function initializePowerToolsUi() {
         try {
           await handleBuilderRun();
         } catch (error) {
-          setPanelStatus("power-tools", "bad", error.message || "Build suggestions failed.");
-          setDiagnostics("power-tools-builder", error, { hint: error.message || "Build suggestions failed.", open: true });
+          applyActionFailureFeedback(error, {
+            diagnosticsSlot: "power-tools-builder",
+            fallback: "Build suggestions failed.",
+          });
         }
       },
     );
@@ -980,8 +1041,10 @@ export function initializePowerToolsUi() {
         try {
           await handleBuilderApply();
         } catch (error) {
-          setPanelStatus("power-tools", "bad", error.message || "Apply selected suggestions failed.");
-          setDiagnostics("power-tools-builder", error, { hint: error.message || "Apply selected suggestions failed.", open: true });
+          applyActionFailureFeedback(error, {
+            diagnosticsSlot: "power-tools-builder",
+            fallback: "Apply selected suggestions failed.",
+          });
         }
       },
     );
@@ -992,8 +1055,10 @@ export function initializePowerToolsUi() {
       try {
         await handleCalibrationRun();
       } catch (error) {
-        setPanelStatus("power-tools", "bad", error.message || "Quality check failed.");
-        setDiagnostics("power-tools-calibration", error, { hint: error.message || "Quality check failed.", open: true });
+        applyActionFailureFeedback(error, {
+          diagnosticsSlot: "power-tools-calibration",
+          fallback: "Quality check failed.",
+        });
       }
     });
   });
@@ -1006,8 +1071,9 @@ export function initializePowerToolsUi() {
         try {
           await handleDebugBundle();
         } catch (error) {
-          setPanelStatus("power-tools", "bad", error.message || "Create troubleshooting bundle failed.");
-          setDiagnostics("power-tools-diagnostics", error, { hint: error.message || "Create troubleshooting bundle failed.", open: true });
+          applyActionFailureFeedback(error, {
+            fallback: "Create troubleshooting bundle failed.",
+          });
         }
       },
     );
@@ -1021,8 +1087,9 @@ export function initializePowerToolsUi() {
         try {
           await handleArmWindowTrace();
         } catch (error) {
-          setPanelStatus("power-tools", "bad", error.message || "Capture startup window trace failed.");
-          setDiagnostics("power-tools-diagnostics", error, { hint: error.message || "Capture startup window trace failed.", open: true });
+          applyActionFailureFeedback(error, {
+            fallback: "Capture startup window trace failed.",
+          });
         }
       },
     );
@@ -1036,8 +1103,9 @@ export function initializePowerToolsUi() {
         try {
           await handleRunReport();
         } catch (error) {
-          setPanelStatus("power-tools", "bad", error.message || "Run report generation failed.");
-          setDiagnostics("power-tools-diagnostics", error, { hint: error.message || "Run report generation failed.", open: true });
+          applyActionFailureFeedback(error, {
+            fallback: "Run report generation failed.",
+          });
         }
       },
     );
