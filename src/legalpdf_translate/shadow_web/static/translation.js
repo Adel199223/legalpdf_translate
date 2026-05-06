@@ -12,6 +12,7 @@ import {
 import {
   collapseTranslationCompletionSectionsInto,
   renderTranslationDownloadLinkInto,
+  renderTranslationCheckboxInto,
   renderTranslationCompletionSurfaceInto,
   renderTranslationFieldValueInto,
   renderTranslationHistoryListInto,
@@ -577,10 +578,7 @@ function setFieldValue(id, value) {
 }
 
 function setCheckbox(id, value) {
-  const node = qs(id);
-  if (node) {
-    node.checked = Boolean(value);
-  }
+  renderTranslationCheckboxInto(qs(id), value);
 }
 
 function coercePositiveInt(value) {

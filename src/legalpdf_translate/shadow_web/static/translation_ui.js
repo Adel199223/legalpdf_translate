@@ -15,6 +15,15 @@ export function renderTranslationFieldValueInto(field, value = "") {
   return field;
 }
 
+export function renderTranslationCheckboxInto(checkbox, value = false) {
+  if (!checkbox) {
+    return undefined;
+  }
+
+  checkbox.checked = Boolean(value);
+  return checkbox;
+}
+
 export function renderTranslationSourcePathInto(nodes = {}, value = "") {
   const { pathField, summary } = nodes || {};
   if (!pathField && !summary) {
