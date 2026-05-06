@@ -8183,7 +8183,7 @@ console.log(JSON.stringify({
     assert results["missingStatusResultType"] == "undefined"
 
 
-def test_gmail_ui_module_centralizes_context_default_renderers() -> None:
+def test_gmail_context_ui_module_owns_context_default_renderers() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -8193,6 +8193,9 @@ def test_gmail_ui_module_centralizes_context_default_renderers() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_context_ui_path = static_dir / "gmail_context_ui.js"
+    assert gmail_context_ui_path.exists()
+    gmail_context_ui_js = gmail_context_ui_path.read_text(encoding="utf-8")
 
     assert 'from "./gmail_ui.js"' in gmail_js
     assert "renderGmailContextDefaultsInto" in gmail_js
@@ -8210,18 +8213,20 @@ def test_gmail_ui_module_centralizes_context_default_renderers() -> None:
     assert "renderGmailSimulatorDefaultsInto" in simulator_block
     assert "setFieldValue(" not in simulator_block
 
-    assert "export function renderGmailContextDefaultsInto" in gmail_ui_js
-    assert "export function renderGmailSimulatorDefaultsInto" in gmail_ui_js
-    context_start = gmail_ui_js.index("export function renderGmailContextDefaultsInto")
-    simulator_start_ui = gmail_ui_js.index("export function renderGmailSimulatorDefaultsInto")
-    context_block = gmail_ui_js[context_start:simulator_start_ui]
-    simulator_end_ui = gmail_ui_js.index("\nexport function", simulator_start_ui + 1)
-    simulator_block_ui = gmail_ui_js[simulator_start_ui:simulator_end_ui]
+    assert 'from "./gmail_context_ui.js"' in gmail_ui_js
+    assert "renderGmailContextDefaultsInto" in gmail_ui_js
+    assert "renderGmailSimulatorDefaultsInto" in gmail_ui_js
+    assert "export function renderGmailContextDefaultsInto" in gmail_context_ui_js
+    assert "export function renderGmailSimulatorDefaultsInto" in gmail_context_ui_js
+    context_start = gmail_context_ui_js.index("export function renderGmailContextDefaultsInto")
+    simulator_start_ui = gmail_context_ui_js.index("export function renderGmailSimulatorDefaultsInto")
+    context_block = gmail_context_ui_js[context_start:simulator_start_ui]
+    simulator_block_ui = gmail_context_ui_js[simulator_start_ui:]
     assert "innerHTML" not in context_block
     assert "innerHTML" not in simulator_block_ui
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_CONTEXT_UI_MODULE_URL__);
 
 function makeField(value = "") {
   const field = {
@@ -8375,7 +8380,7 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {"__GMAIL_CONTEXT_UI_MODULE_URL__": "gmail_context_ui.js"},
         timeout_seconds=30,
     )
 
@@ -23286,6 +23291,11 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailDrawerDatasetDefaultsInto" in gmail_ui_asset.text
         assert "renderGmailDetailsOpenInto" in gmail_ui_asset.text
         assert "renderGmailInputValueInto" in gmail_ui_asset.text
+        gmail_context_ui_asset = client.get(f"/static-build/{asset_version}/gmail_context_ui.js")
+        assert gmail_context_ui_asset.status_code == 200
+        assert gmail_context_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderGmailContextDefaultsInto" in gmail_context_ui_asset.text
+        assert "renderGmailSimulatorDefaultsInto" in gmail_context_ui_asset.text
         gmail_finalize_ui_asset = client.get(f"/static-build/{asset_version}/gmail_finalize_ui.js")
         assert gmail_finalize_ui_asset.status_code == 200
         assert gmail_finalize_ui_asset.headers["content-type"].startswith("application/javascript")
