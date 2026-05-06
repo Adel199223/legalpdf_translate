@@ -232,6 +232,7 @@ def test_app_form_actions_delegate_repeated_action_failure_feedback() -> None:
     assert "function applyActionFailureFeedback" in app_source
     assert app_source.count("recoverInterpretationValidationError(error);") >= 2
     for fallback in [
+        "Interpretation validation failed.",
         "Save failed.",
         "Export failed.",
     ]:
@@ -243,6 +244,8 @@ def test_app_form_actions_delegate_repeated_action_failure_feedback() -> None:
             f'error.message || "{fallback}"'
             not in app_source
         ), f"{fallback} should not repeat raw fallback message plumbing"
+    assert 'setPanelStatus("form", "bad", error.message || "Interpretation validation failed."' not in app_source
+    assert 'hint: error.message || "Interpretation validation failed."' not in app_source
 
 
 def test_app_runtime_actions_delegate_repeated_action_failure_feedback() -> None:
