@@ -278,6 +278,38 @@ def test_app_runtime_actions_delegate_repeated_action_failure_feedback() -> None
     assert 'setPanelStatus("runtime", "bad", error.message || "Runtime mode change failed."' not in app_source
 
 
+def test_app_bootstrap_failures_delegate_action_failure_feedback() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_source = (static_dir / "app.js").read_text(encoding="utf-8")
+
+    assert 'from "./action_feedback_presentation.js"' in app_source
+    assert "function applyActionFailureFeedback" in app_source
+    assert "function applyBootstrapFailureState" in app_source
+    assert "diagnosticsHint" in app_source
+    for fallback in [
+        "This LegalPDF browser tab is using stale browser assets.",
+        "Browser app bootstrap failed.",
+    ]:
+        assert (
+            f'fallback: "{fallback}"'
+            in app_source
+        ), f"{fallback} should be routed through shared action feedback"
+        assert (
+            f'error.message || "{fallback}"'
+            not in app_source
+        ), f"{fallback} should not repeat raw fallback message plumbing"
+    assert 'setTopbarStatus(error.message || "This LegalPDF browser tab is using stale browser assets."' not in app_source
+    assert 'setTopbarStatus(error.message || "Browser app bootstrap failed."' not in app_source
+    assert 'setPanelStatus("runtime", "bad", error.message || "Browser app bootstrap failed."' not in app_source
+    assert 'setDiagnostics("runtime", error, { hint: error.message || "Browser app bootstrap failed."' not in app_source
+
+
 def test_app_interpretation_reference_actions_delegate_repeated_action_failure_feedback() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
