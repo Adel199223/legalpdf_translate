@@ -24695,6 +24695,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert action_feedback_presentation_asset.status_code == 200
         assert action_feedback_presentation_asset.headers["content-type"].startswith("application/javascript")
         assert "buildActionFailureFeedback" in action_feedback_presentation_asset.text
+        assert "applyActionFailureFeedbackToUi" in action_feedback_presentation_asset.text
         power_tools_ui_asset = client.get(f"/static-build/{asset_version}/power_tools_ui.js")
         assert power_tools_ui_asset.status_code == 200
         assert power_tools_ui_asset.headers["content-type"].startswith("application/javascript")

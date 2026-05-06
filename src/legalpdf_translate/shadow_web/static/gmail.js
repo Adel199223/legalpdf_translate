@@ -1,5 +1,5 @@
 import { fetchJson } from "./api.js";
-import { buildActionFailureFeedback } from "./action_feedback_presentation.js";
+import { applyActionFailureFeedbackToUi } from "./action_feedback_presentation.js";
 import { appState, setActiveView } from "./state.js";
 import {
   browserPdfDiagnosticsFromError,
@@ -120,18 +120,11 @@ function applyActionFailureFeedback(
   error,
   { panelSlot = "", diagnosticsSlot = "", fallback = "", diagnosticsHint = "" } = {},
 ) {
-  const feedback = buildActionFailureFeedback(error, fallback, { panelSlot, diagnosticsSlot });
-  const resolvedDiagnosticsHint = typeof diagnosticsHint === "function"
-    ? diagnosticsHint(feedback.message)
-    : (diagnosticsHint || feedback.diagnosticsHint);
-  setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
-  if (feedback.diagnosticsSlot) {
-    setDiagnostics(feedback.diagnosticsSlot, error, {
-      hint: resolvedDiagnosticsHint,
-      open: feedback.diagnosticsOpen,
-    });
-  }
-  return feedback;
+  return applyActionFailureFeedbackToUi(
+    error,
+    { panelSlot, diagnosticsSlot, fallback, diagnosticsHint },
+    { setPanelStatus, setDiagnostics },
+  );
 }
 
 function browserBootstrapConfig() {

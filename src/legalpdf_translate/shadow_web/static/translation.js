@@ -1,5 +1,5 @@
 import { fetchJson } from "./api.js";
-import { buildActionFailureFeedback } from "./action_feedback_presentation.js";
+import { applyActionFailureFeedbackToUi } from "./action_feedback_presentation.js";
 import { appState, setActiveView } from "./state.js";
 import { ensureBrowserPdfBundleFromFile } from "./browser_pdf.js";
 import { runWithBusy } from "./busy_ui.js";
@@ -62,15 +62,11 @@ function applyActionFailureFeedback(
   error,
   { panelSlot = "", diagnosticsSlot = "", fallback = "", tone = "bad" } = {},
 ) {
-  const feedback = buildActionFailureFeedback(error, fallback, { panelSlot, diagnosticsSlot, tone });
-  setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
-  if (feedback.diagnosticsSlot) {
-    setDiagnostics(feedback.diagnosticsSlot, error, {
-      hint: feedback.diagnosticsHint,
-      open: feedback.diagnosticsOpen,
-    });
-  }
-  return feedback;
+  return applyActionFailureFeedbackToUi(
+    error,
+    { panelSlot, diagnosticsSlot, fallback, tone },
+    { setPanelStatus, setDiagnostics },
+  );
 }
 
 function normalizeGmailBatchContext(value) {

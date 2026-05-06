@@ -1,6 +1,6 @@
 import { fetchJson } from "./api.js";
 import { appState } from "./state.js";
-import { buildActionFailureFeedback } from "./action_feedback_presentation.js";
+import { applyActionFailureFeedbackToUi } from "./action_feedback_presentation.js";
 import { runWithBusy } from "./busy_ui.js";
 import {
   buildSettingsActionFeedback,
@@ -455,14 +455,11 @@ function applyActionFailureFeedback(
   error,
   { panelSlot = "power-tools", diagnosticsSlot = "power-tools-diagnostics", fallback = "" } = {},
 ) {
-  const feedback = buildActionFailureFeedback(error, fallback, { panelSlot, diagnosticsSlot });
-  setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
-  if (feedback.diagnosticsSlot) {
-    setDiagnostics(feedback.diagnosticsSlot, error, {
-      hint: feedback.diagnosticsHint,
-      open: feedback.diagnosticsOpen,
-    });
-  }
+  return applyActionFailureFeedbackToUi(
+    error,
+    { panelSlot, diagnosticsSlot, fallback },
+    { setPanelStatus, setDiagnostics },
+  );
 }
 
 async function handleTranslationKeySave() {
