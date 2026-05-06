@@ -20669,6 +20669,152 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_power_tools_ui_module_centralizes_safe_diagnostics_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    power_tools_ui_module = static_dir / "power_tools_ui.js"
+
+    assert power_tools_ui_module.exists()
+    power_tools_ui_source = power_tools_ui_module.read_text(encoding="utf-8")
+    assert "export function setDiagnostics" in power_tools_ui_source
+    assert "export function setPanelStatus" in power_tools_ui_source
+    assert 'from "./diagnostics_presentation.js"' in power_tools_ui_source
+    assert 'from "./diagnostics_presentation.js"' not in power_tools_js
+    assert "function setDiagnostics(slot, value, { hint = \"\", open = false } = {})" not in power_tools_js
+    assert "function setPanelStatus(slot, tone, message)" not in power_tools_js
+    assert "setDiagnostics," in power_tools_js
+    assert "setPanelStatus," in power_tools_js
+    assert 'from "./power_tools_ui.js"' in power_tools_js
+    assert "innerHTML" not in power_tools_ui_source
+
+    script = r"""
+const powerToolsUi = await import(__POWER_TOOLS_UI_MODULE_URL__);
+
+class Element {
+  constructor(id) {
+    this.id = id;
+    this.textContent = "";
+    this.dataset = {};
+    this.open = false;
+    this.innerHTMLAssignments = [];
+    this._innerHTML = "";
+  }
+}
+
+Object.defineProperty(Element.prototype, "innerHTML", {
+  get() {
+    return this._innerHTML;
+  },
+  set(value) {
+    this._innerHTML = String(value ?? "");
+    this.innerHTMLAssignments.push(this._innerHTML);
+  },
+});
+
+const nodes = new Map();
+function createNode(id) {
+  const element = new Element(id);
+  nodes.set(id, element);
+  return element;
+}
+
+const diagnostics = createNode("power-tools-diagnostics");
+const hint = createNode("power-tools-hint");
+const details = createNode("power-tools-details");
+const panelStatus = createNode("power-tools-status");
+
+globalThis.document = {
+  getElementById(id) {
+    return nodes.get(id) || null;
+  },
+};
+
+details.dataset.reveal = "legacy";
+powerToolsUi.setDiagnostics(
+  "power-tools",
+  { message: "<img src=x onerror=alert(1)>", ok: true },
+  { hint: "Safe <hint>", open: true },
+);
+const firstDiagnostics = {
+  text: diagnostics.textContent,
+  hint: hint.textContent,
+  detailsOpen: details.open,
+  reveal: details.dataset.reveal || null,
+};
+
+powerToolsUi.setDiagnostics("power-tools", "Plain <b>diagnostic</b>", { open: false });
+const secondDiagnostics = {
+  text: diagnostics.textContent,
+  preservedHint: hint.textContent,
+  detailsOpen: details.open,
+  reveal: details.dataset.reveal || null,
+};
+
+powerToolsUi.setPanelStatus("power-tools", "warning", "Careful <b>status</b>");
+const firstPanelStatus = {
+  text: panelStatus.textContent,
+  tone: panelStatus.dataset.tone || null,
+};
+
+powerToolsUi.setPanelStatus("power-tools", "", "Cleared <script>");
+const secondPanelStatus = {
+  text: panelStatus.textContent,
+  tone: panelStatus.dataset.tone || null,
+};
+
+powerToolsUi.setDiagnostics("missing", { ignored: true }, { hint: "Ignored", open: true });
+powerToolsUi.setPanelStatus("missing", "warning", "Ignored");
+
+const innerHTMLWrites = [
+  diagnostics,
+  hint,
+  details,
+  panelStatus,
+].reduce((total, node) => total + node.innerHTMLAssignments.length, 0);
+
+console.log(JSON.stringify({
+  firstDiagnostics,
+  secondDiagnostics,
+  firstPanelStatus,
+  secondPanelStatus,
+  innerHTMLWrites,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__POWER_TOOLS_UI_MODULE_URL__": "power_tools_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["firstDiagnostics"] == {
+        "text": '{\n  "message": "<img src=x onerror=alert(1)>",\n  "ok": true\n}',
+        "hint": "Safe <hint>",
+        "detailsOpen": True,
+        "reveal": "legacy",
+    }
+    assert results["secondDiagnostics"] == {
+        "text": "Plain <b>diagnostic</b>",
+        "preservedHint": "Safe <hint>",
+        "detailsOpen": False,
+        "reveal": "legacy",
+    }
+    assert results["firstPanelStatus"] == {
+        "text": "Careful <b>status</b>",
+        "tone": "warning",
+    }
+    assert results["secondPanelStatus"] == {
+        "text": "Cleared <script>",
+        "tone": None,
+    }
+    assert results["innerHTMLWrites"] == 0
+
+
 def test_shadow_web_extension_lab_top_level_card_copy_stays_friendly() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -20737,7 +20883,7 @@ def test_diagnostics_presentation_module_centralizes_safe_diagnostic_formatting(
     assert diagnostics_module.exists()
     assert 'from "./diagnostics_presentation.js"' not in app_js
     assert 'from "./diagnostics_presentation.js"' in diagnostics_ui_js
-    assert 'from "./diagnostics_presentation.js"' in power_tools_js
+    assert 'from "./diagnostics_presentation.js"' not in power_tools_js
 
     script = """
 const diagnostics = await import(__DIAGNOSTICS_PRESENTATION_MODULE_URL__);
@@ -23443,6 +23589,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert power_tools_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderLatestRunDirsInto" in power_tools_ui_asset.text
         assert "renderCredentialRecoveryStateInto" in power_tools_ui_asset.text
+        assert "setDiagnostics" in power_tools_ui_asset.text
+        assert "setPanelStatus" in power_tools_ui_asset.text
         interpretation_reference_ui_asset = client.get(f"/static-build/{asset_version}/interpretation_reference_ui.js")
         assert interpretation_reference_ui_asset.status_code == 200
         assert interpretation_reference_ui_asset.headers["content-type"].startswith("application/javascript")
