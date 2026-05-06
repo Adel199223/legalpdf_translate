@@ -6,6 +6,7 @@ import {
   renderBuilderSourceModeInto,
   renderCredentialRecoveryStateInto,
   renderLatestRunDirsInto,
+  renderPowerToolsBuilderDefaultsInto,
   renderPowerToolsCalibrationDefaultsInto,
   renderPowerToolsCheckboxInto,
   renderPowerToolsFieldValueInto,
@@ -231,16 +232,28 @@ function renderPowerToolsPayload(powerTools, { preserveStatus = false } = {}) {
 
   const builder = powerTools.glossary_builder || {};
   const builderDefaults = builder.defaults || {};
-  setFieldValue("builder-source-mode", builderDefaults.source_mode || "run_folders");
-  setFieldValue("builder-target-lang", builderDefaults.target_lang || "EN");
-  setFieldValue("builder-mode", builderDefaults.mode || "full_text");
-  setFieldValue("builder-lemma-effort", builderDefaults.lemma_effort || "high");
-  setCheckbox("builder-lemma-enabled", builderDefaults.lemma_enabled);
-  setFieldValue("builder-run-dirs", (builderDefaults.run_dirs || []).join("\n"));
-  setFieldValue("builder-pdf-paths", (builderDefaults.pdf_paths || []).join("\n"));
+  const builderPresentation = {
+    sourceMode: builderDefaults.source_mode || "run_folders",
+    targetLang: builderDefaults.target_lang || "EN",
+    mode: builderDefaults.mode || "full_text",
+    lemmaEffort: builderDefaults.lemma_effort || "high",
+    lemmaEnabled: builderDefaults.lemma_enabled,
+    runDirs: (builderDefaults.run_dirs || []).join("\n"),
+    pdfPaths: (builderDefaults.pdf_paths || []).join("\n"),
+  };
   if (builder.last_result?.suggestions) {
-    setFieldValue("builder-approved-json", prettyJson(builder.last_result.suggestions));
+    builderPresentation.approvedJson = prettyJson(builder.last_result.suggestions);
   }
+  renderPowerToolsBuilderDefaultsInto({
+    sourceMode: qs("builder-source-mode"),
+    targetLang: qs("builder-target-lang"),
+    mode: qs("builder-mode"),
+    lemmaEffort: qs("builder-lemma-effort"),
+    lemmaEnabled: qs("builder-lemma-enabled"),
+    runDirs: qs("builder-run-dirs"),
+    pdfPaths: qs("builder-pdf-paths"),
+    approvedJson: qs("builder-approved-json"),
+  }, builderPresentation);
   syncBuilderSourceMode();
 
   const calibration = powerTools.calibration || {};
