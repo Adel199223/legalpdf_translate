@@ -100,6 +100,43 @@ export function buildSettingsStatusPresentation(providerState = {}) {
   };
 }
 
+function settingsActionProviderState(payload = {}) {
+  return payload?.normalized_payload?.provider_state || payload?.diagnostics?.provider_state || {};
+}
+
+function settingsActionMessage(payload = {}, fallback = "") {
+  return String(
+    payload?.normalized_payload?.message
+    || payload?.diagnostics?.error
+    || payload?.diagnostics?.message
+    || fallback,
+  ).trim();
+}
+
+function settingsActionTone(status) {
+  const normalized = String(status || "").trim();
+  if (normalized === "ok") {
+    return "ok";
+  }
+  if (normalized === "unavailable") {
+    return "warn";
+  }
+  return "bad";
+}
+
+export function buildSettingsActionFeedback(payload = {}, fallback = "") {
+  const status = String(payload?.status || "").trim();
+  const message = settingsActionMessage(payload, fallback);
+  return {
+    providerState: settingsActionProviderState(payload),
+    message,
+    tone: settingsActionTone(status),
+    diagnosticsHint: message,
+    diagnosticsOpen: status !== "ok",
+    ok: status === "ok",
+  };
+}
+
 export function buildSettingsCapabilityCards(payload = {}) {
   const providerState = payload?.normalized_payload?.settings_admin?.provider_state || {};
   const translationReady = translationConfigured(providerState);

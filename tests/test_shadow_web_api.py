@@ -24686,6 +24686,11 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert busy_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "setBusy" in busy_ui_asset.text
         assert "runWithBusy" in busy_ui_asset.text
+        settings_presentation_asset = client.get(f"/static-build/{asset_version}/settings_presentation.js")
+        assert settings_presentation_asset.status_code == 200
+        assert settings_presentation_asset.headers["content-type"].startswith("application/javascript")
+        assert "buildSettingsStatusPresentation" in settings_presentation_asset.text
+        assert "buildSettingsActionFeedback" in settings_presentation_asset.text
         power_tools_ui_asset = client.get(f"/static-build/{asset_version}/power_tools_ui.js")
         assert power_tools_ui_asset.status_code == 200
         assert power_tools_ui_asset.headers["content-type"].startswith("application/javascript")

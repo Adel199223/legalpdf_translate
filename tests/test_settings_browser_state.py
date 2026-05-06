@@ -47,19 +47,71 @@ const capabilityCards = settingsModule.buildSettingsCapabilityCards({
     },
   },
 });
+const actionFeedbacks = {
+  okNormalizedMessage: settingsModule.buildSettingsActionFeedback(
+    {
+      status: "ok",
+      normalized_payload: {
+        message: "Saved <b>translation key</b>",
+        provider_state: {
+          translation: { credentials_configured: true },
+        },
+      },
+      diagnostics: {
+        message: "Diagnostic message should not win",
+      },
+    },
+    "Fallback message",
+  ),
+  unavailableDiagnosticsError: settingsModule.buildSettingsActionFeedback(
+    {
+      status: "unavailable",
+      normalized_payload: {},
+      diagnostics: {
+        error: "Provider unavailable <script>bad()</script>",
+        message: "Diagnostic message should not win",
+        provider_state: {
+          ocr: { api_configured: true },
+        },
+      },
+    },
+    "Fallback message",
+  ),
+  badDiagnosticsMessage: settingsModule.buildSettingsActionFeedback(
+    {
+      status: "failed",
+      normalized_payload: {},
+      diagnostics: {
+        message: "Native host failed <img src=x onerror=alert(1)>",
+      },
+    },
+    "Fallback message",
+  ),
+  fallbackOnly: settingsModule.buildSettingsActionFeedback(
+    {
+      status: "",
+      normalized_payload: {},
+      diagnostics: {},
+    },
+    "Fallback <i>message</i>",
+  ),
+};
 
 const helperText = [
   JSON.stringify(readySummaryItems),
   JSON.stringify(readyStatus),
   JSON.stringify(notReadyStatus),
   JSON.stringify(capabilityCards),
+  JSON.stringify(actionFeedbacks),
 ].join(" ");
 
 console.log(JSON.stringify({
+  actionFeedbackExportType: typeof settingsModule.buildSettingsActionFeedback,
   readySummaryItems,
   readyStatus,
   notReadyStatus,
   capabilityCards,
+  actionFeedbacks,
   helperText,
 }));
 """
@@ -119,3 +171,67 @@ def test_settings_presentation_helper_uses_beginner_setup_copy() -> None:
     assert "Job Log DB" not in helper_text
     assert "runtime summary" not in helper_text
     assert "admin controls" not in helper_text
+
+
+def test_settings_presentation_centralizes_action_feedback() -> None:
+    payload = _probe_results()
+
+    assert payload["actionFeedbackExportType"] == "function"
+    feedbacks = payload["actionFeedbacks"]
+
+    assert feedbacks["okNormalizedMessage"] == {
+        "providerState": {
+            "translation": {"credentials_configured": True},
+        },
+        "message": "Saved <b>translation key</b>",
+        "tone": "ok",
+        "diagnosticsHint": "Saved <b>translation key</b>",
+        "diagnosticsOpen": False,
+        "ok": True,
+    }
+    assert feedbacks["unavailableDiagnosticsError"] == {
+        "providerState": {
+            "ocr": {"api_configured": True},
+        },
+        "message": "Provider unavailable <script>bad()</script>",
+        "tone": "warn",
+        "diagnosticsHint": "Provider unavailable <script>bad()</script>",
+        "diagnosticsOpen": True,
+        "ok": False,
+    }
+    assert feedbacks["badDiagnosticsMessage"] == {
+        "providerState": {},
+        "message": "Native host failed <img src=x onerror=alert(1)>",
+        "tone": "bad",
+        "diagnosticsHint": "Native host failed <img src=x onerror=alert(1)>",
+        "diagnosticsOpen": True,
+        "ok": False,
+    }
+    assert feedbacks["fallbackOnly"] == {
+        "providerState": {},
+        "message": "Fallback <i>message</i>",
+        "tone": "bad",
+        "diagnosticsHint": "Fallback <i>message</i>",
+        "diagnosticsOpen": True,
+        "ok": False,
+    }
+
+
+def test_power_tools_delegates_settings_action_feedback() -> None:
+    from pathlib import Path
+
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    settings_presentation_js = (static_dir / "settings_presentation.js").read_text(encoding="utf-8")
+
+    assert "export function buildSettingsActionFeedback" in settings_presentation_js
+    assert "buildSettingsActionFeedback" in power_tools_js
+    assert "function resolvePayloadMessage" not in power_tools_js
+    assert 'payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad"' not in power_tools_js
+    assert "payload.normalized_payload?.provider_state || payload.diagnostics?.provider_state || {}" not in power_tools_js
