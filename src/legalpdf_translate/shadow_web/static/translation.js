@@ -60,9 +60,9 @@ const NUMERIC_MISMATCH_WARNING_MESSAGE = "Review recommended: some numbers from 
 
 function applyActionFailureFeedback(
   error,
-  { panelSlot = "", diagnosticsSlot = "", fallback = "" } = {},
+  { panelSlot = "", diagnosticsSlot = "", fallback = "", tone = "bad" } = {},
 ) {
-  const feedback = buildActionFailureFeedback(error, fallback, { panelSlot, diagnosticsSlot });
+  const feedback = buildActionFailureFeedback(error, fallback, { panelSlot, diagnosticsSlot, tone });
   setPanelStatus(feedback.panelSlot, feedback.tone, feedback.message);
   if (feedback.diagnosticsSlot) {
     setDiagnostics(feedback.diagnosticsSlot, error, {
@@ -2420,10 +2420,10 @@ function scheduleArabicReviewPoll(delayMs = 500) {
   stopArabicReviewPolling();
   translationState.arabicReviewPollTimer = window.setTimeout(() => {
     refreshArabicReviewState().catch((error) => {
-      setPanelStatus("translation-save", "bad", error.message || "Arabic DOCX review refresh failed.");
-      setDiagnostics("translation-save", error, {
-        hint: error.message || "Arabic DOCX review refresh failed.",
-        open: true,
+      applyActionFailureFeedback(error, {
+        panelSlot: "translation-save",
+        diagnosticsSlot: "translation-save",
+        fallback: "Arabic DOCX review refresh failed.",
       });
     });
   }, Math.max(100, Number(delayMs) || 500));
@@ -2463,10 +2463,11 @@ async function refreshArabicReviewState({ allowRestore = false } = {}) {
         await openArabicReviewInWord({ auto: true });
         return currentArabicReviewState();
       } catch (error) {
-        setPanelStatus("translation-save", "warn", error.message || "Arabic DOCX review open failed.");
-        setDiagnostics("translation-save", error, {
-          hint: error.message || "Arabic DOCX review open failed.",
-          open: true,
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation-save",
+          diagnosticsSlot: "translation-save",
+          fallback: "Arabic DOCX review open failed.",
+          tone: "warn",
         });
       }
     }
@@ -2513,10 +2514,10 @@ async function restorePendingArabicReview() {
     await refreshArabicReviewState({ allowRestore: true });
   } catch (error) {
     clearArabicReviewState();
-    setPanelStatus("translation-save", "bad", error.message || "Arabic DOCX review restore failed.");
-    setDiagnostics("translation-save", error, {
-      hint: error.message || "Arabic DOCX review restore failed.",
-      open: true,
+    applyActionFailureFeedback(error, {
+      panelSlot: "translation-save",
+      diagnosticsSlot: "translation-save",
+      fallback: "Arabic DOCX review restore failed.",
     });
   }
 }
@@ -2970,10 +2971,10 @@ function renderTranslationJob(job) {
   if (currentCompletedTranslationJobRequiresArabicReview()) {
     refreshArabicReviewState().catch((error) => {
       clearArabicReviewState();
-      setPanelStatus("translation-save", "bad", error.message || "Arabic DOCX review refresh failed.");
-      setDiagnostics("translation-save", error, {
-        hint: error.message || "Arabic DOCX review refresh failed.",
-        open: true,
+      applyActionFailureFeedback(error, {
+        panelSlot: "translation-save",
+        diagnosticsSlot: "translation-save",
+        fallback: "Arabic DOCX review refresh failed.",
       });
     });
   }
@@ -3009,10 +3010,10 @@ function renderTranslationHistory(history) {
       try {
         await deleteTranslationJobLogRow(item.row?.id);
       } catch (error) {
-        setPanelStatus("translation-save", "bad", error.message || "Translation row delete failed.");
-        setDiagnostics("translation-save", error, {
-          hint: error.message || "Translation row delete failed.",
-          open: true,
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation-save",
+          diagnosticsSlot: "translation-save",
+          fallback: "Translation row delete failed.",
         });
       }
     },
@@ -3560,10 +3561,10 @@ export function initializeTranslationUi() {
       try {
         await openArabicReviewInWord();
       } catch (error) {
-        setPanelStatus("translation-save", "bad", error.message || "Arabic DOCX review open failed.");
-        setDiagnostics("translation-save", error, {
-          hint: error.message || "Arabic DOCX review open failed.",
-          open: true,
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation-save",
+          diagnosticsSlot: "translation-save",
+          fallback: "Arabic DOCX review open failed.",
         });
       }
     });
@@ -3573,10 +3574,10 @@ export function initializeTranslationUi() {
       try {
         await continueArabicReview("continue_now");
       } catch (error) {
-        setPanelStatus("translation-save", "bad", error.message || "Arabic DOCX review continuation failed.");
-        setDiagnostics("translation-save", error, {
-          hint: error.message || "Arabic DOCX review continuation failed.",
-          open: true,
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation-save",
+          diagnosticsSlot: "translation-save",
+          fallback: "Arabic DOCX review continuation failed.",
         });
       }
     });
@@ -3586,10 +3587,10 @@ export function initializeTranslationUi() {
       try {
         await continueArabicReview("continue_without_changes");
       } catch (error) {
-        setPanelStatus("translation-save", "bad", error.message || "Arabic DOCX review continuation failed.");
-        setDiagnostics("translation-save", error, {
-          hint: error.message || "Arabic DOCX review continuation failed.",
-          open: true,
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation-save",
+          diagnosticsSlot: "translation-save",
+          fallback: "Arabic DOCX review continuation failed.",
         });
       }
     });
