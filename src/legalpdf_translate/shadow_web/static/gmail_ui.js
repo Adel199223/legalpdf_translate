@@ -16,6 +16,11 @@ export {
   renderGmailSimulatorDefaultsInto,
 } from "./gmail_context_ui.js";
 export {
+  renderGmailDetailsOpenInto,
+  renderGmailDrawerDatasetDefaultsInto,
+  renderGmailInputValueInto,
+} from "./gmail_control_ui.js";
+export {
   renderGmailPdfPreviewFallbackInto,
   renderGmailPreviewPanelInto,
 } from "./gmail_preview_ui.js";
@@ -25,36 +30,6 @@ export {
   renderGmailSessionResultInto,
   renderGmailTranslationStepCardInto,
 } from "./gmail_session_ui.js";
-
-export function renderGmailDrawerDatasetDefaultsInto(body) {
-  if (!body) {
-    return undefined;
-  }
-
-  body.dataset.gmailReviewDrawer = "closed";
-  body.dataset.gmailPreviewDrawer = "closed";
-  body.dataset.gmailSessionDrawer = "closed";
-  body.dataset.gmailBatchFinalizeDrawer = "closed";
-  return body;
-}
-
-export function renderGmailDetailsOpenInto(details, { open = false } = {}) {
-  if (!details) {
-    return undefined;
-  }
-
-  details.open = Boolean(open);
-  return details;
-}
-
-export function renderGmailInputValueInto(input, value = "") {
-  if (!input) {
-    return undefined;
-  }
-
-  input.value = String(value ?? "");
-  return input;
-}
 
 export function renderGmailDrawerChromeInto(nodes = {}, drawer = {}) {
   const { backdrop, body } = nodes || {};
