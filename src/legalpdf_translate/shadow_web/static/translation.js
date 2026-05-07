@@ -12,7 +12,7 @@ import {
 } from "./result_card_ui.js";
 import {
   collapseTranslationCompletionSectionsInto,
-  renderTranslationDownloadLinkInto,
+  renderTranslationDownloadLinksInto,
   renderTranslationCheckboxInto,
   renderTranslationCompletionSurfaceInto,
   renderTranslationFieldValueInto,
@@ -1788,12 +1788,18 @@ function renderTranslationRunStatus(job = translationState.currentJob) {
   renderTranslationRunStatusInto(nodes, view);
 }
 
-function clearDownloadLink(id) {
-  renderTranslationDownloadLinkInto(qs(id), "");
+function translationDownloadLinkNodes() {
+  return {
+    report: qs("translation-download-report"),
+    docx: qs("translation-download-docx"),
+    partial: qs("translation-download-partial"),
+    summary: qs("translation-download-summary"),
+    analyze: qs("translation-download-analyze"),
+  };
 }
 
-function setDownloadLink(id, href) {
-  renderTranslationDownloadLinkInto(qs(id), href);
+function renderTranslationDownloadLinks(links = {}) {
+  renderTranslationDownloadLinksInto(translationDownloadLinkNodes(), links);
 }
 
 function translationRunReportHref(job = translationState.currentJob) {
@@ -2134,11 +2140,7 @@ function syncTranslationCompletionSurface() {
       reportVisible: false,
       reviewExportAvailable: false,
     });
-    clearDownloadLink("translation-download-report");
-    clearDownloadLink("translation-download-docx");
-    clearDownloadLink("translation-download-partial");
-    clearDownloadLink("translation-download-summary");
-    clearDownloadLink("translation-download-analyze");
+    renderTranslationDownloadLinks();
   }
   if (!available) {
     renderTranslationCompletionResultCard();
@@ -2700,11 +2702,7 @@ function renderTranslationPreparedState() {
     hint: "No translation job has started yet. This Gmail attachment is prepared and ready for Start Translate.",
     open: false,
   });
-  setDownloadLink("translation-download-report", "");
-  setDownloadLink("translation-download-docx", "");
-  setDownloadLink("translation-download-partial", "");
-  setDownloadLink("translation-download-summary", "");
-  setDownloadLink("translation-download-analyze", "");
+  renderTranslationDownloadLinks();
   renderTranslationPreparedControlsInto({
     reportButton: qs("translation-generate-report"),
     reviewExport: qs("translation-review-export"),
@@ -2925,11 +2923,13 @@ function renderTranslationJob(job) {
     hint: diagnosticsHint,
     open: shouldOpenTranslationJobDiagnostics(job, recovery),
   });
-  setDownloadLink("translation-download-report", translationRunReportHref(job));
-  setDownloadLink("translation-download-docx", job?.actions?.download_output_docx ? `/api/translation/jobs/${job.job_id}/artifact/output_docx?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
-  setDownloadLink("translation-download-partial", job?.actions?.download_partial_docx ? `/api/translation/jobs/${job.job_id}/artifact/partial_docx?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
-  setDownloadLink("translation-download-summary", job?.actions?.download_run_summary ? `/api/translation/jobs/${job.job_id}/artifact/run_summary?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
-  setDownloadLink("translation-download-analyze", job?.actions?.download_analyze_report ? `/api/translation/jobs/${job.job_id}/artifact/analyze_report?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "");
+  renderTranslationDownloadLinks({
+    report: translationRunReportHref(job),
+    docx: job?.actions?.download_output_docx ? `/api/translation/jobs/${job.job_id}/artifact/output_docx?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "",
+    partial: job?.actions?.download_partial_docx ? `/api/translation/jobs/${job.job_id}/artifact/partial_docx?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "",
+    summary: job?.actions?.download_run_summary ? `/api/translation/jobs/${job.job_id}/artifact/run_summary?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "",
+    analyze: job?.actions?.download_analyze_report ? `/api/translation/jobs/${job.job_id}/artifact/analyze_report?mode=${appState.runtimeMode}&workspace=${appState.workspaceId}` : "",
+  });
   renderTranslationJobActionControlsInto({
     reportButton: qs("translation-generate-report"),
     reviewExport: qs("translation-review-export"),
@@ -3320,11 +3320,7 @@ export function initializeTranslationUi() {
     hint: "Row-save validation and payload details appear here.",
     open: false,
   });
-  clearDownloadLink("translation-download-docx");
-  clearDownloadLink("translation-download-partial");
-  clearDownloadLink("translation-download-summary");
-  clearDownloadLink("translation-download-analyze");
-  clearDownloadLink("translation-download-report");
+  renderTranslationDownloadLinks();
   clearArabicReviewState();
   renderTranslationSourceCard();
   renderTranslationOutputSummary();

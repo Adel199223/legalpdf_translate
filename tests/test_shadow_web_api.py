@@ -12556,7 +12556,7 @@ def test_translation_ui_module_centralizes_run_status_renderer() -> None:
     assert "renderTranslationRunStatusInto" in translation_js
     assert "export function renderTranslationRunStatusInto" in translation_ui_js
     run_status_start = translation_js.index("function renderTranslationRunStatus")
-    run_status_end = translation_js.index("\nfunction clearDownloadLink", run_status_start)
+    run_status_end = translation_js.index("\nfunction translationDownloadLinkNodes", run_status_start)
     run_status_block = translation_js[run_status_start:run_status_end]
     assert "renderTranslationRunStatusInto(" in run_status_block
     assert ".innerHTML" not in run_status_block
@@ -12914,7 +12914,7 @@ def test_translation_ui_module_centralizes_prepared_controls_renderer() -> None:
     prepared_end = translation_js.index("\n\nfunction renderTranslationResultCard", prepared_start)
     prepared_block = translation_js[prepared_start:prepared_end]
     assert "renderTranslationPreparedControlsInto({" in prepared_block
-    assert "setDownloadLink(\"translation-download-report\", \"\")" in prepared_block
+    assert "renderTranslationDownloadLinks();" in prepared_block
     assert "notifyTranslationUiStateChanged()" in prepared_block
     assert ".disabled =" not in prepared_block
     assert ".classList.add(\"hidden\")" not in prepared_block
@@ -13415,13 +13415,13 @@ def test_translation_ui_module_centralizes_download_link_renderer() -> None:
     translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
 
     assert 'from "./translation_ui.js"' in translation_js
-    assert "renderTranslationDownloadLinkInto" in translation_js
+    assert "renderTranslationDownloadLinksInto" in translation_js
     assert "export function renderTranslationDownloadLinkInto" in translation_ui_js
-    link_start = translation_js.index("function clearDownloadLink")
+    assert "export function renderTranslationDownloadLinksInto" in translation_ui_js
+    link_start = translation_js.index("function translationDownloadLinkNodes")
     link_end = translation_js.index("\nfunction translationRunReportHref", link_start)
     link_block = translation_js[link_start:link_end]
-    assert 'renderTranslationDownloadLinkInto(qs(id), "")' in link_block
-    assert "renderTranslationDownloadLinkInto(qs(id), href)" in link_block
+    assert "renderTranslationDownloadLinksInto(translationDownloadLinkNodes(), links)" in link_block
     assert ".innerHTML" not in link_block
 
     renderer_start = translation_ui_js.index("export function renderTranslationDownloadLinkInto")
@@ -13432,6 +13432,15 @@ def test_translation_ui_module_centralizes_download_link_renderer() -> None:
     )
     renderer_block = translation_ui_js[renderer_start:renderer_end]
     assert ".innerHTML" not in renderer_block
+    batch_renderer_start = translation_ui_js.index("export function renderTranslationDownloadLinksInto")
+    batch_renderer_end = (
+        translation_ui_js.index("\nexport function", batch_renderer_start + 1)
+        if "\nexport function" in translation_ui_js[batch_renderer_start + 1 :]
+        else len(translation_ui_js)
+    )
+    batch_renderer_block = translation_ui_js[batch_renderer_start:batch_renderer_end]
+    assert "renderTranslationDownloadLinkInto" in batch_renderer_block
+    assert ".innerHTML" not in batch_renderer_block
 
     script = r"""
 const translationUi = await import(__TRANSLATION_UI_MODULE_URL__);
@@ -13502,8 +13511,36 @@ const defaultHiddenReturn = translationUi.renderTranslationDownloadLinkInto(defa
 
 const nullReturn = translationUi.renderTranslationDownloadLinkInto(null, malicious);
 
+const batchNodes = {
+  report: makeLink(),
+  docx: makeLink(),
+  partial: makeLink(),
+  summary: makeLink(),
+  analyze: makeLink(),
+};
+batchNodes.partial.href = "/old/partial.docx";
+batchNodes.summary.href = "/old/summary.json";
+const batchReturn = translationUi.renderTranslationDownloadLinksInto(batchNodes, {
+  report: "/api/translation/jobs/123/artifact/run_report?<script>bad()</script>",
+  docx: malicious,
+  summary: "/api/translation/jobs/123/artifact/run_summary?name=<b>unsafe</b>",
+});
+
+const missingNodeReturn = translationUi.renderTranslationDownloadLinksInto({
+  report: null,
+  docx: makeLink(),
+}, {
+  report: "/ignored",
+  docx: "/api/translation/jobs/123/artifact/output_docx",
+  partial: "/ignored",
+});
+const nullBatchReturn = translationUi.renderTranslationDownloadLinksInto(null, {
+  report: malicious,
+});
+
 console.log(JSON.stringify({
   exportType: typeof translationUi.renderTranslationDownloadLinkInto,
+  batchExportType: typeof translationUi.renderTranslationDownloadLinksInto,
   visibleReturned: visibleReturn === visible,
   visible: summarize(visible),
   hiddenReturned: hiddenReturn === hidden,
@@ -13511,6 +13548,16 @@ console.log(JSON.stringify({
   defaultHiddenReturned: defaultHiddenReturn === defaultHidden,
   defaultHidden: summarize(defaultHidden),
   nullReturnType: typeof nullReturn,
+  batchReturned: batchReturn === batchNodes,
+  batch: {
+    report: summarize(batchNodes.report),
+    docx: summarize(batchNodes.docx),
+    partial: summarize(batchNodes.partial),
+    summary: summarize(batchNodes.summary),
+    analyze: summarize(batchNodes.analyze),
+  },
+  missingNodeReturn: typeof missingNodeReturn,
+  nullBatchReturnType: typeof nullBatchReturn,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -13520,6 +13567,7 @@ console.log(JSON.stringify({
     )
 
     assert results["exportType"] == "function"
+    assert results["batchExportType"] == "function"
     assert results["visibleReturned"] is True
     assert results["visible"]["href"] == "/api/translation/jobs/123/artifact/output_docx?name=<img src=x onerror=alert(1)><script>bad()</script>"
     assert results["visible"]["hidden"] is False
@@ -13539,6 +13587,22 @@ console.log(JSON.stringify({
     assert results["defaultHidden"]["removedAttribute"] == "href"
     assert results["defaultHidden"]["innerHTMLWrites"] == 0
     assert results["nullReturnType"] == "undefined"
+    assert results["batchReturned"] is True
+    assert results["batch"]["report"]["href"] == "/api/translation/jobs/123/artifact/run_report?<script>bad()</script>"
+    assert results["batch"]["report"]["hidden"] is False
+    assert results["batch"]["report"]["innerHTMLWrites"] == 0
+    assert results["batch"]["docx"]["href"] == "/api/translation/jobs/123/artifact/output_docx?name=<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["batch"]["docx"]["hidden"] is False
+    assert results["batch"]["partial"]["href"] == ""
+    assert results["batch"]["partial"]["hidden"] is True
+    assert results["batch"]["partial"]["removedAttribute"] == "href"
+    assert results["batch"]["summary"]["href"] == "/api/translation/jobs/123/artifact/run_summary?name=<b>unsafe</b>"
+    assert results["batch"]["summary"]["hidden"] is False
+    assert results["batch"]["analyze"]["href"] == ""
+    assert results["batch"]["analyze"]["hidden"] is True
+    assert results["batch"]["analyze"]["removedAttribute"] == "href"
+    assert results["missingNodeReturn"] == "object"
+    assert results["nullBatchReturnType"] == "undefined"
 
 
 def test_translation_ui_module_centralizes_completion_drawer_renderer() -> None:
@@ -13846,7 +13910,7 @@ def test_translation_ui_module_centralizes_completion_surface_renderer() -> None
     surface_block = translation_js[surface_start:surface_end]
     assert "deriveTranslationCompletionPresentation({" in surface_block
     assert "renderTranslationCompletionSurfaceInto({" in surface_block
-    assert "clearDownloadLink(\"translation-download-report\")" in surface_block
+    assert "renderTranslationDownloadLinks();" in surface_block
     assert "setPanelStatus(" in surface_block
     assert "renderTranslationCompletionResultCard()" in surface_block
     assert "renderArabicReviewCard()" in surface_block
@@ -24695,6 +24759,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderTranslationJobActionControlsInto" in translation_ui_asset.text
         assert "renderTranslationNumericMismatchWarningInto" in translation_ui_asset.text
         assert "renderTranslationDownloadLinkInto" in translation_ui_asset.text
+        assert "renderTranslationDownloadLinksInto" in translation_ui_asset.text
         assert "syncTranslationCompletionDrawerStateInto" in translation_ui_asset.text
         assert "collapseTranslationCompletionSectionsInto" in translation_ui_asset.text
         assert "renderTranslationCompletionSurfaceInto" in translation_ui_asset.text
