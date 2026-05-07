@@ -17,6 +17,11 @@ import {
   renderGmailPrepareActionInto,
   renderGmailReturnToSourceActionInto,
 } from "./gmail_action_ui.js";
+import {
+  renderGmailDetailsOpenInto,
+  renderGmailDrawerDatasetDefaultsInto,
+  renderGmailInputValueInto,
+} from "./gmail_control_ui.js";
 import { renderGmailBatchFinalizeSurfaceInto } from "./gmail_finalize_ui.js";
 import { renderGmailReportActionInto } from "./gmail_report_ui.js";
 import {
@@ -26,10 +31,7 @@ import {
 import {
   renderGmailAttachmentListInto,
   renderGmailContextDefaultsInto,
-  renderGmailDetailsOpenInto,
-  renderGmailDrawerDatasetDefaultsInto,
   renderGmailDrawerChromeInto,
-  renderGmailInputValueInto,
   renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailNumericMismatchWarningInto,

@@ -8625,7 +8625,7 @@ console.log(JSON.stringify({
     assert results["simulatorMissingResultType"] == "object"
 
 
-def test_gmail_ui_module_centralizes_control_state_renderers() -> None:
+def test_gmail_control_ui_module_owns_control_state_renderers() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -8635,10 +8635,15 @@ def test_gmail_ui_module_centralizes_control_state_renderers() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_control_ui_path = static_dir / "gmail_control_ui.js"
+    assert gmail_control_ui_path.exists()
+    gmail_control_ui_js = gmail_control_ui_path.read_text(encoding="utf-8")
 
     assert "renderGmailDrawerDatasetDefaultsInto" in gmail_js
     assert "renderGmailDetailsOpenInto" in gmail_js
     assert "renderGmailInputValueInto" in gmail_js
+    assert 'from "./gmail_control_ui.js"' in gmail_js
+    assert 'from "./gmail_control_ui.js"' in gmail_ui_js
     assert 'document.body.dataset.gmailReviewDrawer = "closed"' not in gmail_js
     assert 'document.body.dataset.gmailPreviewDrawer = "closed"' not in gmail_js
     assert 'document.body.dataset.gmailSessionDrawer = "closed"' not in gmail_js
@@ -8647,17 +8652,22 @@ def test_gmail_ui_module_centralizes_control_state_renderers() -> None:
     assert "startPage.value = String(clamped)" not in gmail_js
     assert "input.value = String(clamped)" not in gmail_js
 
-    assert "export function renderGmailDrawerDatasetDefaultsInto" in gmail_ui_js
-    assert "export function renderGmailDetailsOpenInto" in gmail_ui_js
-    assert "export function renderGmailInputValueInto" in gmail_ui_js
-    drawer_start = gmail_ui_js.index("export function renderGmailDrawerDatasetDefaultsInto")
-    details_start = gmail_ui_js.index("export function renderGmailDetailsOpenInto")
-    input_start = gmail_ui_js.index("export function renderGmailInputValueInto")
-    control_block = gmail_ui_js[drawer_start:gmail_ui_js.index("\nexport function", input_start + 1)]
+    assert "renderGmailDrawerDatasetDefaultsInto" in gmail_ui_js
+    assert "renderGmailDetailsOpenInto" in gmail_ui_js
+    assert "renderGmailInputValueInto" in gmail_ui_js
+    assert "export function renderGmailDrawerDatasetDefaultsInto" not in gmail_ui_js
+    assert "export function renderGmailDetailsOpenInto" not in gmail_ui_js
+    assert "export function renderGmailInputValueInto" not in gmail_ui_js
+    assert "export function renderGmailDrawerDatasetDefaultsInto" in gmail_control_ui_js
+    assert "export function renderGmailDetailsOpenInto" in gmail_control_ui_js
+    assert "export function renderGmailInputValueInto" in gmail_control_ui_js
+    drawer_start = gmail_control_ui_js.index("export function renderGmailDrawerDatasetDefaultsInto")
+    control_block = gmail_control_ui_js[drawer_start:]
     assert "innerHTML" not in control_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_CONTROL_UI_MODULE_URL__);
+const legacyUi = await import(__GMAIL_UI_MODULE_URL__);
 
 function makeBody() {
   return {
@@ -8723,6 +8733,9 @@ console.log(JSON.stringify({
   drawerExportType: typeof ui.renderGmailDrawerDatasetDefaultsInto,
   detailsExportType: typeof ui.renderGmailDetailsOpenInto,
   inputExportType: typeof ui.renderGmailInputValueInto,
+  legacyDrawerExportType: typeof legacyUi.renderGmailDrawerDatasetDefaultsInto,
+  legacyDetailsExportType: typeof legacyUi.renderGmailDetailsOpenInto,
+  legacyInputExportType: typeof legacyUi.renderGmailInputValueInto,
   drawerResultType: typeof drawerResult,
   bodyDataset: body.dataset,
   closedDetailsResultType: typeof closedDetailsResult,
@@ -8740,13 +8753,19 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_CONTROL_UI_MODULE_URL__": "gmail_control_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
         timeout_seconds=30,
     )
 
     assert results["drawerExportType"] == "function"
     assert results["detailsExportType"] == "function"
     assert results["inputExportType"] == "function"
+    assert results["legacyDrawerExportType"] == "function"
+    assert results["legacyDetailsExportType"] == "function"
+    assert results["legacyInputExportType"] == "function"
     assert results["drawerResultType"] == "object"
     assert results["bodyDataset"] == {
         "unrelated": "keep",
@@ -25177,6 +25196,12 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailDrawerDatasetDefaultsInto" in gmail_ui_asset.text
         assert "renderGmailDetailsOpenInto" in gmail_ui_asset.text
         assert "renderGmailInputValueInto" in gmail_ui_asset.text
+        gmail_control_ui_asset = client.get(f"/static-build/{asset_version}/gmail_control_ui.js")
+        assert gmail_control_ui_asset.status_code == 200
+        assert gmail_control_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderGmailDrawerDatasetDefaultsInto" in gmail_control_ui_asset.text
+        assert "renderGmailDetailsOpenInto" in gmail_control_ui_asset.text
+        assert "renderGmailInputValueInto" in gmail_control_ui_asset.text
         gmail_action_ui_asset = client.get(f"/static-build/{asset_version}/gmail_action_ui.js")
         assert gmail_action_ui_asset.status_code == 200
         assert gmail_action_ui_asset.headers["content-type"].startswith("application/javascript")
