@@ -217,6 +217,58 @@ console.log(JSON.stringify({
     ]
 
 
+def test_action_feedback_presentation_builds_bootstrap_failure_marker() -> None:
+    script = """
+const feedbackModule = await import(__ACTION_FEEDBACK_MODULE_URL__);
+
+const staleError = {
+  name: "StaleAssetError",
+  message: "Reload required <img src=x onerror=alert(1)>",
+  payload: { diagnostics: { error: "stale_browser_assets" } },
+};
+const namedError = {
+  name: "BootstrapBoom",
+  message: "",
+  payload: { diagnostics: { error: "" } },
+};
+const anonymousError = {
+  message: "",
+  payload: { diagnostics: {} },
+};
+
+console.log(JSON.stringify({
+  exportType: typeof feedbackModule.buildActionFailureClientMarker,
+  stale: feedbackModule.buildActionFailureClientMarker(staleError, "Browser app bootstrap failed."),
+  named: feedbackModule.buildActionFailureClientMarker(namedError, "Browser app bootstrap failed."),
+  anonymous: feedbackModule.buildActionFailureClientMarker(anonymousError, "Browser app bootstrap failed."),
+  nullError: feedbackModule.buildActionFailureClientMarker(null, "Browser app bootstrap failed."),
+}));
+"""
+    payload = run_browser_esm_json_probe(
+        script,
+        {"__ACTION_FEEDBACK_MODULE_URL__": "action_feedback_presentation.js"},
+        timeout_seconds=20,
+    )
+
+    assert payload["exportType"] == "function"
+    assert payload["stale"] == {
+        "reason": "stale_browser_assets",
+        "message": "Reload required <img src=x onerror=alert(1)>",
+    }
+    assert payload["named"] == {
+        "reason": "BootstrapBoom",
+        "message": "Browser app bootstrap failed.",
+    }
+    assert payload["anonymous"] == {
+        "reason": "bootstrap_failed",
+        "message": "Browser app bootstrap failed.",
+    }
+    assert payload["nullError"] == {
+        "reason": "bootstrap_failed",
+        "message": "Browser app bootstrap failed.",
+    }
+
+
 def test_browser_modules_delegate_action_failure_ui_application() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -279,7 +331,7 @@ def test_app_profile_actions_delegate_repeated_action_failure_feedback() -> None
     app_source = (static_dir / "app.js").read_text(encoding="utf-8")
 
     assert 'from "./action_feedback_presentation.js"' in app_source
-    assert "buildActionFailureFeedback" in app_source
+    assert "applyActionFailureFeedbackToUi" in app_source
     assert "function applyActionFailureFeedback" in app_source
     for fallback in [
         "Profile import failed.",
@@ -544,8 +596,14 @@ def test_app_bootstrap_failures_delegate_action_failure_feedback() -> None:
     app_source = (static_dir / "app.js").read_text(encoding="utf-8")
 
     assert 'from "./action_feedback_presentation.js"' in app_source
+    assert "buildActionFailureClientMarker" in app_source
+    assert "buildActionFailureFeedback" not in app_source
     assert "function applyActionFailureFeedback" in app_source
     assert "function applyBootstrapFailureState" in app_source
+    marker_start = app_source.index("function applyBootstrapFailureState")
+    marker_end = app_source.index("\n}\n", marker_start) + 3
+    marker_block = app_source[marker_start:marker_end]
+    assert "buildActionFailureClientMarker(" in marker_block
     assert "diagnosticsHint" in app_source
     for fallback in [
         "This LegalPDF browser tab is using stale browser assets.",

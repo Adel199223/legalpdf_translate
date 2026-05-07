@@ -1,7 +1,7 @@
 import { describeLocalServerUnavailable, fetchJson, isLocalServerUnavailableError } from "./api.js";
 import {
   applyActionFailureFeedbackToUi,
-  buildActionFailureFeedback,
+  buildActionFailureClientMarker,
 } from "./action_feedback_presentation.js";
 import { runStagedBootstrap } from "./bootstrap_hydration.js";
 import { runWithBusy } from "./busy_ui.js";
@@ -517,15 +517,8 @@ function escapeHtml(value) {
 }
 
 function applyBootstrapFailureState(error) {
-  const bootstrapFeedback = buildActionFailureFeedback(
-    error,
-    "Browser app bootstrap failed.",
-    { panelSlot: "runtime", diagnosticsSlot: "runtime" },
-  );
-  setClientHydrationMarker("client_boot_failed", {
-    reason: error?.payload?.diagnostics?.error || error?.name || "bootstrap_failed",
-    message: bootstrapFeedback.message,
-  });
+  const bootstrapFeedback = buildActionFailureClientMarker(error, "Browser app bootstrap failed.");
+  setClientHydrationMarker("client_boot_failed", bootstrapFeedback);
   if (error?.payload?.diagnostics?.error === "stale_browser_assets") {
     const feedback = applyActionFailureFeedback(error, {
       panelSlot: "runtime",
