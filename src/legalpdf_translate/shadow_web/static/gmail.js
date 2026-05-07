@@ -28,6 +28,7 @@ import {
   renderGmailPdfPreviewFallbackInto,
   renderGmailPreviewPanelInto,
 } from "./gmail_preview_ui.js";
+import { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
 import {
   renderGmailAttachmentListInto,
   renderGmailContextDefaultsInto,
@@ -39,7 +40,6 @@ import {
   renderGmailReviewChromeInto,
   renderGmailReviewDetailInto,
   renderGmailReviewSummaryInto,
-  renderGmailRestoreBarInto,
   renderGmailResumeCardInto,
   renderGmailSessionButtonsInto,
   renderGmailSessionResultInto,

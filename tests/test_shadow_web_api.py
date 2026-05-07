@@ -6322,7 +6322,7 @@ console.log(JSON.stringify({
     assert results["partial"]["innerHTMLWrites"] == [0, 0, 0, 0, 0]
 
 
-def test_gmail_ui_module_centralizes_restore_bar_renderer() -> None:
+def test_gmail_restore_ui_module_owns_restore_bar_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -6332,9 +6332,16 @@ def test_gmail_ui_module_centralizes_restore_bar_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_restore_ui_path = static_dir / "gmail_restore_ui.js"
+    assert gmail_restore_ui_path.exists()
+    gmail_restore_ui_js = gmail_restore_ui_path.read_text(encoding="utf-8")
 
     assert "renderGmailRestoreBarInto" in gmail_js
-    assert "export function renderGmailRestoreBarInto" in gmail_ui_js
+    assert 'from "./gmail_restore_ui.js"' in gmail_js
+    assert 'from "./gmail_restore_ui.js"' in gmail_ui_js
+    assert "renderGmailRestoreBarInto" in gmail_ui_js
+    assert "export function renderGmailRestoreBarInto" not in gmail_ui_js
+    assert "export function renderGmailRestoreBarInto" in gmail_restore_ui_js
 
     restore_start = gmail_js.index("function renderGmailRestoreBar")
     restore_end = gmail_js.index("\nfunction updateDemoReviewAction", restore_start)
@@ -6344,13 +6351,13 @@ def test_gmail_ui_module_centralizes_restore_bar_renderer() -> None:
     assert ".disabled =" not in restore_block
     assert ".textContent =" not in restore_block
 
-    renderer_start = gmail_ui_js.index("export function renderGmailRestoreBarInto")
-    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    renderer_start = gmail_restore_ui_js.index("export function renderGmailRestoreBarInto")
+    renderer_block = gmail_restore_ui_js[renderer_start:]
     assert "innerHTML" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_RESTORE_UI_MODULE_URL__);
+const legacyUi = await import(__GMAIL_UI_MODULE_URL__);
 
 function normalizeClassList(value) {
   return String(value || "").split(/\\s+/).filter(Boolean);
@@ -6480,6 +6487,7 @@ const nullResult = ui.renderGmailRestoreBarInto(null, {
 
 console.log(JSON.stringify({
   exportType: typeof ui.renderGmailRestoreBarInto,
+  legacyExportType: typeof legacyUi.renderGmailRestoreBarInto,
   bothResultType: typeof bothResult,
   noneResultType: typeof noneResult,
   partialResultType: typeof partialResult,
@@ -6492,10 +6500,14 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_RESTORE_UI_MODULE_URL__": "gmail_restore_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
     )
 
     assert results["exportType"] == "function"
+    assert results["legacyExportType"] == "function"
     assert results["bothResultType"] == "object"
     assert results["noneResultType"] == "object"
     assert results["partialResultType"] == "undefined"
@@ -25202,6 +25214,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailDrawerDatasetDefaultsInto" in gmail_control_ui_asset.text
         assert "renderGmailDetailsOpenInto" in gmail_control_ui_asset.text
         assert "renderGmailInputValueInto" in gmail_control_ui_asset.text
+        gmail_restore_ui_asset = client.get(f"/static-build/{asset_version}/gmail_restore_ui.js")
+        assert gmail_restore_ui_asset.status_code == 200
+        assert gmail_restore_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderGmailRestoreBarInto" in gmail_restore_ui_asset.text
         gmail_action_ui_asset = client.get(f"/static-build/{asset_version}/gmail_action_ui.js")
         assert gmail_action_ui_asset.status_code == 200
         assert gmail_action_ui_asset.headers["content-type"].startswith("application/javascript")

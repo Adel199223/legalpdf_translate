@@ -30,6 +30,7 @@ export {
   renderGmailSessionResultInto,
   renderGmailTranslationStepCardInto,
 } from "./gmail_session_ui.js";
+export { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
 
 export function renderGmailDrawerChromeInto(nodes = {}, drawer = {}) {
   const { backdrop, body } = nodes || {};
@@ -44,33 +45,6 @@ export function renderGmailDrawerChromeInto(nodes = {}, drawer = {}) {
   if (body && bodyDatasetKey) {
     body.dataset[bodyDatasetKey] = open ? "open" : "closed";
   }
-  return nodes;
-}
-
-export function renderGmailRestoreBarInto(nodes = {}, restore = {}) {
-  const { bar, reviewButton, previewButton } = nodes || {};
-  if (!bar || !reviewButton || !previewButton) {
-    return undefined;
-  }
-
-  const review = restore.review || {};
-  const preview = restore.preview || {};
-  const reviewVisible = Boolean(review.visible);
-  const previewVisible = Boolean(preview.visible);
-
-  reviewButton.classList.toggle("hidden", !reviewVisible);
-  reviewButton.disabled = !reviewVisible;
-  if (reviewVisible) {
-    reviewButton.textContent = review.label || "";
-  }
-
-  previewButton.classList.toggle("hidden", !previewVisible);
-  previewButton.disabled = !previewVisible;
-  if (previewVisible) {
-    previewButton.textContent = preview.label || "";
-  }
-
-  bar.classList.toggle("hidden", !(reviewVisible || previewVisible));
   return nodes;
 }
 
