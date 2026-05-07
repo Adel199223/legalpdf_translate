@@ -282,25 +282,27 @@ function qs(id) {
   return document.getElementById(id);
 }
 
-export function setDiagnostics(slot, value, { hint = "", open = false } = {}) {
-  const pre = qs(`${slot}-diagnostics`);
-  if (pre) {
-    pre.textContent = formatDiagnosticValue(value);
+export function renderPowerToolsDiagnosticsInto(nodes = {}, value, { hint = "", open = false } = {}) {
+  if (!nodes) {
+    return undefined;
   }
-  const hintNode = qs(`${slot}-hint`);
+
+  const { diagnostics, hint: hintNode, details } = nodes;
+  if (diagnostics) {
+    diagnostics.textContent = formatDiagnosticValue(value);
+  }
   if (hintNode && hint) {
     hintNode.textContent = hint;
   }
-  const details = qs(`${slot}-details`);
   if (details) {
     details.open = Boolean(open);
   }
+  return nodes;
 }
 
-export function setPanelStatus(slot, tone, message) {
-  const panel = qs(`${slot}-status`);
+export function renderPowerToolsPanelStatusInto(panel, tone, message) {
   if (!panel) {
-    return;
+    return undefined;
   }
   panel.textContent = message;
   if (tone) {
@@ -308,4 +310,18 @@ export function setPanelStatus(slot, tone, message) {
   } else {
     delete panel.dataset.tone;
   }
+  return panel;
+}
+
+export function setDiagnostics(slot, value, { hint = "", open = false } = {}) {
+  return renderPowerToolsDiagnosticsInto({
+    diagnostics: qs(`${slot}-diagnostics`),
+    hint: qs(`${slot}-hint`),
+    details: qs(`${slot}-details`),
+  }, value, { hint, open });
+}
+
+export function setPanelStatus(slot, tone, message) {
+  const panel = qs(`${slot}-status`);
+  return renderPowerToolsPanelStatusInto(panel, tone, message);
 }
