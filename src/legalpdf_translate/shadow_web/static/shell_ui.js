@@ -111,6 +111,17 @@ export function renderClientHydrationMarkerInto(
   }
 }
 
+export function renderRouteStateDatasetsInto(body, route = {}) {
+  if (!body?.dataset) {
+    return;
+  }
+  body.dataset.uiVariant = String(route.uiVariant ?? "");
+  body.dataset.workspaceId = String(route.workspaceId ?? "");
+  body.dataset.activeView = String(route.activeView ?? "");
+  body.dataset.shellMode = String(route.shellMode ?? "");
+  body.dataset.beginnerSurface = route.beginnerSurface ? "true" : "false";
+}
+
 export function renderRuntimeModeSelectorInto(select, runtimeMode = {}) {
   if (!select) {
     return;
