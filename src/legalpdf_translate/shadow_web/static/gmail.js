@@ -12,6 +12,11 @@ import {
   setPanelStatus,
 } from "./diagnostics_ui.js";
 import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
+import {
+  renderGmailDemoReviewActionInto,
+  renderGmailPrepareActionInto,
+  renderGmailReturnToSourceActionInto,
+} from "./gmail_action_ui.js";
 import { renderGmailBatchFinalizeSurfaceInto } from "./gmail_finalize_ui.js";
 import { renderGmailReportActionInto } from "./gmail_report_ui.js";
 import {
@@ -22,15 +27,12 @@ import {
   renderGmailAttachmentListInto,
   renderGmailContextDefaultsInto,
   renderGmailDetailsOpenInto,
-  renderGmailDemoReviewActionInto,
   renderGmailDrawerDatasetDefaultsInto,
   renderGmailDrawerChromeInto,
   renderGmailInputValueInto,
   renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailNumericMismatchWarningInto,
-  renderGmailPrepareActionInto,
-  renderGmailReturnToSourceActionInto,
   renderGmailResumeActionsInto,
   renderGmailReviewChromeInto,
   renderGmailReviewDetailInto,

@@ -6534,7 +6534,7 @@ console.log(JSON.stringify({
     assert results["partial"]["innerHTMLWrites"] == [0, 0, 0]
 
 
-def test_gmail_ui_module_centralizes_demo_review_action_renderer() -> None:
+def test_gmail_action_ui_module_owns_demo_review_action_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -6544,9 +6544,15 @@ def test_gmail_ui_module_centralizes_demo_review_action_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_action_ui_path = static_dir / "gmail_action_ui.js"
+    assert gmail_action_ui_path.exists()
+    gmail_action_ui_js = gmail_action_ui_path.read_text(encoding="utf-8")
 
     assert "renderGmailDemoReviewActionInto" in gmail_js
-    assert "export function renderGmailDemoReviewActionInto" in gmail_ui_js
+    assert 'from "./gmail_action_ui.js"' in gmail_js
+    assert 'from "./gmail_action_ui.js"' in gmail_ui_js
+    assert "export function renderGmailDemoReviewActionInto" not in gmail_ui_js
+    assert "export function renderGmailDemoReviewActionInto" in gmail_action_ui_js
 
     update_start = gmail_js.index("function updateDemoReviewAction()")
     update_end = gmail_js.index("\nfunction renderResumeCard", update_start)
@@ -6555,13 +6561,14 @@ def test_gmail_ui_module_centralizes_demo_review_action_renderer() -> None:
     assert ".classList.toggle(" not in update_block
     assert ".disabled =" not in update_block
 
-    renderer_start = gmail_ui_js.index("export function renderGmailDemoReviewActionInto")
-    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    renderer_start = gmail_action_ui_js.index("export function renderGmailDemoReviewActionInto")
+    renderer_end = gmail_action_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_action_ui_js[renderer_start:renderer_end]
     assert "innerHTML" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_ACTION_UI_MODULE_URL__);
+const legacyUi = await import(__GMAIL_UI_MODULE_URL__);
 
 function normalizeClassList(value) {
   return String(value || "").split(/\\s+/).filter(Boolean);
@@ -6649,6 +6656,7 @@ const missingResult = ui.renderGmailDemoReviewActionInto(null, { visible: true }
 
 console.log(JSON.stringify({
   exportType: typeof ui.renderGmailDemoReviewActionInto,
+  legacyExportType: typeof legacyUi.renderGmailDemoReviewActionInto,
   visibleResultType: typeof visibleResult,
   hiddenResultType: typeof hiddenResult,
   missingResultType: typeof missingResult,
@@ -6659,10 +6667,14 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_ACTION_UI_MODULE_URL__": "gmail_action_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
     )
 
     assert results["exportType"] == "function"
+    assert results["legacyExportType"] == "function"
     assert results["visibleResultType"] == "object"
     assert results["hiddenResultType"] == "object"
     assert results["missingResultType"] == "undefined"
@@ -6687,7 +6699,7 @@ console.log(JSON.stringify({
     assert results["truthy"]["innerHTMLWrites"] == 0
 
 
-def test_gmail_ui_module_centralizes_return_to_source_action_renderer() -> None:
+def test_gmail_action_ui_module_owns_return_to_source_action_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -6697,9 +6709,15 @@ def test_gmail_ui_module_centralizes_return_to_source_action_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_action_ui_path = static_dir / "gmail_action_ui.js"
+    assert gmail_action_ui_path.exists()
+    gmail_action_ui_js = gmail_action_ui_path.read_text(encoding="utf-8")
 
     assert "renderGmailReturnToSourceActionInto" in gmail_js
-    assert "export function renderGmailReturnToSourceActionInto" in gmail_ui_js
+    assert 'from "./gmail_action_ui.js"' in gmail_js
+    assert 'from "./gmail_action_ui.js"' in gmail_ui_js
+    assert "export function renderGmailReturnToSourceActionInto" not in gmail_ui_js
+    assert "export function renderGmailReturnToSourceActionInto" in gmail_action_ui_js
 
     update_start = gmail_js.index("function updateReturnToGmailAction()")
     update_end = gmail_js.index("\nfunction pendingStatus", update_start)
@@ -6709,13 +6727,14 @@ def test_gmail_ui_module_centralizes_return_to_source_action_renderer() -> None:
     assert ".disabled =" not in update_block
     assert ".title =" not in update_block
 
-    renderer_start = gmail_ui_js.index("export function renderGmailReturnToSourceActionInto")
-    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    renderer_start = gmail_action_ui_js.index("export function renderGmailReturnToSourceActionInto")
+    renderer_end = gmail_action_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_action_ui_js[renderer_start:renderer_end]
     assert "innerHTML" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_ACTION_UI_MODULE_URL__);
+const legacyUi = await import(__GMAIL_UI_MODULE_URL__);
 
 function normalizeClassList(value) {
   return String(value || "").split(/\\s+/).filter(Boolean);
@@ -6821,6 +6840,7 @@ const missingResult = ui.renderGmailReturnToSourceActionInto(null, {
 
 console.log(JSON.stringify({
   exportType: typeof ui.renderGmailReturnToSourceActionInto,
+  legacyExportType: typeof legacyUi.renderGmailReturnToSourceActionInto,
   visibleResultType: typeof visibleResult,
   hiddenResultType: typeof hiddenResult,
   missingResultType: typeof missingResult,
@@ -6832,10 +6852,14 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_ACTION_UI_MODULE_URL__": "gmail_action_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
     )
 
     assert results["exportType"] == "function"
+    assert results["legacyExportType"] == "function"
     assert results["visibleResultType"] == "object"
     assert results["hiddenResultType"] == "object"
     assert results["missingResultType"] == "undefined"
@@ -6868,7 +6892,7 @@ console.log(JSON.stringify({
     assert results["missingSource"]["innerHTMLWrites"] == 0
 
 
-def test_gmail_ui_module_centralizes_prepare_action_renderer() -> None:
+def test_gmail_action_ui_module_owns_prepare_action_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -6878,9 +6902,15 @@ def test_gmail_ui_module_centralizes_prepare_action_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_action_ui_path = static_dir / "gmail_action_ui.js"
+    assert gmail_action_ui_path.exists()
+    gmail_action_ui_js = gmail_action_ui_path.read_text(encoding="utf-8")
 
     assert "renderGmailPrepareActionInto" in gmail_js
-    assert "export function renderGmailPrepareActionInto" in gmail_ui_js
+    assert 'from "./gmail_action_ui.js"' in gmail_js
+    assert 'from "./gmail_action_ui.js"' in gmail_ui_js
+    assert "export function renderGmailPrepareActionInto" not in gmail_ui_js
+    assert "export function renderGmailPrepareActionInto" in gmail_action_ui_js
 
     update_start = gmail_js.index("function updatePrepareActionState()")
     update_end = gmail_js.index("\nfunction syncShellState", update_start)
@@ -6891,13 +6921,13 @@ def test_gmail_ui_module_centralizes_prepare_action_renderer() -> None:
     assert ".disabled =" not in update_block
     assert ".title =" not in update_block
 
-    renderer_start = gmail_ui_js.index("export function renderGmailPrepareActionInto")
-    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    renderer_start = gmail_action_ui_js.index("export function renderGmailPrepareActionInto")
+    renderer_block = gmail_action_ui_js[renderer_start:]
     assert "innerHTML" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_ACTION_UI_MODULE_URL__);
+const legacyUi = await import(__GMAIL_UI_MODULE_URL__);
 
 function makeButton() {
   const button = {
@@ -6974,6 +7004,7 @@ const missingResult = ui.renderGmailPrepareActionInto(null, {
 
 console.log(JSON.stringify({
   exportType: typeof ui.renderGmailPrepareActionInto,
+  legacyExportType: typeof legacyUi.renderGmailPrepareActionInto,
   enabledResultType: typeof enabledResult,
   blockedResultType: typeof blockedResult,
   missingResultType: typeof missingResult,
@@ -6984,10 +7015,14 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_ACTION_UI_MODULE_URL__": "gmail_action_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
     )
 
     assert results["exportType"] == "function"
+    assert results["legacyExportType"] == "function"
     assert results["enabledResultType"] == "object"
     assert results["blockedResultType"] == "object"
     assert results["missingResultType"] == "undefined"
@@ -25142,6 +25177,12 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailDrawerDatasetDefaultsInto" in gmail_ui_asset.text
         assert "renderGmailDetailsOpenInto" in gmail_ui_asset.text
         assert "renderGmailInputValueInto" in gmail_ui_asset.text
+        gmail_action_ui_asset = client.get(f"/static-build/{asset_version}/gmail_action_ui.js")
+        assert gmail_action_ui_asset.status_code == 200
+        assert gmail_action_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderGmailDemoReviewActionInto" in gmail_action_ui_asset.text
+        assert "renderGmailReturnToSourceActionInto" in gmail_action_ui_asset.text
+        assert "renderGmailPrepareActionInto" in gmail_action_ui_asset.text
         gmail_report_ui_asset = client.get(f"/static-build/{asset_version}/gmail_report_ui.js")
         assert gmail_report_ui_asset.status_code == 200
         assert gmail_report_ui_asset.headers["content-type"].startswith("application/javascript")
