@@ -1,3 +1,5 @@
+import { renderRouteStateDatasetsInto } from "./shell_ui.js";
+
 const SUPPORTED_VIEWS = new Set([
   "dashboard",
   "new-job",
@@ -50,14 +52,16 @@ function beginnerSurfaceActive(state = appState) {
 }
 
 function syncRouteDatasets() {
-  if (!globalThis.document?.body?.dataset) {
+  if (!globalThis.document?.body) {
     return;
   }
-  document.body.dataset.uiVariant = appState.uiVariant;
-  document.body.dataset.workspaceId = appState.workspaceId;
-  document.body.dataset.activeView = appState.activeView;
-  document.body.dataset.shellMode = routeShellMode();
-  document.body.dataset.beginnerSurface = beginnerSurfaceActive() ? "true" : "false";
+  renderRouteStateDatasetsInto(document.body, {
+    uiVariant: appState.uiVariant,
+    workspaceId: appState.workspaceId,
+    activeView: appState.activeView,
+    shellMode: routeShellMode(),
+    beginnerSurface: beginnerSurfaceActive(),
+  });
 }
 
 function emitRouteStateChanged() {

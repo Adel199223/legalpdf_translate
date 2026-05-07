@@ -1104,6 +1104,114 @@ console.log(JSON.stringify({
     assert results["unsafeTextCounts"] == {"img": 6, "script": 6}
 
 
+def test_shadow_web_shell_ui_module_centralizes_route_state_dataset_rendering() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    state_js = (static_dir / "state.js").read_text(encoding="utf-8")
+    shell_ui_js = static_dir / "shell_ui.js"
+
+    assert shell_ui_js.exists()
+    shell_ui_source = shell_ui_js.read_text(encoding="utf-8")
+    assert 'import { renderRouteStateDatasetsInto } from "./shell_ui.js";' in state_js
+    assert "export function renderRouteStateDatasetsInto" in shell_ui_source
+    assert "renderRouteStateDatasetsInto(document.body" in state_js
+    assert "document.body.dataset.uiVariant =" not in state_js
+    assert "document.body.dataset.workspaceId =" not in state_js
+    assert "document.body.dataset.activeView =" not in state_js
+    assert "document.body.dataset.shellMode =" not in state_js
+    assert "document.body.dataset.beginnerSurface =" not in state_js
+    assert "innerHTML" not in shell_ui_source
+
+    script = r"""
+const shellUi = await import(__SHELL_UI_MODULE_URL__);
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const body = { dataset: {} };
+const falseBody = { dataset: {} };
+const innerHTMLWrites = [];
+Object.defineProperty(body, "innerHTML", {
+  get() {
+    return "";
+  },
+  set(value) {
+    innerHTMLWrites.push(String(value ?? ""));
+  },
+});
+
+shellUi.renderRouteStateDatasetsInto(body, {
+  uiVariant: `qt ${malicious}`,
+  workspaceId: `workspace ${malicious}`,
+  activeView: `new-job ${malicious}`,
+  shellMode: `standard ${malicious}`,
+  beginnerSurface: true,
+});
+shellUi.renderRouteStateDatasetsInto(falseBody, {
+  uiVariant: "legacy",
+  workspaceId: "",
+  activeView: "dashboard",
+  shellMode: "standard",
+  beginnerSurface: false,
+});
+const missingDatasetResult = shellUi.renderRouteStateDatasetsInto({}, {
+  uiVariant: `ignored ${malicious}`,
+  workspaceId: `ignored ${malicious}`,
+  activeView: `ignored ${malicious}`,
+  shellMode: `ignored ${malicious}`,
+  beginnerSurface: true,
+});
+const nullBodyResult = shellUi.renderRouteStateDatasetsInto(null, {
+  uiVariant: `ignored ${malicious}`,
+  workspaceId: `ignored ${malicious}`,
+  activeView: `ignored ${malicious}`,
+  shellMode: `ignored ${malicious}`,
+  beginnerSurface: true,
+});
+
+console.log(JSON.stringify({
+  exportedType: typeof shellUi.renderRouteStateDatasetsInto,
+  dataset: body.dataset,
+  falseDataset: falseBody.dataset,
+  unsafeTextCounts: {
+    img: Object.values(body.dataset).join(" ").split("<img").length - 1,
+    script: Object.values(body.dataset).join(" ").split("<script").length - 1,
+  },
+  innerHTMLWrites: innerHTMLWrites.length,
+  missingDatasetResult,
+  nullBodyResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__SHELL_UI_MODULE_URL__": "shell_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportedType"] == "function"
+    assert results["dataset"] == {
+        "uiVariant": "qt <img src=x onerror=alert(1)><script>bad()</script>",
+        "workspaceId": "workspace <img src=x onerror=alert(1)><script>bad()</script>",
+        "activeView": "new-job <img src=x onerror=alert(1)><script>bad()</script>",
+        "shellMode": "standard <img src=x onerror=alert(1)><script>bad()</script>",
+        "beginnerSurface": "true",
+    }
+    assert results["falseDataset"] == {
+        "uiVariant": "legacy",
+        "workspaceId": "",
+        "activeView": "dashboard",
+        "shellMode": "standard",
+        "beginnerSurface": "false",
+    }
+    assert results["unsafeTextCounts"] == {"img": 4, "script": 4}
+    assert results["innerHTMLWrites"] == 0
+    assert "missingDatasetResult" not in results
+    assert "nullBodyResult" not in results
+
+
 def test_shadow_web_shell_ui_module_centralizes_safe_navigation_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -24670,6 +24778,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderTopbarInto" in shell_ui_asset.text
         assert "renderShellRuntimeLabelsInto" in shell_ui_asset.text
         assert "renderClientHydrationMarkerInto" in shell_ui_asset.text
+        assert "renderRouteStateDatasetsInto" in shell_ui_asset.text
         assert "collapseGmailFocusDetailsInto" in shell_ui_asset.text
         new_job_ui_asset = client.get(f"/static-build/{asset_version}/new_job_ui.js")
         assert new_job_ui_asset.status_code == 200
