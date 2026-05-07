@@ -51,3 +51,11 @@ export function applyActionFailureFeedbackToUi(
   }
   return feedback;
 }
+
+export function buildActionFailureClientMarker(error = {}, fallback = "") {
+  const feedback = buildActionFailureFeedback(error, fallback);
+  return {
+    reason: error?.payload?.diagnostics?.error || error?.name || "bootstrap_failed",
+    message: feedback.message,
+  };
+}
