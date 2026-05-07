@@ -189,6 +189,18 @@ export function renderTranslationDownloadLinkInto(node, href = "") {
   return node;
 }
 
+export function renderTranslationDownloadLinksInto(nodes = {}, links = {}) {
+  if (!nodes) {
+    return undefined;
+  }
+
+  const linkKeys = ["report", "docx", "partial", "summary", "analyze"];
+  for (const key of linkKeys) {
+    renderTranslationDownloadLinkInto(nodes[key], links?.[key] || "");
+  }
+  return nodes;
+}
+
 export function syncTranslationCompletionDrawerStateInto(nodes = {}, open = false) {
   const { backdrop, body } = nodes || {};
   if (!backdrop) {
