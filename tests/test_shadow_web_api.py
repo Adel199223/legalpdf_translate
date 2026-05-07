@@ -6992,7 +6992,7 @@ console.log(JSON.stringify({
     assert results["truthyDisabled"]["innerHTMLWrites"] == 0
 
 
-def test_gmail_ui_module_centralizes_session_buttons_renderer() -> None:
+def test_gmail_session_ui_module_owns_session_buttons_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -7002,9 +7002,13 @@ def test_gmail_ui_module_centralizes_session_buttons_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_session_ui_js = (static_dir / "gmail_session_ui.js").read_text(encoding="utf-8")
 
     assert "renderGmailSessionButtonsInto" in gmail_js
-    assert "export function renderGmailSessionButtonsInto" in gmail_ui_js
+    assert 'from "./gmail_session_ui.js"' in gmail_ui_js
+    assert "renderGmailSessionButtonsInto" in gmail_ui_js
+    assert "export function renderGmailSessionButtonsInto" not in gmail_ui_js
+    assert "export function renderGmailSessionButtonsInto" in gmail_session_ui_js
 
     update_start = gmail_js.index("function updateSessionButtons()")
     update_end = gmail_js.index("\nfunction renderReviewSurface", update_start)
@@ -7014,9 +7018,9 @@ def test_gmail_ui_module_centralizes_session_buttons_renderer() -> None:
     assert 'button.classList.toggle("hidden"' not in update_block
     assert "closeSessionDrawer();" in update_block
 
-    renderer_start = gmail_ui_js.index("export function renderGmailSessionButtonsInto")
-    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    renderer_start = gmail_session_ui_js.index("export function renderGmailSessionButtonsInto")
+    renderer_end = gmail_session_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_session_ui_js[renderer_start:renderer_end]
     assert "innerHTML" not in renderer_block
     assert "textContent" not in renderer_block
     assert "qs(" not in renderer_block
@@ -7024,7 +7028,8 @@ def test_gmail_ui_module_centralizes_session_buttons_renderer() -> None:
     assert "gmail-finalize-interpretation" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_SESSION_UI_MODULE_URL__);
+const legacyUi = await import(__GMAIL_UI_MODULE_URL__);
 
 function normalizeClassList(value) {
   return String(value || "").split(/\\s+/).filter(Boolean);
@@ -7113,6 +7118,7 @@ const nullResult = ui.renderGmailSessionButtonsInto(null);
 
 console.log(JSON.stringify({
   exportType: typeof ui.renderGmailSessionButtonsInto,
+  legacyExportType: typeof legacyUi.renderGmailSessionButtonsInto,
   resultType: typeof result,
   emptyResultType: typeof emptyResult,
   nullResultType: typeof nullResult,
@@ -7125,10 +7131,14 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_SESSION_UI_MODULE_URL__": "gmail_session_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
     )
 
     assert results["exportType"] == "function"
+    assert results["legacyExportType"] == "function"
     assert results["resultType"] == "object"
     assert results["emptyResultType"] == "object"
     assert results["nullResultType"] == "undefined"
@@ -25128,6 +25138,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailResumeCardInto" in gmail_session_ui_asset.text
         assert "renderGmailSessionResultInto" in gmail_session_ui_asset.text
         assert "renderGmailTranslationStepCardInto" in gmail_session_ui_asset.text
+        assert "renderGmailSessionButtonsInto" in gmail_session_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")

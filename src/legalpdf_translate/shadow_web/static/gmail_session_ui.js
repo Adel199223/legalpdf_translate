@@ -44,6 +44,22 @@ export function renderGmailTranslationStepCardInto(nodes = {}, card = {}) {
   return nodes;
 }
 
+export function renderGmailSessionButtonsInto(buttonRules = []) {
+  if (!Array.isArray(buttonRules)) {
+    return undefined;
+  }
+
+  for (const [button, enabled] of buttonRules) {
+    if (!button) {
+      continue;
+    }
+    const show = Boolean(enabled);
+    button.disabled = !show;
+    button.classList.toggle("hidden", !show);
+  }
+  return buttonRules;
+}
+
 export function renderGmailResumeCardInto(container, card = {}) {
   if (!container) {
     return undefined;
