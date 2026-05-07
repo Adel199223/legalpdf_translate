@@ -516,9 +516,13 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function applyBootstrapFailureState(error) {
+function setBootstrapFailureClientMarker(error) {
   const bootstrapFeedback = buildActionFailureClientMarker(error, "Browser app bootstrap failed.");
-  setClientHydrationMarker("client_boot_failed", bootstrapFeedback);
+  return setClientHydrationMarker("client_boot_failed", bootstrapFeedback);
+}
+
+function applyBootstrapFailureState(error) {
+  setBootstrapFailureClientMarker(error);
   if (error?.payload?.diagnostics?.error === "stale_browser_assets") {
     const feedback = applyActionFailureFeedback(error, {
       panelSlot: "runtime",
@@ -2592,11 +2596,7 @@ async function loadBootstrap({ staged = false } = {}) {
     });
     return payload;
   } catch (error) {
-    setClientHydrationMarker("client_boot_failed", {
-      payload: appState.bootstrap?.normalized_payload,
-      reason: error?.payload?.diagnostics?.error || error?.name || "bootstrap_failed",
-      message: error?.message || "Browser app bootstrap failed.",
-    });
+    setBootstrapFailureClientMarker(error);
     throw error;
   }
 }
