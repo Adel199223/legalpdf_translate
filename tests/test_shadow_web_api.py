@@ -6064,7 +6064,7 @@ console.log(JSON.stringify({
     assert results["defaultMessage"]["innerHTMLWrites"] == 0
 
 
-def test_gmail_ui_module_centralizes_translation_step_card_renderer() -> None:
+def test_gmail_session_ui_module_owns_translation_step_card_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -6074,9 +6074,13 @@ def test_gmail_ui_module_centralizes_translation_step_card_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_session_ui_js = (static_dir / "gmail_session_ui.js").read_text(encoding="utf-8")
 
     assert "renderGmailTranslationStepCardInto" in gmail_js
-    assert "export function renderGmailTranslationStepCardInto" in gmail_ui_js
+    assert "export function renderGmailTranslationStepCardInto" in gmail_session_ui_js
+    assert "renderGmailTranslationStepCardInto" in gmail_ui_js
+    assert 'from "./gmail_session_ui.js"' in gmail_ui_js
+    assert "export function renderGmailTranslationStepCardInto" not in gmail_ui_js
 
     step_start = gmail_js.index("function renderTranslationCompletionGmailStepCard")
     step_end = gmail_js.index("\nfunction collectSelections", step_start)
@@ -6086,13 +6090,14 @@ def test_gmail_ui_module_centralizes_translation_step_card_renderer() -> None:
     assert ".disabled =" not in step_block
     assert ".textContent =" not in step_block
 
-    renderer_start = gmail_ui_js.index("export function renderGmailTranslationStepCardInto")
-    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    renderer_start = gmail_session_ui_js.index("export function renderGmailTranslationStepCardInto")
+    renderer_end = gmail_session_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_session_ui_js[renderer_start:renderer_end]
     assert "innerHTML" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_SESSION_UI_MODULE_URL__);
+const compatibilityUi = await import(__GMAIL_UI_MODULE_URL__);
 
 function normalizeClassList(value) {
   return String(value || "").split(/\\s+/).filter(Boolean);
@@ -6243,6 +6248,7 @@ const nullResult = ui.renderGmailTranslationStepCardInto(null, {
 
 console.log(JSON.stringify({
   exportType: typeof ui.renderGmailTranslationStepCardInto,
+  compatibilityExportType: typeof compatibilityUi.renderGmailTranslationStepCardInto,
   visibleResultType: typeof visibleResult,
   hiddenResultType: typeof hiddenResult,
   partialResultType: typeof partialResult,
@@ -6255,10 +6261,14 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_SESSION_UI_MODULE_URL__": "gmail_session_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
     )
 
     assert results["exportType"] == "function"
+    assert results["compatibilityExportType"] == "function"
     assert results["visibleResultType"] == "object"
     assert results["hiddenResultType"] == "object"
     assert results["partialResultType"] == "undefined"
@@ -25117,6 +25127,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_session_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailResumeCardInto" in gmail_session_ui_asset.text
         assert "renderGmailSessionResultInto" in gmail_session_ui_asset.text
+        assert "renderGmailTranslationStepCardInto" in gmail_session_ui_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")
