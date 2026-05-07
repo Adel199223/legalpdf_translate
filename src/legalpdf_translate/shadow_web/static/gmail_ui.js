@@ -1,7 +1,10 @@
 import { clearNode, createTextElement, setNodeTitle, setText } from "./safe_rendering.js";
 import { appendResultGridItem, createResultHeader } from "./result_card_ui.js";
 
-export { renderGmailBatchFinalizeSurfaceInto } from "./gmail_finalize_ui.js";
+export {
+  renderGmailBatchFinalizeSurfaceInto,
+  renderGmailNumericMismatchWarningInto,
+} from "./gmail_finalize_ui.js";
 export {
   renderGmailContextDefaultsInto,
   renderGmailSimulatorDefaultsInto,
@@ -72,23 +75,6 @@ export function renderGmailReportActionInto(button, { available = false, label =
   button.textContent = label;
   button.dataset.defaultLabel = label;
   return button;
-}
-
-export function renderGmailNumericMismatchWarningInto(container, warning = {}) {
-  if (!container) {
-    return undefined;
-  }
-  const visible = Boolean(warning?.visible);
-  container.classList.toggle("hidden", !visible);
-  if (!visible) {
-    container.textContent = "";
-    return container;
-  }
-  const lines = Array.isArray(warning.lines) ? warning.lines.filter(Boolean) : [];
-  const detail = lines.length ? `\n${lines.join("\n")}` : "";
-  container.textContent = `${warning.message || "Review recommended: some numbers from the source may not appear exactly in the translation."}${detail}`;
-  container.setAttribute("role", "note");
-  return container;
 }
 
 export function renderGmailRestoreBarInto(nodes = {}, restore = {}) {
