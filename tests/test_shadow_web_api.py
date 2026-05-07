@@ -14992,16 +14992,15 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "export function renderInterpretationDistanceHintInto" in interpretation_reference_ui_text
     assert "export function renderInterpretationActionButtonsInto" in interpretation_reference_ui_text
     assert "export function renderInterpretationCityAddButtonsInto" in interpretation_reference_ui_text
+    assert "export function renderInterpretationActionGuardControlsInto" in interpretation_reference_ui_text
     assert "export function syncInterpretationCityDialogStateInto" in interpretation_reference_ui_text
     assert "export function renderInterpretationCityDialogFieldsInto" in interpretation_reference_ui_text
     assert "export function renderInterpretationCityDialogContentInto" in interpretation_reference_ui_text
     assert "renderInterpretationCityOptionsInto(select, reference.availableCities, currentValue);" in app_js
     assert "renderCourtEmailOptionsInto(select, {" in app_js
     assert "renderServiceEntityOptionsInto(select, options, selectedValue);" in app_js
-    assert "renderInterpretationFieldWarningInto(node, { message, tone });" in app_js
     assert "renderInterpretationDistanceSyncInto(" in app_js
-    assert "renderInterpretationActionButtonsInto(actionButtons, { blocked });" in app_js
-    assert "renderInterpretationCityAddButtonsInto({" in app_js
+    assert "renderInterpretationActionGuardControlsInto({" in app_js
     assert "syncInterpretationCityDialogStateInto(backdrop, document.body, interpretationCityState.dialogOpen);" in app_js
     assert "renderInterpretationCityDialogFieldsInto({" in app_js
     assert "renderInterpretationCityDialogContentInto({" in app_js
@@ -15022,14 +15021,7 @@ def test_interpretation_reference_ui_module_centralizes_safe_select_rendering() 
     assert "innerHTML" not in service_entity_block
     assert "document.createElement(\"option\")" not in service_entity_block
 
-    field_warning_start = app_js.index("function setInterpretationFieldWarning")
-    location_guard_start = app_js.index("function setInterpretationLocationGuard", field_warning_start)
-    field_warning_block = app_js[field_warning_start:location_guard_start]
-    assert "innerHTML" not in field_warning_block
-    assert "node.textContent" not in field_warning_block
-    assert "classList.toggle(\"hidden\"" not in field_warning_block
-    assert "classList.toggle(\"is-warning\"" not in field_warning_block
-    assert "classList.toggle(\"is-danger\"" not in field_warning_block
+    assert "function setInterpretationFieldWarning" not in app_js
 
     distance_sync_start = app_js.index("function syncInterpretationDistanceFromReference")
     action_availability_start = app_js.index("function updateInterpretationActionAvailability", distance_sync_start)
@@ -15812,6 +15804,307 @@ console.log(JSON.stringify({
     assert "nullBackdropResult" not in results
     assert "nullDialogFieldsResult" not in results
     assert "nullDialogContentResult" not in results
+
+
+def test_interpretation_reference_ui_module_centralizes_action_guard_controls() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    interpretation_reference_ui_js = (static_dir / "interpretation_reference_ui.js").read_text(encoding="utf-8")
+
+    assert "renderInterpretationActionGuardControlsInto" in app_js
+    assert "export function renderInterpretationActionGuardControlsInto" in interpretation_reference_ui_js
+    action_availability_start = app_js.index("function updateInterpretationActionAvailability")
+    city_controls_start = app_js.index("function syncInterpretationCityControls", action_availability_start)
+    action_availability_block = app_js[action_availability_start:city_controls_start]
+    assert "renderInterpretationActionGuardControlsInto({" in action_availability_block
+    assert "renderInterpretationActionButtonsInto(" not in action_availability_block
+    assert "renderInterpretationFieldWarningInto(" not in action_availability_block
+    assert "renderInterpretationCityAddButtonsInto(" not in action_availability_block
+    assert "innerHTML" not in action_availability_block
+
+    renderer_start = interpretation_reference_ui_js.index("export function renderInterpretationActionGuardControlsInto")
+    renderer_end = (
+        interpretation_reference_ui_js.index("\nexport function", renderer_start + 1)
+        if "\nexport function" in interpretation_reference_ui_js[renderer_start + 1 :]
+        else len(interpretation_reference_ui_js)
+    )
+    renderer_block = interpretation_reference_ui_js[renderer_start:renderer_end]
+    assert "renderInterpretationActionButtonsInto" in renderer_block
+    assert "renderInterpretationFieldWarningInto" in renderer_block
+    assert "renderInterpretationCityAddButtonsInto" in renderer_block
+    assert "innerHTML" not in renderer_block
+
+    script = r"""
+const interpretationReferenceUi = await import(__INTERPRETATION_REFERENCE_UI_MODULE_URL__);
+
+function makeElement(tagName = "div") {
+  const classes = new Set();
+  const attributes = new Map();
+  const syncClassName = () => {
+    element.className = Array.from(classes).join(" ");
+  };
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    className: "",
+    children: [],
+    disabled: false,
+    innerHTMLAssignments: [],
+    _textContent: "",
+    _innerHTML: "",
+    getAttribute(name) {
+      return attributes.has(String(name)) ? attributes.get(String(name)) : null;
+    },
+    setAttribute(name, value) {
+      attributes.set(String(name), String(value));
+    },
+    classList: {
+      add(...names) {
+        for (const name of names) {
+          classes.add(String(name));
+        }
+        syncClassName();
+      },
+      remove(...names) {
+        for (const name of names) {
+          classes.delete(String(name));
+        }
+        syncClassName();
+      },
+      contains(name) {
+        return classes.has(String(name));
+      },
+      toggle(name, force) {
+        const key = String(name);
+        const shouldAdd = force === undefined ? !classes.has(key) : Boolean(force);
+        if (shouldAdd) {
+          classes.add(key);
+        } else {
+          classes.delete(key);
+        }
+        syncClassName();
+        return shouldAdd;
+      },
+    },
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      return this._textContent;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML;
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.innerHTMLAssignments.push(next);
+      const matches = Array.from(next.matchAll(/<\s*([a-zA-Z0-9-]+)/g));
+      this.children = matches.map((match) => makeElement(match[1]));
+    },
+  });
+  return element;
+}
+
+function walk(node, visitor) {
+  if (!node) {
+    return;
+  }
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  let total = 0;
+  walk(node, (current) => {
+    if (current.tagName === target) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countInnerHtmlWrites(...nodes) {
+  let total = 0;
+  for (const node of nodes) {
+    walk(node, (current) => {
+      total += (current.innerHTMLAssignments || []).length;
+    });
+  }
+  return total;
+}
+
+function summarizeButton(node) {
+  return {
+    text: node.textContent,
+    disabled: Boolean(node.disabled),
+    hidden: node.classList.contains("hidden"),
+    imgCount: countTag(node, "img"),
+    scriptCount: countTag(node, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(node),
+  };
+}
+
+function summarizeWarning(node) {
+  return {
+    text: node.textContent,
+    className: node.className,
+    hidden: node.classList.contains("hidden"),
+    isWarning: node.classList.contains("is-warning"),
+    isDanger: node.classList.contains("is-danger"),
+    imgCount: countTag(node, "img"),
+    scriptCount: countTag(node, "script"),
+    innerHTMLWrites: countInnerHtmlWrites(node),
+  };
+}
+
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+const visibleAction = makeElement("button");
+visibleAction.setAttribute("aria-busy", "false");
+const hiddenBusyAction = makeElement("button");
+hiddenBusyAction.classList.add("hidden");
+hiddenBusyAction.setAttribute("aria-busy", "true");
+const caseWarning = makeElement("p");
+const serviceWarning = makeElement("p");
+const caseAddButton = makeElement("button");
+const serviceAddButton = makeElement("button");
+
+const blockedReturn = interpretationReferenceUi.renderInterpretationActionGuardControlsInto({
+  actionButtons: [visibleAction, hiddenBusyAction, null],
+  caseWarning,
+  serviceWarning,
+  caseAddButton,
+  serviceAddButton,
+}, {
+  blocked: true,
+  caseWarning: { message: ` Imported case city ${malicious} `, tone: "warning" },
+  serviceWarning: { message: `Imported service city ${malicious}`, tone: "danger" },
+  provisionalCaseCity: `Beja ${malicious}`,
+  provisionalServiceCity: `Cuba ${malicious}`,
+  serviceSame: true,
+});
+
+const unblockedAction = makeElement("button");
+unblockedAction.setAttribute("aria-busy", "false");
+const emptyCaseWarning = makeElement("p");
+const emptyServiceWarning = makeElement("p");
+const emptyCaseAddButton = makeElement("button");
+const emptyServiceAddButton = makeElement("button");
+emptyServiceAddButton.disabled = true;
+const unblockedReturn = interpretationReferenceUi.renderInterpretationActionGuardControlsInto({
+  actionButtons: [unblockedAction],
+  caseWarning: emptyCaseWarning,
+  serviceWarning: emptyServiceWarning,
+  caseAddButton: emptyCaseAddButton,
+  serviceAddButton: emptyServiceAddButton,
+}, {
+  blocked: false,
+  caseWarning: { message: "", tone: "warning" },
+  serviceWarning: { message: "", tone: "warning" },
+  provisionalCaseCity: "",
+  provisionalServiceCity: "",
+  serviceSame: false,
+});
+
+const missingNodesReturn = interpretationReferenceUi.renderInterpretationActionGuardControlsInto({
+  actionButtons: null,
+  caseWarning: null,
+  serviceWarning: makeElement("p"),
+  caseAddButton: null,
+  serviceAddButton: makeElement("button"),
+}, {
+  blocked: true,
+  serviceWarning: { message: `Only service ${malicious}`, tone: "warning" },
+  provisionalServiceCity: `Only ${malicious}`,
+  serviceSame: false,
+});
+const nullReturn = interpretationReferenceUi.renderInterpretationActionGuardControlsInto(null, {
+  blocked: true,
+  caseWarning: { message: `Ignored ${malicious}`, tone: "danger" },
+  provisionalCaseCity: `Ignored ${malicious}`,
+});
+
+console.log(JSON.stringify({
+  exportType: typeof interpretationReferenceUi.renderInterpretationActionGuardControlsInto,
+  blockedReturned: blockedReturn && blockedReturn.caseWarning === caseWarning,
+  blocked: {
+    visibleAction: summarizeButton(visibleAction),
+    hiddenBusyAction: summarizeButton(hiddenBusyAction),
+    caseWarning: summarizeWarning(caseWarning),
+    serviceWarning: summarizeWarning(serviceWarning),
+    caseAddButton: summarizeButton(caseAddButton),
+    serviceAddButton: summarizeButton(serviceAddButton),
+  },
+  unblockedReturned: unblockedReturn && unblockedReturn.caseWarning === emptyCaseWarning,
+  unblocked: {
+    action: summarizeButton(unblockedAction),
+    caseWarning: summarizeWarning(emptyCaseWarning),
+    serviceWarning: summarizeWarning(emptyServiceWarning),
+    caseAddButton: summarizeButton(emptyCaseAddButton),
+    serviceAddButton: summarizeButton(emptyServiceAddButton),
+  },
+  missingNodesReturnType: typeof missingNodesReturn,
+  nullReturnType: typeof nullReturn,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REFERENCE_UI_MODULE_URL__": "interpretation_reference_ui.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["blockedReturned"] is True
+    assert results["blocked"]["visibleAction"]["disabled"] is True
+    assert results["blocked"]["visibleAction"]["hidden"] is False
+    assert results["blocked"]["hiddenBusyAction"]["disabled"] is True
+    assert results["blocked"]["hiddenBusyAction"]["hidden"] is True
+    assert results["blocked"]["caseWarning"]["text"] == 'Imported case city <img src=x onerror=alert(1)><script>bad()</script>'
+    assert results["blocked"]["caseWarning"]["hidden"] is False
+    assert results["blocked"]["caseWarning"]["isWarning"] is True
+    assert results["blocked"]["caseWarning"]["isDanger"] is False
+    assert results["blocked"]["caseWarning"]["imgCount"] == 0
+    assert results["blocked"]["caseWarning"]["scriptCount"] == 0
+    assert results["blocked"]["caseWarning"]["innerHTMLWrites"] == 0
+    assert results["blocked"]["serviceWarning"]["text"] == 'Imported service city <img src=x onerror=alert(1)><script>bad()</script>'
+    assert results["blocked"]["serviceWarning"]["isDanger"] is True
+    assert results["blocked"]["serviceWarning"]["imgCount"] == 0
+    assert results["blocked"]["serviceWarning"]["scriptCount"] == 0
+    assert results["blocked"]["serviceWarning"]["innerHTMLWrites"] == 0
+    assert results["blocked"]["caseAddButton"]["text"] == 'Add “Beja <img src=x onerror=alert(1)><script>bad()</script>”'
+    assert results["blocked"]["caseAddButton"]["imgCount"] == 0
+    assert results["blocked"]["caseAddButton"]["scriptCount"] == 0
+    assert results["blocked"]["caseAddButton"]["innerHTMLWrites"] == 0
+    assert results["blocked"]["serviceAddButton"]["text"] == 'Add “Cuba <img src=x onerror=alert(1)><script>bad()</script>”'
+    assert results["blocked"]["serviceAddButton"]["disabled"] is True
+    assert results["blocked"]["serviceAddButton"]["imgCount"] == 0
+    assert results["blocked"]["serviceAddButton"]["scriptCount"] == 0
+    assert results["blocked"]["serviceAddButton"]["innerHTMLWrites"] == 0
+
+    assert results["unblockedReturned"] is True
+    assert results["unblocked"]["action"]["disabled"] is False
+    assert results["unblocked"]["caseWarning"]["hidden"] is True
+    assert results["unblocked"]["serviceWarning"]["hidden"] is True
+    assert results["unblocked"]["caseAddButton"]["text"] == "Add city..."
+    assert results["unblocked"]["serviceAddButton"]["text"] == "Add city..."
+    assert results["unblocked"]["serviceAddButton"]["disabled"] is False
+    assert results["missingNodesReturnType"] == "object"
+    assert results["nullReturnType"] == "undefined"
 
 
 def test_interpretation_reference_ui_module_centralizes_distance_sync_rendering() -> None:
@@ -18950,8 +19243,8 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "escapeHtml" not in gmail_block
     assert 'appendResultGridItem(grid, "Reply status"' not in gmail_block
     completion_start = app_js.index("function renderInterpretationCompletionCard")
-    warning_start = app_js.index("function setInterpretationFieldWarning", completion_start)
-    completion_block = app_js[completion_start:warning_start]
+    guard_start = app_js.index("function setInterpretationLocationGuard", completion_start)
+    completion_block = app_js[completion_start:guard_start]
     assert 'container.classList.toggle("hidden", !completed);' not in completion_block
     assert "syncInterpretationCompletionCardVisibilityInto(container, { completed });" in completion_block
     assert "syncInterpretationReviewDetailsShell(completed);" in completion_block
@@ -18959,7 +19252,6 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "interpretationServiceLocation(snapshot)" in completion_block
     assert "innerHTML" not in completion_block
     assert "escapeHtml" not in completion_block
-    guard_start = app_js.index("function setInterpretationLocationGuard", warning_start)
     reference_start = app_js.index("function applyInterpretationCityValue", guard_start)
     guard_block = app_js[guard_start:reference_start]
     assert 'const message = String(rawMessage || "").trim();' in guard_block
@@ -24897,6 +25189,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderInterpretationDistanceSyncInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationActionButtonsInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationCityAddButtonsInto" in interpretation_reference_ui_asset.text
+        assert "renderInterpretationActionGuardControlsInto" in interpretation_reference_ui_asset.text
         assert "syncInterpretationCityDialogStateInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationCityDialogFieldsInto" in interpretation_reference_ui_asset.text
         assert "renderInterpretationCityDialogContentInto" in interpretation_reference_ui_asset.text
