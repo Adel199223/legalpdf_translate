@@ -599,11 +599,33 @@ def test_app_bootstrap_failures_delegate_action_failure_feedback() -> None:
     assert "buildActionFailureClientMarker" in app_source
     assert "buildActionFailureFeedback" not in app_source
     assert "function applyActionFailureFeedback" in app_source
+    assert "function setBootstrapFailureClientMarker" in app_source
     assert "function applyBootstrapFailureState" in app_source
+    assert app_source.count('setClientHydrationMarker("client_boot_failed"') == 1
+    assert app_source.count("buildActionFailureClientMarker(") == 1
+    assert 'reason: error?.payload?.diagnostics?.error || error?.name || "bootstrap_failed"' not in app_source
+    assert 'message: error?.message || "Browser app bootstrap failed."' not in app_source
+
+    helper_start = app_source.index("function setBootstrapFailureClientMarker")
+    helper_end = app_source.index("\n}\n", helper_start) + 3
+    helper_block = app_source[helper_start:helper_end]
+    assert "buildActionFailureClientMarker(" in helper_block
+    assert 'setClientHydrationMarker("client_boot_failed"' in helper_block
+
     marker_start = app_source.index("function applyBootstrapFailureState")
     marker_end = app_source.index("\n}\n", marker_start) + 3
     marker_block = app_source[marker_start:marker_end]
-    assert "buildActionFailureClientMarker(" in marker_block
+    assert "setBootstrapFailureClientMarker(error)" in marker_block
+    assert "buildActionFailureClientMarker(" not in marker_block
+    load_start = app_source.index("async function loadBootstrap")
+    load_end = app_source.index("\nasync function reloadHistory", load_start)
+    load_block = app_source[load_start:load_end]
+    assert "setBootstrapFailureClientMarker(error)" in load_block
+    load_catch_start = load_block.index("} catch (error) {")
+    load_catch_block = load_block[load_catch_start:]
+    assert 'setClientHydrationMarker("client_boot_failed"' not in load_catch_block
+    assert 'reason: error?.payload?.diagnostics?.error || error?.name || "bootstrap_failed"' not in load_catch_block
+    assert 'message: error?.message || "Browser app bootstrap failed."' not in load_catch_block
     assert "diagnosticsHint" in app_source
     for fallback in [
         "This LegalPDF browser tab is using stale browser assets.",
