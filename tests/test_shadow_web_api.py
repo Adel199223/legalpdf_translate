@@ -5887,7 +5887,7 @@ console.log(JSON.stringify({
     assert results["existingClass"]["hidden"] is False
 
 
-def test_gmail_ui_module_centralizes_numeric_warning_renderer() -> None:
+def test_gmail_finalize_ui_module_owns_numeric_warning_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -5897,9 +5897,13 @@ def test_gmail_ui_module_centralizes_numeric_warning_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_finalize_ui_js = (static_dir / "gmail_finalize_ui.js").read_text(encoding="utf-8")
 
     assert "renderGmailNumericMismatchWarningInto" in gmail_js
-    assert "export function renderGmailNumericMismatchWarningInto" in gmail_ui_js
+    assert 'from "./gmail_finalize_ui.js"' in gmail_ui_js
+    assert "renderGmailNumericMismatchWarningInto" in gmail_ui_js
+    assert "export function renderGmailNumericMismatchWarningInto" not in gmail_ui_js
+    assert "export function renderGmailNumericMismatchWarningInto" in gmail_finalize_ui_js
 
     warning_start = gmail_js.index("function renderGmailFinalizeNumericMismatchWarning")
     warning_end = gmail_js.index("\nfunction interpretationUiSnapshot", warning_start)
@@ -5909,13 +5913,14 @@ def test_gmail_ui_module_centralizes_numeric_warning_renderer() -> None:
     assert ".textContent =" not in warning_block
     assert ".setAttribute(" not in warning_block
 
-    renderer_start = gmail_ui_js.index("export function renderGmailNumericMismatchWarningInto")
-    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    renderer_start = gmail_finalize_ui_js.index("export function renderGmailNumericMismatchWarningInto")
+    renderer_end = gmail_finalize_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_finalize_ui_js[renderer_start:renderer_end]
     assert "innerHTML" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_FINALIZE_UI_MODULE_URL__);
+const legacyUi = await import(__GMAIL_UI_MODULE_URL__);
 
 function normalizeClassList(value) {
   return String(value || "").split(/\\s+/).filter(Boolean);
@@ -6023,6 +6028,7 @@ const nullResult = ui.renderGmailNumericMismatchWarningInto(null, {
 
 console.log(JSON.stringify({
   exportType: typeof ui.renderGmailNumericMismatchWarningInto,
+  legacyExportType: typeof legacyUi.renderGmailNumericMismatchWarningInto,
   visibleResultType: typeof visibleResult,
   hiddenResultType: typeof hiddenResult,
   nullResultType: typeof nullResult,
@@ -6033,10 +6039,14 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_FINALIZE_UI_MODULE_URL__": "gmail_finalize_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
     )
 
     assert results["exportType"] == "function"
+    assert results["legacyExportType"] == "function"
     assert results["visibleResultType"] == "object"
     assert results["hiddenResultType"] == "object"
     assert results["nullResultType"] == "undefined"
@@ -22793,6 +22803,7 @@ def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> Non
     dashboard_js = (static_dir / "dashboard_presentation.js").read_text(encoding="utf-8")
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_finalize_ui_js = (static_dir / "gmail_finalize_ui.js").read_text(encoding="utf-8")
 
     assert 'id="runtime-mode-banner"' in template
     assert '"Live mode: using your real settings, Gmail drafts, and saved work."' in shell_js
@@ -22823,9 +22834,11 @@ def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> Non
     assert '"gmail-batch-finalize-numeric-warning"' in warning_block
     assert "renderGmailNumericMismatchWarningInto(container, warning)" in warning_block
     assert ".innerHTML" not in warning_block
-    warning_renderer_start = gmail_ui_js.index("export function renderGmailNumericMismatchWarningInto")
-    warning_renderer_end = gmail_ui_js.index("\nexport function", warning_renderer_start + 1)
-    warning_renderer_block = gmail_ui_js[warning_renderer_start:warning_renderer_end]
+    assert "renderGmailNumericMismatchWarningInto" in gmail_ui_js
+    assert "export function renderGmailNumericMismatchWarningInto" not in gmail_ui_js
+    warning_renderer_start = gmail_finalize_ui_js.index("export function renderGmailNumericMismatchWarningInto")
+    warning_renderer_end = gmail_finalize_ui_js.index("\nexport function", warning_renderer_start + 1)
+    warning_renderer_block = gmail_finalize_ui_js[warning_renderer_start:warning_renderer_end]
     assert "container.textContent" in warning_renderer_block
     assert ".innerHTML" not in warning_renderer_block
 
@@ -25127,6 +25140,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_finalize_ui_asset.status_code == 200
         assert gmail_finalize_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailBatchFinalizeSurfaceInto" in gmail_finalize_ui_asset.text
+        assert "renderGmailNumericMismatchWarningInto" in gmail_finalize_ui_asset.text
         gmail_preview_ui_asset = client.get(f"/static-build/{asset_version}/gmail_preview_ui.js")
         assert gmail_preview_ui_asset.status_code == 200
         assert gmail_preview_ui_asset.headers["content-type"].startswith("application/javascript")
