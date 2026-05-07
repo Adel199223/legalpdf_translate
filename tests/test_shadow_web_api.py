@@ -21253,6 +21253,8 @@ def test_power_tools_ui_module_centralizes_safe_diagnostics_rendering() -> None:
 
     assert power_tools_ui_module.exists()
     power_tools_ui_source = power_tools_ui_module.read_text(encoding="utf-8")
+    assert "export function renderPowerToolsDiagnosticsInto" in power_tools_ui_source
+    assert "export function renderPowerToolsPanelStatusInto" in power_tools_ui_source
     assert "export function setDiagnostics" in power_tools_ui_source
     assert "export function setPanelStatus" in power_tools_ui_source
     assert 'from "./diagnostics_presentation.js"' in power_tools_ui_source
@@ -21263,6 +21265,12 @@ def test_power_tools_ui_module_centralizes_safe_diagnostics_rendering() -> None:
     assert "setPanelStatus," in power_tools_js
     assert 'from "./power_tools_ui.js"' in power_tools_js
     assert "innerHTML" not in power_tools_ui_source
+    set_diagnostics_start = power_tools_ui_source.index("export function setDiagnostics")
+    set_panel_start = power_tools_ui_source.index("export function setPanelStatus")
+    set_diagnostics_block = power_tools_ui_source[set_diagnostics_start:set_panel_start]
+    set_panel_block = power_tools_ui_source[set_panel_start:]
+    assert "renderPowerToolsDiagnosticsInto({" in set_diagnostics_block
+    assert "renderPowerToolsPanelStatusInto(panel" in set_panel_block
 
     script = r"""
 const powerToolsUi = await import(__POWER_TOOLS_UI_MODULE_URL__);
@@ -21299,11 +21307,56 @@ const diagnostics = createNode("power-tools-diagnostics");
 const hint = createNode("power-tools-hint");
 const details = createNode("power-tools-details");
 const panelStatus = createNode("power-tools-status");
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
 
 globalThis.document = {
   getElementById(id) {
     return nodes.get(id) || null;
   },
+};
+
+const directDiagnostics = new Element("direct-diagnostics");
+const directHint = new Element("direct-hint");
+const directDetails = new Element("direct-details");
+directDetails.dataset.reveal = "direct-legacy";
+const directDiagnosticsResult = powerToolsUi.renderPowerToolsDiagnosticsInto(
+  { diagnostics: directDiagnostics, hint: directHint, details: directDetails },
+  { message: malicious, ok: false },
+  { hint: `Direct ${malicious}`, open: true },
+);
+const firstDirectDiagnostics = {
+  text: directDiagnostics.textContent,
+  hint: directHint.textContent,
+  detailsOpen: directDetails.open,
+  reveal: directDetails.dataset.reveal || null,
+};
+
+powerToolsUi.renderPowerToolsDiagnosticsInto(
+  { diagnostics: directDiagnostics, hint: directHint, details: directDetails },
+  `Direct plain ${malicious}`,
+  { open: false },
+);
+const secondDirectDiagnostics = {
+  text: directDiagnostics.textContent,
+  preservedHint: directHint.textContent,
+  detailsOpen: directDetails.open,
+  reveal: directDetails.dataset.reveal || null,
+};
+
+const directPanelStatus = new Element("direct-panel-status");
+const directPanelResult = powerToolsUi.renderPowerToolsPanelStatusInto(
+  directPanelStatus,
+  "success",
+  `Direct status ${malicious}`,
+);
+const firstDirectPanelStatus = {
+  text: directPanelStatus.textContent,
+  tone: directPanelStatus.dataset.tone || null,
+};
+powerToolsUi.renderPowerToolsPanelStatusInto(directPanelStatus, "", `Direct clear ${malicious}`);
+const secondDirectPanelStatus = {
+  text: directPanelStatus.textContent,
+  tone: directPanelStatus.dataset.tone || null,
 };
 
 details.dataset.reveal = "legacy";
@@ -21341,8 +21394,17 @@ const secondPanelStatus = {
 
 powerToolsUi.setDiagnostics("missing", { ignored: true }, { hint: "Ignored", open: true });
 powerToolsUi.setPanelStatus("missing", "warning", "Ignored");
+const missingDiagnosticsResult = powerToolsUi.renderPowerToolsDiagnosticsInto(null, "Ignored", {
+  hint: "Ignored",
+  open: true,
+});
+const missingPanelResult = powerToolsUi.renderPowerToolsPanelStatusInto(null, "warning", "Ignored");
 
 const innerHTMLWrites = [
+  directDiagnostics,
+  directHint,
+  directDetails,
+  directPanelStatus,
   diagnostics,
   hint,
   details,
@@ -21350,6 +21412,16 @@ const innerHTMLWrites = [
 ].reduce((total, node) => total + node.innerHTMLAssignments.length, 0);
 
 console.log(JSON.stringify({
+  diagnosticsExportType: typeof powerToolsUi.renderPowerToolsDiagnosticsInto,
+  panelExportType: typeof powerToolsUi.renderPowerToolsPanelStatusInto,
+  directDiagnosticsResultType: typeof directDiagnosticsResult,
+  directPanelResultType: typeof directPanelResult,
+  missingDiagnosticsResultType: typeof missingDiagnosticsResult,
+  missingPanelResultType: typeof missingPanelResult,
+  firstDirectDiagnostics,
+  secondDirectDiagnostics,
+  firstDirectPanelStatus,
+  secondDirectPanelStatus,
   firstDiagnostics,
   secondDiagnostics,
   firstPanelStatus,
@@ -21363,6 +21435,32 @@ console.log(JSON.stringify({
         timeout_seconds=30,
     )
 
+    assert results["diagnosticsExportType"] == "function"
+    assert results["panelExportType"] == "function"
+    assert results["directDiagnosticsResultType"] == "object"
+    assert results["directPanelResultType"] == "object"
+    assert results["missingDiagnosticsResultType"] == "undefined"
+    assert results["missingPanelResultType"] == "undefined"
+    assert results["firstDirectDiagnostics"] == {
+        "text": '{\n  "message": "<img src=x onerror=alert(1)><script>bad()</script>",\n  "ok": false\n}',
+        "hint": "Direct <img src=x onerror=alert(1)><script>bad()</script>",
+        "detailsOpen": True,
+        "reveal": "direct-legacy",
+    }
+    assert results["secondDirectDiagnostics"] == {
+        "text": "Direct plain <img src=x onerror=alert(1)><script>bad()</script>",
+        "preservedHint": "Direct <img src=x onerror=alert(1)><script>bad()</script>",
+        "detailsOpen": False,
+        "reveal": "direct-legacy",
+    }
+    assert results["firstDirectPanelStatus"] == {
+        "text": "Direct status <img src=x onerror=alert(1)><script>bad()</script>",
+        "tone": "success",
+    }
+    assert results["secondDirectPanelStatus"] == {
+        "text": "Direct clear <img src=x onerror=alert(1)><script>bad()</script>",
+        "tone": None,
+    }
     assert results["firstDiagnostics"] == {
         "text": '{\n  "message": "<img src=x onerror=alert(1)>",\n  "ok": true\n}',
         "hint": "Safe <hint>",
@@ -25302,6 +25400,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderCredentialRecoveryStateInto" in power_tools_ui_asset.text
         assert "setDiagnostics" in power_tools_ui_asset.text
         assert "setPanelStatus" in power_tools_ui_asset.text
+        assert "renderPowerToolsDiagnosticsInto" in power_tools_ui_asset.text
+        assert "renderPowerToolsPanelStatusInto" in power_tools_ui_asset.text
         assert "renderPowerToolsFieldValueInto" in power_tools_ui_asset.text
         assert "renderPowerToolsCheckboxInto" in power_tools_ui_asset.text
         assert "renderPowerToolsSettingsAdminFormInto" in power_tools_ui_asset.text
