@@ -13,6 +13,7 @@ export {
 export {
   renderGmailResumeCardInto,
   renderGmailSessionResultInto,
+  renderGmailTranslationStepCardInto,
 } from "./gmail_session_ui.js";
 
 export function renderGmailDrawerDatasetDefaultsInto(body) {
@@ -87,32 +88,6 @@ export function renderGmailNumericMismatchWarningInto(container, warning = {}) {
   container.textContent = `${warning.message || "Review recommended: some numbers from the source may not appear exactly in the translation."}${detail}`;
   container.setAttribute("role", "note");
   return container;
-}
-
-export function renderGmailTranslationStepCardInto(nodes = {}, card = {}) {
-  const {
-    card: cardNode,
-    title,
-    copy,
-    chip,
-    button,
-  } = nodes || {};
-  if (!cardNode || !title || !copy || !chip || !button) {
-    return undefined;
-  }
-
-  const visible = Boolean(card.visible);
-  cardNode.classList.toggle("hidden", !visible);
-  button.disabled = !visible || Boolean(card.blocked);
-  if (!visible) {
-    return nodes;
-  }
-
-  title.textContent = card.title || "";
-  copy.textContent = card.copy || "";
-  chip.textContent = card.chipLabel || "";
-  button.textContent = card.buttonLabel || "";
-  return nodes;
 }
 
 export function renderGmailRestoreBarInto(nodes = {}, restore = {}) {

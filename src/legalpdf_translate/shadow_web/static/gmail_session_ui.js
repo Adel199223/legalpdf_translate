@@ -18,6 +18,32 @@ function appendGmailResultGrid(container, gridItems = []) {
   return grid;
 }
 
+export function renderGmailTranslationStepCardInto(nodes = {}, card = {}) {
+  const {
+    card: cardNode,
+    title,
+    copy,
+    chip,
+    button,
+  } = nodes || {};
+  if (!cardNode || !title || !copy || !chip || !button) {
+    return undefined;
+  }
+
+  const visible = Boolean(card.visible);
+  cardNode.classList.toggle("hidden", !visible);
+  button.disabled = !visible || Boolean(card.blocked);
+  if (!visible) {
+    return nodes;
+  }
+
+  title.textContent = card.title || "";
+  copy.textContent = card.copy || "";
+  chip.textContent = card.chipLabel || "";
+  button.textContent = card.buttonLabel || "";
+  return nodes;
+}
+
 export function renderGmailResumeCardInto(container, card = {}) {
   if (!container) {
     return undefined;
