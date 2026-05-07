@@ -12,6 +12,7 @@ export {
 } from "./gmail_preview_ui.js";
 export {
   renderGmailResumeCardInto,
+  renderGmailSessionButtonsInto,
   renderGmailSessionResultInto,
   renderGmailTranslationStepCardInto,
 } from "./gmail_session_ui.js";
@@ -151,22 +152,6 @@ export function renderGmailPrepareActionInto(button, { label = "", disabled = fa
   button.disabled = Boolean(disabled);
   button.title = String(title || "");
   return button;
-}
-
-export function renderGmailSessionButtonsInto(buttonRules = []) {
-  if (!Array.isArray(buttonRules)) {
-    return undefined;
-  }
-
-  for (const [button, enabled] of buttonRules) {
-    if (!button) {
-      continue;
-    }
-    const show = Boolean(enabled);
-    button.disabled = !show;
-    button.classList.toggle("hidden", !show);
-  }
-  return buttonRules;
 }
 
 export function renderGmailResumeActionsInto(nodes = {}, actions = {}) {
