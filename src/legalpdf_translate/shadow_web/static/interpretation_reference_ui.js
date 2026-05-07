@@ -215,6 +215,31 @@ export function renderInterpretationCityAddButtonsInto(nodes = {}, state = {}) {
   }
 }
 
+export function renderInterpretationActionGuardControlsInto(nodes = {}, guard = {}) {
+  if (!nodes) {
+    return undefined;
+  }
+  const {
+    actionButtons = [],
+    caseWarning = null,
+    serviceWarning = null,
+    caseAddButton = null,
+    serviceAddButton = null,
+  } = nodes;
+  renderInterpretationActionButtonsInto(actionButtons, { blocked: guard.blocked });
+  renderInterpretationFieldWarningInto(caseWarning, guard.caseWarning || {});
+  renderInterpretationFieldWarningInto(serviceWarning, guard.serviceWarning || {});
+  renderInterpretationCityAddButtonsInto({
+    caseButton: caseAddButton,
+    serviceButton: serviceAddButton,
+  }, {
+    provisionalCaseCity: guard.provisionalCaseCity,
+    provisionalServiceCity: guard.provisionalServiceCity,
+    serviceSame: guard.serviceSame,
+  });
+  return nodes;
+}
+
 export function renderServiceSameControlsInto(nodes = {}, { serviceSame = false } = {}) {
   const {
     serviceEntity = null,

@@ -74,12 +74,10 @@ import {
   renderCourtEmailStatusInto,
   renderCheckboxValueInto,
   renderControlValueInto,
-  renderInterpretationActionButtonsInto,
+  renderInterpretationActionGuardControlsInto,
   renderInterpretationCityDialogContentInto,
   renderInterpretationCityDialogFieldsInto,
   renderInterpretationFormFieldsInto,
-  renderInterpretationFieldWarningInto,
-  renderInterpretationCityAddButtonsInto,
   renderInterpretationCityOptionsInto,
   renderInterpretationDistanceSyncInto,
   renderServiceEntityOptionsInto,
@@ -1077,14 +1075,6 @@ function renderInterpretationCompletionCard(snapshot = interpretationSnapshot())
   });
 }
 
-function setInterpretationFieldWarning(fieldName, message = "", tone = "warning") {
-  const node = qs(interpretationCityWarningId(fieldName));
-  if (!node) {
-    return;
-  }
-  renderInterpretationFieldWarningInto(node, { message, tone });
-}
-
 function setInterpretationLocationGuard(rawMessage = "", tone = "warning") {
   const card = qs("interpretation-location-guard-card");
   if (!card) {
@@ -1137,15 +1127,12 @@ function updateInterpretationActionAvailability() {
   const actionButtons = ["save-row", "export-honorarios", "interpretation-finalize-gmail"]
     .map((id) => qs(id))
     .filter(Boolean);
-  renderInterpretationActionButtonsInto(actionButtons, { blocked });
   const caseWarning = guard.provisionalCaseCity
     ? `Imported city "${guard.provisionalCaseCity}" is not confirmed yet. Select a known city or add it first.`
     : "";
   const serviceWarning = !qs("service-same")?.checked && guard.provisionalServiceCity
     ? `Imported city "${guard.provisionalServiceCity}" is not confirmed yet. Select a known city or add it first.`
     : "";
-  setInterpretationFieldWarning("case_city", caseWarning, "warning");
-  setInterpretationFieldWarning("service_city", serviceWarning, "warning");
   if (guard.blocked && (guard.blockedCode === "distance_required" || guard.blockedCode === "distance_must_be_positive")) {
     setInterpretationLocationGuard(guard.blockedMessage, "danger");
   } else if (guard.provisionalCaseCity || guard.provisionalServiceCity) {
@@ -1155,10 +1142,16 @@ function updateInterpretationActionAvailability() {
   }
   const caseAddButton = qs(interpretationCityAddButtonId("case_city"));
   const serviceAddButton = qs(interpretationCityAddButtonId("service_city"));
-  renderInterpretationCityAddButtonsInto({
-    caseButton: caseAddButton,
-    serviceButton: serviceAddButton,
+  renderInterpretationActionGuardControlsInto({
+    actionButtons,
+    caseWarning: qs(interpretationCityWarningId("case_city")),
+    serviceWarning: qs(interpretationCityWarningId("service_city")),
+    caseAddButton,
+    serviceAddButton,
   }, {
+    blocked,
+    caseWarning: { message: caseWarning, tone: "warning" },
+    serviceWarning: { message: serviceWarning, tone: "warning" },
     provisionalCaseCity: guard.provisionalCaseCity,
     provisionalServiceCity: guard.provisionalServiceCity,
     serviceSame: qs("service-same")?.checked ?? false,
