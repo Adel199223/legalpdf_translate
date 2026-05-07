@@ -5,6 +5,7 @@ export {
   renderGmailBatchFinalizeSurfaceInto,
   renderGmailNumericMismatchWarningInto,
 } from "./gmail_finalize_ui.js";
+export { renderGmailReportActionInto } from "./gmail_report_ui.js";
 export {
   renderGmailContextDefaultsInto,
   renderGmailSimulatorDefaultsInto,
@@ -64,17 +65,6 @@ export function renderGmailDrawerChromeInto(nodes = {}, drawer = {}) {
     body.dataset[bodyDatasetKey] = open ? "open" : "closed";
   }
   return nodes;
-}
-
-export function renderGmailReportActionInto(button, { available = false, label = "" } = {}) {
-  if (!button) {
-    return undefined;
-  }
-  button.classList.toggle("hidden", !available);
-  button.disabled = !available;
-  button.textContent = label;
-  button.dataset.defaultLabel = label;
-  return button;
 }
 
 export function renderGmailRestoreBarInto(nodes = {}, restore = {}) {

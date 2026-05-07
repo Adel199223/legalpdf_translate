@@ -13,6 +13,7 @@ import {
 } from "./diagnostics_ui.js";
 import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import { renderGmailBatchFinalizeSurfaceInto } from "./gmail_finalize_ui.js";
+import { renderGmailReportActionInto } from "./gmail_report_ui.js";
 import {
   renderGmailPdfPreviewFallbackInto,
   renderGmailPreviewPanelInto,
@@ -29,7 +30,6 @@ import {
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailNumericMismatchWarningInto,
   renderGmailPrepareActionInto,
-  renderGmailReportActionInto,
   renderGmailReturnToSourceActionInto,
   renderGmailResumeActionsInto,
   renderGmailReviewChromeInto,
