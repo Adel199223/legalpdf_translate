@@ -4871,6 +4871,213 @@ console.log(JSON.stringify({
     assert results["translationSession"]["innerHTMLWrites"] == 0
 
 
+def test_gmail_session_presentation_module_builds_session_cards() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_session_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_session_presentation.js"' in gmail_js
+    assert "buildGmailResumeCardPresentation" in gmail_js
+    assert "buildGmailSessionResultPresentation" in gmail_js
+    resume_start = gmail_js.index("function renderResumeCard")
+    resume_end = gmail_js.index("\nfunction renderSessionResult", resume_start)
+    resume_block = gmail_js[resume_start:resume_end]
+    assert "buildGmailResumeCardPresentation" in resume_block
+    assert "Current File" not in resume_block
+    session_start = gmail_js.index("function renderSessionResult")
+    session_end = gmail_js.index("\nfunction renderWorkspaceStrip", session_start)
+    session_block = gmail_js[session_start:session_end]
+    assert "buildGmailSessionResultPresentation" in session_block
+    assert "Completed attachments" not in session_block
+
+    assert "export function buildGmailResumeCardPresentation" in presentation_js
+    assert "export function buildGmailSessionResultPresentation" in presentation_js
+    assert "document." not in presentation_js
+    assert "innerHTML" not in presentation_js
+    assert "renderGmailResumeCardInto" not in presentation_js
+    assert "renderGmailSessionResultInto" not in presentation_js
+
+    script = """
+const presentation = await import(__GMAIL_SESSION_PRESENTATION_MODULE_URL__);
+
+const translationSession = {
+  kind: "translation",
+  status: "in_progress <script>bad()</script>",
+  selected_target_lang: "FR <img src=x>",
+  current_item_number: 2,
+  total_items: 5,
+  completed: false,
+  confirmed_items: [{ id: "one" }, { id: "two" }],
+  message: { subject: "Subject <img src=x onerror=alert(1)>" },
+  current_attachment: {
+    attachment: {
+      filename: "attachment <script>bad()</script>.pdf",
+    },
+  },
+};
+
+const interpretationSession = {
+  kind: "interpretation",
+  status: "prepared",
+  message: { subject: "Notice subject <img src=x>" },
+  attachment: {
+    attachment: {
+      filename: "notice <script>bad()</script>.pdf",
+    },
+  },
+};
+
+const cta = {
+  visible: true,
+  title: "Resume <img src=x>",
+  description: "Continue copy <script>bad()</script>",
+  tone: "ok",
+};
+const redo = {
+  visible: true,
+  description: "Redo copy <b>as text</b>",
+};
+const stage = {
+  title: "Stage title <img src=x>",
+  description: "Stage copy <script>bad()</script>",
+};
+
+const resumeEmpty = presentation.buildGmailResumeCardPresentation({
+  activeSession: translationSession,
+  cta: { visible: false },
+  redo,
+  stagePresentation: stage,
+});
+const resumeTranslation = presentation.buildGmailResumeCardPresentation({
+  activeSession: translationSession,
+  cta,
+  redo,
+  stagePresentation: stage,
+});
+const resumeInterpretation = presentation.buildGmailResumeCardPresentation({
+  activeSession: interpretationSession,
+  cta: { visible: true },
+  redo: {},
+  stagePresentation: {},
+});
+const sessionEmpty = presentation.buildGmailSessionResultPresentation({
+  activeSession: null,
+  stagePresentation: stage,
+});
+const sessionTranslation = presentation.buildGmailSessionResultPresentation({
+  activeSession: translationSession,
+  stagePresentation: stage,
+});
+const sessionTranslationCompleted = presentation.buildGmailSessionResultPresentation({
+  activeSession: { ...translationSession, completed: true, status: "" },
+  stagePresentation: stage,
+});
+const sessionInterpretation = presentation.buildGmailSessionResultPresentation({
+  activeSession: interpretationSession,
+  stagePresentation: stage,
+});
+
+console.log(JSON.stringify({
+  exportTypes: {
+    resume: typeof presentation.buildGmailResumeCardPresentation,
+    session: typeof presentation.buildGmailSessionResultPresentation,
+  },
+  resumeEmpty,
+  resumeTranslation,
+  resumeInterpretation,
+  sessionEmpty,
+  sessionTranslation,
+  sessionTranslationCompleted,
+  sessionInterpretation,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_SESSION_PRESENTATION_MODULE_URL__": "gmail_session_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportTypes"] == {"resume": "function", "session": "function"}
+    assert results["resumeEmpty"] == {
+        "visible": False,
+        "emptyText": "No Gmail step is waiting yet.",
+    }
+
+    resume_translation = results["resumeTranslation"]
+    assert resume_translation["visible"] is True
+    assert resume_translation["title"] == "Resume <img src=x>"
+    assert resume_translation["message"] == "Continue copy <script>bad()</script>"
+    assert resume_translation["extraMessages"] == ["Redo copy <b>as text</b>"]
+    assert resume_translation["label"] == "in_progress <script>bad()</script>"
+    assert resume_translation["tone"] == "ok"
+    assert resume_translation["gridItems"] == [
+        {"label": "Status", "value": "Stage title <img src=x>"},
+        {"label": "Batch", "value": "2/5"},
+        {
+            "label": "Current File",
+            "value": "attachment <script>bad()</script>.pdf",
+            "className": "word-break",
+        },
+    ]
+
+    assert results["resumeInterpretation"]["gridItems"] == [
+        {"label": "Status", "value": "Ready"},
+        {
+            "label": "Notice",
+            "value": "notice <script>bad()</script>.pdf",
+            "className": "word-break",
+        },
+    ]
+    assert results["resumeInterpretation"]["title"] == "Resume Current Step"
+    assert results["resumeInterpretation"]["tone"] == "info"
+
+    assert results["sessionEmpty"] == {
+        "empty": True,
+        "emptyText": "Continue Gmail from here when a translation or interpretation step is ready.",
+    }
+
+    assert results["sessionTranslation"] == {
+        "title": "Stage title <img src=x>",
+        "message": "Stage copy <script>bad()</script>",
+        "label": "in_progress <script>bad()</script>",
+        "tone": "info",
+        "gridItems": [
+            {"label": "Subject", "value": "Subject <img src=x onerror=alert(1)>"},
+            {"label": "Language", "value": "FR <img src=x>"},
+            {
+                "label": "Current document",
+                "value": "attachment <script>bad()</script>.pdf",
+                "className": "word-break",
+            },
+            {"label": "Completed attachments", "value": 2},
+        ],
+    }
+    assert results["sessionTranslationCompleted"]["label"] == "prepared"
+    assert results["sessionTranslationCompleted"]["tone"] == "ok"
+    assert results["sessionInterpretation"] == {
+        "title": "Stage title <img src=x>",
+        "message": "Stage copy <script>bad()</script>",
+        "label": "prepared",
+        "tone": "info",
+        "gridItems": [
+            {
+                "label": "Notice",
+                "value": "notice <script>bad()</script>.pdf",
+                "className": "word-break",
+            },
+            {"label": "Subject", "value": "Notice subject <img src=x>"},
+        ],
+    }
+
+
 def test_gmail_attachment_ui_module_owns_review_attachment_renderers() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -25729,6 +25936,15 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailTranslationStepCardInto" in gmail_session_ui_asset.text
         assert "renderGmailSessionButtonsInto" in gmail_session_ui_asset.text
         assert "renderGmailResumeActionsInto" in gmail_session_ui_asset.text
+        gmail_session_presentation_asset = client.get(
+            f"/static-build/{asset_version}/gmail_session_presentation.js"
+        )
+        assert gmail_session_presentation_asset.status_code == 200
+        assert gmail_session_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailResumeCardPresentation" in gmail_session_presentation_asset.text
+        assert "buildGmailSessionResultPresentation" in gmail_session_presentation_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")
