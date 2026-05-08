@@ -4174,6 +4174,215 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_gmail_result_presentation_module_builds_message_result_cards() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_result_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_result_presentation.js"' in gmail_js
+    assert "buildGmailMessageResultPresentation" in gmail_js
+    message_result_start = gmail_js.index("function renderMessageResult(loadResult)")
+    message_result_end = gmail_js.index("\nfunction renderReviewSummary", message_result_start)
+    message_result_block = gmail_js[message_result_start:message_result_end]
+    assert "buildGmailMessageResultPresentation" in message_result_block
+    assert "renderGmailMessageResultInto(container, detailsHint, buildGmailMessageResultPresentation" in message_result_block
+    assert "Gmail message ready to review." not in message_result_block
+    assert "Gmail message could not finish loading." not in message_result_block
+    assert "Manual message load and output overrides" not in message_result_block
+
+    assert "export function buildGmailMessageResultPresentation" in presentation_js
+    renderer_start = presentation_js.index("export function buildGmailMessageResultPresentation")
+    renderer_block = presentation_js[renderer_start:]
+    assert "document." not in renderer_block
+    assert "innerHTML" not in renderer_block
+    assert "renderGmailMessageResultInto" not in renderer_block
+
+    script = """
+const presentation = await import(__GMAIL_RESULT_PRESENTATION_MODULE_URL__);
+
+const workflow = { label: "Translation <script>bad()</script>" };
+const empty = presentation.buildGmailMessageResultPresentation({
+  loadResult: null,
+  defaults: {},
+  pendingContext: {},
+  pendingStatus: "",
+  pendingWarming: false,
+  workflow,
+});
+const pendingWarming = presentation.buildGmailMessageResultPresentation({
+  loadResult: null,
+  defaults: {
+    message_id: "default-message",
+    subject: "Default subject <img src=x onerror=alert(1)>",
+    account_email: "default@example.test",
+  },
+  pendingContext: {
+    message_id: "pending-message",
+    thread_id: "pending-thread",
+    subject: "Pending subject ignored",
+    account_email: "pending@example.test",
+  },
+  pendingStatus: "warming",
+  pendingWarming: true,
+  workflow,
+});
+const pendingFailed = presentation.buildGmailMessageResultPresentation({
+  loadResult: null,
+  defaults: {},
+  pendingContext: {
+    thread_id: "thread <script>bad()</script>",
+    account_email: "pending <b>mail</b>",
+  },
+  pendingStatus: "failed",
+  pendingWarming: false,
+  workflow,
+});
+const pendingFound = presentation.buildGmailMessageResultPresentation({
+  loadResult: null,
+  defaults: {},
+  pendingContext: {
+    subject: "Found subject <svg/onload=alert(1)>",
+  },
+  pendingStatus: "ready",
+  workflow,
+});
+const loadedReady = presentation.buildGmailMessageResultPresentation({
+  loadResult: {
+    ok: true,
+    message: {
+      subject: "Loaded subject <img src=x>",
+      from_header: "Sender <script>bad()</script>",
+      account_email: "account@example.test",
+      attachments: [{ id: 1 }, { id: 2 }],
+    },
+  },
+  workflow,
+});
+const loadedUnavailable = presentation.buildGmailMessageResultPresentation({
+  loadResult: {
+    ok: false,
+    classification: "unavailable",
+    message: {
+      subject: "",
+      from_header: "",
+      account_email: "",
+      attachments: [],
+    },
+  },
+  workflow,
+});
+const loadedFailed = presentation.buildGmailMessageResultPresentation({
+  loadResult: {
+    ok: false,
+    classification: "bad_request",
+    message: {
+      subject: "Needs attention <b>as text</b>",
+      attachments: null,
+    },
+  },
+  workflow,
+});
+
+console.log(JSON.stringify({
+  exportType: typeof presentation.buildGmailMessageResultPresentation,
+  empty,
+  pendingWarming,
+  pendingFailed,
+  pendingFound,
+  loadedReady,
+  loadedUnavailable,
+  loadedFailed,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_RESULT_PRESENTATION_MODULE_URL__": "gmail_result_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["empty"] == {
+        "empty": True,
+        "emptyText": "Open this from Gmail or load a message manually from details.",
+        "detailsHint": "Manual message load and output overrides stay here unless Gmail needs help finding the message.",
+    }
+    assert results["pendingWarming"] == {
+        "title": "Gmail message is loading.",
+        "message": "Default subject <img src=x onerror=alert(1)>",
+        "label": "Loading",
+        "tone": "info",
+        "detailsHint": "The message is still loading; open these details only if Gmail needs manual help.",
+        "gridItems": [
+            {
+                "label": "Gmail account",
+                "value": "default@example.test",
+                "className": "word-break",
+            },
+            {"label": "Workflow", "value": "Translation <script>bad()</script>"},
+        ],
+    }
+    assert results["pendingFailed"] == {
+        "title": "Gmail message could not finish loading.",
+        "message": "Subject unavailable",
+        "label": "Needs attention",
+        "tone": "bad",
+        "detailsHint": "Detected Gmail details are ready; open these details only if you need manual recovery.",
+        "gridItems": [
+            {
+                "label": "Gmail account",
+                "value": "pending <b>mail</b>",
+                "className": "word-break",
+            },
+            {"label": "Workflow", "value": "Translation <script>bad()</script>"},
+        ],
+    }
+    assert results["pendingFound"]["title"] == "Gmail message found."
+    assert results["pendingFound"]["label"] == "Ready soon"
+    assert results["pendingFound"]["tone"] == "info"
+    assert results["pendingFound"]["message"] == "Found subject <svg/onload=alert(1)>"
+    assert results["pendingFound"]["gridItems"][0]["value"] == "Unavailable"
+
+    assert results["loadedReady"] == {
+        "title": "Gmail message ready to review.",
+        "message": "Loaded subject <img src=x>",
+        "label": "Ready",
+        "tone": "ok",
+        "detailsHint": "Exact IDs and output overrides stay here unless you need manual recovery or troubleshooting.",
+        "gridItems": [
+            {
+                "label": "From",
+                "value": "Sender <script>bad()</script>",
+                "className": "word-break",
+            },
+            {
+                "label": "Gmail account",
+                "value": "account@example.test",
+                "className": "word-break",
+            },
+            {"label": "Supported attachments", "value": 2},
+            {"label": "Workflow", "value": "Translation <script>bad()</script>"},
+        ],
+    }
+    assert results["loadedUnavailable"]["title"] == "Gmail message needs attention."
+    assert results["loadedUnavailable"]["message"] == "No subject"
+    assert results["loadedUnavailable"]["label"] == "Needs attention"
+    assert results["loadedUnavailable"]["tone"] == "warn"
+    assert results["loadedUnavailable"]["gridItems"][0]["value"] == "Unavailable"
+    assert results["loadedUnavailable"]["gridItems"][1]["value"] == "Unavailable"
+    assert results["loadedUnavailable"]["gridItems"][2]["value"] == 0
+    assert results["loadedFailed"]["tone"] == "bad"
+    assert results["loadedFailed"]["message"] == "Needs attention <b>as text</b>"
+    assert results["loadedFailed"]["gridItems"][2]["value"] == 0
+
+
 def test_gmail_result_ui_module_owns_review_summary_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -26266,6 +26475,14 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_result_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailMessageResultInto" in gmail_result_ui_asset.text
         assert "renderGmailReviewSummaryInto" in gmail_result_ui_asset.text
+        gmail_result_presentation_asset = client.get(
+            f"/static-build/{asset_version}/gmail_result_presentation.js"
+        )
+        assert gmail_result_presentation_asset.status_code == 200
+        assert gmail_result_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailMessageResultPresentation" in gmail_result_presentation_asset.text
         gmail_control_ui_asset = client.get(f"/static-build/{asset_version}/gmail_control_ui.js")
         assert gmail_control_ui_asset.status_code == 200
         assert gmail_control_ui_asset.headers["content-type"].startswith("application/javascript")
