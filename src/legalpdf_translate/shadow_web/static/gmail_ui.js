@@ -34,34 +34,7 @@ export {
   renderGmailTranslationStepCardInto,
 } from "./gmail_session_ui.js";
 export { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
-
-export function renderGmailWorkspaceStripInto(nodes = {}, card = {}) {
-  if (!nodes) {
-    return undefined;
-  }
-
-  const { strip, title, copy, action } = nodes;
-  const visible = Boolean(card.visible);
-  if (strip) {
-    strip.classList.toggle("hidden", !visible);
-  }
-  if (!visible) {
-    return nodes;
-  }
-
-  if (title) {
-    title.textContent = card.title || "";
-  }
-  if (copy) {
-    copy.textContent = card.copy || "";
-  }
-  if (action) {
-    action.textContent = card.actionLabel || "";
-    action.dataset.gmailStripAction = card.action || "";
-  }
-
-  return nodes;
-}
+export { renderGmailWorkspaceStripInto } from "./gmail_workspace_ui.js";
 
 export function renderGmailMessageResultInto(container, detailsHint, card = {}) {
   if (!container) {

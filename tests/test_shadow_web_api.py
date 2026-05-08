@@ -7493,7 +7493,7 @@ console.log(JSON.stringify({
     assert results["blockedRedo"]["innerHTMLWrites"] == 0
 
 
-def test_gmail_ui_module_centralizes_workspace_strip_renderer() -> None:
+def test_gmail_workspace_ui_module_owns_workspace_strip_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -7503,9 +7503,16 @@ def test_gmail_ui_module_centralizes_workspace_strip_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_workspace_ui_path = static_dir / "gmail_workspace_ui.js"
+    assert gmail_workspace_ui_path.exists()
+    gmail_workspace_ui_js = gmail_workspace_ui_path.read_text(encoding="utf-8")
 
     assert "renderGmailWorkspaceStripInto" in gmail_js
-    assert "export function renderGmailWorkspaceStripInto" in gmail_ui_js
+    assert 'from "./gmail_workspace_ui.js"' in gmail_js
+    assert "export function renderGmailWorkspaceStripInto" not in gmail_ui_js
+    assert 'from "./gmail_workspace_ui.js"' in gmail_ui_js
+    assert "renderGmailWorkspaceStripInto" in gmail_ui_js
+    assert "export function renderGmailWorkspaceStripInto" in gmail_workspace_ui_js
 
     strip_start = gmail_js.index("function renderWorkspaceStrip()")
     strip_end = gmail_js.index("\nfunction updatePrepareActionState", strip_start)
@@ -7521,16 +7528,16 @@ def test_gmail_ui_module_centralizes_workspace_strip_renderer() -> None:
     assert "currentRecoveredFinalizationAction()" in strip_block
     assert "deriveGmailStagePresentation(" in strip_block
 
-    renderer_start = gmail_ui_js.index("export function renderGmailWorkspaceStripInto")
-    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    renderer_start = gmail_workspace_ui_js.index("export function renderGmailWorkspaceStripInto")
+    renderer_block = gmail_workspace_ui_js[renderer_start:]
     assert "innerHTML" not in renderer_block
     assert "qs(" not in renderer_block
     assert "gmail-workspace-strip" not in renderer_block
     assert "gmail-workspace-strip-action" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_WORKSPACE_UI_MODULE_URL__);
+const compatibilityUi = await import(__GMAIL_UI_MODULE_URL__);
 
 function normalizeClassList(value) {
   return String(value || "").split(/\\s+/).filter(Boolean);
@@ -7682,6 +7689,7 @@ const nullResult = ui.renderGmailWorkspaceStripInto(null, { visible: true });
 
 console.log(JSON.stringify({
   exportType: typeof ui.renderGmailWorkspaceStripInto,
+  compatibilityExportType: typeof compatibilityUi.renderGmailWorkspaceStripInto,
   visibleResultType: typeof visibleResult,
   nullResultType: typeof nullResult,
   strip: summarize(strip),
@@ -7706,10 +7714,14 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_WORKSPACE_UI_MODULE_URL__": "gmail_workspace_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
     )
 
     assert results["exportType"] == "function"
+    assert results["compatibilityExportType"] == "function"
     assert results["visibleResultType"] == "object"
     assert results["nullResultType"] == "undefined"
 
@@ -25374,6 +25386,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_preview_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailPreviewPanelInto" in gmail_preview_ui_asset.text
         assert "renderGmailPdfPreviewFallbackInto" in gmail_preview_ui_asset.text
+        gmail_workspace_ui_asset = client.get(f"/static-build/{asset_version}/gmail_workspace_ui.js")
+        assert gmail_workspace_ui_asset.status_code == 200
+        assert gmail_workspace_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderGmailWorkspaceStripInto" in gmail_workspace_ui_asset.text
         gmail_session_ui_asset = client.get(f"/static-build/{asset_version}/gmail_session_ui.js")
         assert gmail_session_ui_asset.status_code == 200
         assert gmail_session_ui_asset.headers["content-type"].startswith("application/javascript")
