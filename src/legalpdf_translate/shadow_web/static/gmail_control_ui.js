@@ -26,6 +26,22 @@ export function renderGmailDrawerChromeInto(nodes = {}, drawer = {}) {
   return nodes;
 }
 
+export function renderGmailReviewChromeInto(nodes = {}, chrome = {}) {
+  const { status, openButton } = nodes || {};
+  if (!status || !openButton) {
+    return undefined;
+  }
+
+  openButton.disabled = !Boolean(chrome.available);
+  const buttonDataset = openButton.dataset || {};
+  if (!buttonDataset.defaultLabel) {
+    buttonDataset.defaultLabel = openButton.textContent;
+  }
+  openButton.textContent = buttonDataset.defaultLabel || "";
+  status.textContent = chrome.statusText || "";
+  return nodes;
+}
+
 export function renderGmailDetailsOpenInto(details, { open = false } = {}) {
   if (!details) {
     return undefined;
