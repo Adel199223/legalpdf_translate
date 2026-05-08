@@ -5300,6 +5300,176 @@ console.log(JSON.stringify({
     assert results["batchFallbackCard"]["chipLabel"] == "Batch step"
 
 
+def test_gmail_session_presentation_module_builds_workspace_strip_card() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_js = (static_dir / "gmail_session_presentation.js").read_text(encoding="utf-8")
+
+    assert "buildGmailWorkspaceStripPresentation" in gmail_js
+    strip_start = gmail_js.index("function renderWorkspaceStrip()")
+    strip_end = gmail_js.index("\nfunction updatePrepareActionState", strip_start)
+    strip_block = gmail_js[strip_start:strip_end]
+    assert "buildGmailWorkspaceStripPresentation" in strip_block
+    assert "Gmail attachment ready" not in strip_block
+    assert "Review the Gmail message and attachments before you continue." not in strip_block
+    assert "Last finalized batch is recoverable." not in strip_block
+    assert "You can also redo only this attachment if needed." not in strip_block
+
+    assert "export function buildGmailWorkspaceStripPresentation" in presentation_js
+    workspace_start = presentation_js.index("export function buildGmailWorkspaceStripPresentation")
+    workspace_block = presentation_js[workspace_start:]
+    assert "document." not in workspace_block
+    assert "innerHTML" not in workspace_block
+    assert "renderGmailWorkspaceStripInto" not in workspace_block
+
+    script = """
+const presentation = await import(__GMAIL_SESSION_PRESENTATION_MODULE_URL__);
+
+const hidden = presentation.buildGmailWorkspaceStripPresentation({
+  show: false,
+  activeSession: { kind: "translation" },
+  cta: { visible: true },
+});
+const activeWithRedo = presentation.buildGmailWorkspaceStripPresentation({
+  show: true,
+  loadResult: { ok: true },
+  activeSession: { kind: "translation", status: "prepared <script>bad()</script>" },
+  cta: {
+    visible: true,
+    title: "CTA title <img src=x>",
+    description: "CTA copy <script>bad()</script>",
+    action: "resume-<img src=x>",
+  },
+  redo: {
+    visible: true,
+  },
+  stagePresentation: {
+    stripTitle: "Stage title <svg/onload=alert(1)>",
+    stripDescription: "Stage copy <b>as text</b>",
+  },
+});
+const activeWithoutRedo = presentation.buildGmailWorkspaceStripPresentation({
+  show: true,
+  loadResult: { ok: true },
+  activeSession: { kind: "interpretation" },
+  cta: {
+    visible: true,
+    title: "CTA only title",
+    description: "CTA only copy",
+    action: "resume",
+  },
+  redo: {
+    visible: false,
+  },
+  stagePresentation: {},
+});
+const activeFallback = presentation.buildGmailWorkspaceStripPresentation({
+  show: true,
+  loadResult: { ok: true },
+  activeSession: { kind: "translation" },
+  cta: { visible: true },
+  redo: { visible: false },
+  stagePresentation: {},
+});
+const recovered = presentation.buildGmailWorkspaceStripPresentation({
+  show: true,
+  loadResult: null,
+  activeSession: null,
+  recoveredAction: {
+    visible: true,
+    title: "Recovered <img src=x>",
+    description: "Recovered copy <script>bad()</script>",
+    label: "Recovered action <b>label</b>",
+    action: "open-recovered-<script>bad()</script>",
+  },
+});
+const recoveredFallback = presentation.buildGmailWorkspaceStripPresentation({
+  show: true,
+  loadResult: null,
+  activeSession: null,
+  recoveredAction: {
+    visible: true,
+  },
+});
+const defaultCard = presentation.buildGmailWorkspaceStripPresentation({
+  show: true,
+  loadResult: { ok: true },
+  activeSession: null,
+  recoveredAction: {
+    visible: true,
+    title: "Ignored recovered",
+  },
+});
+
+console.log(JSON.stringify({
+  exportType: typeof presentation.buildGmailWorkspaceStripPresentation,
+  hidden,
+  activeWithRedo,
+  activeWithoutRedo,
+  activeFallback,
+  recovered,
+  recoveredFallback,
+  defaultCard,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_SESSION_PRESENTATION_MODULE_URL__": "gmail_session_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["hidden"] == {"visible": False}
+    assert results["activeWithRedo"] == {
+        "visible": True,
+        "title": "Stage title <svg/onload=alert(1)>",
+        "copy": "Stage copy <b>as text</b> You can also redo only this attachment if needed.",
+        "actionLabel": "Continue Gmail step",
+        "action": "resume-<img src=x>",
+    }
+    assert results["activeWithoutRedo"] == {
+        "visible": True,
+        "title": "CTA only title",
+        "copy": "CTA only copy",
+        "actionLabel": "Continue Gmail step",
+        "action": "resume",
+    }
+    assert results["activeFallback"] == {
+        "visible": True,
+        "title": "Continue Gmail step",
+        "copy": "Continue the Gmail step when you are ready.",
+        "actionLabel": "Continue Gmail step",
+        "action": "",
+    }
+    assert results["recovered"] == {
+        "visible": True,
+        "title": "Recovered <img src=x>",
+        "copy": "Recovered copy <script>bad()</script>",
+        "actionLabel": "Recovered action <b>label</b>",
+        "action": "open-recovered-<script>bad()</script>",
+    }
+    assert results["recoveredFallback"] == {
+        "visible": True,
+        "title": "Last finalized batch is recoverable.",
+        "copy": "Open the recovered result only if you need the previous Gmail finalization details or report.",
+        "actionLabel": "Open Last Finalization Result",
+        "action": "",
+    }
+    assert results["defaultCard"] == {
+        "visible": True,
+        "title": "Gmail attachment ready",
+        "copy": "Review the Gmail message and attachments before you continue.",
+        "actionLabel": "Review Gmail message",
+        "action": "open-intake",
+    }
+
+
 def test_gmail_attachment_ui_module_owns_review_attachment_renderers() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -26169,6 +26339,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailSessionResultPresentation" in gmail_session_presentation_asset.text
         assert "buildGmailTranslationStepContext" in gmail_session_presentation_asset.text
         assert "buildGmailTranslationStepCardPresentation" in gmail_session_presentation_asset.text
+        assert "buildGmailWorkspaceStripPresentation" in gmail_session_presentation_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")

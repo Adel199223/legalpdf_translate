@@ -27,6 +27,7 @@ import {
   buildGmailSessionResultPresentation,
   buildGmailTranslationStepCardPresentation,
   buildGmailTranslationStepContext,
+  buildGmailWorkspaceStripPresentation,
 } from "./gmail_session_presentation.js";
 import {
   renderGmailDrawerChromeInto,
@@ -1648,41 +1649,24 @@ function renderWorkspaceStrip() {
   gmailState.stage = currentGmailStage();
   const cta = currentHomeCta();
   const recoveredAction = currentRecoveredFinalizationAction();
+  let stagePresentation = {};
+  let redo = {};
   if (gmailState.activeSession && cta.visible) {
-    const presentation = deriveGmailStagePresentation({
+    stagePresentation = deriveGmailStagePresentation({
       stage: gmailState.stage,
       activeSession: gmailState.activeSession,
     });
-    const redo = currentRedoAction();
-    const description = redo.visible
-      ? `${presentation.stripDescription || cta.description || "Continue the Gmail step when you are ready."} You can also redo only this attachment if needed.`
-      : (presentation.stripDescription || cta.description || "Continue the Gmail step when you are ready.");
-    renderGmailWorkspaceStripInto({ strip, title, copy, action }, {
-      visible: true,
-      title: presentation.stripTitle || cta.title || "Continue Gmail step",
-      copy: description,
-      actionLabel: "Continue Gmail step",
-      action: cta.action || "",
-    });
-    return;
+    redo = currentRedoAction();
   }
-  if (!gmailState.loadResult && !gmailState.activeSession && recoveredAction.visible) {
-    renderGmailWorkspaceStripInto({ strip, title, copy, action }, {
-      visible: true,
-      title: recoveredAction.title || "Last finalized batch is recoverable.",
-      copy: recoveredAction.description || "Open the recovered result only if you need the previous Gmail finalization details or report.",
-      actionLabel: recoveredAction.label || "Open Last Finalization Result",
-      action: recoveredAction.action || "",
-    });
-    return;
-  }
-  renderGmailWorkspaceStripInto({ strip, title, copy, action }, {
-    visible: true,
-    title: "Gmail attachment ready",
-    copy: "Review the Gmail message and attachments before you continue.",
-    actionLabel: "Review Gmail message",
-    action: "open-intake",
-  });
+  renderGmailWorkspaceStripInto({ strip, title, copy, action }, buildGmailWorkspaceStripPresentation({
+    show,
+    loadResult: gmailState.loadResult,
+    activeSession: gmailState.activeSession,
+    cta,
+    redo,
+    recoveredAction,
+    stagePresentation,
+  }));
 }
 
 function updatePrepareActionState() {

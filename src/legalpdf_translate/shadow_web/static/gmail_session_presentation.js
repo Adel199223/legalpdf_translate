@@ -118,6 +118,54 @@ export function buildGmailTranslationStepCardPresentation({
   };
 }
 
+export function buildGmailWorkspaceStripPresentation({
+  show = false,
+  loadResult = null,
+  activeSession = null,
+  cta = {},
+  redo = {},
+  recoveredAction = {},
+  stagePresentation = {},
+} = {}) {
+  if (!show) {
+    return {
+      visible: false,
+    };
+  }
+
+  if (activeSession && cta.visible) {
+    const copy = stagePresentation.stripDescription
+      || cta.description
+      || "Continue the Gmail step when you are ready.";
+    return {
+      visible: true,
+      title: stagePresentation.stripTitle || cta.title || "Continue Gmail step",
+      copy: redo.visible ? `${copy} You can also redo only this attachment if needed.` : copy,
+      actionLabel: "Continue Gmail step",
+      action: cta.action || "",
+    };
+  }
+
+  if (!loadResult && !activeSession && recoveredAction.visible) {
+    return {
+      visible: true,
+      title: recoveredAction.title || "Last finalized batch is recoverable.",
+      copy: recoveredAction.description
+        || "Open the recovered result only if you need the previous Gmail finalization details or report.",
+      actionLabel: recoveredAction.label || "Open Last Finalization Result",
+      action: recoveredAction.action || "",
+    };
+  }
+
+  return {
+    visible: true,
+    title: "Gmail attachment ready",
+    copy: "Review the Gmail message and attachments before you continue.",
+    actionLabel: "Review Gmail message",
+    action: "open-intake",
+  };
+}
+
 export function buildGmailSessionResultPresentation({
   activeSession = null,
   stagePresentation = {},
