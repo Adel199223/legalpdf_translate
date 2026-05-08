@@ -5078,6 +5078,228 @@ console.log(JSON.stringify({
     }
 
 
+def test_gmail_session_presentation_module_builds_translation_step_card() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_js = (static_dir / "gmail_session_presentation.js").read_text(encoding="utf-8")
+
+    assert "buildGmailTranslationStepContext" in gmail_js
+    assert "buildGmailTranslationStepCardPresentation" in gmail_js
+    step_start = gmail_js.index("function renderTranslationCompletionGmailStepCard")
+    step_end = gmail_js.index("\nfunction collectSelections", step_start)
+    step_block = gmail_js[step_start:step_end]
+    assert "buildGmailTranslationStepContext" in step_block
+    assert "buildGmailTranslationStepCardPresentation" in step_block
+    assert "This Gmail attachment is ready to save." not in step_block
+    assert "Save this translated attachment, then continue with the next Gmail step." not in step_block
+
+    assert "export function buildGmailTranslationStepContext" in presentation_js
+    assert "export function buildGmailTranslationStepCardPresentation" in presentation_js
+    translation_start = presentation_js.index("export function buildGmailTranslationStepContext")
+    translation_block = presentation_js[translation_start:]
+    assert "document." not in translation_block
+    assert "innerHTML" not in translation_block
+    assert "renderGmailTranslationStepCardInto" not in translation_block
+
+    script = """
+const presentation = await import(__GMAIL_SESSION_PRESENTATION_MODULE_URL__);
+
+const activeSession = {
+  kind: "translation",
+  completed: false,
+  current_item_number: 2,
+  total_items: 5,
+  current_attachment: {
+    attachment: {
+      filename: "invoice <img src=x onerror=alert(1)>.pdf",
+    },
+  },
+};
+const visibleUi = {
+  currentJobStatus: "completed",
+  hasCompletionSurface: false,
+  requiresArabicReview: false,
+  arabicReviewResolved: false,
+  arabicReviewMessage: "Arabic review <script>bad()</script>",
+  arabicReviewCompletionKey: "key <img src=x>",
+  currentRowId: "row <script>bad()</script>",
+  currentGmailBatchContext: { attachment_id: "att <img src=x>" },
+};
+
+const hiddenContext = presentation.buildGmailTranslationStepContext({
+  activeSession: null,
+  translationUi: visibleUi,
+});
+const blockedHiddenContext = presentation.buildGmailTranslationStepContext({
+  activeSession,
+  translationUi: {
+    ...visibleUi,
+    currentJobStatus: "running",
+    hasCompletionSurface: false,
+    requiresArabicReview: true,
+    arabicReviewResolved: false,
+  },
+});
+const visibleContext = presentation.buildGmailTranslationStepContext({
+  activeSession,
+  translationUi: visibleUi,
+});
+const visibleCard = presentation.buildGmailTranslationStepCardPresentation({
+  stepContext: visibleContext,
+  translationUi: visibleUi,
+});
+const hookCard = presentation.buildGmailTranslationStepCardPresentation({
+  stepContext: visibleContext,
+  translationUi: visibleUi,
+  hookPresentation: {
+    gmailCurrentAttachment: {
+      title: "Hook title <img src=x>",
+      copy: "Hook copy <script>bad()</script>",
+      chipLabel: "Hook chip <b>text</b>",
+      buttonLabel: "Hook button <svg/onload=alert(1)>",
+    },
+  },
+});
+const blockedContext = presentation.buildGmailTranslationStepContext({
+  activeSession,
+  translationUi: {
+    ...visibleUi,
+    requiresArabicReview: true,
+    arabicReviewResolved: false,
+  },
+});
+const blockedCard = presentation.buildGmailTranslationStepCardPresentation({
+  stepContext: blockedContext,
+  translationUi: {
+    ...visibleUi,
+    requiresArabicReview: true,
+    arabicReviewResolved: false,
+  },
+});
+const finalContext = presentation.buildGmailTranslationStepContext({
+  activeSession: {
+    ...activeSession,
+    current_item_number: 5,
+    total_items: 5,
+  },
+  translationUi: visibleUi,
+});
+const finalCard = presentation.buildGmailTranslationStepCardPresentation({
+  stepContext: finalContext,
+  translationUi: visibleUi,
+});
+const batchFallbackContext = presentation.buildGmailTranslationStepContext({
+  activeSession: {
+    ...activeSession,
+    current_item_number: 0,
+    total_items: 0,
+  },
+  translationUi: { ...visibleUi, currentJobStatus: "", hasCompletionSurface: true },
+});
+const batchFallbackCard = presentation.buildGmailTranslationStepCardPresentation({
+  stepContext: batchFallbackContext,
+  translationUi: visibleUi,
+});
+
+console.log(JSON.stringify({
+  exportTypes: {
+    context: typeof presentation.buildGmailTranslationStepContext,
+    card: typeof presentation.buildGmailTranslationStepCardPresentation,
+  },
+  hiddenContext,
+  hiddenCard: presentation.buildGmailTranslationStepCardPresentation({
+    stepContext: hiddenContext,
+    translationUi: visibleUi,
+  }),
+  blockedHiddenContext,
+  visibleContext,
+  visibleCard,
+  hookCard,
+  blockedCard,
+  finalCard,
+  batchFallbackContext,
+  batchFallbackCard,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_SESSION_PRESENTATION_MODULE_URL__": "gmail_session_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportTypes"] == {"context": "function", "card": "function"}
+    assert results["hiddenContext"] == {
+        "visible": False,
+        "blocked": False,
+        "filename": "Current Gmail attachment",
+        "batchLabel": "Batch step",
+        "hasMoreItems": False,
+        "hookPayload": None,
+    }
+    assert results["hiddenCard"] == {"visible": False, "blocked": False}
+    assert results["blockedHiddenContext"]["visible"] is False
+    assert results["blockedHiddenContext"]["blocked"] is True
+
+    visible_context = results["visibleContext"]
+    assert visible_context["visible"] is True
+    assert visible_context["blocked"] is False
+    assert visible_context["filename"] == "invoice <img src=x onerror=alert(1)>.pdf"
+    assert visible_context["batchLabel"] == "2/5"
+    assert visible_context["hasMoreItems"] is True
+    assert visible_context["hookPayload"] == {
+        "currentRowId": "row <script>bad()</script>",
+        "arabicReview": {
+            "required": False,
+            "resolved": False,
+            "message": "Arabic review <script>bad()</script>",
+            "completion_key": "key <img src=x>",
+            "status": "required",
+        },
+        "gmailBatchContext": {"attachment_id": "att <img src=x>"},
+        "gmailCurrentStep": {
+            "visible": True,
+            "filename": "invoice <img src=x onerror=alert(1)>.pdf",
+            "batchLabel": "2/5",
+            "hasMoreItems": True,
+        },
+    }
+    assert results["visibleCard"] == {
+        "visible": True,
+        "blocked": False,
+        "title": "This Gmail attachment is ready to save.",
+        "copy": "Save this translated attachment, then continue with the next Gmail step.",
+        "chipLabel": "2/5",
+        "buttonLabel": "Save this Gmail attachment",
+    }
+    assert results["hookCard"] == {
+        "visible": True,
+        "blocked": False,
+        "title": "Hook title <img src=x>",
+        "copy": "Hook copy <script>bad()</script>",
+        "chipLabel": "Hook chip <b>text</b>",
+        "buttonLabel": "Hook button <svg/onload=alert(1)>",
+    }
+    assert results["blockedCard"] == {
+        "visible": True,
+        "blocked": True,
+        "title": "Review the Arabic document in Word before you save this Gmail attachment.",
+        "copy": "Arabic review <script>bad()</script>",
+        "chipLabel": "2/5",
+        "buttonLabel": "Save this Gmail attachment",
+    }
+    assert results["finalCard"]["copy"] == (
+        "Save this translated attachment, then continue to create the Gmail reply."
+    )
+    assert results["batchFallbackContext"]["batchLabel"] == "Batch step"
+    assert results["batchFallbackCard"]["chipLabel"] == "Batch step"
+
+
 def test_gmail_attachment_ui_module_owns_review_attachment_renderers() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -25945,6 +26167,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         )
         assert "buildGmailResumeCardPresentation" in gmail_session_presentation_asset.text
         assert "buildGmailSessionResultPresentation" in gmail_session_presentation_asset.text
+        assert "buildGmailTranslationStepContext" in gmail_session_presentation_asset.text
+        assert "buildGmailTranslationStepCardPresentation" in gmail_session_presentation_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")

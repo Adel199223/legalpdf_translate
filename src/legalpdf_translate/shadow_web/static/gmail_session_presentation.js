@@ -41,6 +41,83 @@ export function buildGmailResumeCardPresentation({
   };
 }
 
+export function buildGmailTranslationStepContext({
+  activeSession = null,
+  translationUi = {},
+} = {}) {
+  const visible = Boolean(
+    activeSession?.kind === "translation"
+    && !activeSession?.completed
+    && (translationUi.currentJobStatus === "completed" || translationUi.hasCompletionSurface),
+  );
+  const blocked = Boolean(translationUi.requiresArabicReview && !translationUi.arabicReviewResolved);
+  const filename = activeSession?.current_attachment?.attachment?.filename || "Current Gmail attachment";
+  const batchLabel = activeSession?.total_items
+    ? `${activeSession.current_item_number || "?"}/${activeSession.total_items}`
+    : "Batch step";
+  const hasMoreItems = Number(activeSession?.current_item_number || 0) < Number(activeSession?.total_items || 0);
+
+  return {
+    visible,
+    blocked,
+    filename,
+    batchLabel,
+    hasMoreItems,
+    hookPayload: visible ? {
+      currentRowId: translationUi.currentRowId,
+      arabicReview: {
+        required: translationUi.requiresArabicReview,
+        resolved: translationUi.arabicReviewResolved,
+        message: translationUi.arabicReviewMessage,
+        completion_key: translationUi.arabicReviewCompletionKey,
+        status: translationUi.arabicReviewResolved ? "resolved" : "required",
+      },
+      gmailBatchContext: translationUi.currentGmailBatchContext,
+      gmailCurrentStep: {
+        visible,
+        filename,
+        batchLabel,
+        hasMoreItems,
+      },
+    } : null,
+  };
+}
+
+export function buildGmailTranslationStepCardPresentation({
+  stepContext = null,
+  activeSession = null,
+  translationUi = {},
+  hookPresentation = null,
+} = {}) {
+  const context = stepContext || buildGmailTranslationStepContext({ activeSession, translationUi });
+  if (!context.visible) {
+    return {
+      visible: false,
+      blocked: context.blocked,
+    };
+  }
+
+  const hookCard = hookPresentation?.gmailCurrentAttachment || {};
+  return {
+    visible: true,
+    blocked: context.blocked,
+    title: hookCard.title || (
+      context.blocked
+        ? "Review the Arabic document in Word before you save this Gmail attachment."
+        : "This Gmail attachment is ready to save."
+    ),
+    copy: hookCard.copy || (
+      context.blocked
+        ? (translationUi.arabicReviewMessage || "Open the translated DOCX in Word, save it there, then return here to save this Gmail attachment.")
+        : context.hasMoreItems
+          ? "Save this translated attachment, then continue with the next Gmail step."
+          : "Save this translated attachment, then continue to create the Gmail reply."
+    ),
+    chipLabel: hookCard.chipLabel || context.batchLabel,
+    buttonLabel: hookCard.buttonLabel || "Save this Gmail attachment",
+  };
+}
+
 export function buildGmailSessionResultPresentation({
   activeSession = null,
   stagePresentation = {},
