@@ -3885,7 +3885,7 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
-def test_gmail_ui_module_centralizes_message_result_renderer() -> None:
+def test_gmail_result_ui_module_owns_message_result_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -3895,22 +3895,29 @@ def test_gmail_ui_module_centralizes_message_result_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_result_ui_path = static_dir / "gmail_result_ui.js"
 
-    assert 'from "./gmail_ui.js"' in gmail_js
+    assert gmail_result_ui_path.exists()
+    gmail_result_ui_js = gmail_result_ui_path.read_text(encoding="utf-8")
+    assert 'from "./gmail_result_ui.js"' in gmail_js
     assert "renderGmailMessageResultInto" in gmail_js
     message_result_start = gmail_js.index("function renderMessageResult(loadResult)")
     message_result_end = gmail_js.index("\nfunction renderReviewSummary", message_result_start)
     message_result_block = gmail_js[message_result_start:message_result_end]
     assert "renderGmailMessageResultInto" in message_result_block
     assert "innerHTML" not in message_result_block
-    assert "export function renderGmailMessageResultInto" in gmail_ui_js
-    renderer_start = gmail_ui_js.index("export function renderGmailMessageResultInto")
-    renderer_end = gmail_ui_js.index("\nexport function renderGmailNoncanonicalRuntimeGuardInto", renderer_start)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert 'from "./gmail_result_ui.js"' in gmail_ui_js
+    assert "renderGmailMessageResultInto" in gmail_ui_js
+    assert "export function renderGmailMessageResultInto" not in gmail_ui_js
+    assert "export function renderGmailMessageResultInto" in gmail_result_ui_js
+    renderer_start = gmail_result_ui_js.index("export function renderGmailMessageResultInto")
+    renderer_end = gmail_result_ui_js.index("\nexport function renderGmailReviewSummaryInto", renderer_start)
+    renderer_block = gmail_result_ui_js[renderer_start:renderer_end]
     assert "innerHTML" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_RESULT_UI_MODULE_URL__);
+const compat = await import(__GMAIL_UI_MODULE_URL__);
 
 function makeClassList(owner, initial = []) {
   const classes = new Set(initial);
@@ -4089,6 +4096,7 @@ const nullResult = ui.renderGmailMessageResultInto(null, emptyHint, {
 
 console.log(JSON.stringify({
   exportType: typeof ui.renderGmailMessageResultInto,
+  compatExportType: typeof compat.renderGmailMessageResultInto,
   pending: summarize(pendingContainer, pendingHint),
   loaded: summarize(loadedContainer, loadedHint),
   empty: {
@@ -4105,10 +4113,14 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_RESULT_UI_MODULE_URL__": "gmail_result_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
     )
 
     assert results["exportType"] == "function"
+    assert results["compatExportType"] == "function"
     assert results["pending"]["className"] == "result-card"
     assert results["pending"]["childTags"] == ["DIV", "DIV"]
     assert "Gmail <img src=x onerror=alert(1)> found." in results["pending"]["text"]
@@ -4147,7 +4159,7 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
-def test_gmail_ui_module_centralizes_review_summary_renderer() -> None:
+def test_gmail_result_ui_module_owns_review_summary_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -4157,8 +4169,11 @@ def test_gmail_ui_module_centralizes_review_summary_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_result_ui_path = static_dir / "gmail_result_ui.js"
 
-    assert 'from "./gmail_ui.js"' in gmail_js
+    assert gmail_result_ui_path.exists()
+    gmail_result_ui_js = gmail_result_ui_path.read_text(encoding="utf-8")
+    assert 'from "./gmail_result_ui.js"' in gmail_js
     assert "renderGmailReviewSummaryInto" in gmail_js
     review_summary_start = gmail_js.index("function renderReviewSummary(loadResult)")
     review_summary_end = gmail_js.index("\nexport function renderAttachmentListInto", review_summary_start)
@@ -4166,14 +4181,17 @@ def test_gmail_ui_module_centralizes_review_summary_renderer() -> None:
     assert "renderGmailReviewSummaryInto" in review_summary_block
     assert "summary.innerHTML" not in review_summary_block
     assert "summaryGrid.innerHTML" not in review_summary_block
-    assert "export function renderGmailReviewSummaryInto" in gmail_ui_js
-    renderer_start = gmail_ui_js.index("export function renderGmailReviewSummaryInto")
-    renderer_end = gmail_ui_js.index("\nexport function renderGmailNoncanonicalRuntimeGuardInto", renderer_start)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert 'from "./gmail_result_ui.js"' in gmail_ui_js
+    assert "renderGmailReviewSummaryInto" in gmail_ui_js
+    assert "export function renderGmailReviewSummaryInto" not in gmail_ui_js
+    assert "export function renderGmailReviewSummaryInto" in gmail_result_ui_js
+    renderer_start = gmail_result_ui_js.index("export function renderGmailReviewSummaryInto")
+    renderer_block = gmail_result_ui_js[renderer_start:]
     assert "innerHTML" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_RESULT_UI_MODULE_URL__);
+const compat = await import(__GMAIL_UI_MODULE_URL__);
 
 function makeClassList(owner, initial = []) {
   const classes = new Set(initial);
@@ -4349,6 +4367,7 @@ const nullResult = ui.renderGmailReviewSummaryInto(
 
 console.log(JSON.stringify({
   exportType: typeof ui.renderGmailReviewSummaryInto,
+  compatExportType: typeof compat.renderGmailReviewSummaryInto,
   empty: summarize(emptySummary, emptyGrid, emptyDetails),
   populated: summarize(populatedSummary, populatedGrid, populatedDetails),
   nullResultType: typeof nullResult,
@@ -4356,10 +4375,14 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_RESULT_UI_MODULE_URL__": "gmail_result_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
     )
 
     assert results["exportType"] == "function"
+    assert results["compatExportType"] == "function"
     assert results["empty"] == {
         "summaryClass": "result-card empty-state",
         "summaryText": "Load this Gmail message to choose attachments.",
@@ -25358,6 +25381,11 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailDrawerDatasetDefaultsInto" in gmail_ui_asset.text
         assert "renderGmailDetailsOpenInto" in gmail_ui_asset.text
         assert "renderGmailInputValueInto" in gmail_ui_asset.text
+        gmail_result_ui_asset = client.get(f"/static-build/{asset_version}/gmail_result_ui.js")
+        assert gmail_result_ui_asset.status_code == 200
+        assert gmail_result_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderGmailMessageResultInto" in gmail_result_ui_asset.text
+        assert "renderGmailReviewSummaryInto" in gmail_result_ui_asset.text
         gmail_control_ui_asset = client.get(f"/static-build/{asset_version}/gmail_control_ui.js")
         assert gmail_control_ui_asset.status_code == 200
         assert gmail_control_ui_asset.headers["content-type"].startswith("application/javascript")
