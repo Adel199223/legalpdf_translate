@@ -4833,7 +4833,7 @@ console.log(JSON.stringify({
     assert results["translationSession"]["innerHTMLWrites"] == 0
 
 
-def test_gmail_ui_module_centralizes_review_attachment_renderers() -> None:
+def test_gmail_attachment_ui_module_owns_review_attachment_renderers() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -4843,9 +4843,14 @@ def test_gmail_ui_module_centralizes_review_attachment_renderers() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_attachment_ui_path = static_dir / "gmail_attachment_ui.js"
+
+    assert gmail_attachment_ui_path.exists()
+    gmail_attachment_ui_js = gmail_attachment_ui_path.read_text(encoding="utf-8")
 
     assert "renderGmailAttachmentListInto" in gmail_js
     assert "renderGmailReviewDetailInto" in gmail_js
+    assert 'from "./gmail_attachment_ui.js"' in gmail_js
     attachment_start = gmail_js.index("export function renderAttachmentListInto")
     attachment_end = gmail_js.index("\nfunction renderAttachmentList", attachment_start)
     attachment_block = gmail_js[attachment_start:attachment_end]
@@ -4865,21 +4870,18 @@ def test_gmail_ui_module_centralizes_review_attachment_renderers() -> None:
     assert "clearNode" not in detail_block
     assert "innerHTML" not in detail_block
 
-    assert "export function renderGmailAttachmentListInto" in gmail_ui_js
-    assert "export function renderGmailReviewDetailInto" in gmail_ui_js
-    list_renderer_start = gmail_ui_js.index("export function renderGmailAttachmentListInto")
-    detail_renderer_start = gmail_ui_js.index("export function renderGmailReviewDetailInto")
-    list_renderer_block = gmail_ui_js[list_renderer_start:detail_renderer_start]
-    detail_renderer_end = gmail_ui_js.index(
-        "\nexport function renderGmailNoncanonicalRuntimeGuardInto",
-        detail_renderer_start,
-    )
-    detail_renderer_block = gmail_ui_js[detail_renderer_start:detail_renderer_end]
-    assert "innerHTML" not in list_renderer_block
-    assert "innerHTML" not in detail_renderer_block
+    assert 'from "./gmail_attachment_ui.js"' in gmail_ui_js
+    assert "renderGmailAttachmentListInto" in gmail_ui_js
+    assert "renderGmailReviewDetailInto" in gmail_ui_js
+    assert "export function renderGmailAttachmentListInto" not in gmail_ui_js
+    assert "export function renderGmailReviewDetailInto" not in gmail_ui_js
+    assert "export function renderGmailAttachmentListInto" in gmail_attachment_ui_js
+    assert "export function renderGmailReviewDetailInto" in gmail_attachment_ui_js
+    assert "innerHTML" not in gmail_attachment_ui_js
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_ATTACHMENT_UI_MODULE_URL__);
+const compat = await import(__GMAIL_UI_MODULE_URL__);
 
 function normalizeClassList(value) {
   return String(value || "").split(/\\s+/).filter(Boolean);
@@ -5196,6 +5198,8 @@ const nullDetailResult = ui.renderGmailReviewDetailInto(null, { attachment_id: "
 console.log(JSON.stringify({
   listExportType: typeof ui.renderGmailAttachmentListInto,
   detailExportType: typeof ui.renderGmailReviewDetailInto,
+  compatListExportType: typeof compat.renderGmailAttachmentListInto,
+  compatDetailExportType: typeof compat.renderGmailReviewDetailInto,
   emptyHeading: emptyHeading.textContent,
   emptyTable: summarizeTable(emptyTable),
   emptyListReturnType: typeof emptyListResult,
@@ -5214,12 +5218,17 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_ATTACHMENT_UI_MODULE_URL__": "gmail_attachment_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
         timeout_seconds=30,
     )
 
     assert results["listExportType"] == "function"
     assert results["detailExportType"] == "function"
+    assert results["compatListExportType"] == "function"
+    assert results["compatDetailExportType"] == "function"
     assert results["nullListResultType"] == "undefined"
     assert results["nullDetailResultType"] == "undefined"
 
@@ -25386,6 +25395,11 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_preview_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailPreviewPanelInto" in gmail_preview_ui_asset.text
         assert "renderGmailPdfPreviewFallbackInto" in gmail_preview_ui_asset.text
+        gmail_attachment_ui_asset = client.get(f"/static-build/{asset_version}/gmail_attachment_ui.js")
+        assert gmail_attachment_ui_asset.status_code == 200
+        assert gmail_attachment_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderGmailAttachmentListInto" in gmail_attachment_ui_asset.text
+        assert "renderGmailReviewDetailInto" in gmail_attachment_ui_asset.text
         gmail_workspace_ui_asset = client.get(f"/static-build/{asset_version}/gmail_workspace_ui.js")
         assert gmail_workspace_ui_asset.status_code == 200
         assert gmail_workspace_ui_asset.headers["content-type"].startswith("application/javascript")
