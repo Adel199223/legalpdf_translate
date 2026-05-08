@@ -18,6 +18,7 @@ import {
   renderGmailReturnToSourceActionInto,
 } from "./gmail_action_ui.js";
 import {
+  renderGmailDrawerChromeInto,
   renderGmailDetailsOpenInto,
   renderGmailDrawerDatasetDefaultsInto,
   renderGmailInputValueInto,
@@ -32,7 +33,6 @@ import { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
 import {
   renderGmailAttachmentListInto,
   renderGmailContextDefaultsInto,
-  renderGmailDrawerChromeInto,
   renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailNumericMismatchWarningInto,
