@@ -37,7 +37,6 @@ import {
   renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailNumericMismatchWarningInto,
-  renderGmailResumeActionsInto,
   renderGmailReviewDetailInto,
   renderGmailReviewSummaryInto,
   renderGmailResumeCardInto,
@@ -47,6 +46,7 @@ import {
   renderGmailTranslationStepCardInto,
   renderGmailWorkspaceStripInto,
 } from "./gmail_ui.js";
+import { renderGmailResumeActionsInto } from "./gmail_session_ui.js";
 import {
   applyPreviewStateStartPage,
   clearConsumedReviewState,
