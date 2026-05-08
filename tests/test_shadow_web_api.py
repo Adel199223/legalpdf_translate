@@ -3706,7 +3706,7 @@ console.log(JSON.stringify({
     assert "gmailBatchFinalizeDrawer" not in results["bodyDataset"]
 
 
-def test_gmail_ui_module_centralizes_noncanonical_runtime_guard_renderer() -> None:
+def test_gmail_runtime_guard_ui_module_centralizes_noncanonical_runtime_guard_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -3715,10 +3715,12 @@ def test_gmail_ui_module_centralizes_noncanonical_runtime_guard_renderer() -> No
         / "static"
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
-    gmail_ui_js = static_dir / "gmail_ui.js"
+    gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    guard_ui_path = static_dir / "gmail_runtime_guard_ui.js"
+    assert guard_ui_path.exists()
+    guard_ui_js = guard_ui_path.read_text(encoding="utf-8")
 
-    assert gmail_ui_js.exists()
-    assert 'from "./gmail_ui.js"' in gmail_js
+    assert 'from "./gmail_runtime_guard_ui.js"' in gmail_js
     assert "renderGmailNoncanonicalRuntimeGuardInto" in gmail_js
     guard_block = re.search(
         r"function renderGmailNoncanonicalRuntimeGuard\(\) \{(?P<body>.*?)\n\}",
@@ -3727,9 +3729,17 @@ def test_gmail_ui_module_centralizes_noncanonical_runtime_guard_renderer() -> No
     ).group("body")
     assert "renderGmailNoncanonicalRuntimeGuardInto" in guard_block
     assert "innerHTML" not in guard_block
+    assert 'from "./gmail_runtime_guard_ui.js"' in gmail_ui_js
+    assert "export function renderGmailNoncanonicalRuntimeGuardInto" not in gmail_ui_js
+    assert "export function renderGmailNoncanonicalRuntimeGuardInto" in guard_ui_js
+    assert 'from "./safe_rendering.js"' in guard_ui_js
+    renderer_start = guard_ui_js.index("export function renderGmailNoncanonicalRuntimeGuardInto")
+    renderer_block = guard_ui_js[renderer_start:]
+    assert "innerHTML" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_RUNTIME_GUARD_UI_MODULE_URL__);
+const compat = await import(__GMAIL_UI_MODULE_URL__);
 
 function makeClassList(owner, initial = []) {
   const classes = new Set(initial);
@@ -3857,6 +3867,7 @@ const nullResult = ui.renderGmailNoncanonicalRuntimeGuardInto(
 
 console.log(JSON.stringify({
   exportType: typeof ui.renderGmailNoncanonicalRuntimeGuardInto,
+  compatExportType: typeof compat.renderGmailNoncanonicalRuntimeGuardInto,
   active,
   inactive,
   nullResultType: typeof nullResult,
@@ -3864,10 +3875,14 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_RUNTIME_GUARD_UI_MODULE_URL__": "gmail_runtime_guard_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
     )
 
     assert results["exportType"] == "function"
+    assert results["compatExportType"] == "function"
     assert results["active"]["cardHidden"] is False
     assert results["active"]["titleText"] == "<img src=x onerror=alert(1)>"
     assert results["active"]["messageText"] == "<script>alert(2)</script>"
@@ -25355,6 +25370,14 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_ui_asset.status_code == 200
         assert gmail_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailNoncanonicalRuntimeGuardInto" in gmail_ui_asset.text
+        gmail_runtime_guard_ui_asset = client.get(
+            f"/static-build/{asset_version}/gmail_runtime_guard_ui.js"
+        )
+        assert gmail_runtime_guard_ui_asset.status_code == 200
+        assert gmail_runtime_guard_ui_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "renderGmailNoncanonicalRuntimeGuardInto" in gmail_runtime_guard_ui_asset.text
         assert "renderGmailMessageResultInto" in gmail_ui_asset.text
         assert "renderGmailReviewSummaryInto" in gmail_ui_asset.text
         assert "renderGmailReviewChromeInto" in gmail_ui_asset.text
