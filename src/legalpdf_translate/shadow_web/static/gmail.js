@@ -25,6 +25,8 @@ import { buildGmailBatchFinalizeSurfacePresentation } from "./gmail_finalize_pre
 import {
   buildGmailResumeCardPresentation,
   buildGmailSessionResultPresentation,
+  buildGmailTranslationStepCardPresentation,
+  buildGmailTranslationStepContext,
 } from "./gmail_session_presentation.js";
 import {
   renderGmailDrawerChromeInto,
@@ -1183,58 +1185,23 @@ function renderTranslationCompletionGmailStepCard(activeSession) {
     return;
   }
   const translationUi = translationUiSnapshot();
-  const show = Boolean(
-    activeSession?.kind === "translation"
-    && !activeSession?.completed
-    && (translationUi.currentJobStatus === "completed" || translationUi.hasCompletionSurface),
+  const stepContext = buildGmailTranslationStepContext({ activeSession, translationUi });
+  const presentation = stepContext.hookPayload
+    ? gmailState.hooks.deriveTranslationCompletionPresentation?.(stepContext.hookPayload)
+    : null;
+  renderGmailTranslationStepCardInto({
+    card,
+    title,
+    copy,
+    chip,
+    button,
+  },
+    buildGmailTranslationStepCardPresentation({
+      stepContext,
+      translationUi,
+      hookPresentation: presentation,
+    }),
   );
-  const blockedOnArabicReview = Boolean(translationUi.requiresArabicReview && !translationUi.arabicReviewResolved);
-  if (!show) {
-    renderGmailTranslationStepCardInto({ card, title, copy, chip, button }, {
-      visible: false,
-      blocked: blockedOnArabicReview,
-    });
-    return;
-  }
-  const filename = activeSession.current_attachment?.attachment?.filename || "Current Gmail attachment";
-  const batchLabel = activeSession.total_items
-    ? `${activeSession.current_item_number || "?"}/${activeSession.total_items}`
-    : "Batch step";
-  const presentation = gmailState.hooks.deriveTranslationCompletionPresentation?.({
-    currentRowId: translationUi.currentRowId,
-    arabicReview: {
-      required: translationUi.requiresArabicReview,
-      resolved: translationUi.arabicReviewResolved,
-      message: translationUi.arabicReviewMessage,
-      completion_key: translationUi.arabicReviewCompletionKey,
-      status: translationUi.arabicReviewResolved ? "resolved" : "required",
-    },
-    gmailBatchContext: translationUi.currentGmailBatchContext,
-    gmailCurrentStep: {
-      visible: show,
-      filename,
-      batchLabel,
-      hasMoreItems: Number(activeSession.current_item_number || 0) < Number(activeSession.total_items || 0),
-    },
-  });
-  renderGmailTranslationStepCardInto({ card, title, copy, chip, button }, {
-    visible: true,
-    blocked: blockedOnArabicReview,
-    title: presentation?.gmailCurrentAttachment?.title || (
-      blockedOnArabicReview
-        ? "Review the Arabic document in Word before you save this Gmail attachment."
-        : "This Gmail attachment is ready to save."
-    ),
-    copy: presentation?.gmailCurrentAttachment?.copy || (
-      blockedOnArabicReview
-        ? (translationUi.arabicReviewMessage || "Open the translated DOCX in Word, save it there, then return here to save this Gmail attachment.")
-        : Number(activeSession.current_item_number || 0) < Number(activeSession.total_items || 0)
-          ? "Save this translated attachment, then continue with the next Gmail step."
-          : "Save this translated attachment, then continue to create the Gmail reply."
-    ),
-    chipLabel: presentation?.gmailCurrentAttachment?.chipLabel || batchLabel,
-    buttonLabel: presentation?.gmailCurrentAttachment?.buttonLabel || "Save this Gmail attachment",
-  });
 }
 
 function collectSelections() {
