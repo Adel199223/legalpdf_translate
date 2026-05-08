@@ -17,6 +17,7 @@ export {
 } from "./gmail_context_ui.js";
 export {
   renderGmailDrawerChromeInto,
+  renderGmailReviewChromeInto,
   renderGmailDetailsOpenInto,
   renderGmailDrawerDatasetDefaultsInto,
   renderGmailInputValueInto,
@@ -124,22 +125,6 @@ export function renderGmailMessageResultInto(container, detailsHint, card = {}) 
   if (detailsHint) {
     detailsHint.textContent = card.detailsHint || "";
   }
-}
-
-export function renderGmailReviewChromeInto(nodes = {}, chrome = {}) {
-  const { status, openButton } = nodes || {};
-  if (!status || !openButton) {
-    return undefined;
-  }
-
-  openButton.disabled = !Boolean(chrome.available);
-  const buttonDataset = openButton.dataset || {};
-  if (!buttonDataset.defaultLabel) {
-    buttonDataset.defaultLabel = openButton.textContent;
-  }
-  openButton.textContent = buttonDataset.defaultLabel || "";
-  status.textContent = chrome.statusText || "";
-  return nodes;
 }
 
 export function renderGmailReviewSummaryInto(nodes = {}, card = {}) {

@@ -4399,7 +4399,7 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
-def test_gmail_ui_module_centralizes_review_chrome_renderer() -> None:
+def test_gmail_control_ui_module_centralizes_review_chrome_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -4409,9 +4409,11 @@ def test_gmail_ui_module_centralizes_review_chrome_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_control_ui_js = (static_dir / "gmail_control_ui.js").read_text(encoding="utf-8")
 
-    assert 'from "./gmail_ui.js"' in gmail_js
+    assert 'from "./gmail_control_ui.js"' in gmail_js
     assert "renderGmailReviewChromeInto" in gmail_js
+    assert "renderGmailReviewChromeInto," in gmail_js
     review_summary_start = gmail_js.index("function renderReviewSummary(loadResult)")
     review_summary_end = gmail_js.index("\nexport function renderAttachmentListInto", review_summary_start)
     review_summary_block = gmail_js[review_summary_start:review_summary_end]
@@ -4419,14 +4421,17 @@ def test_gmail_ui_module_centralizes_review_chrome_renderer() -> None:
     assert "reviewOpenButton.disabled" not in review_summary_block
     assert "reviewOpenButton.textContent" not in review_summary_block
     assert "reviewStatus.textContent" not in review_summary_block
-    assert "export function renderGmailReviewChromeInto" in gmail_ui_js
-    renderer_start = gmail_ui_js.index("export function renderGmailReviewChromeInto")
-    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "export function renderGmailReviewChromeInto" in gmail_control_ui_js
+    assert "export function renderGmailReviewChromeInto" not in gmail_ui_js
+    assert "renderGmailReviewChromeInto" in gmail_ui_js
+    renderer_start = gmail_control_ui_js.index("export function renderGmailReviewChromeInto")
+    renderer_end = gmail_control_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_control_ui_js[renderer_start:renderer_end]
     assert "innerHTML" not in renderer_block
 
     script = """
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_CONTROL_UI_MODULE_URL__);
+const compatibilityUi = await import(__GMAIL_UI_MODULE_URL__);
 
 function makeElement(initialText = "") {
   const element = {
@@ -4489,6 +4494,7 @@ const missingButtonResult = ui.renderGmailReviewChromeInto(
 
 console.log(JSON.stringify({
   exportType: typeof ui.renderGmailReviewChromeInto,
+  compatibilityExportType: typeof compatibilityUi.renderGmailReviewChromeInto,
   firstResultType: typeof firstResult,
   defaultLabel: openButton.dataset.defaultLabel,
   buttonText: openButton.textContent,
@@ -4502,11 +4508,15 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_CONTROL_UI_MODULE_URL__": "gmail_control_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
     )
 
     assert results == {
         "exportType": "function",
+        "compatibilityExportType": "function",
         "firstResultType": "object",
         "defaultLabel": "Review <img src=x onerror=alert(1)>",
         "buttonText": "Review <img src=x onerror=alert(1)>",
@@ -25320,6 +25330,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_control_ui_asset.status_code == 200
         assert gmail_control_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailDrawerChromeInto" in gmail_control_ui_asset.text
+        assert "renderGmailReviewChromeInto" in gmail_control_ui_asset.text
         assert "renderGmailDrawerDatasetDefaultsInto" in gmail_control_ui_asset.text
         assert "renderGmailDetailsOpenInto" in gmail_control_ui_asset.text
         assert "renderGmailInputValueInto" in gmail_control_ui_asset.text

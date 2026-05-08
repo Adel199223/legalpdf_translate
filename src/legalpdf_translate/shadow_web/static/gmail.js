@@ -19,6 +19,7 @@ import {
 } from "./gmail_action_ui.js";
 import {
   renderGmailDrawerChromeInto,
+  renderGmailReviewChromeInto,
   renderGmailDetailsOpenInto,
   renderGmailDrawerDatasetDefaultsInto,
   renderGmailInputValueInto,
@@ -37,7 +38,6 @@ import {
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailNumericMismatchWarningInto,
   renderGmailResumeActionsInto,
-  renderGmailReviewChromeInto,
   renderGmailReviewDetailInto,
   renderGmailReviewSummaryInto,
   renderGmailResumeCardInto,
