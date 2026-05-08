@@ -34,6 +34,7 @@ import {
   renderGmailMessageResultInto,
   renderGmailReviewSummaryInto,
 } from "./gmail_result_ui.js";
+import { renderGmailNoncanonicalRuntimeGuardInto } from "./gmail_runtime_guard_ui.js";
 import {
   renderGmailPdfPreviewFallbackInto,
   renderGmailPreviewPanelInto,
@@ -41,7 +42,6 @@ import {
 import { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
 import {
   renderGmailContextDefaultsInto,
-  renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailNumericMismatchWarningInto,
   renderGmailResumeCardInto,
   renderGmailSessionButtonsInto,
