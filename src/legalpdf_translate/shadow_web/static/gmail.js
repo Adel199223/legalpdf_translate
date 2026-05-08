@@ -31,16 +31,18 @@ import {
 import { renderGmailBatchFinalizeSurfaceInto } from "./gmail_finalize_ui.js";
 import { renderGmailReportActionInto } from "./gmail_report_ui.js";
 import {
+  renderGmailMessageResultInto,
+  renderGmailReviewSummaryInto,
+} from "./gmail_result_ui.js";
+import {
   renderGmailPdfPreviewFallbackInto,
   renderGmailPreviewPanelInto,
 } from "./gmail_preview_ui.js";
 import { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
 import {
   renderGmailContextDefaultsInto,
-  renderGmailMessageResultInto,
   renderGmailNoncanonicalRuntimeGuardInto,
   renderGmailNumericMismatchWarningInto,
-  renderGmailReviewSummaryInto,
   renderGmailResumeCardInto,
   renderGmailSessionButtonsInto,
   renderGmailSessionResultInto,
