@@ -3536,13 +3536,17 @@ def test_gmail_ui_module_centralizes_drawer_chrome_renderer() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
+    gmail_control_ui_js = (static_dir / "gmail_control_ui.js").read_text(encoding="utf-8")
 
-    assert 'from "./gmail_ui.js"' in gmail_js
+    assert 'from "./gmail_control_ui.js"' in gmail_js
     assert "renderGmailDrawerChromeInto" in gmail_js
-    assert "export function renderGmailDrawerChromeInto" in gmail_ui_js
-    renderer_start = gmail_ui_js.index("export function renderGmailDrawerChromeInto")
-    renderer_end = gmail_ui_js.index("\nexport function", renderer_start + 1)
-    renderer_block = gmail_ui_js[renderer_start:renderer_end]
+    assert "renderGmailDrawerChromeInto," in gmail_js
+    assert "export function renderGmailDrawerChromeInto" in gmail_control_ui_js
+    assert "export function renderGmailDrawerChromeInto" not in gmail_ui_js
+    assert "renderGmailDrawerChromeInto" in gmail_ui_js
+    renderer_start = gmail_control_ui_js.index("export function renderGmailDrawerChromeInto")
+    renderer_end = gmail_control_ui_js.index("\nexport function", renderer_start + 1)
+    renderer_block = gmail_control_ui_js[renderer_start:renderer_end]
     assert "innerHTML" not in renderer_block
 
     drawer_blocks = {
@@ -3570,7 +3574,8 @@ def test_gmail_ui_module_centralizes_drawer_chrome_renderer() -> None:
         assert "document.body.dataset.gmail" not in block
 
     script = r"""
-const ui = await import(__GMAIL_UI_MODULE_URL__);
+const ui = await import(__GMAIL_CONTROL_UI_MODULE_URL__);
+const compatibilityUi = await import(__GMAIL_UI_MODULE_URL__);
 
 function makeClassList(initial = []) {
   const values = new Set(initial);
@@ -3660,15 +3665,20 @@ console.log(JSON.stringify({
   closed: summarize(closedBackdrop),
   noBody: summarize(noBodyBackdrop),
   bodyDataset: body.dataset,
+  compatibilityExportType: typeof compatibilityUi.renderGmailDrawerChromeInto,
 }));
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_UI_MODULE_URL__": "gmail_ui.js"},
+        {
+            "__GMAIL_CONTROL_UI_MODULE_URL__": "gmail_control_ui.js",
+            "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+        },
         timeout_seconds=30,
     )
 
     assert results["exportType"] == "function"
+    assert results["compatibilityExportType"] == "function"
     assert results["openResultIsNodes"] is True
     assert results["closedResultIsNodes"] is True
     assert results["noBodyResultIsNodes"] is True
@@ -25309,6 +25319,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         gmail_control_ui_asset = client.get(f"/static-build/{asset_version}/gmail_control_ui.js")
         assert gmail_control_ui_asset.status_code == 200
         assert gmail_control_ui_asset.headers["content-type"].startswith("application/javascript")
+        assert "renderGmailDrawerChromeInto" in gmail_control_ui_asset.text
         assert "renderGmailDrawerDatasetDefaultsInto" in gmail_control_ui_asset.text
         assert "renderGmailDetailsOpenInto" in gmail_control_ui_asset.text
         assert "renderGmailInputValueInto" in gmail_control_ui_asset.text

@@ -16,6 +16,7 @@ export {
   renderGmailSimulatorDefaultsInto,
 } from "./gmail_context_ui.js";
 export {
+  renderGmailDrawerChromeInto,
   renderGmailDetailsOpenInto,
   renderGmailDrawerDatasetDefaultsInto,
   renderGmailInputValueInto,
@@ -31,22 +32,6 @@ export {
   renderGmailTranslationStepCardInto,
 } from "./gmail_session_ui.js";
 export { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
-
-export function renderGmailDrawerChromeInto(nodes = {}, drawer = {}) {
-  const { backdrop, body } = nodes || {};
-  if (!backdrop) {
-    return undefined;
-  }
-
-  const open = Boolean(drawer.open);
-  backdrop.classList.toggle("hidden", !open);
-  backdrop.setAttribute("aria-hidden", open ? "false" : "true");
-  const bodyDatasetKey = String(drawer.bodyDatasetKey || "").trim();
-  if (body && bodyDatasetKey) {
-    body.dataset[bodyDatasetKey] = open ? "open" : "closed";
-  }
-  return nodes;
-}
 
 export function renderGmailResumeActionsInto(nodes = {}, actions = {}) {
   if (!nodes) {
