@@ -5360,6 +5360,264 @@ console.log(JSON.stringify({
     assert results["staticDetail"]["buttons"][0]["disabled"] is False
 
 
+def test_gmail_finalize_presentation_module_builds_batch_finalize_cards() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_finalize_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_finalize_presentation.js"' in gmail_js
+    assert "buildGmailBatchFinalizeSurfacePresentation" in gmail_js
+    batch_start = gmail_js.index("function renderBatchFinalizeSurface")
+    batch_end = gmail_js.index("\nfunction renderTranslationCompletionGmailStepCard", batch_start)
+    batch_block = gmail_js[batch_start:batch_end]
+    assert "buildGmailBatchFinalizeSurfacePresentation" in batch_block
+    assert "The final Word PDF step is blocked. Review the details here before you try again." not in batch_block
+    assert "shortOutputFolderLabel" not in gmail_js
+
+    assert "export function buildGmailBatchFinalizeSurfacePresentation" in presentation_js
+    assert "document." not in presentation_js
+    assert "innerHTML" not in presentation_js
+    assert "renderGmailBatchFinalizeSurfaceInto" not in presentation_js
+
+    script = """
+const presentation = await import(__GMAIL_FINALIZE_PRESENTATION_MODULE_URL__);
+
+function session(overrides = {}) {
+  return {
+    kind: "translation",
+    completed: true,
+    status: "confirmed",
+    selected_target_lang: "PT-PT",
+    confirmed_items: [{ id: "1" }, { id: "2" }],
+    message: { subject: "Subject <img src=x onerror=alert(1)>" },
+    actual_honorarios_path: "C:/out/docx <script>bad()</script>.docx",
+    actual_honorarios_pdf_path: "C:/out/pdf <img src=x>.pdf",
+    session_report_path: "C:/out/report.json",
+    ...overrides,
+  };
+}
+
+const readyPreflight = {
+  finalization_ready: true,
+  launch_preflight: { message: "Launch ready <b>safe text</b>" },
+  export_canary: { message: "Export ready <script>bad()</script>" },
+  last_checked_at: "2026-05-08T16:00:00Z",
+};
+const base = {
+  session: session(),
+  recoveredOnly: false,
+  preflight: null,
+  payload: null,
+  finalizationState: "ready_to_finalize",
+  preflightInFlight: false,
+  outputFolder: "C:/Cases/Final <img src=x>",
+  provenance: { label: "main@65f4603 <script>bad()</script>" },
+};
+
+const unavailable = presentation.buildGmailBatchFinalizeSurfacePresentation({
+  ...base,
+  session: null,
+});
+const checking = presentation.buildGmailBatchFinalizeSurfacePresentation({
+  ...base,
+  preflightInFlight: true,
+});
+const blocked = presentation.buildGmailBatchFinalizeSurfacePresentation({
+  ...base,
+  finalizationState: "blocked_word_pdf_export",
+  preflight: {
+    finalization_ready: false,
+    message: "Blocked <img src=x>",
+    details: "Details <script>bad()</script>",
+    launch_preflight: { message: "Launch blocked" },
+    export_canary: { message: "Export blocked", failure_phase: "export" },
+    failure_phase: "launch",
+  },
+});
+const ready = presentation.buildGmailBatchFinalizeSurfacePresentation({
+  ...base,
+  preflight: readyPreflight,
+});
+const waiting = presentation.buildGmailBatchFinalizeSurfacePresentation(base);
+const draftReady = presentation.buildGmailBatchFinalizeSurfacePresentation({
+  ...base,
+  finalizationState: "draft_ready",
+  preflight: readyPreflight,
+});
+const draftFailed = presentation.buildGmailBatchFinalizeSurfacePresentation({
+  ...base,
+  finalizationState: "draft_failed",
+  preflight: readyPreflight,
+  session: session({ draft_failure_reason: "Draft failed <img src=x>" }),
+});
+const localArtifacts = presentation.buildGmailBatchFinalizeSurfacePresentation({
+  ...base,
+  finalizationState: "local_artifacts_ready",
+  preflight: readyPreflight,
+});
+const okPayload = presentation.buildGmailBatchFinalizeSurfacePresentation({
+  ...base,
+  preflight: readyPreflight,
+  payload: {
+    status: "ok",
+    normalized_payload: {
+      docx_path: "C:/final/docx <img src=x>.docx",
+      pdf_path: "C:/final/pdf <script>bad()</script>.pdf",
+      gmail_draft_result: { ok: true, message: "Draft ready <b>as text</b>" },
+    },
+  },
+});
+const localOnlyPayload = presentation.buildGmailBatchFinalizeSurfacePresentation({
+  ...base,
+  preflight: readyPreflight,
+  payload: {
+    status: "local_only",
+    normalized_payload: {
+      retry_available: true,
+      docx_path: "C:/local/docx.docx",
+      draft_prereqs: { message: "Draft prereq unavailable <img src=x>" },
+    },
+  },
+});
+const retryPayload = presentation.buildGmailBatchFinalizeSurfacePresentation({
+  ...base,
+  finalizationState: "draft_failed",
+  preflight: readyPreflight,
+  payload: {
+    status: "draft_failed",
+    normalized_payload: {
+      retry_available: true,
+      draft_prereqs: { message: "Retry prereq <img src=x>" },
+    },
+  },
+});
+const recovered = presentation.buildGmailBatchFinalizeSurfacePresentation({
+  ...base,
+  recoveredOnly: true,
+  finalizationState: "draft_ready",
+  session: session({ restored_from_report: true }),
+});
+
+console.log(JSON.stringify({
+  exportType: typeof presentation.buildGmailBatchFinalizeSurfacePresentation,
+  unavailable,
+  checking,
+  blocked,
+  ready,
+  waiting,
+  draftReady,
+  draftFailed,
+  localArtifacts,
+  okPayload,
+  localOnlyPayload,
+  retryPayload,
+  recovered,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_FINALIZE_PRESENTATION_MODULE_URL__": "gmail_finalize_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["unavailable"]["closeDrawer"] is True
+    assert results["unavailable"]["button"] == {
+        "label": "Create Gmail reply",
+        "disabled": True,
+        "hidden": False,
+    }
+    assert results["unavailable"]["result"] == {
+        "empty": True,
+        "text": "Gmail reply details will appear here after the final step.",
+    }
+
+    assert results["checking"]["statusText"] == (
+        "Checking the Word PDF export step before the Gmail reply is created."
+    )
+    assert results["checking"]["button"]["disabled"] is True
+    assert results["checking"]["result"]["text"] == (
+        "Checking whether the final Word PDF step is ready..."
+    )
+
+    assert results["blocked"]["statusText"] == (
+        "The final Word PDF step is blocked. Review the details here before you try again."
+    )
+    assert results["blocked"]["result"]["label"] == "Blocked"
+    assert results["blocked"]["result"]["tone"] == "warn"
+    assert results["blocked"]["result"]["message"] == "Details <script>bad()</script>"
+
+    assert results["ready"]["button"]["disabled"] is False
+    assert results["ready"]["result"]["title"] == "Word PDF export is ready."
+    assert results["ready"]["result"]["label"] == "Ready"
+    assert results["ready"]["summary"]["gridItems"][2]["value"] == "Final <img src=x>"
+
+    assert results["waiting"]["button"]["disabled"] is True
+    assert results["waiting"]["statusText"] == (
+        "The Gmail reply will unlock here after the Word PDF readiness check finishes."
+    )
+    assert results["waiting"]["result"]["text"] == (
+        "Create the Gmail reply after the Word PDF readiness check finishes."
+    )
+
+    assert results["draftReady"]["button"]["hidden"] is True
+    assert results["draftReady"]["button"]["disabled"] is True
+    assert results["draftReady"]["result"]["tone"] == "ok"
+    assert results["draftReady"]["result"]["gridItems"][5]["value"] == "No retry required."
+
+    assert results["draftFailed"]["button"]["label"] == "Try Gmail reply again"
+    assert results["draftFailed"]["button"]["disabled"] is False
+    assert results["draftFailed"]["button"]["hidden"] is False
+    assert results["draftFailed"]["result"]["tone"] == "bad"
+    assert results["draftFailed"]["result"]["gridItems"][2]["value"] == "Draft failed <img src=x>"
+
+    assert results["localArtifacts"]["button"]["label"] == "Try Gmail reply again"
+    assert results["localArtifacts"]["button"]["hidden"] is False
+    assert results["localArtifacts"]["result"]["tone"] == "warn"
+    assert results["localArtifacts"]["result"]["gridItems"][2]["value"] == (
+        "The previous Gmail finalization attempt stayed recoverable in this workspace."
+    )
+
+    assert results["okPayload"]["button"]["label"] == "Finalized"
+    assert results["okPayload"]["button"]["disabled"] is True
+    assert results["okPayload"]["button"]["hidden"] is True
+    assert results["okPayload"]["result"]["label"] == "Draft ready"
+    assert results["okPayload"]["result"]["gridItems"][0]["value"] == "C:/final/docx <img src=x>.docx"
+    assert results["okPayload"]["result"]["gridItems"][1]["value"] == (
+        "C:/final/pdf <script>bad()</script>.pdf"
+    )
+
+    assert results["localOnlyPayload"]["button"]["label"] == "Try Gmail reply again"
+    assert results["localOnlyPayload"]["button"]["disabled"] is False
+    assert results["localOnlyPayload"]["result"]["label"] == "Local only"
+    assert results["localOnlyPayload"]["result"]["tone"] == "warn"
+    assert results["localOnlyPayload"]["result"]["gridItems"][2]["value"] == (
+        "Draft prereq unavailable <img src=x>"
+    )
+
+    assert results["retryPayload"]["button"]["label"] == "Try Gmail reply again"
+    assert results["retryPayload"]["button"]["hidden"] is False
+    assert results["retryPayload"]["result"]["gridItems"][5]["value"] == (
+        "You can try again from this drawer."
+    )
+
+    assert results["recovered"]["button"]["hidden"] is True
+    assert results["recovered"]["summary"]["message"] == (
+        "Recovered Gmail reply details from the last saved attachment set are available here."
+    )
+    assert results["recovered"]["result"]["gridItems"][3]["value"] == (
+        "Recovered from an earlier Gmail reply step"
+    )
+
+
 def test_gmail_finalize_ui_module_owns_batch_finalize_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -25441,6 +25699,14 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_finalize_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailBatchFinalizeSurfaceInto" in gmail_finalize_ui_asset.text
         assert "renderGmailNumericMismatchWarningInto" in gmail_finalize_ui_asset.text
+        gmail_finalize_presentation_asset = client.get(
+            f"/static-build/{asset_version}/gmail_finalize_presentation.js"
+        )
+        assert gmail_finalize_presentation_asset.status_code == 200
+        assert gmail_finalize_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailBatchFinalizeSurfacePresentation" in gmail_finalize_presentation_asset.text
         gmail_preview_ui_asset = client.get(f"/static-build/{asset_version}/gmail_preview_ui.js")
         assert gmail_preview_ui_asset.status_code == 200
         assert gmail_preview_ui_asset.headers["content-type"].startswith("application/javascript")
