@@ -79,6 +79,7 @@ import {
   buildGmailContextDefaultsPresentation,
   buildGmailSimulatorDefaultsPresentation,
 } from "./gmail_context_presentation.js";
+import { buildGmailReviewChromePresentation } from "./gmail_control_presentation.js";
 import {
   renderGmailContextDefaultsInto,
   renderGmailNumericMismatchWarningInto,
@@ -1343,10 +1344,7 @@ function renderReviewSummary(loadResult) {
   renderGmailReviewChromeInto({
     status: reviewStatus,
     openButton: reviewOpenButton,
-  }, {
-    available: Boolean(loadResult?.ok && loadResult?.message),
-    statusText: "Step 1: Choose workflow. Step 2: Pick attachment(s). Step 3: Preview or set start page if needed. Step 4: Continue.",
-  });
+  }, buildGmailReviewChromePresentation({ loadResult }));
   const selectedCount = collectSelections().length;
   const outputFolder = fieldValue("gmail-output-dir") || gmailState.bootstrap?.defaults?.default_output_dir || "Use default folder";
   renderGmailReviewSummaryInto(
