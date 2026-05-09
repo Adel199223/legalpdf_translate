@@ -9222,6 +9222,190 @@ console.log(JSON.stringify({
     assert results["partialAction"]["action"] == "partial"
 
 
+def test_gmail_preview_presentation_module_derives_preview_panel_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_preview_presentation_path = static_dir / "gmail_preview_presentation.js"
+    assert gmail_preview_presentation_path.exists()
+    gmail_preview_presentation_js = gmail_preview_presentation_path.read_text(encoding="utf-8")
+    assert "export function buildGmailPreviewPanelPresentation" in gmail_preview_presentation_js
+    builder_start = gmail_preview_presentation_js.index("export function buildGmailPreviewPanelPresentation")
+    builder_block = gmail_preview_presentation_js[builder_start:]
+    assert "document." not in builder_block
+    assert "innerHTML" not in builder_block
+    assert "renderGmailPreviewPanelInto" not in builder_block
+
+    script = """
+const presentation = await import(__GMAIL_PREVIEW_PRESENTATION_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const empty = presentation.buildGmailPreviewPanelPresentation({});
+const missingHref = presentation.buildGmailPreviewPanelPresentation({
+  attachment: { filename: `Missing ${malicious}` },
+  href: "",
+  page: 3,
+  pageCount: 8,
+  canApply: true,
+  isPdf: true,
+  isImage: false,
+});
+const pdf = presentation.buildGmailPreviewPanelPresentation({
+  attachment: { filename: `PDF ${malicious}` },
+  href: "/api/gmail/attachment/att-pdf?page=2#page=2",
+  page: 2,
+  pageCount: 5,
+  canApply: true,
+  isPdf: true,
+  isImage: false,
+});
+const inspectPdf = presentation.buildGmailPreviewPanelPresentation({
+  attachment: { filename: `Inspect ${malicious}` },
+  href: "/api/gmail/attachment/att-inspect",
+  page: `9${malicious}`,
+  pageCount: `8${malicious}`,
+  canApply: false,
+  isPdf: true,
+  isImage: false,
+});
+const image = presentation.buildGmailPreviewPanelPresentation({
+  attachment: { filename: `Image ${malicious}` },
+  href: "/api/gmail/attachment/att-img?token=<unsafe>",
+  page: 1,
+  pageCount: 1,
+  canApply: false,
+  isPdf: false,
+  isImage: true,
+});
+const fallback = presentation.buildGmailPreviewPanelPresentation({
+  attachment: { filename: `Other ${malicious}` },
+  href: "/api/gmail/attachment/att-other",
+  page: 1,
+  pageCount: 0,
+  canApply: false,
+  isPdf: false,
+  isImage: false,
+});
+
+console.log(JSON.stringify({
+  exportType: typeof presentation.buildGmailPreviewPanelPresentation,
+  empty,
+  missingHref,
+  pdf,
+  inspectPdf,
+  image,
+  fallback,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_PREVIEW_PRESENTATION_MODULE_URL__": "gmail_preview_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["empty"] == {
+        "summary": {
+            "kind": "empty",
+            "className": "result-card empty-state",
+            "text": "Preview is optional. Open it when you want to check the document more closely.",
+        },
+        "openTab": {"visible": False, "href": "#"},
+        "controls": {
+            "applyDisabled": True,
+            "applyLabel": "",
+            "pageDisabled": True,
+            "prevDisabled": True,
+            "nextDisabled": True,
+            "pageMin": "1",
+            "pageMax": "1",
+            "pageValue": "1",
+        },
+        "body": {
+            "kind": "empty",
+            "className": "gmail-inline-preview empty-state",
+            "text": "Preview opens here when requested.",
+        },
+        "statusText": "Preview is optional. Use it if you want to check the document or choose a later start page.",
+        "shouldRenderPdfCanvas": False,
+    }
+    assert results["missingHref"] == results["empty"]
+    assert results["pdf"] == {
+        "summary": {
+            "kind": "card",
+            "title": "PDF <img src=x onerror=alert(1)><script>bad()</script>",
+            "message": "5 page(s) available",
+            "label": "Page 2",
+            "tone": "info",
+        },
+        "openTab": {"visible": True, "href": "/api/gmail/attachment/att-pdf?page=2#page=2"},
+        "controls": {
+            "applyDisabled": False,
+            "applyLabel": "",
+            "pageDisabled": False,
+            "prevDisabled": False,
+            "nextDisabled": False,
+            "pageMin": "1",
+            "pageMax": "5",
+            "pageValue": "2",
+        },
+        "body": {
+            "kind": "pdf",
+            "className": "gmail-inline-preview",
+            "shellClassName": "gmail-inline-preview-canvas-shell",
+            "canvasId": "gmail-preview-canvas",
+            "canvasClassName": "gmail-inline-preview-canvas",
+            "canvasAriaLabel": "Preview for PDF <img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "statusText": "Previewing page 2 of 5. Use current page if you want the translation to start later in the document.",
+        "shouldRenderPdfCanvas": True,
+    }
+    assert results["inspectPdf"]["summary"] == {
+        "kind": "card",
+        "title": "Inspect <img src=x onerror=alert(1)><script>bad()</script>",
+        "message": "Preview ready",
+        "label": "Inspect only",
+        "tone": "ok",
+    }
+    assert results["inspectPdf"]["controls"] == {
+        "applyDisabled": True,
+        "applyLabel": "Preview only",
+        "pageDisabled": False,
+        "prevDisabled": True,
+        "nextDisabled": False,
+        "pageMin": "1",
+        "pageMax": "1",
+        "pageValue": "1",
+    }
+    assert results["inspectPdf"]["statusText"] == "Previewing page 1. This workflow still continues from page 1."
+    assert results["inspectPdf"]["shouldRenderPdfCanvas"] is True
+    assert results["image"]["body"] == {
+        "kind": "image",
+        "className": "gmail-inline-preview",
+        "shellClassName": "gmail-inline-preview-image-shell",
+        "imageClassName": "gmail-inline-preview-image",
+        "src": "/api/gmail/attachment/att-img?token=<unsafe>",
+        "alt": "Image <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["image"]["controls"]["applyLabel"] == "Preview only"
+    assert results["image"]["statusText"] == "Image preview is shown inline. Start page stays fixed at 1 for this attachment."
+    assert results["image"]["shouldRenderPdfCanvas"] is False
+    assert results["fallback"]["body"] == {
+        "kind": "fallback",
+        "className": "gmail-inline-preview empty-state",
+        "leadingText": "Open ",
+        "strongText": "Other <img src=x onerror=alert(1)><script>bad()</script>",
+        "trailingText": " in a new tab for a full attachment view.",
+    }
+    assert results["fallback"]["summary"]["message"] == "Preview ready"
+    assert results["fallback"]["statusText"] == "This attachment type is available through the new-tab fallback."
+    assert results["fallback"]["shouldRenderPdfCanvas"] is False
+
+
 def test_gmail_preview_ui_module_owns_preview_panel_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -9233,26 +9417,37 @@ def test_gmail_preview_ui_module_owns_preview_panel_renderer() -> None:
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
     gmail_preview_ui_path = static_dir / "gmail_preview_ui.js"
+    gmail_preview_presentation_path = static_dir / "gmail_preview_presentation.js"
     assert gmail_preview_ui_path.exists()
+    assert gmail_preview_presentation_path.exists()
     gmail_preview_ui_js = gmail_preview_ui_path.read_text(encoding="utf-8")
+    gmail_preview_presentation_js = gmail_preview_presentation_path.read_text(encoding="utf-8")
 
     assert 'from "./gmail_preview_ui.js"' in gmail_js
+    assert 'from "./gmail_preview_presentation.js"' in gmail_js
     assert "renderGmailPreviewPanelInto" in gmail_js
+    assert "buildGmailPreviewPanelPresentation" in gmail_js
     preview_panel_start = gmail_js.index("function renderPreviewPanel()")
     preview_panel_end = gmail_js.index("\nfunction renderGmailRestoreBar", preview_panel_start)
     preview_panel_block = gmail_js[preview_panel_start:preview_panel_end]
     assert "renderGmailPreviewPanelInto" in preview_panel_block
+    assert "buildGmailPreviewPanelPresentation({" in preview_panel_block
     assert "summary.innerHTML" not in preview_panel_block
     assert "container.innerHTML" not in preview_panel_block
 
     assert 'from "./gmail_preview_ui.js"' in gmail_ui_js
     assert "renderGmailPreviewPanelInto" in gmail_ui_js
     assert "export function renderGmailPreviewPanelInto" in gmail_preview_ui_js
+    assert "export function buildGmailPreviewPanelPresentation" in gmail_preview_presentation_js
     renderer_start = gmail_preview_ui_js.index("export function renderGmailPreviewPanelInto")
     renderer_block = gmail_preview_ui_js[renderer_start:gmail_preview_ui_js.index("\nexport function renderGmailPdfPreviewFallbackInto", renderer_start)]
     assert "innerHTML" not in renderer_block
+    assert "Previewing page" not in renderer_block
+    assert "Preview is optional" not in renderer_block
+    assert "Image preview is shown inline" not in renderer_block
 
     script = """
+const presentation = await import(__GMAIL_PREVIEW_PRESENTATION_MODULE_URL__);
 const ui = await import(__GMAIL_PREVIEW_UI_MODULE_URL__);
 
 function normalizeClassList(value) {
@@ -9496,10 +9691,10 @@ function summarize(nodes, result) {
 const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
 
 const emptyNodes = makeNodes("Use current page");
-const emptyResult = ui.renderGmailPreviewPanelInto(emptyNodes, {});
+const emptyResult = ui.renderGmailPreviewPanelInto(emptyNodes, presentation.buildGmailPreviewPanelPresentation({}));
 
 const pdfNodes = makeNodes("Use current page");
-const pdfResult = ui.renderGmailPreviewPanelInto(pdfNodes, {
+const pdfResult = ui.renderGmailPreviewPanelInto(pdfNodes, presentation.buildGmailPreviewPanelPresentation({
   attachment: { filename: `PDF ${malicious}` },
   href: "/api/gmail/attachment/att-pdf?page=2",
   page: 2,
@@ -9507,10 +9702,10 @@ const pdfResult = ui.renderGmailPreviewPanelInto(pdfNodes, {
   canApply: true,
   isPdf: true,
   isImage: false,
-});
+}));
 
 const imageNodes = makeNodes("Use current page");
-const imageResult = ui.renderGmailPreviewPanelInto(imageNodes, {
+const imageResult = ui.renderGmailPreviewPanelInto(imageNodes, presentation.buildGmailPreviewPanelPresentation({
   attachment: { filename: `Image ${malicious}` },
   href: "/api/gmail/attachment/att-img?token=<unsafe>",
   page: 1,
@@ -9518,10 +9713,10 @@ const imageResult = ui.renderGmailPreviewPanelInto(imageNodes, {
   canApply: false,
   isPdf: false,
   isImage: true,
-});
+}));
 
 const fallbackNodes = makeNodes("Use current page");
-const fallbackResult = ui.renderGmailPreviewPanelInto(fallbackNodes, {
+const fallbackResult = ui.renderGmailPreviewPanelInto(fallbackNodes, presentation.buildGmailPreviewPanelPresentation({
   attachment: { filename: `Other ${malicious}` },
   href: "/api/gmail/attachment/att-other",
   page: 1,
@@ -9529,14 +9724,14 @@ const fallbackResult = ui.renderGmailPreviewPanelInto(fallbackNodes, {
   canApply: false,
   isPdf: false,
   isImage: false,
-});
+}));
 
 const missingResult = ui.renderGmailPreviewPanelInto({ ...makeNodes(), container: null }, {
-  attachment: { filename: "ignored" },
-  href: "/ignored",
+  summary: { kind: "empty", className: "result-card empty-state", text: "ignored" },
 });
 
 console.log(JSON.stringify({
+  presentationExportType: typeof presentation.buildGmailPreviewPanelPresentation,
   exportType: typeof ui.renderGmailPreviewPanelInto,
   missingResultType: typeof missingResult,
   empty: summarize(emptyNodes, emptyResult),
@@ -9547,10 +9742,14 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_PREVIEW_UI_MODULE_URL__": "gmail_preview_ui.js"},
+        {
+            "__GMAIL_PREVIEW_PRESENTATION_MODULE_URL__": "gmail_preview_presentation.js",
+            "__GMAIL_PREVIEW_UI_MODULE_URL__": "gmail_preview_ui.js",
+        },
         timeout_seconds=30,
     )
 
+    assert results["presentationExportType"] == "function"
     assert results["exportType"] == "function"
     assert results["missingResultType"] == "undefined"
 
@@ -26913,6 +27112,14 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_preview_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailPreviewPanelInto" in gmail_preview_ui_asset.text
         assert "renderGmailPdfPreviewFallbackInto" in gmail_preview_ui_asset.text
+        gmail_preview_presentation_asset = client.get(
+            f"/static-build/{asset_version}/gmail_preview_presentation.js"
+        )
+        assert gmail_preview_presentation_asset.status_code == 200
+        assert gmail_preview_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailPreviewPanelPresentation" in gmail_preview_presentation_asset.text
         gmail_attachment_ui_asset = client.get(f"/static-build/{asset_version}/gmail_attachment_ui.js")
         assert gmail_attachment_ui_asset.status_code == 200
         assert gmail_attachment_ui_asset.headers["content-type"].startswith("application/javascript")

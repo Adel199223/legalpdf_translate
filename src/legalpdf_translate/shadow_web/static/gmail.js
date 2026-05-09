@@ -52,6 +52,7 @@ import {
   renderGmailPdfPreviewFallbackInto,
   renderGmailPreviewPanelInto,
 } from "./gmail_preview_ui.js";
+import { buildGmailPreviewPanelPresentation } from "./gmail_preview_presentation.js";
 import { buildGmailRestoreBarPresentation } from "./gmail_restore_presentation.js";
 import { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
 import {
@@ -1420,6 +1421,15 @@ function renderPreviewPanel() {
     return;
   }
 
+  const presentation = buildGmailPreviewPanelPresentation({
+    attachment: previewAttachment,
+    href: previewHref,
+    page: previewPage(),
+    pageCount: previewPageCount(),
+    canApply: previewAttachment ? canEditStartPage(previewAttachment) : false,
+    isPdf: previewAttachment ? isPdfAttachment(previewAttachment) : false,
+    isImage: previewAttachment ? isImageAttachment(previewAttachment) : false,
+  });
   const renderResult = renderGmailPreviewPanelInto({
     container,
     summary,
@@ -1429,15 +1439,7 @@ function renderPreviewPanel() {
     prevButton,
     nextButton,
     pageInput,
-  }, {
-    attachment: previewAttachment,
-    href: previewHref,
-    page: previewPage(),
-    pageCount: previewPageCount(),
-    canApply: previewAttachment ? canEditStartPage(previewAttachment) : false,
-    isPdf: previewAttachment ? isPdfAttachment(previewAttachment) : false,
-    isImage: previewAttachment ? isImageAttachment(previewAttachment) : false,
-  });
+  }, presentation);
   if (renderResult?.shouldRenderPdfCanvas) {
     void renderActivePdfPreviewCanvas(previewAttachment);
   }
