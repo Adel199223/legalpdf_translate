@@ -53,7 +53,8 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - Canonical status: stable merged baseline and the default authority for fresh sessions
 
 ## Current Modernization Baseline
-- Canonical `main` is `c3ec60e57852af4ff69ba96cd0410c489a25ba69` after PR #226, `[codex] Extract Gmail prepare action presentation`.
+- Product-modernization baseline at closeout is `c3ec60e57852af4ff69ba96cd0410c489a25ba69` after PR #226, `[codex] Extract Gmail prepare action presentation`.
+- The repository may be on a later docs-only closeout merge; use `git rev-parse HEAD` in `C:\Users\FA507\.codex\legalpdf_translate` for the exact current `main` commit.
 - Latest `main` GitHub Actions CI was green at closeout, and the expected local state was clean/aligned with only the canonical worktree remaining.
 - Recent browser modernization split the static frontend into focused modules: `*_ui.js` modules own safe DOM writes, `*_presentation.js` modules own pure labels/status/card shaping, and `app.js`, `gmail.js`, `translation.js`, and `power-tools.js` remain coordinators for state, API calls, routing, and side effects.
 - The next normal modernization slice should be a small TDD PR from clean `main`, preferably another narrow Gmail/browser presentation or coordinator-pressure cleanup. Use `mode=shadow` for browser smoke unless the user explicitly asks for live Gmail, OAuth, or native-host testing.
