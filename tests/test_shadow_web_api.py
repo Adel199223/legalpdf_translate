@@ -9028,6 +9028,232 @@ console.log(JSON.stringify({
     }
 
 
+def test_gmail_stage_presentation_module_derives_stage_and_home_cta_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    review_state_js = (static_dir / "gmail_review_state.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_stage_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert "export function buildGmailStagePresentation" in presentation_js
+    assert "export function buildGmailHomeCtaPresentation" in presentation_js
+    assert "document." not in presentation_js
+    assert "innerHTML" not in presentation_js
+    assert "renderGmail" not in presentation_js
+
+    assert "export function deriveGmailStage(" in review_state_js
+    assert "export function deriveGmailStagePresentation" not in review_state_js
+    assert "export function deriveGmailHomeCta" not in review_state_js
+
+    assert 'from "./gmail_stage_presentation.js"' in gmail_js
+    stage_import = re.search(
+        r"import \{(?P<body>.*?)\} from \"\./gmail_stage_presentation\.js\";",
+        gmail_js,
+        re.S,
+    ).group("body")
+    assert "buildGmailStagePresentation" in stage_import
+    assert "buildGmailHomeCtaPresentation" in stage_import
+    review_import = re.search(
+        r"import \{(?P<body>.*?)\} from \"\./gmail_review_state\.js\";",
+        gmail_js,
+        re.S,
+    ).group("body")
+    assert "deriveGmailStage" in review_import
+    assert "deriveGmailStagePresentation" not in review_import
+    assert "deriveGmailHomeCta" not in review_import
+
+    current_cta_start = gmail_js.index("function currentHomeCta()")
+    current_cta_end = gmail_js.index("\nfunction currentRedoAction", current_cta_start)
+    current_cta_block = gmail_js[current_cta_start:current_cta_end]
+    assert "buildGmailHomeCtaPresentation({" in current_cta_block
+
+    home_status_start = gmail_js.index("function gmailHomeStatusMessage()")
+    home_status_end = gmail_js.index("\nfunction renderMessageResult", home_status_start)
+    home_status_block = gmail_js[home_status_start:home_status_end]
+    assert "buildGmailStagePresentation({" in home_status_block
+
+    resume_start = gmail_js.index("function renderResumeCard(")
+    resume_end = gmail_js.index("\nfunction renderSessionResult", resume_start)
+    resume_block = gmail_js[resume_start:resume_end]
+    assert "buildGmailStagePresentation({" in resume_block
+
+    session_start = gmail_js.index("function renderSessionResult")
+    session_end = gmail_js.index("\nfunction renderWorkspaceStrip", session_start)
+    session_block = gmail_js[session_start:session_end]
+    assert "buildGmailStagePresentation({" in session_block
+
+    strip_start = gmail_js.index("function renderWorkspaceStrip()")
+    strip_end = gmail_js.index("\nfunction updatePrepareActionState", strip_start)
+    strip_block = gmail_js[strip_start:strip_end]
+    assert "buildGmailStagePresentation({" in strip_block
+
+    script = """
+const presentation = await import(__GMAIL_STAGE_PRESENTATION_MODULE_URL__);
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const translationSession = {
+  kind: "translation",
+  current_attachment: {
+    attachment: {
+      filename: `sentença ${malicious}.pdf`,
+    },
+  },
+};
+const interpretationSession = {
+  kind: "interpretation",
+  attachment: {
+    attachment: {
+      filename: `notice ${malicious}.pdf`,
+    },
+  },
+};
+
+const idle = presentation.buildGmailStagePresentation({});
+const review = presentation.buildGmailStagePresentation({ stage: "review" });
+const prepared = presentation.buildGmailStagePresentation({
+  stage: "translation_prepared",
+  activeSession: translationSession,
+});
+const recovery = presentation.buildGmailStagePresentation({
+  stage: "translation_recovery",
+  activeSession: translationSession,
+});
+const finalizeReady = presentation.buildGmailStagePresentation({
+  stage: "translation_finalize",
+  activeSession: { ...translationSession, finalization_state: "draft_ready" },
+});
+const finalizeFailed = presentation.buildGmailStagePresentation({
+  stage: "translation_finalize",
+  activeSession: { ...translationSession, finalization_state: "draft_failed" },
+});
+const interpretationReview = presentation.buildGmailStagePresentation({
+  stage: "interpretation_review",
+  activeSession: interpretationSession,
+});
+const invalid = presentation.buildGmailStagePresentation({
+  stage: malicious,
+  activeSession: translationSession,
+});
+
+const ctaHidden = presentation.buildGmailHomeCtaPresentation({
+  stage: "review",
+  activeSession: null,
+});
+const ctaRecovery = presentation.buildGmailHomeCtaPresentation({
+  stage: "translation_recovery",
+  activeSession: translationSession,
+});
+const ctaPrepared = presentation.buildGmailHomeCtaPresentation({
+  stage: "translation_prepared",
+  activeSession: translationSession,
+});
+const ctaFinalizeReady = presentation.buildGmailHomeCtaPresentation({
+  stage: "translation_finalize",
+  activeSession: { ...translationSession, finalization_state: "draft_ready" },
+});
+const ctaFinalizeFailed = presentation.buildGmailHomeCtaPresentation({
+  stage: "translation_finalize",
+  activeSession: { ...translationSession, finalization_state: "draft_failed" },
+});
+const ctaInterpretation = presentation.buildGmailHomeCtaPresentation({
+  stage: "interpretation_finalize",
+  activeSession: interpretationSession,
+});
+const ctaSuppliedPresentation = presentation.buildGmailHomeCtaPresentation({
+  stage: "translation_running",
+  activeSession: translationSession,
+  stagePresentation: {
+    title: `Supplied ${malicious}`,
+    description: `Supplied description ${malicious}`,
+  },
+});
+const ctaNull = presentation.buildGmailHomeCtaPresentation();
+
+console.log(JSON.stringify({
+  stageExportType: typeof presentation.buildGmailStagePresentation,
+  ctaExportType: typeof presentation.buildGmailHomeCtaPresentation,
+  idle,
+  review,
+  prepared,
+  recovery,
+  finalizeReady,
+  finalizeFailed,
+  interpretationReview,
+  invalid,
+  ctaHidden,
+  ctaRecovery,
+  ctaPrepared,
+  ctaFinalizeReady,
+  ctaFinalizeFailed,
+  ctaInterpretation,
+  ctaSuppliedPresentation,
+  ctaNull,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {
+            "__GMAIL_STAGE_PRESENTATION_MODULE_URL__": "gmail_stage_presentation.js",
+        },
+    )
+
+    assert results["stageExportType"] == "function"
+    assert results["ctaExportType"] == "function"
+    assert results["idle"] == {
+        "title": "Review Gmail attachments.",
+        "description": "Open this from Gmail or load a message manually from details.",
+        "stripTitle": "Gmail attachment ready",
+        "stripDescription": "Review the Gmail message and attachments before you continue.",
+    }
+    assert results["review"]["description"] == (
+        "Choose your workflow, pick the attachment you want, and continue when you are ready."
+    )
+    assert results["prepared"]["title"] == "Translation is ready to start."
+    assert "sentença <img src=x onerror=alert(1)><script>bad()</script>.pdf" in results["prepared"]["description"]
+    assert results["recovery"]["stripTitle"] == "Continue Gmail step"
+    assert "needs recovery" in results["recovery"]["description"]
+    assert results["finalizeReady"]["description"] == (
+        "The Gmail reply is ready to review. Open the final step to check the final files or report."
+    )
+    assert results["finalizeFailed"]["stripDescription"] == (
+        "Continue the Gmail step to finish the Gmail reply or review what still needs attention."
+    )
+    assert results["interpretationReview"]["title"] == "Interpretation details are ready."
+    assert "notice <img src=x onerror=alert(1)><script>bad()</script>.pdf" not in results["interpretationReview"]["description"]
+    assert results["invalid"]["description"] == "Open this from Gmail or load a message manually from details."
+
+    assert results["ctaHidden"] == {
+        "visible": False,
+        "label": "Resume Current Step",
+        "action": "review",
+        "title": "",
+        "description": "",
+        "tone": "info",
+    }
+    assert results["ctaRecovery"]["visible"] is True
+    assert results["ctaRecovery"]["label"] == "Resume Recovery"
+    assert results["ctaRecovery"]["action"] == "resume-translation-recovery"
+    assert results["ctaRecovery"]["tone"] == "warn"
+    assert "sentença <img src=x onerror=alert(1)><script>bad()</script>.pdf" in results["ctaRecovery"]["description"]
+    assert results["ctaPrepared"]["action"] == "resume-translation-prepared"
+    assert results["ctaPrepared"]["tone"] == "ok"
+    assert results["ctaFinalizeReady"]["label"] == "Continue Current Step"
+    assert results["ctaFinalizeReady"]["tone"] == "ok"
+    assert results["ctaFinalizeFailed"]["label"] == "Resume Current Step"
+    assert results["ctaFinalizeFailed"]["tone"] == "info"
+    assert results["ctaInterpretation"]["action"] == "resume-interpretation-finalize"
+    assert results["ctaSuppliedPresentation"]["title"] == "Supplied <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ctaSuppliedPresentation"]["description"] == "Supplied description <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["ctaNull"]["visible"] is False
+
+
 def test_gmail_session_ui_module_owns_session_buttons_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -9474,7 +9700,7 @@ def test_gmail_workspace_ui_module_owns_workspace_strip_renderer() -> None:
     assert "currentGmailStage()" in strip_block
     assert "currentHomeCta()" in strip_block
     assert "currentRecoveredFinalizationAction()" in strip_block
-    assert "deriveGmailStagePresentation(" in strip_block
+    assert "buildGmailStagePresentation(" in strip_block
 
     renderer_start = gmail_workspace_ui_js.index("export function renderGmailWorkspaceStripInto")
     renderer_block = gmail_workspace_ui_js[renderer_start:]
@@ -27576,6 +27802,15 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailDemoReviewActionPresentation" in gmail_action_presentation_asset.text
         assert "buildGmailPrepareActionPresentation" in gmail_action_presentation_asset.text
         assert "buildGmailReturnToSourceActionPresentation" in gmail_action_presentation_asset.text
+        gmail_stage_presentation_asset = client.get(
+            f"/static-build/{asset_version}/gmail_stage_presentation.js"
+        )
+        assert gmail_stage_presentation_asset.status_code == 200
+        assert gmail_stage_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailStagePresentation" in gmail_stage_presentation_asset.text
+        assert "buildGmailHomeCtaPresentation" in gmail_stage_presentation_asset.text
         gmail_report_ui_asset = client.get(f"/static-build/{asset_version}/gmail_report_ui.js")
         assert gmail_report_ui_asset.status_code == 200
         assert gmail_report_ui_asset.headers["content-type"].startswith("application/javascript")

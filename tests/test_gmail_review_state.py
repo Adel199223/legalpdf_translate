@@ -6,6 +6,7 @@ from .browser_esm_probe import run_browser_esm_json_probe
 def _run_review_state_probe() -> dict[str, object]:
     script = """
 const reviewModule = await import(__GMAIL_REVIEW_MODULE_URL__);
+const stageModule = await import(__GMAIL_STAGE_PRESENTATION_MODULE_URL__);
 
 const memory = new Map();
 const storage = {{
@@ -131,56 +132,56 @@ results.workflowInterpretation = reviewModule.deriveGmailWorkflowPresentation({{
 results.kindPdf = reviewModule.deriveGmailAttachmentKindLabel("application/pdf");
 results.kindImage = reviewModule.deriveGmailAttachmentKindLabel("image/png");
 results.kindUnknown = reviewModule.deriveGmailAttachmentKindLabel("application/octet-stream");
-results.stagePresentationIdle = reviewModule.deriveGmailStagePresentation({{
+results.stagePresentationIdle = stageModule.buildGmailStagePresentation({{
   stage: "idle",
   activeSession: null,
 }});
-results.stagePresentationReview = reviewModule.deriveGmailStagePresentation({{
+results.stagePresentationReview = stageModule.buildGmailStagePresentation({{
   stage: "review",
   activeSession: null,
 }});
-results.stagePresentationPrepared = reviewModule.deriveGmailStagePresentation({{
+results.stagePresentationPrepared = stageModule.buildGmailStagePresentation({{
   stage: "translation_prepared",
   activeSession: {{
     kind: "translation",
     current_attachment: {{ attachment: {{ filename: "sentença 305.pdf" }} }},
   }},
 }});
-results.stagePresentationRunning = reviewModule.deriveGmailStagePresentation({{
+results.stagePresentationRunning = stageModule.buildGmailStagePresentation({{
   stage: "translation_running",
   activeSession: {{
     kind: "translation",
     current_attachment: {{ attachment: {{ filename: "sentença 305.pdf" }} }},
   }},
 }});
-results.stagePresentationSave = reviewModule.deriveGmailStagePresentation({{
+results.stagePresentationSave = stageModule.buildGmailStagePresentation({{
   stage: "translation_save",
   activeSession: {{ kind: "translation" }},
 }});
-results.stagePresentationFinalize = reviewModule.deriveGmailStagePresentation({{
+results.stagePresentationFinalize = stageModule.buildGmailStagePresentation({{
   stage: "translation_finalize",
   activeSession: {{
     kind: "translation",
     finalization_state: "draft_ready",
   }},
 }});
-results.stagePresentationInterpretationReview = reviewModule.deriveGmailStagePresentation({{
+results.stagePresentationInterpretationReview = stageModule.buildGmailStagePresentation({{
   stage: "interpretation_review",
   activeSession: {{ kind: "interpretation" }},
 }});
-results.stagePresentationInterpretationFinalize = reviewModule.deriveGmailStagePresentation({{
+results.stagePresentationInterpretationFinalize = stageModule.buildGmailStagePresentation({{
   stage: "interpretation_finalize",
   activeSession: {{ kind: "interpretation" }},
 }});
-results.ctaHidden = reviewModule.deriveGmailHomeCta({{
+results.ctaHidden = stageModule.buildGmailHomeCtaPresentation({{
   stage: "review",
   activeSession: null,
 }});
-results.ctaTranslationSave = reviewModule.deriveGmailHomeCta({{
+results.ctaTranslationSave = stageModule.buildGmailHomeCtaPresentation({{
   stage: "translation_save",
   activeSession: {{ kind: "translation", current_item_number: 1, total_items: 2 }},
 }});
-results.ctaTranslationRecovery = reviewModule.deriveGmailHomeCta({{
+results.ctaTranslationRecovery = stageModule.buildGmailHomeCtaPresentation({{
   stage: "translation_recovery",
   activeSession: {{
     kind: "translation",
@@ -189,7 +190,7 @@ results.ctaTranslationRecovery = reviewModule.deriveGmailHomeCta({{
     current_attachment: {{ attachment: {{ filename: "sentença 305.pdf" }} }},
   }},
 }});
-results.ctaTranslationFinalize = reviewModule.deriveGmailHomeCta({{
+results.ctaTranslationFinalize = stageModule.buildGmailHomeCtaPresentation({{
   stage: "translation_finalize",
   activeSession: {{ kind: "translation", current_item_number: 2, total_items: 2 }},
 }});
@@ -293,7 +294,7 @@ results.redoMatchingRunning = reviewModule.deriveGmailRedoAction({{
     }}],
   }},
 }});
-results.ctaInterpretationFinalize = reviewModule.deriveGmailHomeCta({{
+results.ctaInterpretationFinalize = stageModule.buildGmailHomeCtaPresentation({{
   stage: "interpretation_finalize",
   activeSession: {{ kind: "interpretation" }},
 }});
@@ -391,7 +392,10 @@ console.log(JSON.stringify(results));
 """.replace("{{", "{").replace("}}", "}")
     return run_browser_esm_json_probe(
         script,
-        {"__GMAIL_REVIEW_MODULE_URL__": "gmail_review_state.js"},
+        {
+            "__GMAIL_REVIEW_MODULE_URL__": "gmail_review_state.js",
+            "__GMAIL_STAGE_PRESENTATION_MODULE_URL__": "gmail_stage_presentation.js",
+        },
         timeout_seconds=20,
     )
 
