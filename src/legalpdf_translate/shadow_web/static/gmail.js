@@ -94,9 +94,13 @@ import { renderGmailResumeActionsInto } from "./gmail_session_ui.js";
 import { renderGmailWorkspaceStripInto } from "./gmail_workspace_ui.js";
 import {
   applyPreviewStateStartPage,
+  buildGmailSelectionStateMap,
   clearConsumedReviewState,
+  clampGmailAttachmentStartPage,
   deriveGmailOverlayDismissalAction,
+  deriveGmailAttachmentStartEditable,
   deriveGmailAttachmentKindLabel,
+  deriveGmailFocusedAttachmentId,
   deriveGmailRedoAction,
   deriveRecoveredFinalizationAction,
   createClosedPreviewState,
@@ -104,6 +108,7 @@ import {
   deriveGmailWorkflowPresentation,
   isPreviewStateOpen,
   minimizePreviewState,
+  normalizeGmailAttachmentSelectionState,
   openPreviewState,
   readConsumedReviewState,
   restorePreviewState,
@@ -832,16 +837,6 @@ function applyBootstrapDefaults(data) {
   }, presentation);
 }
 
-function activeSessionAttachmentId(activeSession) {
-  if (activeSession?.kind === "translation") {
-    return activeSession.current_attachment?.attachment?.attachment_id || "";
-  }
-  if (activeSession?.kind === "interpretation") {
-    return activeSession.attachment?.attachment?.attachment_id || "";
-  }
-  return "";
-}
-
 function resetPreviewState() {
   gmailState.previewState = createClosedPreviewState();
   gmailState.previewDrawerMinimized = false;
@@ -850,29 +845,22 @@ function resetPreviewState() {
 }
 
 function canEditStartPage(attachment) {
-  return currentWorkflowKind() === "translation" && isPdfAttachment(attachment);
+  return deriveGmailAttachmentStartEditable({
+    workflowKind: currentWorkflowKind(),
+    attachment,
+  });
 }
 
 function clampStartPage(attachment, rawValue, pageCountOverride = null) {
-  if (!attachment || !canEditStartPage(attachment)) {
-    return 1;
-  }
-  const parsed = Number.parseInt(String(rawValue ?? "1").trim(), 10);
-  let value = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
-  const pageCount = Number(pageCountOverride ?? (gmailState.selectionState.get(attachment.attachment_id)?.pageCount || 0));
-  if (pageCount > 0) {
-    value = Math.min(value, pageCount);
-  }
-  return Math.max(1, value);
+  return clampGmailAttachmentStartPage({
+    editable: Boolean(attachment && canEditStartPage(attachment)),
+    rawValue,
+    pageCount: pageCountOverride ?? (gmailState.selectionState.get(attachment?.attachment_id)?.pageCount || 0),
+  });
 }
 
 function attachmentState(attachmentId) {
-  const existing = gmailState.selectionState.get(attachmentId) || {};
-  return {
-    selected: Boolean(existing.selected),
-    startPage: Number(existing.startPage || 1),
-    pageCount: Number(existing.pageCount || 0),
-  };
+  return normalizeGmailAttachmentSelectionState(gmailState.selectionState.get(attachmentId));
 }
 
 function browserPdfAttachmentState(attachmentId) {
@@ -894,45 +882,17 @@ function setBrowserPdfAttachmentState(attachmentId, nextValue) {
 }
 
 function setAttachmentState(attachmentId, nextValue) {
-  gmailState.selectionState.set(attachmentId, {
-    selected: Boolean(nextValue.selected),
-    startPage: Math.max(1, Number(nextValue.startPage || 1)),
-    pageCount: Math.max(0, Number(nextValue.pageCount || 0)),
-  });
+  gmailState.selectionState.set(attachmentId, normalizeGmailAttachmentSelectionState(nextValue));
 }
 
 function ensureSelectionState(loadResult, activeSession) {
   const message = loadResult?.message || null;
-  const next = new Map();
-  for (const attachment of message?.attachments || []) {
-    const existing = gmailState.selectionState.get(attachment.attachment_id) || {};
-    next.set(attachment.attachment_id, {
-      selected: Boolean(existing.selected),
-      startPage: clampStartPage(attachment, existing.startPage || 1, existing.pageCount || 0),
-      pageCount: Math.max(0, Number(existing.pageCount || 0)),
-    });
-  }
-  if (activeSession?.kind === "translation") {
-    for (const item of activeSession.attachments || []) {
-      const attachment = item.attachment || {};
-      next.set(attachment.attachment_id, {
-        selected: true,
-        startPage: clampStartPage(attachment, item.start_page || 1, item.page_count || 0),
-        pageCount: Math.max(0, Number(item.page_count || 0)),
-      });
-    }
-  }
-  if (activeSession?.kind === "interpretation") {
-    const attachmentId = activeSession.attachment?.attachment?.attachment_id || "";
-    if (attachmentId) {
-      next.set(attachmentId, {
-        selected: true,
-        startPage: 1,
-        pageCount: Math.max(0, Number(activeSession.attachment?.page_count || 0)),
-      });
-    }
-  }
-  gmailState.selectionState = next;
+  gmailState.selectionState = buildGmailSelectionStateMap({
+    attachments: message?.attachments || [],
+    existingSelectionState: gmailState.selectionState,
+    activeSession,
+    workflowKind: currentWorkflowKind(),
+  });
   syncFocusedAttachment();
 }
 
@@ -947,19 +907,12 @@ function syncFocusedAttachment() {
   if (isPreviewStateOpen(gmailState.previewState) && !attachmentIds.has(gmailState.previewState.attachmentId)) {
     resetPreviewState();
   }
-  let nextId = gmailState.reviewFocusedAttachmentId;
-  if (!attachmentIds.has(nextId)) {
-    nextId = "";
-  }
-  if (!nextId) {
-    nextId = attachments.find((attachment) => attachmentState(attachment.attachment_id).selected)?.attachment_id || "";
-  }
-  if (!nextId) {
-    nextId = activeSessionAttachmentId(gmailState.activeSession);
-  }
-  if (!attachmentIds.has(nextId)) {
-    nextId = attachments[0]?.attachment_id || "";
-  }
+  const nextId = deriveGmailFocusedAttachmentId({
+    attachments,
+    selectionState: gmailState.selectionState,
+    currentFocusedAttachmentId: gmailState.reviewFocusedAttachmentId,
+    activeSession: gmailState.activeSession,
+  });
   gmailState.reviewFocusedAttachmentId = nextId;
   return getAttachmentById(nextId);
 }

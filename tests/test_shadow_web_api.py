@@ -9701,6 +9701,87 @@ console.log(JSON.stringify({
     }
 
 
+def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    review_state_js = (static_dir / "gmail_review_state.js").read_text(encoding="utf-8")
+
+    expected_exports = [
+        "deriveGmailAttachmentStartEditable",
+        "clampGmailAttachmentStartPage",
+        "normalizeGmailAttachmentSelectionState",
+        "buildGmailSelectionStateMap",
+        "deriveGmailActiveSessionAttachmentId",
+        "deriveGmailFocusedAttachmentId",
+    ]
+    for export_name in expected_exports:
+        assert f"export function {export_name}" in review_state_js
+
+    assert "document." not in review_state_js
+    assert "innerHTML" not in review_state_js
+
+    review_import = re.search(
+        r"import \{(?P<body>.*?)\} from \"\./gmail_review_state\.js\";",
+        gmail_js,
+        re.S,
+    ).group("body")
+    expected_imports = [
+        "deriveGmailAttachmentStartEditable",
+        "clampGmailAttachmentStartPage",
+        "normalizeGmailAttachmentSelectionState",
+        "buildGmailSelectionStateMap",
+        "deriveGmailFocusedAttachmentId",
+    ]
+    for export_name in expected_imports:
+        assert export_name in review_import
+
+    assert "function activeSessionAttachmentId(" not in gmail_js
+
+    can_edit_start = gmail_js.index("function canEditStartPage(")
+    can_edit_end = gmail_js.index("\nfunction clampStartPage", can_edit_start)
+    can_edit_block = gmail_js[can_edit_start:can_edit_end]
+    assert "deriveGmailAttachmentStartEditable({" in can_edit_block
+    assert "isPdfAttachment(attachment)" not in can_edit_block
+
+    clamp_start = gmail_js.index("function clampStartPage(")
+    clamp_end = gmail_js.index("\nfunction attachmentState", clamp_start)
+    clamp_block = gmail_js[clamp_start:clamp_end]
+    assert "clampGmailAttachmentStartPage({" in clamp_block
+    assert "Number.parseInt" not in clamp_block
+
+    attachment_state_start = gmail_js.index("function attachmentState(")
+    attachment_state_end = gmail_js.index("\nfunction browserPdfAttachmentState", attachment_state_start)
+    attachment_state_block = gmail_js[attachment_state_start:attachment_state_end]
+    assert "normalizeGmailAttachmentSelectionState(" in attachment_state_block
+    assert "selected: Boolean" not in attachment_state_block
+
+    set_state_start = gmail_js.index("function setAttachmentState(")
+    set_state_end = gmail_js.index("\nfunction ensureSelectionState", set_state_start)
+    set_state_block = gmail_js[set_state_start:set_state_end]
+    assert "normalizeGmailAttachmentSelectionState(" in set_state_block
+    assert "Math.max(1" not in set_state_block
+
+    ensure_start = gmail_js.index("function ensureSelectionState(")
+    ensure_end = gmail_js.index("\nfunction syncFocusedAttachment", ensure_start)
+    ensure_block = gmail_js[ensure_start:ensure_end]
+    assert "buildGmailSelectionStateMap({" in ensure_block
+    assert "for (const item of activeSession.attachments" not in ensure_block
+    assert "activeSession?.kind === \"interpretation\"" not in ensure_block
+
+    focus_start = gmail_js.index("function syncFocusedAttachment(")
+    focus_end = gmail_js.index("\nfunction focusAttachment", focus_start)
+    focus_block = gmail_js[focus_start:focus_end]
+    assert "deriveGmailFocusedAttachmentId({" in focus_block
+    assert "attachments.find(" not in focus_block
+    assert "activeSessionAttachmentId(" not in focus_block
+
+
 def test_gmail_session_ui_module_owns_session_buttons_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -11399,7 +11480,7 @@ def test_gmail_context_ui_module_owns_context_default_renderers() -> None:
     assert "renderGmailContextDefaultsInto" in gmail_js
     assert "renderGmailSimulatorDefaultsInto" in gmail_js
     bootstrap_start = gmail_js.index("function applyBootstrapDefaults")
-    bootstrap_end = gmail_js.index("\nfunction activeSessionAttachmentId", bootstrap_start)
+    bootstrap_end = gmail_js.index("\nfunction resetPreviewState", bootstrap_start)
     bootstrap_block = gmail_js[bootstrap_start:bootstrap_end]
     assert "buildGmailContextDefaultsPresentation" in bootstrap_block
     assert "renderGmailContextDefaultsInto" in bootstrap_block
@@ -28645,6 +28726,12 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailStagePresentation" in gmail_stage_presentation_asset.text
         assert "buildGmailHomeCtaPresentation" in gmail_stage_presentation_asset.text
         assert "buildGmailPanelStatusPresentation" in gmail_stage_presentation_asset.text
+        gmail_review_state_asset = client.get(f"/static-build/{asset_version}/gmail_review_state.js")
+        assert gmail_review_state_asset.status_code == 200
+        assert gmail_review_state_asset.headers["content-type"].startswith("application/javascript")
+        assert "deriveGmailAttachmentStartEditable" in gmail_review_state_asset.text
+        assert "buildGmailSelectionStateMap" in gmail_review_state_asset.text
+        assert "deriveGmailFocusedAttachmentId" in gmail_review_state_asset.text
         gmail_report_ui_asset = client.get(f"/static-build/{asset_version}/gmail_report_ui.js")
         assert gmail_report_ui_asset.status_code == 200
         assert gmail_report_ui_asset.headers["content-type"].startswith("application/javascript")
