@@ -52,6 +52,7 @@ import {
   renderGmailPdfPreviewFallbackInto,
   renderGmailPreviewPanelInto,
 } from "./gmail_preview_ui.js";
+import { buildGmailRestoreBarPresentation } from "./gmail_restore_presentation.js";
 import { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
 import {
   renderGmailContextDefaultsInto,
@@ -69,9 +70,7 @@ import {
   clearConsumedReviewState,
   deriveGmailOverlayDismissalAction,
   deriveGmailAttachmentKindLabel,
-  deriveGmailPreviewRestoreLabel,
   deriveGmailRedoAction,
-  deriveGmailReviewRestoreLabel,
   deriveRecoveredFinalizationAction,
   createClosedPreviewState,
   deriveGmailHomeCta,
@@ -1451,28 +1450,16 @@ function renderGmailRestoreBar() {
   if (!bar || !reviewButton || !previewButton) {
     return;
   }
-  const canRestoreReview = Boolean(
-    gmailState.reviewDrawerMinimized
-    && !gmailState.reviewDrawerOpen
-    && gmailState.loadResult?.ok
-    && gmailState.loadResult?.message,
-  );
-
-  const canRestorePreview = Boolean(
-    gmailState.previewDrawerMinimized
-    && !gmailState.previewDrawerOpen
-    && isPreviewStateOpen(gmailState.previewState),
-  );
-  renderGmailRestoreBarInto({ bar, reviewButton, previewButton }, {
-    review: {
-      visible: canRestoreReview,
-      label: canRestoreReview ? deriveGmailReviewRestoreLabel({ selectedCount: collectSelections().length }) : "",
-    },
-    preview: {
-      visible: canRestorePreview,
-      label: canRestorePreview ? deriveGmailPreviewRestoreLabel(gmailState.previewState) : "",
-    },
+  const presentation = buildGmailRestoreBarPresentation({
+    reviewDrawerMinimized: gmailState.reviewDrawerMinimized,
+    reviewDrawerOpen: gmailState.reviewDrawerOpen,
+    loadResult: gmailState.loadResult,
+    previewDrawerMinimized: gmailState.previewDrawerMinimized,
+    previewDrawerOpen: gmailState.previewDrawerOpen,
+    previewState: gmailState.previewState,
+    selectedCount: collectSelections().length,
   });
+  renderGmailRestoreBarInto({ bar, reviewButton, previewButton }, presentation);
 }
 
 function updateDemoReviewAction() {
