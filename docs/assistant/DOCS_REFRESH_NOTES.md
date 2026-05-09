@@ -16,6 +16,19 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-05-09 — chore/fresh-thread-handoff-wording
+- Files changed:
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/HANDOFF.md
+  - docs/assistant/SESSION_RESUME.md
+- Key symbols / entrypoints changed:
+  - docs-only handoff commit wording
+- User-visible behavior:
+  - No app behavior change; fresh-session docs now distinguish the PR #226 product-modernization baseline from later docs-only closeout merge commits.
+- Tests:
+  - git diff --check
+  - powershell -ExecutionPolicy Bypass -File scripts\validate_dev.ps1
+
 ## 2026-05-09 — chore/fresh-thread-handoff-closeout
 - Files changed:
   - .gitignore

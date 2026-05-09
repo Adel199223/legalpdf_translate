@@ -4,7 +4,8 @@
 - Canonical repo: `C:\Users\FA507\.codex\legalpdf_translate`.
 - Repository: `Adel199223/legalpdf_translate`.
 - Canonical branch: `main`.
-- Current canonical `main`: `c3ec60e57852af4ff69ba96cd0410c489a25ba69` after PR #226, `[codex] Extract Gmail prepare action presentation`.
+- Current product-modernization baseline: `c3ec60e57852af4ff69ba96cd0410c489a25ba69` after PR #226, `[codex] Extract Gmail prepare action presentation`.
+- This file may live on a later docs-only closeout merge; use `git rev-parse HEAD` in the canonical repo for the exact current repository head.
 - Latest `main` GitHub Actions CI: green for `test (3.11)` and `docs_tooling_contracts`.
 - Primary UI: local browser app on `127.0.0.1`, normally live on port `8877`.
 - Secondary UI: Qt/PySide6 shell.
