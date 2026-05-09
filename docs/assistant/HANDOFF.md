@@ -4,14 +4,21 @@
 - Canonical repo: `C:\Users\FA507\.codex\legalpdf_translate`.
 - Repository: `Adel199223/legalpdf_translate`.
 - Canonical branch: `main`.
-- Main after PR #49 merge: `24c30fe63d2237657e941d0cfb792e7836c62d03`.
+- Current canonical `main`: `c3ec60e57852af4ff69ba96cd0410c489a25ba69` after PR #226, `[codex] Extract Gmail prepare action presentation`.
+- Latest `main` GitHub Actions CI: green for `test (3.11)` and `docs_tooling_contracts`.
 - Primary UI: local browser app on `127.0.0.1`, normally live on port `8877`.
 - Secondary UI: Qt/PySide6 shell.
 - Development UI review mode: browser `shadow` mode with isolated app data.
+- Closeout hygiene state: no open PRs, only the canonical worktree, and no required feature branches or worktrees were present before this docs closeout branch.
 
-PR #46 and the docs harness refresh PR #47 have been squash-merged into `main`. A post-merge setup pass launched the canonical-main live browser runtime and reported both `8877` and `8765` listening. Future live Gmail extension testing must happen from canonical `main`, not from feature branches.
+The recent browser modernization line has been merged through PR #226. The static browser frontend is now split across focused UI/presentation modules while `app.js`, `gmail.js`, `translation.js`, and `power-tools.js` remain coordinator modules for state, API calls, routing, and side effects. This preserved the existing FastAPI/static app, route IDs, payload shapes, selectors, Gmail/native-host contracts, CLI, and PySide6 entry points.
 
-Google Photos Interpretation import is merged and this follow-up closeout adds the accepted Review Details behavior: one selected Google Photos image imports through the Interpretation-only photo/OCR path, service-city evidence stays separate from case-city evidence, court email options are keyed to the case city, photo date can prefill service date only as an editable fallback, and distance is keyed to the effective service city. Google Photos place/location remains unavailable from the Picker API; if any testing credential was exposed during troubleshooting, rotate it before production-like use.
+Recent validation baseline after PR #226:
+- focused Gmail prepare-action presentation/static coverage
+- browser safe-rendering probe
+- broad shadow-web, route-state, and translation-browser regression group
+- `scripts\validate_dev.ps1 -Full`, with the known Dart wrapper AOT issue accepted only because the direct Dart fallback passed
+- light shadow-mode browser smoke on `main@c3ec60e` for Dashboard, New Job, Extension Lab, and Gmail intake, without opening live Gmail/OAuth/native-host flows
 
 ## What The App Does
 LegalPDF Translate is a Windows-first legal PDF translation and Gmail intake app. It translates PDFs page by page into DOCX, preserves run artifacts, supports browser and Qt workflows, records translation and interpretation work in the Job Log, and can continue from a real Gmail message through a browser extension/native-host bridge.
@@ -30,6 +37,8 @@ Important invariant: do not convert the translation workflow into one whole-docu
 - Roadmap resume anchor: `docs/assistant/SESSION_RESUME.md`.
 
 ## Current Next Step
+For the next fresh chat, start from clean canonical `main` and choose one normal small PR. The highest-value modernization path is still narrow browser/Gmail presentation or coordinator-pressure cleanup: keep state derivation and side effects in coordinator modules, move only safe DOM rendering or pure presentation shaping into focused modules, and validate in shadow mode before any live-host work.
+
 For live Gmail checks, use canonical `main` only:
 1. Keep the primary worktree on `main`.
 2. Confirm the canonical live browser runtime is running.
