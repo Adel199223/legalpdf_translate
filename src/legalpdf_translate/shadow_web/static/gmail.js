@@ -44,6 +44,10 @@ import {
 import { renderGmailBatchFinalizeSurfaceInto } from "./gmail_finalize_ui.js";
 import { renderGmailReportActionInto } from "./gmail_report_ui.js";
 import {
+  buildGmailFailureReportActionPresentation,
+  buildGmailFinalizationReportActionPresentation,
+} from "./gmail_report_presentation.js";
+import {
   buildGmailMessageResultPresentation,
   buildGmailReviewSummaryPresentation,
 } from "./gmail_result_presentation.js";
@@ -411,24 +415,17 @@ function rememberGmailFailureReport(error, options = {}) {
 
 function updateGmailFailureReportActionState() {
   const button = qs("gmail-generate-failure-report");
-  const available = Boolean(gmailState.lastFailureReportContext);
-  const defaultLabel = "Generate Failure Report";
-  renderGmailReportActionInto(button, {
-    available,
-    label: defaultLabel,
-  });
+  renderGmailReportActionInto(button, buildGmailFailureReportActionPresentation({
+    failureReportContext: gmailState.lastFailureReportContext,
+  }));
 }
 
 function updateGmailFinalizationReportActionState() {
   const button = qs("gmail-batch-finalize-report");
-  const available = Boolean(currentGmailFinalizationReportContext());
-  const defaultLabel = gmailState.lastFinalizationReportPayload
-    ? "Generate Updated Finalization Report"
-    : "Generate Finalization Report";
-  renderGmailReportActionInto(button, {
-    available,
-    label: defaultLabel,
-  });
+  renderGmailReportActionInto(button, buildGmailFinalizationReportActionPresentation({
+    finalizationReportContext: currentGmailFinalizationReportContext(),
+    lastFinalizationReportPayload: gmailState.lastFinalizationReportPayload,
+  }));
 }
 
 function gmailFailureHint(error, fallbackMessage) {

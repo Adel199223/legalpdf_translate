@@ -7298,6 +7298,94 @@ console.log(JSON.stringify({
     assert results["success"]["innerHTMLWrites"] == 0
 
 
+def test_gmail_report_presentation_module_builds_report_action_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_report_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_report_presentation.js"' in gmail_js
+    assert "export function buildGmailFailureReportActionPresentation" in presentation_js
+    assert "export function buildGmailFinalizationReportActionPresentation" in presentation_js
+    builder_block = presentation_js[
+        presentation_js.index("export function buildGmailFailureReportActionPresentation") :
+    ]
+    assert "document." not in builder_block
+    assert "innerHTML" not in builder_block
+    assert "renderGmailReportActionInto" not in builder_block
+
+    script = """
+const presentation = await import(__GMAIL_REPORT_PRESENTATION_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+console.log(JSON.stringify({
+  failureExportType: typeof presentation.buildGmailFailureReportActionPresentation,
+  finalizationExportType: typeof presentation.buildGmailFinalizationReportActionPresentation,
+  failureMissing: presentation.buildGmailFailureReportActionPresentation({}),
+  failureAvailable: presentation.buildGmailFailureReportActionPresentation({
+    failureReportContext: { error: malicious },
+  }),
+  failureFalsey: presentation.buildGmailFailureReportActionPresentation({
+    failureReportContext: "",
+  }),
+  finalizationMissing: presentation.buildGmailFinalizationReportActionPresentation({}),
+  finalizationAvailable: presentation.buildGmailFinalizationReportActionPresentation({
+    finalizationReportContext: { status: "ready" },
+  }),
+  finalizationUpdated: presentation.buildGmailFinalizationReportActionPresentation({
+    finalizationReportContext: { status: "ready" },
+    lastFinalizationReportPayload: { status: malicious },
+  }),
+  finalizationUpdatedHidden: presentation.buildGmailFinalizationReportActionPresentation({
+    finalizationReportContext: null,
+    lastFinalizationReportPayload: { status: malicious },
+  }),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_REPORT_PRESENTATION_MODULE_URL__": "gmail_report_presentation.js"},
+    )
+
+    assert results["failureExportType"] == "function"
+    assert results["finalizationExportType"] == "function"
+    assert results["failureMissing"] == {
+        "available": False,
+        "label": "Generate Failure Report",
+    }
+    assert results["failureAvailable"] == {
+        "available": True,
+        "label": "Generate Failure Report",
+    }
+    assert results["failureFalsey"] == {
+        "available": False,
+        "label": "Generate Failure Report",
+    }
+    assert results["finalizationMissing"] == {
+        "available": False,
+        "label": "Generate Finalization Report",
+    }
+    assert results["finalizationAvailable"] == {
+        "available": True,
+        "label": "Generate Finalization Report",
+    }
+    assert results["finalizationUpdated"] == {
+        "available": True,
+        "label": "Generate Updated Finalization Report",
+    }
+    assert results["finalizationUpdatedHidden"] == {
+        "available": False,
+        "label": "Generate Updated Finalization Report",
+    }
+
+
 def test_gmail_report_ui_module_owns_report_action_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -7309,19 +7397,29 @@ def test_gmail_report_ui_module_owns_report_action_renderer() -> None:
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
     gmail_report_ui_path = static_dir / "gmail_report_ui.js"
+    gmail_report_presentation_path = static_dir / "gmail_report_presentation.js"
     assert gmail_report_ui_path.exists()
+    assert gmail_report_presentation_path.exists()
     gmail_report_ui_js = gmail_report_ui_path.read_text(encoding="utf-8")
+    gmail_report_presentation_js = gmail_report_presentation_path.read_text(encoding="utf-8")
 
     assert "renderGmailReportActionInto" in gmail_js
     assert 'from "./gmail_report_ui.js"' in gmail_js
+    assert 'from "./gmail_report_presentation.js"' in gmail_js
+    assert "buildGmailFailureReportActionPresentation" in gmail_js
+    assert "buildGmailFinalizationReportActionPresentation" in gmail_js
     assert 'from "./gmail_report_ui.js"' in gmail_ui_js
     assert "export function renderGmailReportActionInto" not in gmail_ui_js
     assert "export function renderGmailReportActionInto" in gmail_report_ui_js
+    assert "export function buildGmailFailureReportActionPresentation" in gmail_report_presentation_js
+    assert "export function buildGmailFinalizationReportActionPresentation" in gmail_report_presentation_js
 
     failure_start = gmail_js.index("function updateGmailFailureReportActionState")
     failure_end = gmail_js.index("\nfunction updateGmailFinalizationReportActionState", failure_start)
     failure_block = gmail_js[failure_start:failure_end]
-    assert "renderGmailReportActionInto(button, {" in failure_block
+    assert "buildGmailFailureReportActionPresentation({" in failure_block
+    assert "renderGmailReportActionInto(button," in failure_block
+    assert '"Generate Failure Report"' not in failure_block
     assert ".classList.toggle(" not in failure_block
     assert ".disabled =" not in failure_block
     assert ".textContent =" not in failure_block
@@ -7330,7 +7428,10 @@ def test_gmail_report_ui_module_owns_report_action_renderer() -> None:
     finalization_start = gmail_js.index("function updateGmailFinalizationReportActionState")
     finalization_end = gmail_js.index("\nfunction gmailFailureHint", finalization_start)
     finalization_block = gmail_js[finalization_start:finalization_end]
-    assert "renderGmailReportActionInto(button, {" in finalization_block
+    assert "buildGmailFinalizationReportActionPresentation({" in finalization_block
+    assert "renderGmailReportActionInto(button," in finalization_block
+    assert '"Generate Finalization Report"' not in finalization_block
+    assert '"Generate Updated Finalization Report"' not in finalization_block
     assert ".classList.toggle(" not in finalization_block
     assert ".disabled =" not in finalization_block
     assert ".textContent =" not in finalization_block
@@ -27403,6 +27504,15 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_report_ui_asset.status_code == 200
         assert gmail_report_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailReportActionInto" in gmail_report_ui_asset.text
+        gmail_report_presentation_asset = client.get(
+            f"/static-build/{asset_version}/gmail_report_presentation.js"
+        )
+        assert gmail_report_presentation_asset.status_code == 200
+        assert gmail_report_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailFailureReportActionPresentation" in gmail_report_presentation_asset.text
+        assert "buildGmailFinalizationReportActionPresentation" in gmail_report_presentation_asset.text
         gmail_context_ui_asset = client.get(f"/static-build/{asset_version}/gmail_context_ui.js")
         assert gmail_context_ui_asset.status_code == 200
         assert gmail_context_ui_asset.headers["content-type"].startswith("application/javascript")
