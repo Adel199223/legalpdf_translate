@@ -90,3 +90,55 @@ export function buildGmailMessageResultPresentation({
     ],
   };
 }
+
+export function buildGmailReviewSummaryPresentation({
+  loadResult = null,
+  workflow = {},
+  selectedCount = 0,
+  outputFolder = "",
+} = {}) {
+  if (!loadResult?.ok || !loadResult?.message) {
+    return {
+      empty: true,
+      emptyText: "Load this Gmail message to choose attachments.",
+    };
+  }
+
+  const message = loadResult.message;
+  const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+  return {
+    subject: message.subject || "No subject",
+    reviewStatus: workflow.reviewStatus || "",
+    workflowLabel: workflow.label || "",
+    attachmentCount: attachments.length,
+    chipLabel: selectedCount ? `${selectedCount} selected` : "Review ready",
+    chipTone: selectedCount ? "ok" : "info",
+    gridItems: [
+      {
+        label: "From",
+        value: message.from_header || "Unavailable",
+        className: "word-break",
+      },
+      {
+        label: "Gmail account",
+        value: message.account_email || "Unavailable",
+        className: "word-break",
+      },
+      {
+        label: "Exact message ID",
+        value: message.message_id || "Unavailable",
+        className: "word-break",
+      },
+      {
+        label: "Exact thread ID",
+        value: message.thread_id || "Unavailable",
+        className: "word-break",
+      },
+      {
+        label: "Save output in",
+        value: outputFolder || "Use default folder",
+        className: "word-break",
+      },
+    ],
+  };
+}

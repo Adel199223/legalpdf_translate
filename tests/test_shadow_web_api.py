@@ -4383,6 +4383,147 @@ console.log(JSON.stringify({
     assert results["loadedFailed"]["gridItems"][2]["value"] == 0
 
 
+def test_gmail_result_presentation_module_builds_review_summary_cards() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_result_presentation.js"
+
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+    assert 'from "./gmail_result_presentation.js"' in gmail_js
+    assert "buildGmailReviewSummaryPresentation" in gmail_js
+    review_summary_start = gmail_js.index("function renderReviewSummary(loadResult)")
+    review_summary_end = gmail_js.index("\nexport function renderAttachmentListInto", review_summary_start)
+    review_summary_block = gmail_js[review_summary_start:review_summary_end]
+    assert "buildGmailReviewSummaryPresentation({" in review_summary_block
+    assert "renderGmailReviewSummaryInto(" in review_summary_block
+    assert "gridItems: [" not in review_summary_block
+    assert "chipLabel:" not in review_summary_block
+    assert "export function buildGmailReviewSummaryPresentation" in presentation_js
+    renderer_start = presentation_js.index("export function buildGmailReviewSummaryPresentation")
+    renderer_block = presentation_js[renderer_start:]
+    assert "document." not in renderer_block
+    assert "innerHTML" not in renderer_block
+    assert "renderGmailReviewSummaryInto" not in renderer_block
+
+    script = """
+const presentation = await import(__GMAIL_RESULT_PRESENTATION_MODULE_URL__);
+
+const workflow = {
+  label: "Translation <script>alert(1)</script>",
+  reviewStatus: "Pick attachments <img src=x onerror=alert(2)>",
+};
+
+const empty = presentation.buildGmailReviewSummaryPresentation({
+  loadResult: { ok: false, message: null },
+  workflow,
+  selectedCount: 3,
+  outputFolder: "ignored",
+});
+
+const ready = presentation.buildGmailReviewSummaryPresentation({
+  loadResult: {
+    ok: true,
+    message: {
+      subject: "Subject <script>alert(3)</script>",
+      from_header: "Sender <img src=x onerror=alert(4)>",
+      account_email: "account@example.test <script>alert(5)</script>",
+      message_id: "msg-1",
+      thread_id: "thread-1",
+      attachments: [{ id: "a1" }, { id: "a2" }],
+    },
+  },
+  workflow,
+  selectedCount: 0,
+  outputFolder: "C:/safe/<script>alert(6)</script>",
+});
+
+const selected = presentation.buildGmailReviewSummaryPresentation({
+  loadResult: {
+    ok: true,
+    message: {
+      subject: "",
+      from_header: "",
+      account_email: "",
+      message_id: "",
+      thread_id: "",
+      attachments: [],
+    },
+  },
+  workflow: { label: "Interpretation", reviewStatus: "Review details" },
+  selectedCount: 2,
+  outputFolder: "",
+});
+
+console.log(JSON.stringify({
+  exportType: typeof presentation.buildGmailReviewSummaryPresentation,
+  empty,
+  ready,
+  selected,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_RESULT_PRESENTATION_MODULE_URL__": "gmail_result_presentation.js"},
+    )
+
+    assert results["exportType"] == "function"
+    assert results["empty"] == {
+        "empty": True,
+        "emptyText": "Load this Gmail message to choose attachments.",
+    }
+    assert results["ready"]["subject"] == "Subject <script>alert(3)</script>"
+    assert results["ready"]["reviewStatus"] == "Pick attachments <img src=x onerror=alert(2)>"
+    assert results["ready"]["workflowLabel"] == "Translation <script>alert(1)</script>"
+    assert results["ready"]["attachmentCount"] == 2
+    assert results["ready"]["chipLabel"] == "Review ready"
+    assert results["ready"]["chipTone"] == "info"
+    assert results["ready"]["gridItems"] == [
+        {
+            "label": "From",
+            "value": "Sender <img src=x onerror=alert(4)>",
+            "className": "word-break",
+        },
+        {
+            "label": "Gmail account",
+            "value": "account@example.test <script>alert(5)</script>",
+            "className": "word-break",
+        },
+        {
+            "label": "Exact message ID",
+            "value": "msg-1",
+            "className": "word-break",
+        },
+        {
+            "label": "Exact thread ID",
+            "value": "thread-1",
+            "className": "word-break",
+        },
+        {
+            "label": "Save output in",
+            "value": "C:/safe/<script>alert(6)</script>",
+            "className": "word-break",
+        },
+    ]
+    assert results["selected"]["subject"] == "No subject"
+    assert results["selected"]["attachmentCount"] == 0
+    assert results["selected"]["chipLabel"] == "2 selected"
+    assert results["selected"]["chipTone"] == "ok"
+    assert [item["value"] for item in results["selected"]["gridItems"]] == [
+        "Unavailable",
+        "Unavailable",
+        "Unavailable",
+        "Unavailable",
+        "Use default folder",
+    ]
+
+
 def test_gmail_result_ui_module_owns_review_summary_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -26483,6 +26624,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
             "application/javascript"
         )
         assert "buildGmailMessageResultPresentation" in gmail_result_presentation_asset.text
+        assert "buildGmailReviewSummaryPresentation" in gmail_result_presentation_asset.text
         gmail_control_ui_asset = client.get(f"/static-build/{asset_version}/gmail_control_ui.js")
         assert gmail_control_ui_asset.status_code == 200
         assert gmail_control_ui_asset.headers["content-type"].startswith("application/javascript")
