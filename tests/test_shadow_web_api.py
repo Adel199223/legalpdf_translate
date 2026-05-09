@@ -16839,6 +16839,204 @@ console.log(JSON.stringify({
     assert results["partialReturnedText"] == "<img src=x onerror=alert(1)><script>bad()</script>"
 
 
+def test_translation_source_presentation_module_builds_source_card_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "translation_source_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./translation_source_presentation.js"' in translation_js
+    assert "buildTranslationSourceCardPresentation" in translation_js
+    assert "export function buildTranslationSourceCardPresentation" in presentation_js
+    assert "document.create" not in presentation_js
+    assert "document.querySelector" not in presentation_js
+    assert "innerHTML" not in presentation_js
+    assert "renderTranslationSourceCardInto" not in presentation_js
+
+    script = r"""
+const presentation = await import(__TRANSLATION_SOURCE_PRESENTATION_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const empty = presentation.buildTranslationSourceCardPresentation();
+const manualReady = presentation.buildTranslationSourceCardPresentation({
+  sourceState: {
+    status: "manual-ready",
+    ready: true,
+    filename: `Manual ${malicious}.pdf`,
+    sourceType: "pdf",
+    pageCount: 12,
+    message: `Manual ready ${malicious}`,
+  },
+  selectedTarget: `pt ${malicious}`,
+  defaultTarget: "EN",
+  hasManualSourceSelection: true,
+});
+const uploadingReplacement = presentation.buildTranslationSourceCardPresentation({
+  sourceState: {
+    status: "manual-uploading",
+    ready: false,
+    filename: `Upload ${malicious}.jpg`,
+    sourceType: "image",
+    replacingPrepared: true,
+  },
+  selectedTarget: "",
+  defaultTarget: "FR",
+  hasManualSourceSelection: false,
+});
+const manualError = presentation.buildTranslationSourceCardPresentation({
+  sourceState: {
+    status: "manual-error",
+    ready: false,
+    filename: `Bad ${malicious}.pdf`,
+    sourceType: "pdf",
+    message: `Could not stage ${malicious}`,
+  },
+});
+const currentJob = presentation.buildTranslationSourceCardPresentation({
+  sourceState: {
+    status: "current-job",
+    ready: false,
+    filename: `Running ${malicious}.pdf`,
+    sourceType: "pdf",
+    pageCount: 4,
+  },
+  selectedTarget: "DE",
+});
+const gmailPrepared = presentation.buildTranslationSourceCardPresentation({
+  sourceState: {
+    status: "prepared-ready",
+    ready: true,
+    filename: `Gmail ${malicious}.pdf`,
+    sourceType: "",
+    pageCount: 7,
+    fromGmail: true,
+  },
+  preparedLaunch: {
+    target_lang: "ES",
+    gmail_batch_context: { selected_target_lang: "IT" },
+  },
+  selectedTarget: "PT",
+  defaultTarget: "EN",
+});
+const gmailPreparedContextTarget = presentation.buildTranslationSourceCardPresentation({
+  sourceState: {
+    status: "prepared-ready",
+    ready: true,
+    filename: "context.pdf",
+    sourceType: "pdf",
+    pageCount: 2,
+    fromGmail: true,
+  },
+  preparedLaunch: {
+    target_lang: "",
+    gmail_batch_context: { selected_target_lang: "IT" },
+  },
+  defaultTarget: "EN",
+});
+const preparedNonGmail = presentation.buildTranslationSourceCardPresentation({
+  sourceState: {
+    status: "prepared-ready",
+    ready: true,
+    filename: "Prepared.doc",
+    sourceType: "",
+    pageCount: null,
+    fromGmail: false,
+  },
+  selectedTarget: "",
+  defaultTarget: "",
+});
+
+console.log(JSON.stringify({
+  exportType: typeof presentation.buildTranslationSourceCardPresentation,
+  empty,
+  manualReady,
+  uploadingReplacement,
+  manualError,
+  currentJob,
+  gmailPrepared,
+  gmailPreparedContextTarget,
+  preparedNonGmail,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_SOURCE_PRESENTATION_MODULE_URL__": "translation_source_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["empty"] == {
+        "state": "empty",
+        "title": "Choose a PDF or image",
+        "copy": "Drag and drop it here, or choose it from your computer.",
+        "filename": "No file selected yet.",
+        "sourceType": "PDF or image",
+        "pages": "--",
+        "target": "Target language: EN",
+        "defaultTarget": "Using the current target language for this run.",
+        "stageStatus": "Choose a file to begin.",
+        "hint": "PDF and common image files are supported.",
+        "chipText": "",
+        "chipTone": "",
+        "browseLabel": "Choose document",
+        "browseDisabled": False,
+        "clearHidden": True,
+    }
+    assert results["manualReady"]["state"] == "manual-ready"
+    assert results["manualReady"]["title"] == "Manual <img src=x onerror=alert(1)><script>bad()</script>.pdf"
+    assert results["manualReady"]["copy"] == (
+        "The document is staged and ready. Confirm the language and output folder, then start translation."
+    )
+    assert results["manualReady"]["sourceType"] == "PDF"
+    assert results["manualReady"]["pages"] == 12
+    assert results["manualReady"]["target"] == "Target language: PT <IMG SRC=X ONERROR=ALERT(1)><SCRIPT>BAD()</SCRIPT>"
+    assert results["manualReady"]["chipText"] == "Ready"
+    assert results["manualReady"]["chipTone"] == "ok"
+    assert results["manualReady"]["browseLabel"] == "Choose another document"
+    assert results["manualReady"]["browseDisabled"] is False
+    assert results["manualReady"]["clearHidden"] is False
+    assert results["uploadingReplacement"]["copy"] == (
+        "Checking the replacement document before it replaces the prepared attachment..."
+    )
+    assert results["uploadingReplacement"]["stageStatus"] == "Checking the replacement document..."
+    assert results["uploadingReplacement"]["hint"] == "PDF and common image files are supported."
+    assert results["uploadingReplacement"]["chipText"] == "Uploading"
+    assert results["uploadingReplacement"]["chipTone"] == "info"
+    assert results["uploadingReplacement"]["browseDisabled"] is True
+    assert results["manualError"]["copy"] == "Could not stage <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["manualError"]["stageStatus"] == "Could not stage <img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["manualError"]["chipText"] == "Needs attention"
+    assert results["manualError"]["chipTone"] == "bad"
+    assert results["currentJob"]["copy"] == (
+        "This source is attached to the current translation job. Progress will update below while the run is active."
+    )
+    assert results["currentJob"]["stageStatus"] == "Current job is using this source."
+    assert results["currentJob"]["hint"] == "Load another source only when you are ready to prepare the next run."
+    assert results["currentJob"]["chipText"] == "In progress"
+    assert results["gmailPrepared"]["title"] == "Gmail attachment is prepared"
+    assert results["gmailPrepared"]["sourceType"] == "PDF"
+    assert results["gmailPrepared"]["target"] == "Current Gmail job target: ES"
+    assert results["gmailPrepared"]["defaultTarget"] == "Default target for new jobs: EN"
+    assert results["gmailPrepared"]["stageStatus"] == "Ready from Gmail."
+    assert results["gmailPrepared"]["hint"] == (
+        "The Gmail attachment stays staged until you explicitly choose a new local file."
+    )
+    assert results["gmailPrepared"]["chipText"] == "Ready"
+    assert results["gmailPrepared"]["chipTone"] == "info"
+    assert results["gmailPreparedContextTarget"]["target"] == "Current Gmail job target: IT"
+    assert results["preparedNonGmail"]["title"] == "Prepared.doc"
+    assert results["preparedNonGmail"]["sourceType"] == "PDF"
+    assert results["preparedNonGmail"]["target"] == "Target language: EN"
+    assert results["preparedNonGmail"]["defaultTarget"] == "Using the current target language for this run."
+
+
 def test_translation_ui_module_centralizes_source_card_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -16849,10 +17047,14 @@ def test_translation_ui_module_centralizes_source_card_renderer() -> None:
     )
     translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
     translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+    presentation_js = (static_dir / "translation_source_presentation.js").read_text(encoding="utf-8")
 
     assert 'from "./translation_ui.js"' in translation_js
+    assert 'from "./translation_source_presentation.js"' in translation_js
     assert "renderTranslationSourceCardInto" in translation_js
+    assert "buildTranslationSourceCardPresentation" in translation_js
     assert "export function renderTranslationSourceCardInto" in translation_ui_js
+    assert "export function buildTranslationSourceCardPresentation" in presentation_js
     source_start = translation_js.index("function renderTranslationSourceCard")
     source_end = translation_js.index("\n\nfunction browserDefaultOutputDir", source_start)
     source_block = translation_js[source_start:source_end]
@@ -16861,7 +17063,12 @@ def test_translation_ui_module_centralizes_source_card_renderer() -> None:
     assert 'fieldValue("translation-target-lang")' in source_block
     assert "defaultTranslationTargetLang()" in source_block
     assert "hasManualSourceSelection()" in source_block
+    assert "buildTranslationSourceCardPresentation({" in source_block
     assert "renderTranslationSourceCardInto({" in source_block
+    assert "const isPrepared =" not in source_block
+    assert "let copy =" not in source_block
+    assert "let stageStatus =" not in source_block
+    assert "const chipState =" not in source_block
     assert "title.textContent" not in source_block
     assert "copy.textContent" not in source_block
     assert ".innerHTML" not in source_block
@@ -27896,6 +28103,12 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderTranslationSourceDragStateInto" in translation_ui_asset.text
         assert "renderTranslationHistoryListInto" in translation_ui_asset.text
         assert "renderTranslationJobsListInto" in translation_ui_asset.text
+        translation_source_presentation_asset = client.get(
+            f"/static-build/{asset_version}/translation_source_presentation.js"
+        )
+        assert translation_source_presentation_asset.status_code == 200
+        assert translation_source_presentation_asset.headers["content-type"].startswith("application/javascript")
+        assert "buildTranslationSourceCardPresentation" in translation_source_presentation_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")

@@ -5,6 +5,7 @@ import { ensureBrowserPdfBundleFromFile } from "./browser_pdf.js";
 import { runWithBusy } from "./busy_ui.js";
 import { setDiagnostics, setPanelStatus } from "./diagnostics_ui.js";
 import { renderShellVisibilityInto } from "./shell_ui.js";
+import { buildTranslationSourceCardPresentation } from "./translation_source_presentation.js";
 import {
   renderArabicReviewCardInto,
   renderResultHeaderCardInto,
@@ -700,17 +701,6 @@ function currentManualSourceFile() {
   return translationState.manualSourceFile || qs("translation-source-file")?.files?.[0] || null;
 }
 
-function normalizeSourceTypeLabel(sourceType) {
-  const normalized = String(sourceType || "").trim().toLowerCase();
-  if (normalized === "pdf") {
-    return "PDF";
-  }
-  if (normalized === "image") {
-    return "Image";
-  }
-  return "PDF or image";
-}
-
 function buildSourceCardStateFromJob(job) {
   const jobSourcePath = String(job?.config?.source_path || "").trim();
   const sourceName = jobSourcePath.split(/[\\/]/).pop() || jobSourcePath;
@@ -922,67 +912,14 @@ function renderTranslationSourceCard() {
     return;
   }
   const sourceState = deriveTranslationSourceState();
-  const isPrepared = sourceState.status === "prepared-ready";
-  const isUploading = sourceState.status === "manual-uploading";
-  const isError = sourceState.status === "manual-error";
-  const isCurrentJob = sourceState.status === "current-job";
-  const ready = sourceState.ready;
-  let copy = "Drag and drop it here, or choose it from your computer.";
-  if (isUploading) {
-    copy = sourceState.replacingPrepared
-      ? "Checking the replacement document before it replaces the prepared attachment..."
-      : "Uploading the file and checking the page count...";
-  } else if (isCurrentJob) {
-    copy = "This source is attached to the current translation job. Progress will update below while the run is active.";
-  } else if (isPrepared) {
-    copy = sourceState.fromGmail
-      ? "Review settings, then start translation. Choosing a local file will replace the prepared Gmail attachment for the next run."
-      : "This document is already staged. Choosing a local file will replace it for the next run.";
-  } else if (ready) {
-    copy = "The document is staged and ready. Confirm the language and output folder, then start translation.";
-  } else if (isError) {
-    copy = sourceState.message || "The file could not be staged. Choose another document to try again.";
-  }
-
   const launch = currentPreparedTranslationLaunch();
-  const gmailTarget = String(launch?.target_lang || launch?.gmail_batch_context?.selected_target_lang || "").trim().toUpperCase();
-  const selectedTarget = String(fieldValue("translation-target-lang") || "").trim().toUpperCase();
-  const fallbackTarget = defaultTranslationTargetLang();
-  let stageStatus = "Choose a file to begin.";
-  if (isUploading) {
-    stageStatus = sourceState.replacingPrepared
-      ? "Checking the replacement document..."
-      : "Uploading and checking the file...";
-  } else if (isCurrentJob) {
-    stageStatus = "Current job is using this source.";
-  } else if (isPrepared) {
-    stageStatus = sourceState.fromGmail ? "Ready from Gmail." : "Prepared and ready.";
-  } else if (ready) {
-    stageStatus = "Uploaded and ready.";
-  } else if (isError) {
-    stageStatus = sourceState.message || "Upload failed.";
-  }
-  let hint = "PDF and common image files are supported.";
-  if (isCurrentJob) {
-    hint = "Load another source only when you are ready to prepare the next run.";
-  } else if (ready && isPrepared) {
-    hint = sourceState.fromGmail
-      ? "The Gmail attachment stays staged until you explicitly choose a new local file."
-      : "The prepared document stays staged until you explicitly choose a new local file.";
-  } else if (ready) {
-    hint = "The same local file will not be uploaded again unless it changes.";
-  }
-  const chipState = isError
-    ? { text: "Needs attention", tone: "bad" }
-    : isUploading
-      ? { text: "Uploading", tone: "info" }
-      : isCurrentJob
-        ? { text: "In progress", tone: "info" }
-        : isPrepared
-          ? { text: "Ready", tone: "info" }
-          : ready
-            ? { text: "Ready", tone: "ok" }
-            : { text: "", tone: "" };
+  const presentation = buildTranslationSourceCardPresentation({
+    sourceState,
+    preparedLaunch: launch,
+    selectedTarget: fieldValue("translation-target-lang"),
+    defaultTarget: defaultTranslationTargetLang(),
+    hasManualSourceSelection: hasManualSourceSelection(),
+  });
   renderTranslationSourceCardInto({
     card,
     title: qs("translation-source-card-title"),
@@ -997,29 +934,7 @@ function renderTranslationSourceCard() {
     chip: qs("translation-source-card-chip"),
     browseButton: qs("translation-source-browse"),
     clearButton: qs("translation-source-clear"),
-  }, {
-    state: sourceState.status || "empty",
-    title: isPrepared && sourceState.fromGmail
-      ? "Gmail attachment is prepared"
-      : sourceState.filename || (isPrepared ? "Prepared source" : "Choose a PDF or image"),
-    copy,
-    filename: sourceState.filename || "No file selected yet.",
-    sourceType: normalizeSourceTypeLabel(sourceState.sourceType || (isPrepared ? "pdf" : "")),
-    pages: sourceState.pageCount ?? "--",
-    target: isPrepared && sourceState.fromGmail && gmailTarget
-      ? `Current Gmail job target: ${gmailTarget}`
-      : `Target language: ${selectedTarget || fallbackTarget || "EN"}`,
-    defaultTarget: isPrepared && sourceState.fromGmail && fallbackTarget && fallbackTarget !== gmailTarget
-      ? `Default target for new jobs: ${fallbackTarget}`
-      : "Using the current target language for this run.",
-    stageStatus,
-    hint,
-    chipText: chipState.text,
-    chipTone: chipState.tone,
-    browseLabel: ready ? "Choose another document" : "Choose document",
-    browseDisabled: isUploading,
-    clearHidden: !hasManualSourceSelection(),
-  });
+  }, presentation);
 }
 
 function browserDefaultOutputDir() {
