@@ -4798,20 +4798,36 @@ def test_gmail_control_ui_module_centralizes_review_chrome_renderer() -> None:
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
     gmail_control_ui_js = (static_dir / "gmail_control_ui.js").read_text(encoding="utf-8")
+    gmail_control_presentation_path = static_dir / "gmail_control_presentation.js"
+    assert gmail_control_presentation_path.exists()
+    gmail_control_presentation_js = gmail_control_presentation_path.read_text(encoding="utf-8")
 
     assert 'from "./gmail_control_ui.js"' in gmail_js
+    assert 'from "./gmail_control_presentation.js"' in gmail_js
+    assert "buildGmailReviewChromePresentation" in gmail_js
     assert "renderGmailReviewChromeInto" in gmail_js
     assert "renderGmailReviewChromeInto," in gmail_js
     review_summary_start = gmail_js.index("function renderReviewSummary(loadResult)")
     review_summary_end = gmail_js.index("\nexport function renderAttachmentListInto", review_summary_start)
     review_summary_block = gmail_js[review_summary_start:review_summary_end]
+    assert "buildGmailReviewChromePresentation({" in review_summary_block
     assert "renderGmailReviewChromeInto({" in review_summary_block
+    assert "Boolean(loadResult?.ok && loadResult?.message)" not in review_summary_block
+    assert "Step 1: Choose workflow." not in review_summary_block
     assert "reviewOpenButton.disabled" not in review_summary_block
     assert "reviewOpenButton.textContent" not in review_summary_block
     assert "reviewStatus.textContent" not in review_summary_block
     assert "export function renderGmailReviewChromeInto" in gmail_control_ui_js
     assert "export function renderGmailReviewChromeInto" not in gmail_ui_js
     assert "renderGmailReviewChromeInto" in gmail_ui_js
+    assert "export function buildGmailReviewChromePresentation" in gmail_control_presentation_js
+    presentation_start = gmail_control_presentation_js.index(
+        "export function buildGmailReviewChromePresentation",
+    )
+    presentation_block = gmail_control_presentation_js[presentation_start:]
+    assert "document." not in presentation_block
+    assert "innerHTML" not in presentation_block
+    assert "renderGmailReviewChromeInto" not in presentation_block
     renderer_start = gmail_control_ui_js.index("export function renderGmailReviewChromeInto")
     renderer_end = gmail_control_ui_js.index("\nexport function", renderer_start + 1)
     renderer_block = gmail_control_ui_js[renderer_start:renderer_end]
@@ -4915,6 +4931,101 @@ console.log(JSON.stringify({
         "missingStatusResultType": "undefined",
         "missingButtonResultType": "undefined",
     }
+
+
+def test_gmail_control_presentation_module_builds_review_chrome_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_control_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_control_presentation.js"' in gmail_js
+    assert "buildGmailReviewChromePresentation" in gmail_js
+    assert "export function buildGmailReviewChromePresentation" in presentation_js
+    presentation_start = presentation_js.index("export function buildGmailReviewChromePresentation")
+    presentation_block = presentation_js[presentation_start:]
+    assert "document." not in presentation_block
+    assert "innerHTML" not in presentation_block
+    assert "renderGmail" not in presentation_block
+    review_summary_start = gmail_js.index("function renderReviewSummary(loadResult)")
+    review_summary_end = gmail_js.index("\nexport function renderAttachmentListInto", review_summary_start)
+    review_summary_block = gmail_js[review_summary_start:review_summary_end]
+    assert "buildGmailReviewChromePresentation({" in review_summary_block
+    assert "Boolean(loadResult?.ok && loadResult?.message)" not in review_summary_block
+    assert "Step 1: Choose workflow." not in review_summary_block
+
+    script = """
+const presentation = await import(__GMAIL_CONTROL_PRESENTATION_MODULE_URL__);
+
+const empty = presentation.buildGmailReviewChromePresentation();
+const nullResult = presentation.buildGmailReviewChromePresentation({ loadResult: null });
+const loaded = presentation.buildGmailReviewChromePresentation({
+  loadResult: {
+    ok: true,
+    message: {
+      subject: "Subject <img src=x onerror=alert(1)>",
+    },
+  },
+});
+const missingMessage = presentation.buildGmailReviewChromePresentation({
+  loadResult: {
+    ok: true,
+    message: null,
+  },
+});
+const messageWithoutOk = presentation.buildGmailReviewChromePresentation({
+  loadResult: {
+    ok: false,
+    message: {
+      subject: "Subject <script>bad()</script>",
+    },
+  },
+});
+const maliciousMetadata = presentation.buildGmailReviewChromePresentation({
+  loadResult: {
+    ok: true,
+    message: {
+      subject: "Subject <script>bad()</script>",
+      from: "<img src=x onerror=alert(2)>",
+    },
+  },
+});
+
+console.log(JSON.stringify({
+  exportType: typeof presentation.buildGmailReviewChromePresentation,
+  empty,
+  nullResult,
+  loaded,
+  missingMessage,
+  messageWithoutOk,
+  maliciousMetadata,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_CONTROL_PRESENTATION_MODULE_URL__": "gmail_control_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    expected_status = (
+        "Step 1: Choose workflow. Step 2: Pick attachment(s). "
+        "Step 3: Preview or set start page if needed. Step 4: Continue."
+    )
+
+    assert results["exportType"] == "function"
+    assert results["empty"] == {"available": False, "statusText": expected_status}
+    assert results["nullResult"] == {"available": False, "statusText": expected_status}
+    assert results["loaded"] == {"available": True, "statusText": expected_status}
+    assert results["missingMessage"] == {"available": False, "statusText": expected_status}
+    assert results["messageWithoutOk"] == {"available": False, "statusText": expected_status}
+    assert results["maliciousMetadata"] == {"available": True, "statusText": expected_status}
 
 
 def test_gmail_session_ui_module_owns_session_card_renderers() -> None:
@@ -28392,6 +28503,14 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailDrawerDatasetDefaultsInto" in gmail_control_ui_asset.text
         assert "renderGmailDetailsOpenInto" in gmail_control_ui_asset.text
         assert "renderGmailInputValueInto" in gmail_control_ui_asset.text
+        gmail_control_presentation_asset = client.get(
+            f"/static-build/{asset_version}/gmail_control_presentation.js"
+        )
+        assert gmail_control_presentation_asset.status_code == 200
+        assert gmail_control_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailReviewChromePresentation" in gmail_control_presentation_asset.text
         gmail_restore_ui_asset = client.get(f"/static-build/{asset_version}/gmail_restore_ui.js")
         assert gmail_restore_ui_asset.status_code == 200
         assert gmail_restore_ui_asset.headers["content-type"].startswith("application/javascript")
