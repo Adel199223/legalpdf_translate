@@ -7700,6 +7700,301 @@ console.log(JSON.stringify({
     }
 
 
+def test_gmail_report_context_module_builds_diagnostic_payloads() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    context_path = static_dir / "gmail_report_context.js"
+    assert context_path.exists()
+    context_js = context_path.read_text(encoding="utf-8")
+    assert "export function buildGmailAttachmentReportSnapshot" in context_js
+    assert "export function buildGmailFailureReportContext" in context_js
+    assert "export function buildGmailFinalizationReportContext" in context_js
+    assert "document." not in context_js
+    assert "innerHTML" not in context_js
+
+    script = """
+const context = await import(__GMAIL_REPORT_CONTEXT_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const workerError = new Error(`Setting up fake worker failed: ${malicious}`);
+workerError.name = "WorkerPreviewError";
+workerError.browserPdfDiagnostics = {
+  error: "browser_pdf_worker_load_failed",
+  message: "Browser PDF worker failed.",
+  raw_browser_error: `TypeError: ${malicious}`,
+  phase: "worker_boot",
+};
+workerError.payload = {
+  diagnostics: {
+    error: `payload_code_${malicious}`,
+    payload_detail: malicious,
+  },
+};
+
+const attachment = {
+  attachment_id: "att-pdf",
+  filename: `demo ${malicious}.pdf`,
+  mime_type: "application/pdf",
+  size_bytes: "661",
+};
+const imageAttachment = {
+  attachment_id: "att-image",
+  filename: "scan.png",
+  mime_type: "image/png",
+  size_bytes: "12",
+};
+const selectionState = new Map([
+  ["att-pdf", { selected: true, startPage: "3", pageCount: "9" }],
+  ["att-image", { selected: false, startPage: "bad", pageCount: -5 }],
+]);
+
+const failureOpen = context.buildGmailFailureReportContext({
+  error: workerError,
+  operation: "gmail_preview_attachment",
+  capturedAt: "2026-05-09T21:00:00.000Z",
+  runtimeMode: "shadow",
+  workspaceId: "gmail-report-context-smoke",
+  activeView: "gmail-intake",
+  runtime: {
+    build_sha: "abc123",
+    asset_version: "asset-123",
+  },
+  buildIdentity: {
+    branch: "codex/gmail-report-context-shaping",
+    head_sha: "abc123",
+  },
+  workflowKind: "translation",
+  focusedAttachmentId: "att-focused",
+  attachment,
+  message: {
+    message_id: "msg-1",
+    thread_id: "thread-1",
+    subject: `Subject ${malicious}`,
+    account_email: "demo@example.test",
+  },
+  attachments: [attachment, imageAttachment],
+  selectionState,
+  previewOpen: true,
+  previewState: {
+    attachmentId: "att-pdf",
+    page: "2",
+    pageCount: "9",
+    previewHref: " /api/gmail/attachment/att-pdf#page=2 ",
+  },
+});
+
+const failureClosed = context.buildGmailFailureReportContext({
+  error: new Error("plain failure"),
+  capturedAt: "",
+  runtimeMode: "live",
+  workspaceId: "gmail-intake",
+  activeView: "new-job",
+  runtime: {},
+  buildIdentity: {},
+  workflowKind: "interpretation",
+  focusedAttachmentId: "att-focused",
+  message: null,
+  attachments: [],
+  previewOpen: false,
+  previewState: {
+    attachmentId: "att-pdf",
+    page: "2",
+    pageCount: "9",
+    previewHref: "/api/gmail/attachment/att-pdf",
+  },
+});
+
+const finalizationPayloadWins = context.buildGmailFinalizationReportContext({
+  batchFinalizeResult: {
+    normalized_payload: {
+      finalization_report_context: {
+        source: "payload",
+        runtime_mode: "existing-mode",
+        build_sha: "existing-sha",
+        draft: malicious,
+      },
+    },
+  },
+  displayedSession: {
+    finalization_report_context: {
+      source: "session",
+    },
+  },
+  runtimeMode: "shadow",
+  workspaceId: "workspace-from-app",
+  activeView: "gmail-intake",
+  buildSha: "abc123",
+  assetVersion: "asset-123",
+});
+
+const finalizationSessionFallback = context.buildGmailFinalizationReportContext({
+  batchFinalizeResult: null,
+  displayedSession: {
+    finalization_report_context: {
+      source: "session",
+      workspace_id: "session-workspace",
+    },
+  },
+  runtimeMode: "shadow",
+  workspaceId: "workspace-from-app",
+  activeView: "gmail-intake",
+  buildSha: "abc123",
+  assetVersion: "asset-123",
+});
+
+console.log(JSON.stringify({
+  attachmentSnapshot: context.buildGmailAttachmentReportSnapshot({
+    attachment,
+    selectionState,
+  }),
+  failureOpen,
+  failureClosed,
+  finalizationPayloadWins,
+  finalizationSessionFallback,
+  finalizationMissing: context.buildGmailFinalizationReportContext({}),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_REPORT_CONTEXT_MODULE_URL__": "gmail_report_context.js"},
+    )
+    malicious = "<img src=x onerror=alert(1)><script>bad()</script>"
+
+    assert results["attachmentSnapshot"] == {
+        "attachment_id": "att-pdf",
+        "filename": "demo <img src=x onerror=alert(1)><script>bad()</script>.pdf",
+        "mime_type": "application/pdf",
+        "size_bytes": 661,
+        "selected": True,
+        "start_page": 3,
+        "page_count": 9,
+    }
+
+    failure_open = results["failureOpen"]
+    assert failure_open["kind"] == "gmail_browser_failure"
+    assert failure_open["captured_at"] == "2026-05-09T21:00:00.000Z"
+    assert failure_open["operation"] == "gmail_preview_attachment"
+    assert failure_open["runtime_mode"] == "shadow"
+    assert failure_open["workspace_id"] == "gmail-report-context-smoke"
+    assert failure_open["active_view"] == "gmail-intake"
+    assert failure_open["build_sha"] == "abc123"
+    assert failure_open["asset_version"] == "asset-123"
+    assert failure_open["build_identity"]["branch"] == "codex/gmail-report-context-shaping"
+    assert failure_open["workflow_kind"] == "translation"
+    assert failure_open["focused_attachment_id"] == "att-pdf"
+    assert failure_open["message"] == {
+        "message_id": "msg-1",
+        "thread_id": "thread-1",
+        "subject": "Subject <img src=x onerror=alert(1)><script>bad()</script>",
+        "account_email": "demo@example.test",
+    }
+    assert failure_open["attachments"] == [
+        {
+            "attachment_id": "att-pdf",
+            "filename": "demo <img src=x onerror=alert(1)><script>bad()</script>.pdf",
+            "mime_type": "application/pdf",
+            "size_bytes": 661,
+            "selected": True,
+            "start_page": 3,
+            "page_count": 9,
+        },
+        {
+            "attachment_id": "att-image",
+            "filename": "scan.png",
+            "mime_type": "image/png",
+            "size_bytes": 12,
+            "selected": False,
+            "start_page": 1,
+            "page_count": 0,
+        },
+    ]
+    assert failure_open["preview_state"] == {
+        "attachment_id": "att-pdf",
+        "page": 2,
+        "page_count": 9,
+        "preview_href": "/api/gmail/attachment/att-pdf#page=2",
+    }
+    assert failure_open["error"]["code"] == "payload_code_<img src=x onerror=alert(1)><script>bad()</script>"
+    assert "Setting up fake worker failed" in failure_open["error"]["message"]
+    assert failure_open["error"]["diagnostics"]["error"] == (
+        "payload_code_<img src=x onerror=alert(1)><script>bad()</script>"
+    )
+    assert failure_open["error"]["diagnostics"]["payload_detail"] == malicious
+    assert failure_open["error"]["diagnostics"]["raw_browser_error"]
+
+    assert results["failureClosed"]["preview_state"] == {}
+    assert results["failureClosed"]["focused_attachment_id"] == "att-focused"
+    assert results["failureClosed"]["message"] == {
+        "message_id": "",
+        "thread_id": "",
+        "subject": "",
+        "account_email": "",
+    }
+
+    assert results["finalizationPayloadWins"] == {
+        "source": "payload",
+        "runtime_mode": "existing-mode",
+        "workspace_id": "workspace-from-app",
+        "active_view": "gmail-intake",
+        "build_sha": "existing-sha",
+        "asset_version": "asset-123",
+        "draft": malicious,
+    }
+    assert results["finalizationSessionFallback"] == {
+        "source": "session",
+        "runtime_mode": "shadow",
+        "workspace_id": "session-workspace",
+        "active_view": "gmail-intake",
+        "build_sha": "abc123",
+        "asset_version": "asset-123",
+    }
+    assert results["finalizationMissing"] is None
+
+
+def test_gmail_report_context_module_owns_report_context_shaping() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    context_path = static_dir / "gmail_report_context.js"
+    assert context_path.exists()
+    context_js = context_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_report_context.js"' in gmail_js
+    assert "export function buildGmailAttachmentReportSnapshot" in context_js
+    assert "export function buildGmailFailureReportContext" in context_js
+    assert "export function buildGmailFinalizationReportContext" in context_js
+    assert "document." not in context_js
+    assert "innerHTML" not in context_js
+    assert "fetchJson(" not in context_js
+    assert "renderGmail" not in context_js
+
+    assert "function attachmentReportSnapshot(" not in gmail_js
+    assert "function buildGmailFailureReportContext(" not in gmail_js
+
+    finalization_start = gmail_js.index("function currentGmailFinalizationReportContext")
+    finalization_end = gmail_js.index("\nfunction clearGmailFailureReportContext", finalization_start)
+    finalization_block = gmail_js[finalization_start:finalization_end]
+    assert "buildGmailFinalizationReportContext({" in finalization_block
+    assert "rawContext" not in finalization_block
+
+    remember_start = gmail_js.index("function rememberGmailFailureReport")
+    remember_end = gmail_js.index("\nfunction updateGmailFailureReportActionState", remember_start)
+    remember_block = gmail_js[remember_start:remember_end]
+    assert "buildGmailFailureReportContext({" in remember_block
+    assert "attachments: gmailAttachments()" in remember_block
+    assert "selectionState: gmailState.selectionState" in remember_block
+
+
 def test_gmail_report_ui_module_owns_report_action_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -28745,6 +29040,15 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         )
         assert "buildGmailFailureReportActionPresentation" in gmail_report_presentation_asset.text
         assert "buildGmailFinalizationReportActionPresentation" in gmail_report_presentation_asset.text
+        gmail_report_context_asset = client.get(
+            f"/static-build/{asset_version}/gmail_report_context.js"
+        )
+        assert gmail_report_context_asset.status_code == 200
+        assert gmail_report_context_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailFailureReportContext" in gmail_report_context_asset.text
+        assert "buildGmailFinalizationReportContext" in gmail_report_context_asset.text
         gmail_context_ui_asset = client.get(f"/static-build/{asset_version}/gmail_context_ui.js")
         assert gmail_context_ui_asset.status_code == 200
         assert gmail_context_ui_asset.headers["content-type"].startswith("application/javascript")
