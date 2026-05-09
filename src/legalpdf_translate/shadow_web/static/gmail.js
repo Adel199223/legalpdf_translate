@@ -22,6 +22,10 @@ import {
   renderGmailAttachmentListInto,
   renderGmailReviewDetailInto,
 } from "./gmail_attachment_ui.js";
+import {
+  buildGmailAttachmentListPresentation,
+  buildGmailReviewDetailPresentation,
+} from "./gmail_attachment_presentation.js";
 import { buildGmailBatchFinalizeSurfacePresentation } from "./gmail_finalize_presentation.js";
 import {
   buildGmailResumeCardPresentation,
@@ -1345,14 +1349,39 @@ export function renderAttachmentListInto(
   attachments,
   options = {},
 ) {
-  renderGmailAttachmentListInto(container, attachments, {
-    ...options,
-    formatSizeLabel: options.formatSizeLabel || formatBytes,
-    resolveKindLabel: options.resolveKindLabel || attachmentKindLabel,
-    resolveStartPage: options.resolveStartPage || ((attachment, state = {}) => (
-      clampStartPage(attachment, state.startPage, state.pageCount)
-    )),
+  const normalizedAttachments = Array.isArray(attachments) ? attachments : [];
+  const resolveState = options.resolveState || (() => ({ selected: false, startPage: 1, pageCount: 0 }));
+  const resolveCanEditStart = options.resolveCanEditStart || (() => false);
+  const resolveKindLabel = options.resolveKindLabel || attachmentKindLabel;
+  const resolveStartPage = options.resolveStartPage || ((attachment, state = {}) => (
+    clampStartPage(attachment, state.startPage, state.pageCount)
+  ));
+  const formatSizeLabel = options.formatSizeLabel || formatBytes;
+  const attachmentStates = new Map();
+  const canEditStartByAttachmentId = new Map();
+  const kindLabelsByAttachmentId = new Map();
+  const startPagesByAttachmentId = new Map();
+  const sizeLabelsByAttachmentId = new Map();
+  for (const attachment of normalizedAttachments) {
+    const attachmentId = attachment?.attachment_id || "";
+    const state = resolveState(attachmentId) || {};
+    attachmentStates.set(attachmentId, state);
+    canEditStartByAttachmentId.set(attachmentId, resolveCanEditStart(attachment) === true);
+    kindLabelsByAttachmentId.set(attachmentId, resolveKindLabel(attachment));
+    startPagesByAttachmentId.set(attachmentId, resolveStartPage(attachment, state));
+    sizeLabelsByAttachmentId.set(attachmentId, formatSizeLabel(attachment?.size_bytes || 0));
+  }
+  const presentation = buildGmailAttachmentListPresentation({
+    attachments: normalizedAttachments,
+    interpretationWorkflow: options.interpretationWorkflow === true,
+    focusedAttachmentId: options.focusedAttachmentId || "",
+    attachmentStates,
+    canEditStartByAttachmentId,
+    kindLabelsByAttachmentId,
+    startPagesByAttachmentId,
+    sizeLabelsByAttachmentId,
   });
+  renderGmailAttachmentListInto(container, presentation, { startHeading: options.startHeading || null });
 }
 
 function renderAttachmentList(loadResult) {
@@ -1379,13 +1408,18 @@ export function renderReviewDetailInto(
   options = {},
 ) {
   const state = options.state || {};
-  renderGmailReviewDetailInto(container, attachment, {
-    ...options,
+  const presentation = buildGmailReviewDetailPresentation({
+    attachment,
     state,
+    canEditStart: options.canEditStart === true,
+    previewLoaded: options.previewLoaded === true,
+    runtimeGuard: options.runtimeGuard || { blocked: false },
+    kindLabel: options.kindLabel || "",
     startPage: Object.prototype.hasOwnProperty.call(options, "startPage")
       ? options.startPage
       : clampStartPage(attachment, state.startPage, state.pageCount),
   });
+  renderGmailReviewDetailInto(container, presentation);
 }
 
 function renderReviewDetail() {

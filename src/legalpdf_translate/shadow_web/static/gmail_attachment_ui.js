@@ -13,122 +13,87 @@ function createCell(className = "") {
   return cell;
 }
 
-function defaultFormatSizeLabel(value) {
-  const bytes = Number(value || 0);
-  if (!Number.isFinite(bytes) || bytes <= 0) {
-    return "0 B";
-  }
-  const units = ["B", "KB", "MB", "GB"];
-  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
-  const scaled = bytes / (1024 ** index);
-  const precision = scaled >= 10 || index === 0 ? 0 : 1;
-  return `${scaled.toFixed(precision)} ${units[index]}`;
+function applyDataset(element, dataset = {}) {
+  Object.entries(dataset || {}).forEach(([key, value]) => {
+    element.dataset[key] = String(value ?? "");
+  });
 }
 
-function defaultAttachmentKindLabel(attachment) {
-  const normalized = String(attachment?.mime_type || "").trim().toLowerCase();
-  if (normalized === "application/pdf") {
-    return "PDF";
-  }
-  if (normalized.startsWith("image/")) {
-    return "Image";
-  }
-  return "Unknown";
-}
-
-function defaultStartPage(_attachment, state = {}) {
-  const parsed = Number.parseInt(String(state.startPage ?? "1").trim(), 10);
-  let value = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
-  const pageCount = Number(state.pageCount || 0);
-  if (pageCount > 0) {
-    value = Math.min(value, pageCount);
-  }
-  return Math.max(1, value);
+function safeTextTagName(value, fallback) {
+  const tagName = String(value || "").trim().toLowerCase();
+  return ["strong", "p", "span", "label"].includes(tagName) ? tagName : fallback;
 }
 
 export function renderGmailAttachmentListInto(
   container,
-  attachments = [],
-  {
-    startHeading = null,
-    interpretationWorkflow = false,
-    focusedAttachmentId = "",
-    resolveState = () => ({ selected: false, startPage: 1, pageCount: 0 }),
-    resolveCanEditStart = () => false,
-    resolveKindLabel = defaultAttachmentKindLabel,
-    resolveStartPage = defaultStartPage,
-    formatSizeLabel = defaultFormatSizeLabel,
-  } = {},
+  presentation = {},
+  { startHeading = null } = {},
 ) {
   if (!container) {
     return undefined;
   }
-  const normalizedAttachments = Array.isArray(attachments) ? attachments : [];
   clearNode(container);
   if (startHeading) {
-    startHeading.textContent = "Start page";
+    startHeading.textContent = presentation.startHeadingLabel || "";
   }
-  if (!normalizedAttachments.length) {
+  const rows = Array.isArray(presentation.rows) ? presentation.rows : [];
+  if (!rows.length) {
+    const empty = presentation.empty || {};
     const row = document.createElement("tr");
-    const cell = createCell("empty-state");
-    cell.colSpan = 5;
-    cell.textContent = "No supported PDF or image attachments were found in this message.";
+    const cell = createCell(empty.className || "");
+    cell.colSpan = Number(empty.colSpan || 1);
+    cell.textContent = empty.text || "";
     row.appendChild(cell);
     container.appendChild(row);
     return container;
   }
-  const selectedInputType = interpretationWorkflow ? "radio" : "checkbox";
-  for (const attachment of normalizedAttachments) {
-    const attachmentId = attachment?.attachment_id || "";
-    const state = resolveState(attachmentId) || {};
-    const selected = state.selected === true;
-    const focused = focusedAttachmentId === attachmentId;
-    const canEditStart = resolveCanEditStart(attachment) === true;
+  for (const rowPresentation of rows) {
     const row = document.createElement("tr");
-    row.className = [
-      "gmail-review-row",
-      selected ? "is-selected" : "",
-      focused ? "is-focused" : "",
-    ].filter(Boolean).join(" ");
-    row.dataset.attachmentRow = attachmentId;
-    row.tabIndex = 0;
+    row.className = rowPresentation.rowClassName || "";
+    row.dataset.attachmentRow = rowPresentation.attachmentId || "";
+    row.tabIndex = Number(rowPresentation.tabIndex ?? 0);
 
-    const selectCell = createCell();
+    const select = rowPresentation.select || {};
+    const selectCell = createCell(select.cellClassName || "");
     const label = document.createElement("label");
-    label.className = "checkbox-inline gmail-review-select";
+    label.className = select.labelClassName || "";
     const input = document.createElement("input");
-    input.type = selectedInputType;
-    input.name = "gmail-review-selection";
-    input.dataset.attachmentCheckbox = attachmentId;
-    input.checked = selected;
+    input.type = select.inputType || "";
+    input.name = select.inputName || "";
+    applyDataset(input, select.inputDataset);
+    input.checked = select.checked === true;
     label.appendChild(input);
-    label.appendChild(createTextElement("span", selected ? "Selected" : "Choose", "gmail-review-row-label"));
+    label.appendChild(createTextElement("span", select.text || "", select.textClassName || ""));
     selectCell.appendChild(label);
 
-    const fileCell = createCell("gmail-review-file-cell");
-    const filename = createTextElement("strong", attachment?.filename || "Attachment", "gmail-review-file-name");
-    setNodeTitle(filename, attachment?.filename || "Attachment");
+    const file = rowPresentation.file || {};
+    const fileCell = createCell(file.cellClassName || "");
+    const filename = createTextElement("strong", file.text || "", file.className || "");
+    setNodeTitle(filename, file.title || "");
     fileCell.appendChild(filename);
 
-    const mimeCell = createCell();
-    setNodeTitle(mimeCell, attachment?.mime_type || "Unknown");
-    mimeCell.textContent = resolveKindLabel(attachment);
+    const kind = rowPresentation.kind || {};
+    const mimeCell = createCell(kind.cellClassName || "");
+    setNodeTitle(mimeCell, kind.title || "");
+    mimeCell.textContent = kind.text || "";
 
-    const sizeCell = createCell();
-    sizeCell.textContent = formatSizeLabel(attachment?.size_bytes || 0);
+    const size = rowPresentation.size || {};
+    const sizeCell = createCell(size.cellClassName || "");
+    sizeCell.textContent = size.text || "";
 
-    const startCell = createCell();
-    if (canEditStart) {
+    const start = rowPresentation.start || {};
+    const startCell = createCell(start.cellClassName || "");
+    if (start.kind === "input") {
       const startInput = document.createElement("input");
-      startInput.type = "number";
-      startInput.className = "attachment-start-page";
-      startInput.min = "1";
-      startInput.step = "1";
-      startInput.value = String(resolveStartPage(attachment, state));
-      startInput.dataset.attachmentStartPage = attachmentId;
+      startInput.type = start.inputType || "";
+      startInput.className = start.className || "";
+      startInput.min = start.min || "";
+      startInput.step = start.step || "";
+      startInput.value = start.value || "";
+      applyDataset(startInput, start.dataset);
       startCell.appendChild(startInput);
     } else {
-      startCell.appendChild(createTextElement("span", "1", "gmail-review-start-static"));
+      startCell.appendChild(createTextElement("span", start.text || "", start.className || ""));
     }
 
     row.appendChild(selectCell);
@@ -143,74 +108,74 @@ export function renderGmailAttachmentListInto(
 
 export function renderGmailReviewDetailInto(
   container,
-  attachment,
-  {
-    state = {},
-    canEditStart = false,
-    previewLoaded = false,
-    runtimeGuard = { blocked: false },
-    kindLabel = "",
-    startPage = defaultStartPage(attachment, state),
-  } = {},
+  presentation = {},
 ) {
   if (!container) {
     return undefined;
   }
-  if (!attachment) {
-    container.className = "result-card empty-state";
-    clearNode(container);
-    setText(container, "Choose an attachment row to see the document details, optional preview, and start page.");
+  container.className = presentation.className || "";
+  clearNode(container);
+  if (presentation.emptyText) {
+    setText(container, presentation.emptyText);
     return container;
   }
-  const pageCountText = state.pageCount > 0
-    ? `${state.pageCount} ${state.pageCount === 1 ? "page" : "pages"}`
-    : "Page count appears after preview";
-  const selectedStateText = state.selected ? "Selected" : "Not selected";
-  container.className = "result-card";
-  clearNode(container);
   const strip = document.createElement("div");
-  strip.className = "gmail-review-detail-strip";
+  strip.className = presentation.stripClassName || "";
   const primary = document.createElement("div");
-  primary.className = "gmail-review-detail-primary";
-  const title = createTextElement("strong", attachment.filename || "Attachment", "word-break");
-  setNodeTitle(title, attachment.filename || "Attachment");
+  primary.className = presentation.primaryClassName || "";
+  const titlePresentation = presentation.title || {};
+  const title = createTextElement(
+    safeTextTagName(titlePresentation.tagName, "strong"),
+    titlePresentation.text || "",
+    titlePresentation.className || "",
+  );
+  setNodeTitle(title, titlePresentation.title || "");
   primary.appendChild(title);
+  const meta = presentation.meta || {};
   primary.appendChild(createTextElement(
-    "p",
-    `${kindLabel} · ${selectedStateText} · ${pageCountText}${previewLoaded ? " · Preview ready" : ""}`,
-    "gmail-review-detail-meta",
+    safeTextTagName(meta.tagName, "p"),
+    meta.text || "",
+    meta.className || "",
   ));
+  const hint = presentation.hint || {};
   primary.appendChild(createTextElement(
-    "p",
-    "Preview is optional. Use it if you want to check the document or choose a later start page.",
-    "field-hint",
+    safeTextTagName(hint.tagName, "p"),
+    hint.text || "",
+    hint.className || "",
   ));
   strip.appendChild(primary);
   const actions = document.createElement("div");
-  actions.className = "gmail-review-detail-actions";
-  if (canEditStart) {
+  actions.className = presentation.actionsClassName || "";
+  const startField = presentation.startField || null;
+  if (startField) {
     const field = document.createElement("div");
-    field.className = "field gmail-review-start-field";
-    const label = createTextElement("label", "Start page");
-    label.htmlFor = "gmail-review-detail-start";
+    field.className = startField.className || "";
+    const labelPresentation = startField.label || {};
+    const label = createTextElement(
+      safeTextTagName(labelPresentation.tagName, "label"),
+      labelPresentation.text || "",
+    );
+    label.htmlFor = labelPresentation.htmlFor || "";
+    const inputPresentation = startField.input || {};
     const input = document.createElement("input");
-    input.id = "gmail-review-detail-start";
-    input.type = "number";
-    input.min = "1";
-    input.step = "1";
-    input.value = String(startPage);
-    input.dataset.detailStartPage = attachment.attachment_id || "";
+    input.id = inputPresentation.id || "";
+    input.type = inputPresentation.type || "";
+    input.min = inputPresentation.min || "";
+    input.step = inputPresentation.step || "";
+    input.value = inputPresentation.value || "";
+    applyDataset(input, inputPresentation.dataset);
     field.appendChild(label);
     field.appendChild(input);
     actions.appendChild(field);
   }
+  const previewButtonPresentation = presentation.previewButton || {};
   const previewButton = document.createElement("button");
-  previewButton.type = "button";
-  previewButton.className = "ghost-button";
-  previewButton.id = "gmail-preview-selected";
-  previewButton.dataset.previewSelected = attachment.attachment_id || "";
-  previewButton.disabled = runtimeGuard.blocked === true;
-  previewButton.textContent = "Preview";
+  previewButton.type = previewButtonPresentation.type || "";
+  previewButton.className = previewButtonPresentation.className || "";
+  previewButton.id = previewButtonPresentation.id || "";
+  applyDataset(previewButton, previewButtonPresentation.dataset);
+  previewButton.disabled = previewButtonPresentation.disabled === true;
+  previewButton.textContent = previewButtonPresentation.text || "";
   actions.appendChild(previewButton);
   strip.appendChild(actions);
   container.appendChild(strip);

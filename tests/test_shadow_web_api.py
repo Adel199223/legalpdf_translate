@@ -5820,6 +5820,245 @@ console.log(JSON.stringify({
     }
 
 
+def test_gmail_attachment_presentation_module_derives_list_and_detail_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_attachment_presentation_path = static_dir / "gmail_attachment_presentation.js"
+    assert gmail_attachment_presentation_path.exists()
+    gmail_attachment_presentation_js = gmail_attachment_presentation_path.read_text(encoding="utf-8")
+    assert "export function buildGmailAttachmentListPresentation" in gmail_attachment_presentation_js
+    assert "export function buildGmailReviewDetailPresentation" in gmail_attachment_presentation_js
+    builder_block = gmail_attachment_presentation_js[
+        gmail_attachment_presentation_js.index("export function buildGmailAttachmentListPresentation") :
+    ]
+    assert "document." not in builder_block
+    assert "innerHTML" not in builder_block
+    assert "renderGmailAttachmentListInto" not in builder_block
+    assert "renderGmailReviewDetailInto" not in builder_block
+
+    script = """
+const presentation = await import(__GMAIL_ATTACHMENT_PRESENTATION_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const pdfId = `pdf-${malicious}`;
+const imageId = `image-${malicious}`;
+
+const emptyList = presentation.buildGmailAttachmentListPresentation({});
+const populatedList = presentation.buildGmailAttachmentListPresentation({
+  attachments: [
+    {
+      attachment_id: pdfId,
+      filename: `PDF ${malicious}`,
+      mime_type: `application/pdf ${malicious}`,
+      size_bytes: 1536,
+    },
+    {
+      attachment_id: imageId,
+      filename: `Image ${malicious}`,
+      mime_type: `image/png ${malicious}`,
+      size_bytes: 256,
+    },
+  ],
+  focusedAttachmentId: pdfId,
+  attachmentStates: {
+    [pdfId]: { selected: true, startPage: 9, pageCount: 4 },
+    [imageId]: { selected: false, startPage: 1, pageCount: 0 },
+  },
+  canEditStartByAttachmentId: {
+    [pdfId]: true,
+    [imageId]: false,
+  },
+  kindLabelsByAttachmentId: {
+    [pdfId]: `Kind application/pdf ${malicious}`,
+    [imageId]: `Kind image/png ${malicious}`,
+  },
+  startPagesByAttachmentId: {
+    [pdfId]: 4,
+    [imageId]: 1,
+  },
+  sizeLabelsByAttachmentId: {
+    [pdfId]: "1536 bytes",
+    [imageId]: "256 bytes",
+  },
+});
+const interpretationList = presentation.buildGmailAttachmentListPresentation({
+  attachments: [
+    { attachment_id: "att-image", filename: "Image file", mime_type: "image/png", size_bytes: 99 },
+  ],
+  interpretationWorkflow: true,
+  attachmentStates: {
+    "att-image": { selected: false, startPage: 1, pageCount: 0 },
+  },
+  canEditStartByAttachmentId: {
+    "att-image": false,
+  },
+  kindLabelsByAttachmentId: {
+    "att-image": "Image",
+  },
+});
+const emptyDetail = presentation.buildGmailReviewDetailPresentation({});
+const populatedDetail = presentation.buildGmailReviewDetailPresentation({
+  attachment: {
+    attachment_id: pdfId,
+    filename: `PDF ${malicious}`,
+    mime_type: "application/pdf",
+  },
+  state: { selected: true, startPage: 7, pageCount: 4 },
+  canEditStart: true,
+  previewLoaded: true,
+  runtimeGuard: { blocked: true },
+  kindLabel: `PDF ${malicious}`,
+  startPage: 4,
+});
+const staticDetail = presentation.buildGmailReviewDetailPresentation({
+  attachment: {
+    attachment_id: "image-1",
+    filename: "Image",
+    mime_type: "image/png",
+  },
+  state: { selected: false, startPage: 1, pageCount: 0 },
+  canEditStart: false,
+  previewLoaded: false,
+  runtimeGuard: { blocked: false },
+  kindLabel: "Image",
+});
+
+console.log(JSON.stringify({
+  listExportType: typeof presentation.buildGmailAttachmentListPresentation,
+  detailExportType: typeof presentation.buildGmailReviewDetailPresentation,
+  emptyList,
+  populatedList,
+  interpretationList,
+  emptyDetail,
+  populatedDetail,
+  staticDetail,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_ATTACHMENT_PRESENTATION_MODULE_URL__": "gmail_attachment_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["listExportType"] == "function"
+    assert results["detailExportType"] == "function"
+    assert results["emptyList"] == {
+        "startHeadingLabel": "Start page",
+        "selectedInputType": "checkbox",
+        "empty": {
+            "className": "empty-state",
+            "colSpan": 5,
+            "text": "No supported PDF or image attachments were found in this message.",
+        },
+        "rows": [],
+    }
+    populated_rows = results["populatedList"]["rows"]
+    assert results["populatedList"]["startHeadingLabel"] == "Start page"
+    assert results["populatedList"]["selectedInputType"] == "checkbox"
+    assert len(populated_rows) == 2
+    assert populated_rows[0] == {
+        "attachmentId": "pdf-<img src=x onerror=alert(1)><script>bad()</script>",
+        "rowClassName": "gmail-review-row is-selected is-focused",
+        "tabIndex": 0,
+        "select": {
+            "cellClassName": "",
+            "labelClassName": "checkbox-inline gmail-review-select",
+            "inputType": "checkbox",
+            "inputName": "gmail-review-selection",
+            "inputDataset": {"attachmentCheckbox": "pdf-<img src=x onerror=alert(1)><script>bad()</script>"},
+            "checked": True,
+            "text": "Selected",
+            "textClassName": "gmail-review-row-label",
+        },
+        "file": {
+            "cellClassName": "gmail-review-file-cell",
+            "text": "PDF <img src=x onerror=alert(1)><script>bad()</script>",
+            "className": "gmail-review-file-name",
+            "title": "PDF <img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "kind": {
+            "cellClassName": "",
+            "text": "Kind application/pdf <img src=x onerror=alert(1)><script>bad()</script>",
+            "title": "application/pdf <img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "size": {"cellClassName": "", "text": "1536 bytes"},
+        "start": {
+            "cellClassName": "",
+            "kind": "input",
+            "inputType": "number",
+            "className": "attachment-start-page",
+            "min": "1",
+            "step": "1",
+            "value": "4",
+            "dataset": {"attachmentStartPage": "pdf-<img src=x onerror=alert(1)><script>bad()</script>"},
+        },
+    }
+    assert populated_rows[1]["rowClassName"] == "gmail-review-row"
+    assert populated_rows[1]["select"]["text"] == "Choose"
+    assert populated_rows[1]["start"] == {
+        "cellClassName": "",
+        "kind": "static",
+        "text": "1",
+        "className": "gmail-review-start-static",
+    }
+    assert results["interpretationList"]["selectedInputType"] == "radio"
+    assert results["interpretationList"]["rows"][0]["select"]["inputType"] == "radio"
+    assert results["interpretationList"]["rows"][0]["size"]["text"] == "99 B"
+    assert results["emptyDetail"] == {
+        "className": "result-card empty-state",
+        "emptyText": "Choose an attachment row to see the document details, optional preview, and start page.",
+    }
+    assert results["populatedDetail"] == {
+        "className": "result-card",
+        "stripClassName": "gmail-review-detail-strip",
+        "primaryClassName": "gmail-review-detail-primary",
+        "actionsClassName": "gmail-review-detail-actions",
+        "title": {
+            "tagName": "strong",
+            "text": "PDF <img src=x onerror=alert(1)><script>bad()</script>",
+            "className": "word-break",
+            "title": "PDF <img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "meta": {
+            "tagName": "p",
+            "text": "PDF <img src=x onerror=alert(1)><script>bad()</script> · Selected · 4 pages · Preview ready",
+            "className": "gmail-review-detail-meta",
+        },
+        "hint": {
+            "tagName": "p",
+            "text": "Preview is optional. Use it if you want to check the document or choose a later start page.",
+            "className": "field-hint",
+        },
+        "startField": {
+            "className": "field gmail-review-start-field",
+            "label": {"tagName": "label", "text": "Start page", "htmlFor": "gmail-review-detail-start"},
+            "input": {
+                "id": "gmail-review-detail-start",
+                "type": "number",
+                "min": "1",
+                "step": "1",
+                "value": "4",
+                "dataset": {"detailStartPage": "pdf-<img src=x onerror=alert(1)><script>bad()</script>"},
+            },
+        },
+        "previewButton": {
+            "id": "gmail-preview-selected",
+            "type": "button",
+            "className": "ghost-button",
+            "dataset": {"previewSelected": "pdf-<img src=x onerror=alert(1)><script>bad()</script>"},
+            "disabled": True,
+            "text": "Preview",
+        },
+    }
+    assert results["staticDetail"]["meta"]["text"] == "Image · Not selected · Page count appears after preview"
+    assert results["staticDetail"]["startField"] is None
+    assert results["staticDetail"]["previewButton"]["disabled"] is False
+
+
 def test_gmail_attachment_ui_module_owns_review_attachment_renderers() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -5831,17 +6070,24 @@ def test_gmail_attachment_ui_module_owns_review_attachment_renderers() -> None:
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
     gmail_attachment_ui_path = static_dir / "gmail_attachment_ui.js"
+    gmail_attachment_presentation_path = static_dir / "gmail_attachment_presentation.js"
 
     assert gmail_attachment_ui_path.exists()
+    assert gmail_attachment_presentation_path.exists()
     gmail_attachment_ui_js = gmail_attachment_ui_path.read_text(encoding="utf-8")
+    gmail_attachment_presentation_js = gmail_attachment_presentation_path.read_text(encoding="utf-8")
 
     assert "renderGmailAttachmentListInto" in gmail_js
     assert "renderGmailReviewDetailInto" in gmail_js
     assert 'from "./gmail_attachment_ui.js"' in gmail_js
+    assert 'from "./gmail_attachment_presentation.js"' in gmail_js
+    assert "buildGmailAttachmentListPresentation" in gmail_js
+    assert "buildGmailReviewDetailPresentation" in gmail_js
     attachment_start = gmail_js.index("export function renderAttachmentListInto")
     attachment_end = gmail_js.index("\nfunction renderAttachmentList", attachment_start)
     attachment_block = gmail_js[attachment_start:attachment_end]
     assert "renderGmailAttachmentListInto" in attachment_block
+    assert "buildGmailAttachmentListPresentation({" in attachment_block
     assert "document.createElement" not in attachment_block
     assert "appendChild" not in attachment_block
     assert "createTextElement" not in attachment_block
@@ -5851,6 +6097,7 @@ def test_gmail_attachment_ui_module_owns_review_attachment_renderers() -> None:
     detail_end = gmail_js.index("\nfunction renderReviewDetail", detail_start)
     detail_block = gmail_js[detail_start:detail_end]
     assert "renderGmailReviewDetailInto" in detail_block
+    assert "buildGmailReviewDetailPresentation({" in detail_block
     assert "document.createElement" not in detail_block
     assert "appendChild" not in detail_block
     assert "createTextElement" not in detail_block
@@ -5864,9 +6111,19 @@ def test_gmail_attachment_ui_module_owns_review_attachment_renderers() -> None:
     assert "export function renderGmailReviewDetailInto" not in gmail_ui_js
     assert "export function renderGmailAttachmentListInto" in gmail_attachment_ui_js
     assert "export function renderGmailReviewDetailInto" in gmail_attachment_ui_js
+    assert "export function buildGmailAttachmentListPresentation" in gmail_attachment_presentation_js
+    assert "export function buildGmailReviewDetailPresentation" in gmail_attachment_presentation_js
     assert "innerHTML" not in gmail_attachment_ui_js
+    renderer_start = gmail_attachment_ui_js.index("export function renderGmailAttachmentListInto")
+    renderer_block = gmail_attachment_ui_js[renderer_start:]
+    assert "No supported PDF or image attachments" not in renderer_block
+    assert "Page count appears after preview" not in renderer_block
+    assert "Preview ready" not in renderer_block
+    assert '"Selected"' not in renderer_block
+    assert '"Choose"' not in renderer_block
 
     script = """
+const presentation = await import(__GMAIL_ATTACHMENT_PRESENTATION_MODULE_URL__);
 const ui = await import(__GMAIL_ATTACHMENT_UI_MODULE_URL__);
 const compat = await import(__GMAIL_UI_MODULE_URL__);
 
@@ -6088,101 +6345,149 @@ function summarizeDetail(node) {
 }
 
 const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const pdfId = `pdf-${malicious}`;
+const imageId = `image-${malicious}`;
 
 const emptyTable = makeElement("tbody");
 const emptyHeading = makeElement("th");
-const emptyListResult = ui.renderGmailAttachmentListInto(emptyTable, [], { startHeading: emptyHeading });
+const emptyListResult = ui.renderGmailAttachmentListInto(
+  emptyTable,
+  presentation.buildGmailAttachmentListPresentation({}),
+  { startHeading: emptyHeading },
+);
 
 const table = makeElement("tbody");
 const startHeading = makeElement("th");
-const populatedListResult = ui.renderGmailAttachmentListInto(table, [
+const populatedListResult = ui.renderGmailAttachmentListInto(table, presentation.buildGmailAttachmentListPresentation({
+  attachments: [
   {
-    attachment_id: `pdf-${malicious}`,
+    attachment_id: pdfId,
     filename: `PDF ${malicious}`,
     mime_type: `application/pdf ${malicious}`,
     size_bytes: 1536,
   },
   {
-    attachment_id: `image-${malicious}`,
+    attachment_id: imageId,
     filename: `Image ${malicious}`,
     mime_type: `image/png ${malicious}`,
     size_bytes: 256,
   },
-], {
+  ],
   startHeading,
   interpretationWorkflow: false,
-  focusedAttachmentId: `pdf-${malicious}`,
-  resolveState(attachmentId) {
-    return String(attachmentId).startsWith("pdf-")
-      ? { selected: true, startPage: 9, pageCount: 4 }
-      : { selected: false, startPage: 1, pageCount: 0 };
+  focusedAttachmentId: pdfId,
+  attachmentStates: {
+    [pdfId]: { selected: true, startPage: 9, pageCount: 4 },
+    [imageId]: { selected: false, startPage: 1, pageCount: 0 },
   },
-  resolveCanEditStart(attachment) {
-    return String(attachment.attachment_id).startsWith("pdf-");
+  canEditStartByAttachmentId: {
+    [pdfId]: true,
+    [imageId]: false,
   },
-  resolveStartPage(attachment, state) {
-    return String(attachment.attachment_id).startsWith("pdf-")
-      ? Math.min(Number(state.startPage || 1), Number(state.pageCount || 0) || 1)
-      : 1;
+  startPagesByAttachmentId: {
+    [pdfId]: 4,
+    [imageId]: 1,
   },
-  resolveKindLabel(attachment) {
-    return `Kind ${attachment.mime_type}`;
+  kindLabelsByAttachmentId: {
+    [pdfId]: `Kind application/pdf ${malicious}`,
+    [imageId]: `Kind image/png ${malicious}`,
   },
-  formatSizeLabel(value) {
-    return `${value} bytes`;
+  sizeLabelsByAttachmentId: {
+    [pdfId]: "1536 bytes",
+    [imageId]: "256 bytes",
   },
-});
+}), { startHeading });
 
 const interpretationTable = makeElement("tbody");
-ui.renderGmailAttachmentListInto(interpretationTable, [
-  { attachment_id: "att-image", filename: "Image file", mime_type: "image/png", size_bytes: 99 },
-], {
+ui.renderGmailAttachmentListInto(interpretationTable, presentation.buildGmailAttachmentListPresentation({
+  attachments: [
+    { attachment_id: "att-image", filename: "Image file", mime_type: "image/png", size_bytes: 99 },
+  ],
   interpretationWorkflow: true,
-  resolveState() {
-    return { selected: false, startPage: 1, pageCount: 0 };
+  attachmentStates: {
+    "att-image": { selected: false, startPage: 1, pageCount: 0 },
   },
-  resolveCanEditStart() {
-    return false;
+  canEditStartByAttachmentId: {
+    "att-image": false,
   },
-  resolveKindLabel() {
-    return "Image";
+  kindLabelsByAttachmentId: {
+    "att-image": "Image",
   },
-});
+}));
 
 const emptyDetail = makeElement("article");
-const emptyDetailResult = ui.renderGmailReviewDetailInto(emptyDetail, null);
+const emptyDetailResult = ui.renderGmailReviewDetailInto(
+  emptyDetail,
+  presentation.buildGmailReviewDetailPresentation({}),
+);
 
 const detail = makeElement("article");
-const populatedDetailResult = ui.renderGmailReviewDetailInto(detail, {
-  attachment_id: `pdf-${malicious}`,
-  filename: `PDF ${malicious}`,
-  mime_type: "application/pdf",
-}, {
+const populatedDetailResult = ui.renderGmailReviewDetailInto(detail, presentation.buildGmailReviewDetailPresentation({
+  attachment: {
+    attachment_id: pdfId,
+    filename: `PDF ${malicious}`,
+    mime_type: "application/pdf",
+  },
   state: { selected: true, startPage: 7, pageCount: 4 },
   canEditStart: true,
   previewLoaded: true,
   runtimeGuard: { blocked: true },
   kindLabel: `PDF ${malicious}`,
   startPage: 4,
-});
+}));
 
 const staticDetail = makeElement("article");
-ui.renderGmailReviewDetailInto(staticDetail, {
-  attachment_id: "image-1",
-  filename: "Image",
-  mime_type: "image/png",
-}, {
+ui.renderGmailReviewDetailInto(staticDetail, presentation.buildGmailReviewDetailPresentation({
+  attachment: {
+    attachment_id: "image-1",
+    filename: "Image",
+    mime_type: "image/png",
+  },
   state: { selected: false, startPage: 1, pageCount: 0 },
   canEditStart: false,
   previewLoaded: false,
   runtimeGuard: { blocked: false },
   kindLabel: "Image",
+}));
+
+const unsafePresentationDetail = makeElement("article");
+ui.renderGmailReviewDetailInto(unsafePresentationDetail, {
+  className: "result-card",
+  stripClassName: "gmail-review-detail-strip",
+  primaryClassName: "gmail-review-detail-primary",
+  actionsClassName: "gmail-review-detail-actions",
+  title: {
+    tagName: "script",
+    text: malicious,
+    className: "word-break",
+    title: malicious,
+  },
+  meta: {
+    tagName: "img",
+    text: malicious,
+    className: "gmail-review-detail-meta",
+  },
+  hint: {
+    tagName: "iframe",
+    text: malicious,
+    className: "field-hint",
+  },
+  previewButton: {
+    id: "gmail-preview-selected",
+    type: "button",
+    className: "ghost-button",
+    dataset: { previewSelected: "unsafe" },
+    disabled: false,
+    text: "Preview",
+  },
 });
 
 const nullListResult = ui.renderGmailAttachmentListInto(null, []);
 const nullDetailResult = ui.renderGmailReviewDetailInto(null, { attachment_id: "ignored" });
 
 console.log(JSON.stringify({
+  presentationListExportType: typeof presentation.buildGmailAttachmentListPresentation,
+  presentationDetailExportType: typeof presentation.buildGmailReviewDetailPresentation,
   listExportType: typeof ui.renderGmailAttachmentListInto,
   detailExportType: typeof ui.renderGmailReviewDetailInto,
   compatListExportType: typeof compat.renderGmailAttachmentListInto,
@@ -6199,6 +6504,7 @@ console.log(JSON.stringify({
   populatedDetail: summarizeDetail(detail),
   populatedDetailReturnType: typeof populatedDetailResult,
   staticDetail: summarizeDetail(staticDetail),
+  unsafePresentationDetail: summarizeDetail(unsafePresentationDetail),
   nullListResultType: typeof nullListResult,
   nullDetailResultType: typeof nullDetailResult,
 }));
@@ -6206,12 +6512,15 @@ console.log(JSON.stringify({
     results = run_browser_esm_json_probe(
         script,
         {
+            "__GMAIL_ATTACHMENT_PRESENTATION_MODULE_URL__": "gmail_attachment_presentation.js",
             "__GMAIL_ATTACHMENT_UI_MODULE_URL__": "gmail_attachment_ui.js",
             "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
         },
         timeout_seconds=30,
     )
 
+    assert results["presentationListExportType"] == "function"
+    assert results["presentationDetailExportType"] == "function"
     assert results["listExportType"] == "function"
     assert results["detailExportType"] == "function"
     assert results["compatListExportType"] == "function"
@@ -6307,6 +6616,11 @@ console.log(JSON.stringify({
     assert "Image · Not selected · Page count appears after preview" in results["staticDetail"]["text"]
     assert results["staticDetail"]["inputs"] == []
     assert results["staticDetail"]["buttons"][0]["disabled"] is False
+    assert "<img src=x onerror=alert(1)><script>bad()</script>" in results["unsafePresentationDetail"]["text"]
+    assert "word-break" in results["unsafePresentationDetail"]["classes"]
+    assert results["unsafePresentationDetail"]["imgCount"] == 0
+    assert results["unsafePresentationDetail"]["scriptCount"] == 0
+    assert results["unsafePresentationDetail"]["innerHTMLWrites"] == 0
 
 
 def test_gmail_finalize_presentation_module_builds_batch_finalize_cards() -> None:
@@ -27125,6 +27439,15 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_attachment_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailAttachmentListInto" in gmail_attachment_ui_asset.text
         assert "renderGmailReviewDetailInto" in gmail_attachment_ui_asset.text
+        gmail_attachment_presentation_asset = client.get(
+            f"/static-build/{asset_version}/gmail_attachment_presentation.js"
+        )
+        assert gmail_attachment_presentation_asset.status_code == 200
+        assert gmail_attachment_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailAttachmentListPresentation" in gmail_attachment_presentation_asset.text
+        assert "buildGmailReviewDetailPresentation" in gmail_attachment_presentation_asset.text
         gmail_workspace_ui_asset = client.get(f"/static-build/{asset_version}/gmail_workspace_ui.js")
         assert gmail_workspace_ui_asset.status_code == 200
         assert gmail_workspace_ui_asset.headers["content-type"].startswith("application/javascript")
