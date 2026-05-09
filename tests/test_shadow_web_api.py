@@ -7598,17 +7598,22 @@ def test_gmail_finalize_ui_module_owns_numeric_warning_renderer() -> None:
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
     gmail_finalize_ui_js = (static_dir / "gmail_finalize_ui.js").read_text(encoding="utf-8")
+    gmail_finalize_presentation_js = (static_dir / "gmail_finalize_presentation.js").read_text(encoding="utf-8")
 
+    assert "buildGmailNumericMismatchWarningPresentation" in gmail_js
     assert "renderGmailNumericMismatchWarningInto" in gmail_js
+    assert 'from "./gmail_finalize_presentation.js"' in gmail_js
     assert 'from "./gmail_finalize_ui.js"' in gmail_ui_js
     assert "renderGmailNumericMismatchWarningInto" in gmail_ui_js
     assert "export function renderGmailNumericMismatchWarningInto" not in gmail_ui_js
     assert "export function renderGmailNumericMismatchWarningInto" in gmail_finalize_ui_js
+    assert "export function buildGmailNumericMismatchWarningPresentation" in gmail_finalize_presentation_js
 
     warning_start = gmail_js.index("function renderGmailFinalizeNumericMismatchWarning")
     warning_end = gmail_js.index("\nfunction interpretationUiSnapshot", warning_start)
     warning_block = gmail_js[warning_start:warning_end]
-    assert "renderGmailNumericMismatchWarningInto(container, warning)" in warning_block
+    assert "buildGmailNumericMismatchWarningPresentation(warning)" in warning_block
+    assert "renderGmailNumericMismatchWarningInto(container, presentation)" in warning_block
     assert ".classList.toggle(" not in warning_block
     assert ".textContent =" not in warning_block
     assert ".setAttribute(" not in warning_block
@@ -7617,10 +7622,21 @@ def test_gmail_finalize_ui_module_owns_numeric_warning_renderer() -> None:
     renderer_end = gmail_finalize_ui_js.index("\nexport function", renderer_start + 1)
     renderer_block = gmail_finalize_ui_js[renderer_start:renderer_end]
     assert "innerHTML" not in renderer_block
+    assert "Array.isArray" not in renderer_block
+    assert "warning.message" not in renderer_block
+    assert "lines.join" not in renderer_block
+
+    builder_start = gmail_finalize_presentation_js.index("export function buildGmailNumericMismatchWarningPresentation")
+    builder_end = gmail_finalize_presentation_js.index("\nexport function", builder_start + 1)
+    builder_block = gmail_finalize_presentation_js[builder_start:builder_end]
+    assert "document." not in builder_block
+    assert "innerHTML" not in builder_block
+    assert "renderGmailNumericMismatchWarningInto" not in builder_block
 
     script = """
 const ui = await import(__GMAIL_FINALIZE_UI_MODULE_URL__);
 const legacyUi = await import(__GMAIL_UI_MODULE_URL__);
+const presentation = await import(__GMAIL_FINALIZE_PRESENTATION_MODULE_URL__);
 
 function normalizeClassList(value) {
   return String(value || "").split(/\\s+/).filter(Boolean);
@@ -7702,24 +7718,26 @@ function summarize(element) {
 const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
 
 const visible = makeElement();
-const visibleResult = ui.renderGmailNumericMismatchWarningInto(visible, {
+const visiblePresentation = presentation.buildGmailNumericMismatchWarningPresentation({
   visible: true,
   message: `Review ${malicious}`,
   lines: [`Line one ${malicious}`, "", null, `Line two ${malicious}`],
 });
+const visibleResult = ui.renderGmailNumericMismatchWarningInto(visible, visiblePresentation);
 
 const hidden = makeElement();
-const hiddenResult = ui.renderGmailNumericMismatchWarningInto(hidden, {
+const hiddenPresentation = presentation.buildGmailNumericMismatchWarningPresentation({
   visible: false,
   message: `Hidden ${malicious}`,
   lines: [`Hidden line ${malicious}`],
 });
+const hiddenResult = ui.renderGmailNumericMismatchWarningInto(hidden, hiddenPresentation);
 
 const defaultMessage = makeElement();
-ui.renderGmailNumericMismatchWarningInto(defaultMessage, {
+ui.renderGmailNumericMismatchWarningInto(defaultMessage, presentation.buildGmailNumericMismatchWarningPresentation({
   visible: true,
   lines: [],
-});
+}));
 
 const nullResult = ui.renderGmailNumericMismatchWarningInto(null, {
   visible: true,
@@ -7729,6 +7747,9 @@ const nullResult = ui.renderGmailNumericMismatchWarningInto(null, {
 console.log(JSON.stringify({
   exportType: typeof ui.renderGmailNumericMismatchWarningInto,
   legacyExportType: typeof legacyUi.renderGmailNumericMismatchWarningInto,
+  presentationExportType: typeof presentation.buildGmailNumericMismatchWarningPresentation,
+  visiblePresentation,
+  hiddenPresentation,
   visibleResultType: typeof visibleResult,
   hiddenResultType: typeof hiddenResult,
   nullResultType: typeof nullResult,
@@ -7742,11 +7763,27 @@ console.log(JSON.stringify({
         {
             "__GMAIL_FINALIZE_UI_MODULE_URL__": "gmail_finalize_ui.js",
             "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
+            "__GMAIL_FINALIZE_PRESENTATION_MODULE_URL__": "gmail_finalize_presentation.js",
         },
     )
 
     assert results["exportType"] == "function"
     assert results["legacyExportType"] == "function"
+    assert results["presentationExportType"] == "function"
+    assert results["visiblePresentation"] == {
+        "visible": True,
+        "text": (
+            "Review <img src=x onerror=alert(1)><script>bad()</script>\n"
+            "Line one <img src=x onerror=alert(1)><script>bad()</script>\n"
+            "Line two <img src=x onerror=alert(1)><script>bad()</script>"
+        ),
+        "role": "note",
+    }
+    assert results["hiddenPresentation"] == {
+        "visible": False,
+        "text": "",
+        "role": "",
+    }
     assert results["visibleResultType"] == "object"
     assert results["hiddenResultType"] == "object"
     assert results["nullResultType"] == "undefined"
@@ -25575,7 +25612,8 @@ def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> Non
     warning_end = gmail_js.index("function interpretationUiSnapshot")
     warning_block = gmail_js[warning_start:warning_end]
     assert '"gmail-batch-finalize-numeric-warning"' in warning_block
-    assert "renderGmailNumericMismatchWarningInto(container, warning)" in warning_block
+    assert "buildGmailNumericMismatchWarningPresentation(warning)" in warning_block
+    assert "renderGmailNumericMismatchWarningInto(container, presentation)" in warning_block
     assert ".innerHTML" not in warning_block
     assert "renderGmailNumericMismatchWarningInto" in gmail_ui_js
     assert "export function renderGmailNumericMismatchWarningInto" not in gmail_ui_js
@@ -28003,6 +28041,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
             "application/javascript"
         )
         assert "buildGmailBatchFinalizeSurfacePresentation" in gmail_finalize_presentation_asset.text
+        assert "buildGmailNumericMismatchWarningPresentation" in gmail_finalize_presentation_asset.text
         gmail_preview_ui_asset = client.get(f"/static-build/{asset_version}/gmail_preview_ui.js")
         assert gmail_preview_ui_asset.status_code == 200
         assert gmail_preview_ui_asset.headers["content-type"].startswith("application/javascript")

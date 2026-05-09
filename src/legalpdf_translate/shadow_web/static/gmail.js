@@ -30,7 +30,10 @@ import {
   buildGmailAttachmentListPresentation,
   buildGmailReviewDetailPresentation,
 } from "./gmail_attachment_presentation.js";
-import { buildGmailBatchFinalizeSurfacePresentation } from "./gmail_finalize_presentation.js";
+import {
+  buildGmailBatchFinalizeSurfacePresentation,
+  buildGmailNumericMismatchWarningPresentation,
+} from "./gmail_finalize_presentation.js";
 import {
   buildGmailResumeCardPresentation,
   buildGmailSessionResultPresentation,
@@ -525,7 +528,8 @@ function translationUiSnapshot() {
 
 function renderGmailFinalizeNumericMismatchWarning(warning = translationUiSnapshot().numericMismatchWarning) {
   const container = qs("gmail-batch-finalize-numeric-warning");
-  renderGmailNumericMismatchWarningInto(container, warning);
+  const presentation = buildGmailNumericMismatchWarningPresentation(warning);
+  renderGmailNumericMismatchWarningInto(container, presentation);
 }
 
 function interpretationUiSnapshot() {
