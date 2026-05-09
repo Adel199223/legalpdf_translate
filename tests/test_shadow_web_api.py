@@ -10795,6 +10795,128 @@ console.log(JSON.stringify({
     assert results["missingStatusResultType"] == "undefined"
 
 
+def test_gmail_context_presentation_module_builds_context_default_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_context_presentation_path = static_dir / "gmail_context_presentation.js"
+    assert gmail_context_presentation_path.exists()
+    gmail_context_presentation_js = gmail_context_presentation_path.read_text(encoding="utf-8")
+
+    assert "export function buildGmailContextDefaultsPresentation" in gmail_context_presentation_js
+    assert "export function buildGmailSimulatorDefaultsPresentation" in gmail_context_presentation_js
+    assert "document." not in gmail_context_presentation_js
+    assert "innerHTML" not in gmail_context_presentation_js
+    assert "renderGmail" not in gmail_context_presentation_js
+
+    script = """
+const presentation = await import(__GMAIL_CONTEXT_PRESENTATION_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const fullContext = presentation.buildGmailContextDefaultsPresentation({
+  defaults: {
+    message_context: {
+      message_id: `msg-${malicious}`,
+      thread_id: `thread-${malicious}`,
+      subject: `Subject ${malicious}`,
+      account_email: `sender-${malicious}@example.test`,
+    },
+    default_output_dir: `C:/Output/${malicious}`,
+    target_lang: "FR",
+  },
+});
+
+const nullContext = presentation.buildGmailContextDefaultsPresentation();
+const emptyContext = presentation.buildGmailContextDefaultsPresentation({ defaults: {} });
+const falsyContext = presentation.buildGmailContextDefaultsPresentation({
+  defaults: {
+    message_context: {
+      message_id: 0,
+      thread_id: false,
+      subject: null,
+      account_email: undefined,
+    },
+    default_output_dir: 0,
+    target_lang: "",
+  },
+});
+
+const simulator = presentation.buildGmailSimulatorDefaultsPresentation({
+  defaults: {
+    message_id: `sim-message-${malicious}`,
+    thread_id: `sim-thread-${malicious}`,
+    subject: `Sim subject ${malicious}`,
+    account_email: `sim-${malicious}@example.test`,
+  },
+});
+
+const simulatorEmpty = presentation.buildGmailSimulatorDefaultsPresentation();
+const simulatorFalsy = presentation.buildGmailSimulatorDefaultsPresentation({
+  defaults: {
+    message_id: 0,
+    thread_id: false,
+    subject: null,
+    account_email: "",
+  },
+});
+
+console.log(JSON.stringify({
+  contextExportType: typeof presentation.buildGmailContextDefaultsPresentation,
+  simulatorExportType: typeof presentation.buildGmailSimulatorDefaultsPresentation,
+  fullContext,
+  nullContext,
+  emptyContext,
+  falsyContext,
+  simulator,
+  simulatorEmpty,
+  simulatorFalsy,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_CONTEXT_PRESENTATION_MODULE_URL__": "gmail_context_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["contextExportType"] == "function"
+    assert results["simulatorExportType"] == "function"
+    assert results["fullContext"] == {
+        "messageId": "msg-<img src=x onerror=alert(1)><script>bad()</script>",
+        "threadId": "thread-<img src=x onerror=alert(1)><script>bad()</script>",
+        "subject": "Subject <img src=x onerror=alert(1)><script>bad()</script>",
+        "accountEmail": "sender-<img src=x onerror=alert(1)><script>bad()</script>@example.test",
+        "outputDir": "C:/Output/<img src=x onerror=alert(1)><script>bad()</script>",
+        "targetLang": "FR",
+    }
+    assert results["nullContext"] == {
+        "messageId": "",
+        "threadId": "",
+        "subject": "",
+        "accountEmail": "",
+        "outputDir": "",
+        "targetLang": "EN",
+    }
+    assert results["emptyContext"] == results["nullContext"]
+    assert results["falsyContext"] == results["nullContext"]
+    assert results["simulator"] == {
+        "messageId": "sim-message-<img src=x onerror=alert(1)><script>bad()</script>",
+        "threadId": "sim-thread-<img src=x onerror=alert(1)><script>bad()</script>",
+        "subject": "Sim subject <img src=x onerror=alert(1)><script>bad()</script>",
+        "accountEmail": "sim-<img src=x onerror=alert(1)><script>bad()</script>@example.test",
+    }
+    assert results["simulatorEmpty"] == {
+        "messageId": "",
+        "threadId": "",
+        "subject": "",
+        "accountEmail": "",
+    }
+    assert results["simulatorFalsy"] == results["simulatorEmpty"]
+
+
 def test_gmail_context_ui_module_owns_context_default_renderers() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -10806,15 +10928,21 @@ def test_gmail_context_ui_module_owns_context_default_renderers() -> None:
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
     gmail_context_ui_path = static_dir / "gmail_context_ui.js"
+    gmail_context_presentation_path = static_dir / "gmail_context_presentation.js"
     assert gmail_context_ui_path.exists()
+    assert gmail_context_presentation_path.exists()
     gmail_context_ui_js = gmail_context_ui_path.read_text(encoding="utf-8")
 
     assert 'from "./gmail_ui.js"' in gmail_js
+    assert 'from "./gmail_context_presentation.js"' in gmail_js
+    assert "buildGmailContextDefaultsPresentation" in gmail_js
+    assert "buildGmailSimulatorDefaultsPresentation" in gmail_js
     assert "renderGmailContextDefaultsInto" in gmail_js
     assert "renderGmailSimulatorDefaultsInto" in gmail_js
     bootstrap_start = gmail_js.index("function applyBootstrapDefaults")
     bootstrap_end = gmail_js.index("\nfunction activeSessionAttachmentId", bootstrap_start)
     bootstrap_block = gmail_js[bootstrap_start:bootstrap_end]
+    assert "buildGmailContextDefaultsPresentation" in bootstrap_block
     assert "renderGmailContextDefaultsInto" in bootstrap_block
     assert "setFieldValue(" not in bootstrap_block
     assert 'fieldValue("gmail-' not in bootstrap_block
@@ -10822,6 +10950,7 @@ def test_gmail_context_ui_module_owns_context_default_renderers() -> None:
     simulator_start = gmail_js.index('qs("gmail-use-simulator-defaults")?.addEventListener("click"')
     simulator_end = gmail_js.index('\n\n  qs("gmail-workflow-kind")', simulator_start)
     simulator_block = gmail_js[simulator_start:simulator_end]
+    assert "buildGmailSimulatorDefaultsPresentation" in simulator_block
     assert "renderGmailSimulatorDefaultsInto" in simulator_block
     assert "setFieldValue(" not in simulator_block
 
@@ -10836,9 +10965,13 @@ def test_gmail_context_ui_module_owns_context_default_renderers() -> None:
     simulator_block_ui = gmail_context_ui_js[simulator_start_ui:]
     assert "innerHTML" not in context_block
     assert "innerHTML" not in simulator_block_ui
+    assert "message_context" not in context_block
+    assert "default_output_dir" not in context_block
+    assert "defaults." not in simulator_block_ui
 
     script = """
 const ui = await import(__GMAIL_CONTEXT_UI_MODULE_URL__);
+const presentation = await import(__GMAIL_CONTEXT_PRESENTATION_MODULE_URL__);
 
 function makeField(value = "") {
   const field = {
@@ -10886,7 +11019,7 @@ function summarize(nodes, result) {
 const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
 
 const blankNodes = makeNodes();
-const blankResult = ui.renderGmailContextDefaultsInto(blankNodes, {
+const blankPresentation = presentation.buildGmailContextDefaultsPresentation({
   defaults: {
     message_context: {
       message_id: `msg-${malicious}`,
@@ -10898,6 +11031,7 @@ const blankResult = ui.renderGmailContextDefaultsInto(blankNodes, {
     target_lang: "FR",
   },
 });
+const blankResult = ui.renderGmailContextDefaultsInto(blankNodes, blankPresentation);
 
 const preservedNodes = makeNodes({
   messageId: " existing-message ",
@@ -10907,7 +11041,7 @@ const preservedNodes = makeNodes({
   outputDir: "C:/Existing",
   targetLang: "AR",
 });
-ui.renderGmailContextDefaultsInto(preservedNodes, {
+const preservedPresentation = presentation.buildGmailContextDefaultsPresentation({
   defaults: {
     message_context: {
       message_id: "new-message",
@@ -10919,16 +11053,20 @@ ui.renderGmailContextDefaultsInto(preservedNodes, {
     target_lang: "EN",
   },
 });
+ui.renderGmailContextDefaultsInto(preservedNodes, preservedPresentation);
 
 const defaultLanguageNodes = makeNodes();
-ui.renderGmailContextDefaultsInto(defaultLanguageNodes, { defaults: {} });
+ui.renderGmailContextDefaultsInto(
+  defaultLanguageNodes,
+  presentation.buildGmailContextDefaultsPresentation({ defaults: {} }),
+);
 
 const missingNodes = makeNodes();
 const missingResult = ui.renderGmailContextDefaultsInto({
   ...missingNodes,
   messageId: null,
   outputDir: null,
-}, {
+}, presentation.buildGmailContextDefaultsPresentation({
   defaults: {
     message_context: {
       message_id: "ignored-message",
@@ -10939,7 +11077,7 @@ const missingResult = ui.renderGmailContextDefaultsInto({
     default_output_dir: "ignored-output",
     target_lang: "PT",
   },
-});
+}));
 
 const simulatorNodes = makeNodes({
   messageId: "old-message",
@@ -10949,38 +11087,47 @@ const simulatorNodes = makeNodes({
   outputDir: "C:/Keep",
   targetLang: "AR",
 });
-const simulatorResult = ui.renderGmailSimulatorDefaultsInto(simulatorNodes, {
+const simulatorPresentation = presentation.buildGmailSimulatorDefaultsPresentation({
+  defaults: {
   message_id: `sim-message-${malicious}`,
   thread_id: `sim-thread-${malicious}`,
   subject: `Sim subject ${malicious}`,
   account_email: `sim-${malicious}@example.test`,
+  },
 });
+const simulatorResult = ui.renderGmailSimulatorDefaultsInto(simulatorNodes, simulatorPresentation);
 
 const simulatorBlankAccountNodes = makeNodes({
   accountEmail: "keep@example.test",
 });
-ui.renderGmailSimulatorDefaultsInto(simulatorBlankAccountNodes, {
+ui.renderGmailSimulatorDefaultsInto(simulatorBlankAccountNodes, presentation.buildGmailSimulatorDefaultsPresentation({
+  defaults: {
   message_id: null,
   thread_id: undefined,
   subject: "",
   account_email: "",
-});
+  },
+}));
 
 const simulatorMissingResult = ui.renderGmailSimulatorDefaultsInto({
   messageId: null,
   threadId: null,
   subject: null,
   accountEmail: null,
-}, {
+}, presentation.buildGmailSimulatorDefaultsPresentation({
+  defaults: {
   message_id: "ignored",
   thread_id: "ignored",
   subject: "ignored",
   account_email: "ignored@example.test",
-});
+  },
+}));
 
 console.log(JSON.stringify({
   contextExportType: typeof ui.renderGmailContextDefaultsInto,
   simulatorExportType: typeof ui.renderGmailSimulatorDefaultsInto,
+  contextPresentationExportType: typeof presentation.buildGmailContextDefaultsPresentation,
+  simulatorPresentationExportType: typeof presentation.buildGmailSimulatorDefaultsPresentation,
   blank: summarize(blankNodes, blankResult),
   preserved: summarize(preservedNodes),
   defaultLanguage: summarize(defaultLanguageNodes),
@@ -10992,12 +11139,17 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__GMAIL_CONTEXT_UI_MODULE_URL__": "gmail_context_ui.js"},
+        {
+            "__GMAIL_CONTEXT_UI_MODULE_URL__": "gmail_context_ui.js",
+            "__GMAIL_CONTEXT_PRESENTATION_MODULE_URL__": "gmail_context_presentation.js",
+        },
         timeout_seconds=30,
     )
 
     assert results["contextExportType"] == "function"
     assert results["simulatorExportType"] == "function"
+    assert results["contextPresentationExportType"] == "function"
+    assert results["simulatorPresentationExportType"] == "function"
 
     assert results["blank"]["resultType"] == "object"
     assert results["blank"]["values"] == {
@@ -27829,6 +27981,15 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_context_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailContextDefaultsInto" in gmail_context_ui_asset.text
         assert "renderGmailSimulatorDefaultsInto" in gmail_context_ui_asset.text
+        gmail_context_presentation_asset = client.get(
+            f"/static-build/{asset_version}/gmail_context_presentation.js"
+        )
+        assert gmail_context_presentation_asset.status_code == 200
+        assert gmail_context_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailContextDefaultsPresentation" in gmail_context_presentation_asset.text
+        assert "buildGmailSimulatorDefaultsPresentation" in gmail_context_presentation_asset.text
         gmail_finalize_ui_asset = client.get(f"/static-build/{asset_version}/gmail_finalize_ui.js")
         assert gmail_finalize_ui_asset.status_code == 200
         assert gmail_finalize_ui_asset.headers["content-type"].startswith("application/javascript")
