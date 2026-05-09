@@ -17891,8 +17891,8 @@ def test_interpretation_reference_ui_module_centralizes_row_id_rendering() -> No
     assert 'renderInterpretationRowIdInto(qs("row-id"),' in app_js
 
     delete_start = app_js.index("async function handleDeleteJobLogRow")
-    capability_start = app_js.index("function buildCapabilityCards", delete_start)
-    delete_block = app_js[delete_start:capability_start]
+    capability_render_start = app_js.index("function renderCapabilityCards", delete_start)
+    delete_block = app_js[delete_start:capability_render_start]
     assert 'renderInterpretationRowIdInto(qs("row-id"), "");' in delete_block
     assert 'qs("row-id").value = "";' not in delete_block
     assert "innerHTML" not in delete_block
@@ -24326,6 +24326,28 @@ def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> Non
     shell_block = app_js[shell_start:shell_end]
     assert "setTopbarStatus(chrome.status, chrome.tone);" in shell_block
     assert "runtime.workspace_id || appState.bootstrap?.normalized_payload?.runtime" not in shell_block
+
+
+def test_shadow_web_app_drops_unused_capability_card_builder() -> None:
+    root = Path(__file__).resolve().parents[1]
+    static_dir = root / "src" / "legalpdf_translate" / "shadow_web" / "static"
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    dashboard_presentation_js = (static_dir / "dashboard_presentation.js").read_text(encoding="utf-8")
+    settings_presentation_js = (static_dir / "settings_presentation.js").read_text(encoding="utf-8")
+    extension_lab_presentation_js = (static_dir / "extension_lab_presentation.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "function buildCapabilityCards(" not in app_js
+    assert "function describeCredentialSource(" not in app_js
+    assert "translationSource = describeCredentialSource" not in app_js
+    assert "buildCapabilityCards(payload)" not in app_js
+    assert "deriveDashboardPresentation(payload)" in app_js
+    assert "buildSettingsCapabilityCards(payload)" in app_js
+    assert "buildExtensionLabCards({" in app_js
+    assert "export function deriveDashboardPresentation" in dashboard_presentation_js
+    assert "export function buildSettingsCapabilityCards" in settings_presentation_js
+    assert "export function buildExtensionLabCards" in extension_lab_presentation_js
 
 
 def test_interpretation_review_drawer_uses_city_scoped_email_and_service_entity_selectors() -> None:
