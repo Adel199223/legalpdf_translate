@@ -8201,7 +8201,7 @@ def test_gmail_action_ui_module_owns_prepare_action_renderer() -> None:
     update_start = gmail_js.index("function updatePrepareActionState()")
     update_end = gmail_js.index("\nfunction syncShellState", update_start)
     update_block = gmail_js[update_start:update_end]
-    assert 'renderGmailPrepareActionInto(button, { label, disabled, title });' in update_block
+    assert "renderGmailPrepareActionInto(button, presentation);" in update_block
     assert ".textContent =" not in update_block
     assert ".dataset.defaultLabel =" not in update_block
     assert ".disabled =" not in update_block
@@ -8332,6 +8332,118 @@ console.log(JSON.stringify({
     assert results["truthyDisabled"]["text"] == "Load first"
     assert results["truthyDisabled"]["defaultLabel"] == "Load first"
     assert results["truthyDisabled"]["innerHTMLWrites"] == 0
+
+
+def test_gmail_action_presentation_module_derives_prepare_action_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_action_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert "export function buildGmailPrepareActionPresentation" in presentation_js
+    assert 'from "./gmail_action_presentation.js"' in gmail_js
+
+    update_start = gmail_js.index("function updatePrepareActionState()")
+    update_end = gmail_js.index("\nfunction syncShellState", update_start)
+    update_block = gmail_js[update_start:update_end]
+    assert "buildGmailPrepareActionPresentation({" in update_block
+    assert "renderGmailPrepareActionInto(button, presentation);" in update_block
+    assert "let label = workflow.prepareLabel" not in update_block
+    assert "label = workflow.emptySelectionLabel" not in update_block
+    assert 'label = "Restart live Gmail runtime to continue"' not in update_block
+    assert "innerHTML" not in presentation_js
+
+    script = """
+const presentation = await import(__GMAIL_ACTION_PRESENTATION_MODULE_URL__);
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const workflow = {
+  prepareLabel: `Continue ${malicious}`,
+  emptySelectionLabel: `Choose ${malicious}`,
+};
+
+const ready = presentation.buildGmailPrepareActionPresentation({
+  workflow,
+  loadResult: { ok: true, message: "Loaded" },
+  selections: [{ id: "att-1" }],
+  runtimeGuard: {},
+});
+
+const noMessage = presentation.buildGmailPrepareActionPresentation({
+  workflow,
+  loadResult: { ok: true, message: "" },
+  selections: [{ id: "att-1" }],
+  runtimeGuard: {},
+});
+
+const emptySelection = presentation.buildGmailPrepareActionPresentation({
+  workflow,
+  loadResult: { ok: true, message: "Loaded" },
+  selections: [],
+  runtimeGuard: {},
+});
+
+const blocked = presentation.buildGmailPrepareActionPresentation({
+  workflow,
+  loadResult: { ok: true, message: "Loaded" },
+  selections: [{ id: "att-1" }],
+  runtimeGuard: { blocked: true, message: `Blocked ${malicious}` },
+});
+
+const missingWorkflow = presentation.buildGmailPrepareActionPresentation({
+  loadResult: { ok: true, message: "Loaded" },
+  selections: [{ id: "att-1" }],
+});
+
+console.log(JSON.stringify({
+  exportType: typeof presentation.buildGmailPrepareActionPresentation,
+  ready,
+  noMessage,
+  emptySelection,
+  blocked,
+  missingWorkflow,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {
+            "__GMAIL_ACTION_PRESENTATION_MODULE_URL__": "gmail_action_presentation.js",
+        },
+    )
+
+    assert results["exportType"] == "function"
+    assert results["ready"] == {
+        "label": "Continue <img src=x onerror=alert(1)><script>bad()</script>",
+        "disabled": False,
+        "title": "",
+    }
+    assert results["noMessage"] == {
+        "label": "Load a Gmail message first",
+        "disabled": True,
+        "title": "",
+    }
+    assert results["emptySelection"] == {
+        "label": "Choose <img src=x onerror=alert(1)><script>bad()</script>",
+        "disabled": True,
+        "title": "",
+    }
+    assert results["blocked"] == {
+        "label": "Restart live Gmail runtime to continue",
+        "disabled": True,
+        "title": "Blocked <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["missingWorkflow"] == {
+        "label": "",
+        "disabled": False,
+        "title": "",
+    }
 
 
 def test_gmail_session_ui_module_owns_session_buttons_renderer() -> None:
@@ -26665,6 +26777,14 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderGmailDemoReviewActionInto" in gmail_action_ui_asset.text
         assert "renderGmailReturnToSourceActionInto" in gmail_action_ui_asset.text
         assert "renderGmailPrepareActionInto" in gmail_action_ui_asset.text
+        gmail_action_presentation_asset = client.get(
+            f"/static-build/{asset_version}/gmail_action_presentation.js"
+        )
+        assert gmail_action_presentation_asset.status_code == 200
+        assert gmail_action_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailPrepareActionPresentation" in gmail_action_presentation_asset.text
         gmail_report_ui_asset = client.get(f"/static-build/{asset_version}/gmail_report_ui.js")
         assert gmail_report_ui_asset.status_code == 200
         assert gmail_report_ui_asset.headers["content-type"].startswith("application/javascript")
