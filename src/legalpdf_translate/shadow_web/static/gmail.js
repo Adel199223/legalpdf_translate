@@ -72,6 +72,10 @@ import {
   buildGmailStagePresentation,
 } from "./gmail_stage_presentation.js";
 import {
+  buildGmailContextDefaultsPresentation,
+  buildGmailSimulatorDefaultsPresentation,
+} from "./gmail_context_presentation.js";
+import {
   renderGmailContextDefaultsInto,
   renderGmailNumericMismatchWarningInto,
   renderGmailResumeCardInto,
@@ -825,6 +829,9 @@ function forgetConsumedReviewEvent() {
 }
 
 function applyBootstrapDefaults(data) {
+  const presentation = buildGmailContextDefaultsPresentation({
+    defaults: data?.defaults,
+  });
   renderGmailContextDefaultsInto({
     messageId: qs("gmail-message-id"),
     threadId: qs("gmail-thread-id"),
@@ -832,7 +839,7 @@ function applyBootstrapDefaults(data) {
     accountEmail: qs("gmail-account-email"),
     outputDir: qs("gmail-output-dir"),
     targetLang: qs("gmail-target-lang"),
-  }, data);
+  }, presentation);
 }
 
 function activeSessionAttachmentId(activeSession) {
@@ -2333,12 +2340,13 @@ export function initializeGmailUi(hooks) {
 
   qs("gmail-use-simulator-defaults")?.addEventListener("click", () => {
     const defaults = appState.extensionDiagnostics?.simulator_defaults || {};
+    const presentation = buildGmailSimulatorDefaultsPresentation({ defaults });
     renderGmailSimulatorDefaultsInto({
       messageId: qs("gmail-message-id"),
       threadId: qs("gmail-thread-id"),
       subject: qs("gmail-subject"),
       accountEmail: qs("gmail-account-email"),
-    }, defaults);
+    }, presentation);
   });
 
   qs("gmail-workflow-kind")?.addEventListener("change", () => {
