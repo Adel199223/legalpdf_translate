@@ -10013,6 +10013,8 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
         "normalizeGmailAttachmentSelectionState",
         "buildGmailSelectionStateMap",
         "buildGmailPrepareSelectionsPayload",
+        "applyGmailWorkflowSelectionDefaults",
+        "buildGmailAttachmentSelectionUpdate",
         "deriveGmailActiveSessionAttachmentId",
         "deriveGmailFocusedAttachmentId",
     ]
@@ -10033,6 +10035,8 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
         "normalizeGmailAttachmentSelectionState",
         "buildGmailSelectionStateMap",
         "buildGmailPrepareSelectionsPayload",
+        "applyGmailWorkflowSelectionDefaults",
+        "buildGmailAttachmentSelectionUpdate",
         "deriveGmailFocusedAttachmentId",
     ]
     for export_name in expected_imports:
@@ -10085,6 +10089,20 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
     assert "selections.push(" not in collect_block
     assert "for (const [attachmentId, item]" not in collect_block
     assert "page_count:" not in collect_block
+
+    defaults_start = gmail_js.index("function setWorkflowSelectionDefaults(")
+    defaults_end = gmail_js.index("\nfunction updateAttachmentSelection", defaults_start)
+    defaults_block = gmail_js[defaults_start:defaults_end]
+    assert "applyGmailWorkflowSelectionDefaults({" in defaults_block
+    assert "for (const attachment of gmailAttachments())" not in defaults_block
+    assert "let kept = false" not in defaults_block
+
+    update_start = gmail_js.index("function updateAttachmentSelection(")
+    update_end = gmail_js.index("\nfunction updateAttachmentStartPage", update_start)
+    update_block = gmail_js[update_start:update_end]
+    assert "buildGmailAttachmentSelectionUpdate({" in update_block
+    assert "for (const other of gmailAttachments())" not in update_block
+    assert "setAttachmentState(attachmentId, next)" not in update_block
 
 
 def test_gmail_session_ui_module_owns_session_buttons_renderer() -> None:
@@ -29037,6 +29055,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "deriveGmailAttachmentStartEditable" in gmail_review_state_asset.text
         assert "buildGmailSelectionStateMap" in gmail_review_state_asset.text
         assert "buildGmailPrepareSelectionsPayload" in gmail_review_state_asset.text
+        assert "applyGmailWorkflowSelectionDefaults" in gmail_review_state_asset.text
+        assert "buildGmailAttachmentSelectionUpdate" in gmail_review_state_asset.text
         assert "deriveGmailFocusedAttachmentId" in gmail_review_state_asset.text
         gmail_report_ui_asset = client.get(f"/static-build/{asset_version}/gmail_report_ui.js")
         assert gmail_report_ui_asset.status_code == 200
