@@ -225,6 +225,40 @@ const interpretationSelection = reviewModule.buildGmailSelectionStateMap({{
 }});
 results.selectionInterpretationSession = mapEntries(interpretationSelection);
 results.selectionNull = mapEntries(reviewModule.buildGmailSelectionStateMap());
+const prepareSelections = reviewModule.buildGmailPrepareSelectionsPayload({{
+  attachments: [pdfAttachment, imageAttachment, otherAttachment],
+  selectionState: new Map([
+    ["stale-att", {{ selected: true, startPage: 9, pageCount: 9 }}],
+    ["att-pdf", {{ selected: true, startPage: "9", pageCount: 4 }}],
+    ["att-image", {{ selected: true, startPage: "7", pageCount: 0 }}],
+    ["att-other", {{ selected: false, startPage: 3, pageCount: 0 }}],
+  ]),
+  workflowKind: "translation",
+}});
+results.prepareSelections = prepareSelections;
+results.prepareSelectionOrder = prepareSelections.map((item) => item.attachment_id);
+results.prepareImageHasPageCount = Object.prototype.hasOwnProperty.call(prepareSelections[1] || {{}}, "page_count");
+const objectPrepareSelections = reviewModule.buildGmailPrepareSelectionsPayload({{
+  attachments: [pdfAttachment, otherAttachment],
+  selectionState: {{
+    "att-pdf": {{ selected: true, startPage: "<script>bad()</script>", pageCount: "bad" }},
+    "att-other": {{ selected: true, startPage: 6, pageCount: -2 }},
+    "att-missing": {{ selected: true, startPage: 2, pageCount: 3 }},
+  }},
+  workflowKind: "translation",
+}});
+results.prepareObjectSelections = objectPrepareSelections;
+results.prepareObjectPdfHasPageCount = Object.prototype.hasOwnProperty.call(objectPrepareSelections[0] || {{}}, "page_count");
+results.prepareObjectOtherHasPageCount = Object.prototype.hasOwnProperty.call(objectPrepareSelections[1] || {{}}, "page_count");
+results.prepareInterpretationSelections = reviewModule.buildGmailPrepareSelectionsPayload({{
+  attachments: [pdfAttachment, imageAttachment],
+  selectionState: new Map([
+    ["att-pdf", {{ selected: true, startPage: 5, pageCount: 5 }}],
+    ["att-image", {{ selected: true, startPage: 4, pageCount: 3 }}],
+  ]),
+  workflowKind: "interpretation",
+}});
+results.prepareNullSelections = reviewModule.buildGmailPrepareSelectionsPayload();
 results.activeAttachmentTranslation = reviewModule.deriveGmailActiveSessionAttachmentId({{
   kind: "translation",
   current_attachment: {{ attachment: {{ attachment_id: "att-pdf" }} }},
@@ -615,6 +649,23 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
         "att-other": {"selected": True, "startPage": 1, "pageCount": 0},
     }
     assert results["selectionNull"] == {}
+    assert results["prepareSelections"] == [
+        {"attachment_id": "att-pdf", "start_page": 4, "page_count": 4},
+        {"attachment_id": "att-image", "start_page": 1},
+    ]
+    assert results["prepareSelectionOrder"] == ["att-pdf", "att-image"]
+    assert results["prepareImageHasPageCount"] is True
+    assert results["prepareObjectSelections"] == [
+        {"attachment_id": "att-pdf", "start_page": 1},
+        {"attachment_id": "att-other", "start_page": 1},
+    ]
+    assert results["prepareObjectPdfHasPageCount"] is True
+    assert results["prepareObjectOtherHasPageCount"] is True
+    assert results["prepareInterpretationSelections"] == [
+        {"attachment_id": "att-pdf", "start_page": 1, "page_count": 5},
+        {"attachment_id": "att-image", "start_page": 1, "page_count": 3},
+    ]
+    assert results["prepareNullSelections"] == []
     assert results["activeAttachmentTranslation"] == "att-pdf"
     assert results["activeAttachmentInterpretation"] == "att-image"
     assert results["activeAttachmentMissing"] == ""

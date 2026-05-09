@@ -313,6 +313,16 @@ function selectionStateFrom(source, id) {
   return normalizeGmailAttachmentSelectionState();
 }
 
+function selectionStateEntries(source) {
+  if (source instanceof Map) {
+    return Array.from(source.entries());
+  }
+  if (source && typeof source === "object") {
+    return Object.entries(source);
+  }
+  return [];
+}
+
 function normalizeAttachmentList(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -419,6 +429,41 @@ export function buildGmailSelectionStateMap({
   }
 
   return next;
+}
+
+export function buildGmailPrepareSelectionsPayload({
+  attachments = [],
+  selectionState = new Map(),
+  workflowKind = "",
+} = {}) {
+  const normalizedAttachments = normalizeAttachmentList(attachments);
+  const attachmentsById = new Map(
+    normalizedAttachments.map((attachment) => [attachmentId(attachment), attachment])
+  );
+  const selections = [];
+
+  for (const [selectedAttachmentId, rawState] of selectionStateEntries(selectionState)) {
+    const state = normalizeGmailAttachmentSelectionState(rawState);
+    if (!state.selected) {
+      continue;
+    }
+    const attachment = attachmentsById.get(selectedAttachmentId);
+    if (!attachment) {
+      continue;
+    }
+    const pageCount = nonnegativeNumber(state.pageCount);
+    selections.push({
+      attachment_id: selectedAttachmentId,
+      start_page: clampGmailAttachmentStartPage({
+        editable: deriveGmailAttachmentStartEditable({ workflowKind, attachment }),
+        rawValue: state.startPage,
+        pageCount,
+      }),
+      page_count: pageCount || undefined,
+    });
+  }
+
+  return selections;
 }
 
 export function deriveGmailFocusedAttachmentId({

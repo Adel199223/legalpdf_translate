@@ -10012,6 +10012,7 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
         "clampGmailAttachmentStartPage",
         "normalizeGmailAttachmentSelectionState",
         "buildGmailSelectionStateMap",
+        "buildGmailPrepareSelectionsPayload",
         "deriveGmailActiveSessionAttachmentId",
         "deriveGmailFocusedAttachmentId",
     ]
@@ -10031,6 +10032,7 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
         "clampGmailAttachmentStartPage",
         "normalizeGmailAttachmentSelectionState",
         "buildGmailSelectionStateMap",
+        "buildGmailPrepareSelectionsPayload",
         "deriveGmailFocusedAttachmentId",
     ]
     for export_name in expected_imports:
@@ -10075,6 +10077,14 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
     assert "deriveGmailFocusedAttachmentId({" in focus_block
     assert "attachments.find(" not in focus_block
     assert "activeSessionAttachmentId(" not in focus_block
+
+    collect_start = gmail_js.index("function collectSelections(")
+    collect_end = gmail_js.index("\nfunction setWorkflowSelectionDefaults", collect_start)
+    collect_block = gmail_js[collect_start:collect_end]
+    assert "buildGmailPrepareSelectionsPayload({" in collect_block
+    assert "selections.push(" not in collect_block
+    assert "for (const [attachmentId, item]" not in collect_block
+    assert "page_count:" not in collect_block
 
 
 def test_gmail_session_ui_module_owns_session_buttons_renderer() -> None:
@@ -29026,6 +29036,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_review_state_asset.headers["content-type"].startswith("application/javascript")
         assert "deriveGmailAttachmentStartEditable" in gmail_review_state_asset.text
         assert "buildGmailSelectionStateMap" in gmail_review_state_asset.text
+        assert "buildGmailPrepareSelectionsPayload" in gmail_review_state_asset.text
         assert "deriveGmailFocusedAttachmentId" in gmail_review_state_asset.text
         gmail_report_ui_asset = client.get(f"/static-build/{asset_version}/gmail_report_ui.js")
         assert gmail_report_ui_asset.status_code == 200

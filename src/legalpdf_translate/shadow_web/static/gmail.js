@@ -98,6 +98,7 @@ import { renderGmailResumeActionsInto } from "./gmail_session_ui.js";
 import { renderGmailWorkspaceStripInto } from "./gmail_workspace_ui.js";
 import {
   applyPreviewStateStartPage,
+  buildGmailPrepareSelectionsPayload,
   buildGmailSelectionStateMap,
   clearConsumedReviewState,
   clampGmailAttachmentStartPage,
@@ -1124,22 +1125,11 @@ function renderTranslationCompletionGmailStepCard(activeSession) {
 }
 
 function collectSelections() {
-  const selections = [];
-  for (const [attachmentId, item] of gmailState.selectionState.entries()) {
-    if (!item.selected) {
-      continue;
-    }
-    const attachment = getAttachmentById(attachmentId);
-    if (!attachment) {
-      continue;
-    }
-    selections.push({
-      attachment_id: attachmentId,
-      start_page: clampStartPage(attachment, item.startPage, item.pageCount),
-      page_count: Math.max(0, Number(item.pageCount || 0)) || undefined,
-    });
-  }
-  return selections;
+  return buildGmailPrepareSelectionsPayload({
+    attachments: gmailAttachments(),
+    selectionState: gmailState.selectionState,
+    workflowKind: currentWorkflowKind(),
+  });
 }
 
 function setWorkflowSelectionDefaults() {
