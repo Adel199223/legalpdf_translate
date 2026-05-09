@@ -7607,20 +7607,29 @@ def test_gmail_restore_ui_module_owns_restore_bar_renderer() -> None:
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
     gmail_restore_ui_path = static_dir / "gmail_restore_ui.js"
+    gmail_restore_presentation_path = static_dir / "gmail_restore_presentation.js"
     assert gmail_restore_ui_path.exists()
+    assert gmail_restore_presentation_path.exists()
     gmail_restore_ui_js = gmail_restore_ui_path.read_text(encoding="utf-8")
+    gmail_restore_presentation_js = gmail_restore_presentation_path.read_text(encoding="utf-8")
 
     assert "renderGmailRestoreBarInto" in gmail_js
     assert 'from "./gmail_restore_ui.js"' in gmail_js
+    assert 'from "./gmail_restore_presentation.js"' in gmail_js
+    assert "buildGmailRestoreBarPresentation" in gmail_js
     assert 'from "./gmail_restore_ui.js"' in gmail_ui_js
     assert "renderGmailRestoreBarInto" in gmail_ui_js
     assert "export function renderGmailRestoreBarInto" not in gmail_ui_js
     assert "export function renderGmailRestoreBarInto" in gmail_restore_ui_js
+    assert "export function buildGmailRestoreBarPresentation" in gmail_restore_presentation_js
 
     restore_start = gmail_js.index("function renderGmailRestoreBar")
     restore_end = gmail_js.index("\nfunction updateDemoReviewAction", restore_start)
     restore_block = gmail_js[restore_start:restore_end]
     assert "renderGmailRestoreBarInto({" in restore_block
+    assert "buildGmailRestoreBarPresentation({" in restore_block
+    assert "deriveGmailReviewRestoreLabel" not in restore_block
+    assert "deriveGmailPreviewRestoreLabel" not in restore_block
     assert ".classList.toggle(" not in restore_block
     assert ".disabled =" not in restore_block
     assert ".textContent =" not in restore_block
@@ -7628,8 +7637,14 @@ def test_gmail_restore_ui_module_owns_restore_bar_renderer() -> None:
     renderer_start = gmail_restore_ui_js.index("export function renderGmailRestoreBarInto")
     renderer_block = gmail_restore_ui_js[renderer_start:]
     assert "innerHTML" not in renderer_block
+    builder_start = gmail_restore_presentation_js.index("export function buildGmailRestoreBarPresentation")
+    builder_block = gmail_restore_presentation_js[builder_start:]
+    assert "document." not in builder_block
+    assert "innerHTML" not in builder_block
+    assert "renderGmailRestoreBarInto" not in builder_block
 
     script = """
+const presentation = await import(__GMAIL_RESTORE_PRESENTATION_MODULE_URL__);
 const ui = await import(__GMAIL_RESTORE_UI_MODULE_URL__);
 const legacyUi = await import(__GMAIL_UI_MODULE_URL__);
 
@@ -7725,6 +7740,51 @@ function summarize(nodes) {
 
 const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
 
+const presentationHidden = presentation.buildGmailRestoreBarPresentation({});
+const presentationReviewOnly = presentation.buildGmailRestoreBarPresentation({
+  reviewDrawerMinimized: true,
+  reviewDrawerOpen: false,
+  loadResult: { ok: true, message: { subject: "Loaded" } },
+  previewDrawerMinimized: false,
+  previewState: { open: false },
+  selectedCount: `0${malicious}`,
+});
+const presentationPreviewOnly = presentation.buildGmailRestoreBarPresentation({
+  reviewDrawerMinimized: false,
+  reviewDrawerOpen: false,
+  loadResult: { ok: true, message: { subject: "Loaded" } },
+  previewDrawerMinimized: true,
+  previewDrawerOpen: false,
+  previewState: { open: true, attachmentId: "att-1", page: `4${malicious}` },
+  selectedCount: 0,
+});
+const presentationBoth = presentation.buildGmailRestoreBarPresentation({
+  reviewDrawerMinimized: true,
+  reviewDrawerOpen: false,
+  loadResult: { ok: true, message: { subject: "Loaded" } },
+  previewDrawerMinimized: true,
+  previewDrawerOpen: false,
+  previewState: { open: true, attachmentId: "att-2", page: 7 },
+  selectedCount: 2,
+});
+const presentationBlockedReview = presentation.buildGmailRestoreBarPresentation({
+  reviewDrawerMinimized: true,
+  reviewDrawerOpen: true,
+  loadResult: { ok: true, message: { subject: "Loaded" } },
+  previewDrawerMinimized: false,
+  previewState: { open: false },
+  selectedCount: 1,
+});
+const presentationBlockedPreview = presentation.buildGmailRestoreBarPresentation({
+  reviewDrawerMinimized: false,
+  reviewDrawerOpen: false,
+  loadResult: { ok: true, message: { subject: "Loaded" } },
+  previewDrawerMinimized: true,
+  previewDrawerOpen: true,
+  previewState: { open: true, attachmentId: "att-3", page: 3 },
+  selectedCount: 0,
+});
+
 const both = makeNodes();
 const bothResult = ui.renderGmailRestoreBarInto(both, {
   review: { visible: true, label: `Restore review ${malicious}` },
@@ -7760,8 +7820,15 @@ const nullResult = ui.renderGmailRestoreBarInto(null, {
 });
 
 console.log(JSON.stringify({
+  presentationExportType: typeof presentation.buildGmailRestoreBarPresentation,
   exportType: typeof ui.renderGmailRestoreBarInto,
   legacyExportType: typeof legacyUi.renderGmailRestoreBarInto,
+  presentationHidden,
+  presentationReviewOnly,
+  presentationPreviewOnly,
+  presentationBoth,
+  presentationBlockedReview,
+  presentationBlockedPreview,
   bothResultType: typeof bothResult,
   noneResultType: typeof noneResult,
   partialResultType: typeof partialResult,
@@ -7775,13 +7842,39 @@ console.log(JSON.stringify({
     results = run_browser_esm_json_probe(
         script,
         {
+            "__GMAIL_RESTORE_PRESENTATION_MODULE_URL__": "gmail_restore_presentation.js",
             "__GMAIL_RESTORE_UI_MODULE_URL__": "gmail_restore_ui.js",
             "__GMAIL_UI_MODULE_URL__": "gmail_ui.js",
         },
     )
 
+    assert results["presentationExportType"] == "function"
     assert results["exportType"] == "function"
     assert results["legacyExportType"] == "function"
+    assert results["presentationHidden"] == {
+        "review": {"visible": False, "label": ""},
+        "preview": {"visible": False, "label": ""},
+    }
+    assert results["presentationReviewOnly"] == {
+        "review": {"visible": True, "label": "Review Attachments — Restore"},
+        "preview": {"visible": False, "label": ""},
+    }
+    assert results["presentationPreviewOnly"] == {
+        "review": {"visible": False, "label": ""},
+        "preview": {"visible": True, "label": "PDF Preview — page 4"},
+    }
+    assert results["presentationBoth"] == {
+        "review": {"visible": True, "label": "Review Attachments — 2 selected"},
+        "preview": {"visible": True, "label": "PDF Preview — page 7"},
+    }
+    assert results["presentationBlockedReview"] == {
+        "review": {"visible": False, "label": ""},
+        "preview": {"visible": False, "label": ""},
+    }
+    assert results["presentationBlockedPreview"] == {
+        "review": {"visible": False, "label": ""},
+        "preview": {"visible": False, "label": ""},
+    }
     assert results["bothResultType"] == "object"
     assert results["noneResultType"] == "object"
     assert results["partialResultType"] == "undefined"
@@ -26771,6 +26864,14 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_restore_ui_asset.status_code == 200
         assert gmail_restore_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGmailRestoreBarInto" in gmail_restore_ui_asset.text
+        gmail_restore_presentation_asset = client.get(
+            f"/static-build/{asset_version}/gmail_restore_presentation.js"
+        )
+        assert gmail_restore_presentation_asset.status_code == 200
+        assert gmail_restore_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailRestoreBarPresentation" in gmail_restore_presentation_asset.text
         gmail_action_ui_asset = client.get(f"/static-build/{asset_version}/gmail_action_ui.js")
         assert gmail_action_ui_asset.status_code == 200
         assert gmail_action_ui_asset.headers["content-type"].startswith("application/javascript")
