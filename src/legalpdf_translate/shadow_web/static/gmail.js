@@ -56,6 +56,10 @@ import {
   buildGmailFinalizationReportActionPresentation,
 } from "./gmail_report_presentation.js";
 import {
+  buildGmailFailureReportContext,
+  buildGmailFinalizationReportContext,
+} from "./gmail_report_context.js";
+import {
   buildGmailMessageResultPresentation,
   buildGmailReviewSummaryPresentation,
 } from "./gmail_result_presentation.js";
@@ -343,85 +347,15 @@ function currentBatchFinalizeState() {
 }
 
 function currentGmailFinalizationReportContext() {
-  const normalized = gmailState.batchFinalizeResult?.normalized_payload || {};
-  const rawContext = (
-    normalized.finalization_report_context
-    && typeof normalized.finalization_report_context === "object"
-  )
-    ? normalized.finalization_report_context
-    : (
-      currentDisplayedBatchFinalizeSession()?.finalization_report_context
-      && typeof currentDisplayedBatchFinalizeSession().finalization_report_context === "object"
-    )
-      ? currentDisplayedBatchFinalizeSession().finalization_report_context
-      : null;
-  if (!rawContext) {
-    return null;
-  }
-  return {
-    ...rawContext,
-    runtime_mode: String(rawContext.runtime_mode || appState.runtimeMode || "").trim(),
-    workspace_id: String(rawContext.workspace_id || appState.workspaceId || "").trim(),
-    active_view: String(rawContext.active_view || appState.activeView || "").trim(),
-    build_sha: String(rawContext.build_sha || browserBootstrapConfig().buildSha || "").trim(),
-    asset_version: String(rawContext.asset_version || browserBootstrapConfig().assetVersion || "").trim(),
-  };
-}
-
-function attachmentReportSnapshot(attachment) {
-  const state = attachmentState(attachment.attachment_id);
-  return {
-    attachment_id: attachment.attachment_id,
-    filename: attachment.filename || "",
-    mime_type: attachment.mime_type || "",
-    size_bytes: Number(attachment.size_bytes || 0),
-    selected: state.selected,
-    start_page: state.startPage,
-    page_count: state.pageCount,
-  };
-}
-
-function buildGmailFailureReportContext(error, { operation = "", attachment = null } = {}) {
-  const runtime = currentGmailRuntimePayload();
-  const diagnostics = {
-    ...browserPdfDiagnosticsFromError(error),
-    ...(error?.payload?.diagnostics && typeof error.payload.diagnostics === "object" ? error.payload.diagnostics : {}),
-  };
-  const message = gmailState.loadResult?.message || {};
-  const previewState = isPreviewStateOpen(gmailState.previewState)
-    ? {
-      attachment_id: gmailState.previewState.attachmentId || "",
-      page: previewPage(),
-      page_count: previewPageCount(),
-      preview_href: String(gmailState.previewState.previewHref || "").trim(),
-    }
-    : {};
-  return {
-    kind: "gmail_browser_failure",
-    captured_at: new Date().toISOString(),
-    operation: String(operation || "").trim(),
-    runtime_mode: appState.runtimeMode,
-    workspace_id: appState.workspaceId,
-    active_view: appState.activeView,
-    build_sha: String(runtime.build_sha || "").trim(),
-    asset_version: String(runtime.asset_version || "").trim(),
-    build_identity: currentGmailBuildIdentity(),
-    workflow_kind: currentWorkflowKind(),
-    focused_attachment_id: attachment?.attachment_id || gmailState.reviewFocusedAttachmentId || "",
-    message: {
-      message_id: message.message_id || "",
-      thread_id: message.thread_id || "",
-      subject: message.subject || "",
-      account_email: message.account_email || "",
-    },
-    attachments: gmailAttachments().map(attachmentReportSnapshot),
-    preview_state: previewState,
-    error: {
-      code: String(diagnostics.error || error?.name || "gmail_browser_failure").trim() || "gmail_browser_failure",
-      message: String(error?.message || diagnostics.message || "Gmail browser failure.").trim(),
-      diagnostics,
-    },
-  };
+  return buildGmailFinalizationReportContext({
+    batchFinalizeResult: gmailState.batchFinalizeResult,
+    displayedSession: currentDisplayedBatchFinalizeSession(),
+    runtimeMode: appState.runtimeMode,
+    workspaceId: appState.workspaceId,
+    activeView: appState.activeView,
+    buildSha: browserBootstrapConfig().buildSha,
+    assetVersion: browserBootstrapConfig().assetVersion,
+  });
 }
 
 function clearGmailFailureReportContext() {
@@ -430,7 +364,28 @@ function clearGmailFailureReportContext() {
 }
 
 function rememberGmailFailureReport(error, options = {}) {
-  gmailState.lastFailureReportContext = buildGmailFailureReportContext(error, options);
+  gmailState.lastFailureReportContext = buildGmailFailureReportContext({
+    error,
+    operation: options.operation || "",
+    attachment: options.attachment || null,
+    capturedAt: new Date().toISOString(),
+    runtimeMode: appState.runtimeMode,
+    workspaceId: appState.workspaceId,
+    activeView: appState.activeView,
+    runtime: currentGmailRuntimePayload(),
+    buildIdentity: currentGmailBuildIdentity(),
+    workflowKind: currentWorkflowKind(),
+    focusedAttachmentId: gmailState.reviewFocusedAttachmentId,
+    message: gmailState.loadResult?.message || {},
+    attachments: gmailAttachments(),
+    selectionState: gmailState.selectionState,
+    previewOpen: isPreviewStateOpen(gmailState.previewState),
+    previewState: {
+      ...gmailState.previewState,
+      page: previewPage(),
+      pageCount: previewPageCount(),
+    },
+  });
   gmailState.lastFailureReportPayload = null;
 }
 
