@@ -68,6 +68,10 @@ import { buildGmailPreviewPanelPresentation } from "./gmail_preview_presentation
 import { buildGmailRestoreBarPresentation } from "./gmail_restore_presentation.js";
 import { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
 import {
+  buildGmailHomeCtaPresentation,
+  buildGmailStagePresentation,
+} from "./gmail_stage_presentation.js";
+import {
   renderGmailContextDefaultsInto,
   renderGmailNumericMismatchWarningInto,
   renderGmailResumeCardInto,
@@ -86,8 +90,6 @@ import {
   deriveGmailRedoAction,
   deriveRecoveredFinalizationAction,
   createClosedPreviewState,
-  deriveGmailHomeCta,
-  deriveGmailStagePresentation,
   deriveGmailStage,
   deriveGmailWorkflowPresentation,
   isPreviewStateOpen,
@@ -551,7 +553,7 @@ function currentGmailStage() {
 }
 
 function currentHomeCta() {
-  return deriveGmailHomeCta({
+  return buildGmailHomeCtaPresentation({
     stage: gmailState.stage || currentGmailStage(),
     activeSession: gmailState.activeSession,
   });
@@ -574,7 +576,7 @@ function gmailHomeStatusMessage() {
   const clickDiagnostics = currentClickDiagnostics();
   const recoveredAction = currentRecoveredFinalizationAction();
   const stage = gmailState.stage || currentGmailStage();
-  const presentation = deriveGmailStagePresentation({
+  const presentation = buildGmailStagePresentation({
     stage,
     activeSession: gmailState.activeSession,
   });
@@ -1523,7 +1525,7 @@ function renderResumeCard(activeSession) {
   if (!container) {
     return;
   }
-  const stagePresentation = deriveGmailStagePresentation({
+  const stagePresentation = buildGmailStagePresentation({
     stage: gmailState.stage,
     activeSession,
   });
@@ -1540,7 +1542,7 @@ function renderSessionResult(activeSession) {
   if (!container) {
     return;
   }
-  const presentation = deriveGmailStagePresentation({
+  const presentation = buildGmailStagePresentation({
     stage: gmailState.stage || currentGmailStage(),
     activeSession,
   });
@@ -1572,7 +1574,7 @@ function renderWorkspaceStrip() {
   let stagePresentation = {};
   let redo = {};
   if (gmailState.activeSession && cta.visible) {
-    stagePresentation = deriveGmailStagePresentation({
+    stagePresentation = buildGmailStagePresentation({
       stage: gmailState.stage,
       activeSession: gmailState.activeSession,
     });
@@ -1720,7 +1722,7 @@ export function renderGmailBootstrap(payload) {
     "gmail-session",
     gmailState.activeSession ? "ok" : "",
     gmailState.activeSession
-      ? deriveGmailStagePresentation({
+      ? buildGmailStagePresentation({
         stage: gmailState.stage || currentGmailStage(),
         activeSession: gmailState.activeSession,
       }).description
