@@ -286,6 +286,169 @@ export function deriveGmailAttachmentKindLabel(mimeType) {
   return "Unknown";
 }
 
+function positiveNumber(value, fallback = 1) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function nonnegativeNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function attachmentId(attachment) {
+  return attachment?.attachment_id || "";
+}
+
+function selectionStateFrom(source, id) {
+  if (!id) {
+    return normalizeGmailAttachmentSelectionState();
+  }
+  if (source instanceof Map) {
+    return normalizeGmailAttachmentSelectionState(source.get(id));
+  }
+  if (source && typeof source === "object") {
+    return normalizeGmailAttachmentSelectionState(source[id]);
+  }
+  return normalizeGmailAttachmentSelectionState();
+}
+
+function normalizeAttachmentList(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+export function deriveGmailAttachmentStartEditable({
+  workflowKind = "",
+  attachment = null,
+  mimeType = "",
+} = {}) {
+  const normalizedWorkflow = String(workflowKind || "").trim();
+  const normalizedMimeType = String(mimeType || attachment?.mime_type || "").trim().toLowerCase();
+  return normalizedWorkflow === "translation" && normalizedMimeType === "application/pdf";
+}
+
+export function clampGmailAttachmentStartPage({
+  editable = false,
+  rawValue = 1,
+  pageCount = 0,
+} = {}) {
+  if (!editable) {
+    return 1;
+  }
+  const parsed = Number.parseInt(String(rawValue ?? "1").trim(), 10);
+  let value = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+  const normalizedPageCount = nonnegativeNumber(pageCount);
+  if (normalizedPageCount > 0) {
+    value = Math.min(value, normalizedPageCount);
+  }
+  return Math.max(1, value);
+}
+
+export function normalizeGmailAttachmentSelectionState(value = {}) {
+  return {
+    selected: Boolean(value?.selected),
+    startPage: positiveNumber(value?.startPage, 1),
+    pageCount: nonnegativeNumber(value?.pageCount),
+  };
+}
+
+export function deriveGmailActiveSessionAttachmentId(activeSession) {
+  if (activeSession?.kind === "translation") {
+    return activeSession.current_attachment?.attachment?.attachment_id || "";
+  }
+  if (activeSession?.kind === "interpretation") {
+    return activeSession.attachment?.attachment?.attachment_id || "";
+  }
+  return "";
+}
+
+export function buildGmailSelectionStateMap({
+  attachments = [],
+  existingSelectionState = new Map(),
+  activeSession = null,
+  workflowKind = "",
+} = {}) {
+  const next = new Map();
+  const normalizedAttachments = normalizeAttachmentList(attachments);
+
+  for (const attachment of normalizedAttachments) {
+    const id = attachmentId(attachment);
+    const existing = selectionStateFrom(existingSelectionState, id);
+    const editable = deriveGmailAttachmentStartEditable({ workflowKind, attachment });
+    const pageCount = existing.pageCount;
+    next.set(id, {
+      selected: existing.selected,
+      startPage: clampGmailAttachmentStartPage({
+        editable,
+        rawValue: existing.startPage,
+        pageCount,
+      }),
+      pageCount,
+    });
+  }
+
+  if (activeSession?.kind === "translation") {
+    for (const item of activeSession.attachments || []) {
+      const attachment = item?.attachment || {};
+      const id = attachmentId(attachment);
+      if (!id) {
+        continue;
+      }
+      const pageCount = nonnegativeNumber(item?.page_count);
+      next.set(id, {
+        selected: true,
+        startPage: clampGmailAttachmentStartPage({
+          editable: deriveGmailAttachmentStartEditable({ workflowKind, attachment }),
+          rawValue: item?.start_page || 1,
+          pageCount,
+        }),
+        pageCount,
+      });
+    }
+  }
+
+  const interpretationAttachmentId = activeSession?.kind === "interpretation"
+    ? deriveGmailActiveSessionAttachmentId(activeSession)
+    : "";
+  if (interpretationAttachmentId) {
+    next.set(interpretationAttachmentId, {
+      selected: true,
+      startPage: 1,
+      pageCount: nonnegativeNumber(activeSession?.attachment?.page_count),
+    });
+  }
+
+  return next;
+}
+
+export function deriveGmailFocusedAttachmentId({
+  attachments = [],
+  selectionState = new Map(),
+  currentFocusedAttachmentId = "",
+  activeSession = null,
+} = {}) {
+  const normalizedAttachments = normalizeAttachmentList(attachments);
+  if (!normalizedAttachments.length) {
+    return "";
+  }
+  const attachmentIds = new Set(normalizedAttachments.map((attachment) => attachmentId(attachment)));
+  const currentId = currentFocusedAttachmentId || "";
+  if (attachmentIds.has(currentId)) {
+    return currentId;
+  }
+  const selectedAttachment = normalizedAttachments.find((attachment) => (
+    selectionStateFrom(selectionState, attachmentId(attachment)).selected
+  ));
+  if (selectedAttachment) {
+    return attachmentId(selectedAttachment);
+  }
+  const activeAttachmentId = deriveGmailActiveSessionAttachmentId(activeSession);
+  if (attachmentIds.has(activeAttachmentId)) {
+    return activeAttachmentId;
+  }
+  return attachmentId(normalizedAttachments[0]);
+}
+
 export function deriveRecoveredFinalizationAction({ restoredCompletedSession }) {
   if (
     restoredCompletedSession?.kind !== "translation"

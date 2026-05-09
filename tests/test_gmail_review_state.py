@@ -132,6 +132,141 @@ results.workflowInterpretation = reviewModule.deriveGmailWorkflowPresentation({{
 results.kindPdf = reviewModule.deriveGmailAttachmentKindLabel("application/pdf");
 results.kindImage = reviewModule.deriveGmailAttachmentKindLabel("image/png");
 results.kindUnknown = reviewModule.deriveGmailAttachmentKindLabel("application/octet-stream");
+results.startEditablePdfTranslation = reviewModule.deriveGmailAttachmentStartEditable({{
+  workflowKind: "translation",
+  mimeType: "application/pdf",
+}});
+results.startEditablePdfInterpretation = reviewModule.deriveGmailAttachmentStartEditable({{
+  workflowKind: "interpretation",
+  mimeType: "application/pdf",
+}});
+results.startEditableImageTranslation = reviewModule.deriveGmailAttachmentStartEditable({{
+  workflowKind: "translation",
+  mimeType: "image/png",
+}});
+results.startEditableAttachmentObject = reviewModule.deriveGmailAttachmentStartEditable({{
+  workflowKind: "translation",
+  attachment: {{ mime_type: " APPLICATION/PDF " }},
+}});
+results.startEditableParameterizedPdf = reviewModule.deriveGmailAttachmentStartEditable({{
+  workflowKind: "translation",
+  mimeType: "application/pdf; name=demo.pdf",
+}});
+results.startEditableXPdf = reviewModule.deriveGmailAttachmentStartEditable({{
+  workflowKind: "translation",
+  mimeType: "application/x-pdf",
+}});
+results.clampPdfHigh = reviewModule.clampGmailAttachmentStartPage({{
+  editable: true,
+  rawValue: "8",
+  pageCount: 5,
+}});
+results.clampPdfInvalid = reviewModule.clampGmailAttachmentStartPage({{
+  editable: true,
+  rawValue: "<script>bad()</script>",
+  pageCount: 5,
+}});
+results.clampPdfNoPageCount = reviewModule.clampGmailAttachmentStartPage({{
+  editable: true,
+  rawValue: "12",
+  pageCount: 0,
+}});
+results.clampNonEditable = reviewModule.clampGmailAttachmentStartPage({{
+  editable: false,
+  rawValue: "8",
+  pageCount: 5,
+}});
+results.normalizedSelectionBad = reviewModule.normalizeGmailAttachmentSelectionState({{
+  selected: 1,
+  startPage: "not-a-number",
+  pageCount: -7,
+}});
+results.normalizedSelectionNull = reviewModule.normalizeGmailAttachmentSelectionState();
+const pdfAttachment = {{ attachment_id: "att-pdf", mime_type: "application/pdf", filename: "doc.pdf" }};
+const imageAttachment = {{ attachment_id: "att-image", mime_type: "image/png", filename: "image.png" }};
+const otherAttachment = {{ attachment_id: "att-other", mime_type: "application/octet-stream", filename: "other.bin" }};
+const mapEntries = (map) => Object.fromEntries(Array.from(map.entries()));
+const baseSelection = reviewModule.buildGmailSelectionStateMap({{
+  attachments: [pdfAttachment, imageAttachment],
+  existingSelectionState: new Map([
+    ["att-pdf", {{ selected: true, startPage: "9", pageCount: 5 }}],
+    ["att-image", {{ selected: true, startPage: "4", pageCount: 0 }}],
+  ]),
+  workflowKind: "translation",
+}});
+results.selectionBase = mapEntries(baseSelection);
+const translationSelection = reviewModule.buildGmailSelectionStateMap({{
+  attachments: [pdfAttachment, imageAttachment],
+  existingSelectionState: new Map(),
+  activeSession: {{
+    kind: "translation",
+    attachments: [
+      {{ attachment: pdfAttachment, start_page: 7, page_count: 5 }},
+      {{ attachment: imageAttachment, start_page: 4, page_count: 0 }},
+    ],
+  }},
+  workflowKind: "translation",
+}});
+results.selectionTranslationSession = mapEntries(translationSelection);
+const interpretationSelection = reviewModule.buildGmailSelectionStateMap({{
+  attachments: [pdfAttachment, imageAttachment, otherAttachment],
+  existingSelectionState: new Map([
+    ["att-pdf", {{ selected: true, startPage: 3, pageCount: 5 }}],
+    ["att-other", {{ selected: true, startPage: 2, pageCount: 0 }}],
+  ]),
+  activeSession: {{
+    kind: "interpretation",
+    attachment: {{
+      attachment: imageAttachment,
+      page_count: 3,
+    }},
+  }},
+  workflowKind: "interpretation",
+}});
+results.selectionInterpretationSession = mapEntries(interpretationSelection);
+results.selectionNull = mapEntries(reviewModule.buildGmailSelectionStateMap());
+results.activeAttachmentTranslation = reviewModule.deriveGmailActiveSessionAttachmentId({{
+  kind: "translation",
+  current_attachment: {{ attachment: {{ attachment_id: "att-pdf" }} }},
+}});
+results.activeAttachmentInterpretation = reviewModule.deriveGmailActiveSessionAttachmentId({{
+  kind: "interpretation",
+  attachment: {{ attachment: {{ attachment_id: "att-image" }} }},
+}});
+results.activeAttachmentMissing = reviewModule.deriveGmailActiveSessionAttachmentId(null);
+const focusSelection = new Map([
+  ["att-image", {{ selected: true, startPage: 1, pageCount: 0 }}],
+]);
+results.focusValidExisting = reviewModule.deriveGmailFocusedAttachmentId({{
+  attachments: [pdfAttachment, imageAttachment, otherAttachment],
+  selectionState: focusSelection,
+  currentFocusedAttachmentId: "att-pdf",
+  activeSession: {{ kind: "translation", current_attachment: {{ attachment: {{ attachment_id: "att-other" }} }} }},
+}});
+results.focusSelectedFallback = reviewModule.deriveGmailFocusedAttachmentId({{
+  attachments: [pdfAttachment, imageAttachment, otherAttachment],
+  selectionState: focusSelection,
+  currentFocusedAttachmentId: "missing",
+  activeSession: {{ kind: "translation", current_attachment: {{ attachment: {{ attachment_id: "att-other" }} }} }},
+}});
+results.focusActiveSessionFallback = reviewModule.deriveGmailFocusedAttachmentId({{
+  attachments: [pdfAttachment, imageAttachment, otherAttachment],
+  selectionState: new Map(),
+  currentFocusedAttachmentId: "",
+  activeSession: {{ kind: "translation", current_attachment: {{ attachment: {{ attachment_id: "att-other" }} }} }},
+}});
+results.focusFirstFallback = reviewModule.deriveGmailFocusedAttachmentId({{
+  attachments: [pdfAttachment, imageAttachment],
+  selectionState: new Map(),
+  currentFocusedAttachmentId: "missing",
+  activeSession: {{ kind: "translation", current_attachment: {{ attachment: {{ attachment_id: "missing" }} }} }},
+}});
+results.focusEmpty = reviewModule.deriveGmailFocusedAttachmentId({{
+  attachments: [],
+  selectionState: focusSelection,
+  currentFocusedAttachmentId: "att-image",
+  activeSession: {{ kind: "interpretation", attachment: {{ attachment: {{ attachment_id: "att-image" }} }} }},
+}});
 results.stagePresentationIdle = stageModule.buildGmailStagePresentation({{
   stage: "idle",
   activeSession: null,
@@ -454,6 +589,40 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
     assert results["kindPdf"] == "PDF"
     assert results["kindImage"] == "Image"
     assert results["kindUnknown"] == "Unknown"
+    assert results["startEditablePdfTranslation"] is True
+    assert results["startEditablePdfInterpretation"] is False
+    assert results["startEditableImageTranslation"] is False
+    assert results["startEditableAttachmentObject"] is True
+    assert results["startEditableParameterizedPdf"] is False
+    assert results["startEditableXPdf"] is False
+    assert results["clampPdfHigh"] == 5
+    assert results["clampPdfInvalid"] == 1
+    assert results["clampPdfNoPageCount"] == 12
+    assert results["clampNonEditable"] == 1
+    assert results["normalizedSelectionBad"] == {"selected": True, "startPage": 1, "pageCount": 0}
+    assert results["normalizedSelectionNull"] == {"selected": False, "startPage": 1, "pageCount": 0}
+    assert results["selectionBase"] == {
+        "att-pdf": {"selected": True, "startPage": 5, "pageCount": 5},
+        "att-image": {"selected": True, "startPage": 1, "pageCount": 0},
+    }
+    assert results["selectionTranslationSession"] == {
+        "att-pdf": {"selected": True, "startPage": 5, "pageCount": 5},
+        "att-image": {"selected": True, "startPage": 1, "pageCount": 0},
+    }
+    assert results["selectionInterpretationSession"] == {
+        "att-pdf": {"selected": True, "startPage": 1, "pageCount": 5},
+        "att-image": {"selected": True, "startPage": 1, "pageCount": 3},
+        "att-other": {"selected": True, "startPage": 1, "pageCount": 0},
+    }
+    assert results["selectionNull"] == {}
+    assert results["activeAttachmentTranslation"] == "att-pdf"
+    assert results["activeAttachmentInterpretation"] == "att-image"
+    assert results["activeAttachmentMissing"] == ""
+    assert results["focusValidExisting"] == "att-pdf"
+    assert results["focusSelectedFallback"] == "att-image"
+    assert results["focusActiveSessionFallback"] == "att-other"
+    assert results["focusFirstFallback"] == "att-pdf"
+    assert results["focusEmpty"] == ""
     assert "Open this from Gmail" in results["stagePresentationIdle"]["description"]
     assert "Choose your workflow" in results["stagePresentationReview"]["description"]
     assert results["stagePresentationPrepared"]["title"] == "Translation is ready to start."
