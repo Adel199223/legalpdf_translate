@@ -8343,7 +8343,9 @@ def test_gmail_action_ui_module_owns_demo_review_action_renderer() -> None:
     gmail_action_ui_js = gmail_action_ui_path.read_text(encoding="utf-8")
 
     assert "renderGmailDemoReviewActionInto" in gmail_js
+    assert "buildGmailDemoReviewActionPresentation" in gmail_js
     assert 'from "./gmail_action_ui.js"' in gmail_js
+    assert 'from "./gmail_action_presentation.js"' in gmail_js
     assert 'from "./gmail_action_ui.js"' in gmail_ui_js
     assert "export function renderGmailDemoReviewActionInto" not in gmail_ui_js
     assert "export function renderGmailDemoReviewActionInto" in gmail_action_ui_js
@@ -8351,7 +8353,10 @@ def test_gmail_action_ui_module_owns_demo_review_action_renderer() -> None:
     update_start = gmail_js.index("function updateDemoReviewAction()")
     update_end = gmail_js.index("\nfunction renderResumeCard", update_start)
     update_block = gmail_js[update_start:update_end]
-    assert "renderGmailDemoReviewActionInto(button, { visible });" in update_block
+    assert "buildGmailDemoReviewActionPresentation({" in update_block
+    assert "renderGmailDemoReviewActionInto(button, presentation);" in update_block
+    assert 'appState.runtimeMode === "shadow"' not in update_block
+    assert "gmailState.loadResult?.ok && gmailState.loadResult?.message" not in update_block
     assert ".classList.toggle(" not in update_block
     assert ".disabled =" not in update_block
 
@@ -8508,7 +8513,9 @@ def test_gmail_action_ui_module_owns_return_to_source_action_renderer() -> None:
     gmail_action_ui_js = gmail_action_ui_path.read_text(encoding="utf-8")
 
     assert "renderGmailReturnToSourceActionInto" in gmail_js
+    assert "buildGmailReturnToSourceActionPresentation" in gmail_js
     assert 'from "./gmail_action_ui.js"' in gmail_js
+    assert 'from "./gmail_action_presentation.js"' in gmail_js
     assert 'from "./gmail_action_ui.js"' in gmail_ui_js
     assert "export function renderGmailReturnToSourceActionInto" not in gmail_ui_js
     assert "export function renderGmailReturnToSourceActionInto" in gmail_action_ui_js
@@ -8516,7 +8523,9 @@ def test_gmail_action_ui_module_owns_return_to_source_action_renderer() -> None:
     update_start = gmail_js.index("function updateReturnToGmailAction()")
     update_end = gmail_js.index("\nfunction pendingStatus", update_start)
     update_block = gmail_js[update_start:update_end]
-    assert "renderGmailReturnToSourceActionInto(button, { visible, sourceUrl });" in update_block
+    assert "buildGmailReturnToSourceActionPresentation({" in update_block
+    assert "renderGmailReturnToSourceActionInto(button, presentation);" in update_block
+    assert "const visible = sourceUrl !==" not in update_block
     assert ".classList.toggle(" not in update_block
     assert ".disabled =" not in update_block
     assert ".title =" not in update_block
@@ -8855,8 +8864,22 @@ def test_gmail_action_presentation_module_derives_prepare_action_state() -> None
     assert presentation_path.exists()
     presentation_js = presentation_path.read_text(encoding="utf-8")
 
+    assert "export function buildGmailDemoReviewActionPresentation" in presentation_js
     assert "export function buildGmailPrepareActionPresentation" in presentation_js
+    assert "export function buildGmailReturnToSourceActionPresentation" in presentation_js
     assert 'from "./gmail_action_presentation.js"' in gmail_js
+
+    demo_start = gmail_js.index("function updateDemoReviewAction()")
+    demo_end = gmail_js.index("\nfunction renderResumeCard", demo_start)
+    demo_block = gmail_js[demo_start:demo_end]
+    assert "buildGmailDemoReviewActionPresentation({" in demo_block
+    assert "renderGmailDemoReviewActionInto(button, presentation);" in demo_block
+
+    return_start = gmail_js.index("function updateReturnToGmailAction()")
+    return_end = gmail_js.index("\nfunction pendingStatus", return_start)
+    return_block = gmail_js[return_start:return_end]
+    assert "buildGmailReturnToSourceActionPresentation({" in return_block
+    assert "renderGmailReturnToSourceActionInto(button, presentation);" in return_block
 
     update_start = gmail_js.index("function updatePrepareActionState()")
     update_end = gmail_js.index("\nfunction syncShellState", update_start)
@@ -8876,6 +8899,36 @@ const workflow = {
   prepareLabel: `Continue ${malicious}`,
   emptySelectionLabel: `Choose ${malicious}`,
 };
+
+const demoEmpty = presentation.buildGmailDemoReviewActionPresentation({
+  runtimeMode: "shadow",
+  loadResult: null,
+});
+
+const demoLoaded = presentation.buildGmailDemoReviewActionPresentation({
+  runtimeMode: "shadow",
+  loadResult: { ok: true, message: { id: "message-1" } },
+});
+
+const demoNative = presentation.buildGmailDemoReviewActionPresentation({
+  runtimeMode: "native",
+  loadResult: null,
+});
+
+const demoInvalidMode = presentation.buildGmailDemoReviewActionPresentation({
+  runtimeMode: malicious,
+  loadResult: { ok: false, message: "" },
+});
+
+const returnVisible = presentation.buildGmailReturnToSourceActionPresentation({
+  sourceUrl: `  https://mail.google.test/thread/${malicious}  `,
+});
+
+const returnMissing = presentation.buildGmailReturnToSourceActionPresentation({
+  sourceUrl: "   ",
+});
+
+const returnNull = presentation.buildGmailReturnToSourceActionPresentation();
 
 const ready = presentation.buildGmailPrepareActionPresentation({
   workflow,
@@ -8911,7 +8964,16 @@ const missingWorkflow = presentation.buildGmailPrepareActionPresentation({
 });
 
 console.log(JSON.stringify({
+  demoExportType: typeof presentation.buildGmailDemoReviewActionPresentation,
+  returnExportType: typeof presentation.buildGmailReturnToSourceActionPresentation,
   exportType: typeof presentation.buildGmailPrepareActionPresentation,
+  demoEmpty,
+  demoLoaded,
+  demoNative,
+  demoInvalidMode,
+  returnVisible,
+  returnMissing,
+  returnNull,
   ready,
   noMessage,
   emptySelection,
@@ -8926,7 +8988,19 @@ console.log(JSON.stringify({
         },
     )
 
+    assert results["demoExportType"] == "function"
+    assert results["returnExportType"] == "function"
     assert results["exportType"] == "function"
+    assert results["demoEmpty"] == {"visible": True}
+    assert results["demoLoaded"] == {"visible": False}
+    assert results["demoNative"] == {"visible": False}
+    assert results["demoInvalidMode"] == {"visible": False}
+    assert results["returnVisible"] == {
+        "visible": True,
+        "sourceUrl": "https://mail.google.test/thread/<img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["returnMissing"] == {"visible": False, "sourceUrl": ""}
+    assert results["returnNull"] == {"visible": False, "sourceUrl": ""}
     assert results["ready"] == {
         "label": "Continue <img src=x onerror=alert(1)><script>bad()</script>",
         "disabled": False,
@@ -27499,7 +27573,9 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert gmail_action_presentation_asset.headers["content-type"].startswith(
             "application/javascript"
         )
+        assert "buildGmailDemoReviewActionPresentation" in gmail_action_presentation_asset.text
         assert "buildGmailPrepareActionPresentation" in gmail_action_presentation_asset.text
+        assert "buildGmailReturnToSourceActionPresentation" in gmail_action_presentation_asset.text
         gmail_report_ui_asset = client.get(f"/static-build/{asset_version}/gmail_report_ui.js")
         assert gmail_report_ui_asset.status_code == 200
         assert gmail_report_ui_asset.headers["content-type"].startswith("application/javascript")

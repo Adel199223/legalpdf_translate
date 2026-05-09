@@ -17,7 +17,11 @@ import {
   renderGmailPrepareActionInto,
   renderGmailReturnToSourceActionInto,
 } from "./gmail_action_ui.js";
-import { buildGmailPrepareActionPresentation } from "./gmail_action_presentation.js";
+import {
+  buildGmailDemoReviewActionPresentation,
+  buildGmailPrepareActionPresentation,
+  buildGmailReturnToSourceActionPresentation,
+} from "./gmail_action_presentation.js";
 import {
   renderGmailAttachmentListInto,
   renderGmailReviewDetailInto,
@@ -745,9 +749,10 @@ function updateReturnToGmailAction() {
   if (!button) {
     return;
   }
-  const sourceUrl = currentSourceGmailUrl();
-  const visible = sourceUrl !== "";
-  renderGmailReturnToSourceActionInto(button, { visible, sourceUrl });
+  const presentation = buildGmailReturnToSourceActionPresentation({
+    sourceUrl: currentSourceGmailUrl(),
+  });
+  renderGmailReturnToSourceActionInto(button, presentation);
 }
 
 function pendingStatus() {
@@ -1500,8 +1505,11 @@ function updateDemoReviewAction() {
   if (!button) {
     return;
   }
-  const visible = appState.runtimeMode === "shadow" && !(gmailState.loadResult?.ok && gmailState.loadResult?.message);
-  renderGmailDemoReviewActionInto(button, { visible });
+  const presentation = buildGmailDemoReviewActionPresentation({
+    runtimeMode: appState.runtimeMode,
+    loadResult: gmailState.loadResult,
+  });
+  renderGmailDemoReviewActionInto(button, presentation);
 }
 
 function renderResumeCard(activeSession) {

@@ -1,3 +1,12 @@
+export function buildGmailDemoReviewActionPresentation({
+  runtimeMode = "",
+  loadResult = null,
+} = {}) {
+  return {
+    visible: runtimeMode === "shadow" && !(loadResult?.ok && loadResult?.message),
+  };
+}
+
 export function buildGmailPrepareActionPresentation({
   workflow = {},
   loadResult = null,
@@ -22,5 +31,15 @@ export function buildGmailPrepareActionPresentation({
     label,
     disabled,
     title: runtimeGuard.blocked ? String(runtimeGuard.message || "") : "",
+  };
+}
+
+export function buildGmailReturnToSourceActionPresentation({
+  sourceUrl = "",
+} = {}) {
+  const normalizedSourceUrl = String(sourceUrl ?? "").trim();
+  return {
+    visible: normalizedSourceUrl !== "",
+    sourceUrl: normalizedSourceUrl,
   };
 }
