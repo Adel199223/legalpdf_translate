@@ -38,7 +38,10 @@ import {
 } from "./gmail_control_ui.js";
 import { renderGmailBatchFinalizeSurfaceInto } from "./gmail_finalize_ui.js";
 import { renderGmailReportActionInto } from "./gmail_report_ui.js";
-import { buildGmailMessageResultPresentation } from "./gmail_result_presentation.js";
+import {
+  buildGmailMessageResultPresentation,
+  buildGmailReviewSummaryPresentation,
+} from "./gmail_result_presentation.js";
 import {
   renderGmailMessageResultInto,
   renderGmailReviewSummaryInto,
@@ -1312,7 +1315,6 @@ function renderReviewSummary(loadResult) {
   const summaryDetails = qs("gmail-review-summary-details");
   const reviewStatus = qs("gmail-review-status");
   const reviewOpenButton = qs("gmail-open-review");
-  const attachments = loadResult?.message?.attachments || [];
   if (!summary || !summaryGrid || !reviewStatus || !reviewOpenButton) {
     return;
   }
@@ -1324,56 +1326,16 @@ function renderReviewSummary(loadResult) {
     available: Boolean(loadResult?.ok && loadResult?.message),
     statusText: "Step 1: Choose workflow. Step 2: Pick attachment(s). Step 3: Preview or set start page if needed. Step 4: Continue.",
   });
-  if (!loadResult?.ok || !loadResult?.message) {
-    renderGmailReviewSummaryInto(
-      { summary, summaryGrid, summaryDetails },
-      {
-        empty: true,
-        emptyText: "Load this Gmail message to choose attachments.",
-      },
-    );
-    return;
-  }
-  const message = loadResult.message;
   const selectedCount = collectSelections().length;
   const outputFolder = fieldValue("gmail-output-dir") || gmailState.bootstrap?.defaults?.default_output_dir || "Use default folder";
   renderGmailReviewSummaryInto(
     { summary, summaryGrid, summaryDetails },
-    {
-      subject: message.subject || "No subject",
-      reviewStatus: workflow.reviewStatus,
-      workflowLabel: workflow.label,
-      attachmentCount: attachments.length,
-      chipLabel: selectedCount ? `${selectedCount} selected` : "Review ready",
-      chipTone: selectedCount ? "ok" : "info",
-      gridItems: [
-        {
-          label: "From",
-          value: message.from_header || "Unavailable",
-          className: "word-break",
-        },
-        {
-          label: "Gmail account",
-          value: message.account_email || "Unavailable",
-          className: "word-break",
-        },
-        {
-          label: "Exact message ID",
-          value: message.message_id || "Unavailable",
-          className: "word-break",
-        },
-        {
-          label: "Exact thread ID",
-          value: message.thread_id || "Unavailable",
-          className: "word-break",
-        },
-        {
-          label: "Save output in",
-          value: outputFolder,
-          className: "word-break",
-        },
-      ],
-    },
+    buildGmailReviewSummaryPresentation({
+      loadResult,
+      workflow,
+      selectedCount,
+      outputFolder,
+    }),
   );
 }
 
