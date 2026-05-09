@@ -52,6 +52,12 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - Branch: `main`
 - Canonical status: stable merged baseline and the default authority for fresh sessions
 
+## Current Modernization Baseline
+- Canonical `main` is `c3ec60e57852af4ff69ba96cd0410c489a25ba69` after PR #226, `[codex] Extract Gmail prepare action presentation`.
+- Latest `main` GitHub Actions CI was green at closeout, and the expected local state was clean/aligned with only the canonical worktree remaining.
+- Recent browser modernization split the static frontend into focused modules: `*_ui.js` modules own safe DOM writes, `*_presentation.js` modules own pure labels/status/card shaping, and `app.js`, `gmail.js`, `translation.js`, and `power-tools.js` remain coordinators for state, API calls, routing, and side effects.
+- The next normal modernization slice should be a small TDD PR from clean `main`, preferably another narrow Gmail/browser presentation or coordinator-pressure cleanup. Use `mode=shadow` for browser smoke unless the user explicitly asks for live Gmail, OAuth, or native-host testing.
+
 ## Roadmap State
 - Dormant roadmap state.
 - No active roadmap currently open on this worktree.
@@ -88,6 +94,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 ## Next Concrete Action
 - No active roadmap needs resume handling.
 - For new work, use normal ExecPlan flow unless the user explicitly opens a new roadmap.
+- If continuing modernization, choose one narrow browser/Gmail presentation or coordinator-pressure slice, create an isolated worktree from clean `main`, use focused tests first, publish through a GitHub PR, wait for Actions, smoke in shadow mode when relevant, and clean up the merged branch/worktree.
 - Publish/merge requests should follow the standard commit/publish workflow and should not start a new Gmail/runtime thread while accepted live fixes remain only in local commits.
 
 ## Resume Order

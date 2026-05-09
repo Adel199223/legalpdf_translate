@@ -30,6 +30,7 @@ docs/assistant/_scratch/
 # Investigation scratch artifacts
 rg_*_hotspots*.txt
 ui_*_search*.txt
+.playwright/
 .playwright-cli/
 output/playwright/
 

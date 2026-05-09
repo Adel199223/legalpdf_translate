@@ -16,6 +16,22 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-05-09 — chore/fresh-thread-handoff-closeout
+- Files changed:
+  - .gitignore
+  - APP_KNOWLEDGE.md
+  - docs/assistant/APP_KNOWLEDGE.md
+  - docs/assistant/DOCS_REFRESH_NOTES.md
+  - docs/assistant/HANDOFF.md
+  - docs/assistant/SESSION_RESUME.md
+- Key symbols / entrypoints changed:
+  - docs-only fresh-thread handoff and browser modularization status
+- User-visible behavior:
+  - No app behavior change; fresh-session docs now point to current `main` after PR #226 and `.playwright/` is ignored as local Playwright scratch.
+- Tests:
+  - .\.venv311\Scripts\python.exe -m pytest -q tests\test_shadow_web_api.py -k "versioned_static_route"
+  - powershell -ExecutionPolicy Bypass -File scripts\validate_dev.ps1
+
 ## 2026-05-06 — feat/translation-checkbox-ui-module (deferred)
 - Files changed:
   - src/legalpdf_translate/shadow_web/static/translation.js
