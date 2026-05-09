@@ -28,96 +28,90 @@ function gmailPreviewResult(shouldRenderPdfCanvas) {
   return { shouldRenderPdfCanvas: Boolean(shouldRenderPdfCanvas) };
 }
 
-function renderGmailPreviewSummary(summary, attachment, { page, pageCount, canApply }) {
+function renderGmailPreviewSummary(summary, previewSummary = {}) {
+  if (previewSummary.kind !== "card") {
+    summary.className = previewSummary.className || "result-card empty-state";
+    summary.textContent = previewSummary.text || "";
+    return;
+  }
   summary.className = "result-card";
   clearNode(summary);
   summary.appendChild(createResultHeader({
-    title: attachment.filename || "Attachment preview",
-    message: pageCount > 0 ? `${pageCount} page(s) available` : "Preview ready",
-    label: canApply ? `Page ${page}` : "Inspect only",
-    tone: canApply ? "info" : "ok",
+    title: previewSummary.title || "Attachment preview",
+    message: previewSummary.message || "",
+    label: previewSummary.label || "",
+    tone: previewSummary.tone || "ok",
   }));
 }
 
-function renderGmailPdfPreview(nodes, attachment, preview) {
+function applyGmailPreviewControls(nodes, preview = {}) {
   const {
-    container,
-    status,
+    openTab,
     applyButton,
     prevButton,
     nextButton,
     pageInput,
   } = nodes;
-  const page = Number(preview.page) || 1;
-  const pageCount = Number(preview.pageCount) || 0;
-  const canApply = Boolean(preview.canApply);
+  const controls = preview.controls || {};
+  const openTabPresentation = preview.openTab || {};
 
-  pageInput.disabled = false;
-  prevButton.disabled = page <= 1;
-  nextButton.disabled = pageCount > 0 ? page >= pageCount : false;
-  pageInput.max = String(Math.max(1, pageCount || page));
-  pageInput.value = String(page);
-  applyButton.disabled = !canApply;
-  applyButton.textContent = canApply ? applyButton.dataset.defaultLabel : "Preview only";
+  openTab.classList.toggle("hidden", !openTabPresentation.visible);
+  openTab.href = openTabPresentation.visible ? (openTabPresentation.href || "#") : "#";
+  applyButton.disabled = controls.applyDisabled !== false;
+  applyButton.textContent = controls.applyLabel || applyButton.dataset.defaultLabel;
+  pageInput.disabled = controls.pageDisabled !== false;
+  prevButton.disabled = controls.prevDisabled !== false;
+  nextButton.disabled = controls.nextDisabled !== false;
+  pageInput.min = controls.pageMin || "1";
+  pageInput.max = controls.pageMax || "1";
+  pageInput.value = controls.pageValue || "1";
+}
 
-  container.className = "gmail-inline-preview";
+function renderGmailPdfPreview(nodes, body = {}) {
+  const { container } = nodes;
+
+  container.className = body.className || "gmail-inline-preview";
   clearNode(container);
   const shell = document.createElement("div");
-  shell.className = "gmail-inline-preview-canvas-shell";
+  shell.className = body.shellClassName || "gmail-inline-preview-canvas-shell";
   const canvas = document.createElement("canvas");
-  canvas.id = "gmail-preview-canvas";
-  canvas.className = "gmail-inline-preview-canvas";
-  canvas.setAttribute("aria-label", `Preview for ${attachment.filename || "attachment"}`);
+  canvas.id = body.canvasId || "gmail-preview-canvas";
+  canvas.className = body.canvasClassName || "gmail-inline-preview-canvas";
+  canvas.setAttribute("aria-label", body.canvasAriaLabel || "Preview for attachment");
   shell.appendChild(canvas);
   container.appendChild(shell);
-
-  status.textContent = canApply
-    ? (pageCount > 0
-      ? `Previewing page ${page} of ${pageCount}. Use current page if you want the translation to start later in the document.`
-      : `Previewing page ${page}. Use current page if you want the translation to start later in the document.`)
-    : (pageCount > 0
-      ? `Previewing page ${page} of ${pageCount}. This workflow still continues from page 1.`
-      : `Previewing page ${page}. This workflow still continues from page 1.`);
 }
 
-function renderGmailImagePreview(nodes, attachment, preview) {
-  const {
-    container,
-    status,
-    applyButton,
-  } = nodes;
-  applyButton.disabled = true;
-  applyButton.textContent = "Preview only";
-  container.className = "gmail-inline-preview";
+function renderGmailImagePreview(nodes, body = {}) {
+  const { container } = nodes;
+  container.className = body.className || "gmail-inline-preview";
   clearNode(container);
   const shell = document.createElement("div");
-  shell.className = "gmail-inline-preview-image-shell";
+  shell.className = body.shellClassName || "gmail-inline-preview-image-shell";
   const image = document.createElement("img");
-  image.className = "gmail-inline-preview-image";
-  image.src = preview.href || "";
-  image.alt = attachment.filename || "Attachment preview";
+  image.className = body.imageClassName || "gmail-inline-preview-image";
+  image.src = body.src || "";
+  image.alt = body.alt || "Attachment preview";
   shell.appendChild(image);
   container.appendChild(shell);
-  status.textContent = "Image preview is shown inline. Start page stays fixed at 1 for this attachment.";
 }
 
-function renderGmailFallbackPreview(nodes, attachment) {
-  const {
-    container,
-    status,
-    applyButton,
-  } = nodes;
-  applyButton.disabled = true;
-  applyButton.textContent = "Preview only";
-  container.className = "gmail-inline-preview empty-state";
+function renderGmailFallbackPreview(nodes, body = {}) {
+  const { container } = nodes;
+  container.className = body.className || "gmail-inline-preview empty-state";
   clearNode(container);
-  container.appendChild(createTextElement("span", "Open "));
-  container.appendChild(createTextElement("strong", attachment.filename || "the preview"));
-  container.appendChild(createTextElement("span", " in a new tab for a full attachment view."));
-  status.textContent = "This attachment type is available through the new-tab fallback.";
+  container.appendChild(createTextElement("span", body.leadingText || ""));
+  container.appendChild(createTextElement("strong", body.strongText || ""));
+  container.appendChild(createTextElement("span", body.trailingText || ""));
 }
 
-export function renderGmailPreviewPanelInto(nodes = {}, preview = {}) {
+function renderGmailEmptyPreview(nodes, body = {}) {
+  const { container } = nodes;
+  container.className = body.className || "gmail-inline-preview empty-state";
+  container.textContent = body.text || "";
+}
+
+export function renderGmailPreviewPanelInto(nodes = {}, presentation = {}) {
   const {
     container,
     summary,
@@ -140,35 +134,22 @@ export function renderGmailPreviewPanelInto(nodes = {}, preview = {}) {
     pageInput,
   });
 
-  const attachment = preview.attachment || null;
-  if (!attachment || !preview.href) {
-    summary.className = "result-card empty-state";
-    summary.textContent = "Preview is optional. Open it when you want to check the document more closely.";
-    container.className = "gmail-inline-preview empty-state";
-    container.textContent = "Preview opens here when requested.";
-    status.textContent = "Preview is optional. Use it if you want to check the document or choose a later start page.";
-    return gmailPreviewResult(false);
+  renderGmailPreviewSummary(summary, presentation.summary || {});
+  applyGmailPreviewControls(nodes, presentation);
+  status.textContent = presentation.statusText || "";
+
+  const body = presentation.body || {};
+  if (body.kind === "pdf") {
+    renderGmailPdfPreview(nodes, body);
+  } else if (body.kind === "image") {
+    renderGmailImagePreview(nodes, body);
+  } else if (body.kind === "fallback") {
+    renderGmailFallbackPreview(nodes, body);
+  } else {
+    renderGmailEmptyPreview(nodes, body);
   }
 
-  const page = Number(preview.page) || 1;
-  const pageCount = Number(preview.pageCount) || 0;
-  const canApply = Boolean(preview.canApply);
-  renderGmailPreviewSummary(summary, attachment, { page, pageCount, canApply });
-  openTab.classList.remove("hidden");
-  openTab.href = preview.href;
-
-  if (preview.isPdf) {
-    renderGmailPdfPreview(nodes, attachment, { ...preview, page, pageCount, canApply });
-    return gmailPreviewResult(true);
-  }
-
-  if (preview.isImage) {
-    renderGmailImagePreview(nodes, attachment, preview);
-    return gmailPreviewResult(false);
-  }
-
-  renderGmailFallbackPreview(nodes, attachment);
-  return gmailPreviewResult(false);
+  return gmailPreviewResult(presentation.shouldRenderPdfCanvas);
 }
 
 export function renderGmailPdfPreviewFallbackInto(nodes = {}, fallback = {}) {
