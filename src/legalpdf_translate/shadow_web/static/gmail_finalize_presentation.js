@@ -19,6 +19,26 @@ function gmailBatchStateLabel(finalizationState, session) {
   })[finalizationState] || session?.status || "confirmed";
 }
 
+export function buildGmailNumericMismatchWarningPresentation(warning = {}) {
+  const visible = Boolean(warning?.visible);
+  if (!visible) {
+    return {
+      visible: false,
+      text: "",
+      role: "",
+    };
+  }
+
+  const lines = Array.isArray(warning.lines) ? warning.lines.filter(Boolean) : [];
+  const detail = lines.length ? `\n${lines.join("\n")}` : "";
+  const message = warning.message || "Review recommended: some numbers from the source may not appear exactly in the translation.";
+  return {
+    visible: true,
+    text: `${message}${detail}`,
+    role: "note",
+  };
+}
+
 function gmailBatchSummaryCard({
   session,
   recoveredOnly,

@@ -41,20 +41,18 @@ function renderGmailResultCardInto(container, card = {}) {
   return container;
 }
 
-export function renderGmailNumericMismatchWarningInto(container, warning = {}) {
+export function renderGmailNumericMismatchWarningInto(container, presentation = {}) {
   if (!container) {
     return undefined;
   }
-  const visible = Boolean(warning?.visible);
+  const visible = Boolean(presentation?.visible);
   container.classList.toggle("hidden", !visible);
   if (!visible) {
     container.textContent = "";
     return container;
   }
-  const lines = Array.isArray(warning.lines) ? warning.lines.filter(Boolean) : [];
-  const detail = lines.length ? `\n${lines.join("\n")}` : "";
-  container.textContent = `${warning.message || "Review recommended: some numbers from the source may not appear exactly in the translation."}${detail}`;
-  container.setAttribute("role", "note");
+  container.textContent = presentation.text || "";
+  container.setAttribute("role", presentation.role || "note");
   return container;
 }
 
