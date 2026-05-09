@@ -642,6 +642,83 @@ results.previewInspectOnlyMoved = reviewModule.setPreviewStatePage(results.previ
 results.previewInspectOnlyApplied = reviewModule.applyPreviewStateStartPage(results.previewInspectOnlyMoved, 3);
 results.previewIsOpen = reviewModule.isPreviewStateOpen(results.previewOpened);
 results.previewClosedIsOpen = reviewModule.isPreviewStateOpen(results.previewClosed);
+const previewContextAttachments = [
+  {{ attachment_id: "att-1", mime_type: "application/pdf", filename: "doc.pdf" }},
+  {{ attachment_id: "att-2", mime_type: "application/pdf", filename: "inspect.pdf" }},
+  {{ attachment_id: "att-image", mime_type: "image/png", filename: "photo.png" }},
+  {{ attachment_id: "att-other", mime_type: "application/octet-stream", filename: "other.bin" }},
+];
+results.previewContextClosed = reviewModule.buildGmailPreviewPanelContext({{
+  attachments: previewContextAttachments,
+  previewState: results.previewClosed,
+  workflowKind: "translation",
+}});
+results.previewContextPdf = reviewModule.buildGmailPreviewPanelContext({{
+  attachments: previewContextAttachments,
+  previewState: results.previewMoved,
+  workflowKind: "translation",
+}});
+results.previewContextInspectPdf = reviewModule.buildGmailPreviewPanelContext({{
+  attachments: previewContextAttachments,
+  previewState: results.previewInspectOnlyMoved,
+  workflowKind: "interpretation",
+}});
+results.previewContextImage = reviewModule.buildGmailPreviewPanelContext({{
+  attachments: previewContextAttachments,
+  previewState: {{
+    open: true,
+    attachmentId: "att-image",
+    previewHref: " /api/gmail/attachment/att-image ",
+    page: 7,
+    pageCount: 0,
+  }},
+  workflowKind: "translation",
+}});
+results.previewContextFallback = reviewModule.buildGmailPreviewPanelContext({{
+  attachments: previewContextAttachments,
+  previewState: {{
+    open: true,
+    attachmentId: "att-other",
+    previewHref: "/api/gmail/attachment/att-other",
+    page: 2,
+    pageCount: 0,
+  }},
+  workflowKind: "translation",
+}});
+results.previewContextMissingAttachment = reviewModule.buildGmailPreviewPanelContext({{
+  attachments: previewContextAttachments,
+  previewState: {{
+    open: true,
+    attachmentId: "missing",
+    previewHref: "/api/gmail/attachment/missing",
+    page: 2,
+    pageCount: 3,
+  }},
+  workflowKind: "translation",
+}});
+results.previewContextMissingHref = reviewModule.buildGmailPreviewPanelContext({{
+  attachments: previewContextAttachments,
+  previewState: {{
+    open: true,
+    attachmentId: "att-1",
+    previewHref: "   ",
+    page: 2,
+    pageCount: 3,
+  }},
+  workflowKind: "translation",
+}});
+results.previewContextInvalidPage = reviewModule.buildGmailPreviewPanelContext({{
+  attachments: previewContextAttachments,
+  previewState: {{
+    open: true,
+    attachmentId: "att-1",
+    previewHref: " /api/gmail/attachment/att-1 ",
+    page: "<script>bad()</script>",
+    pageCount: "bad",
+  }},
+  workflowKind: "translation",
+}});
+results.previewContextNull = reviewModule.buildGmailPreviewPanelContext();
 results.reviewRestoreZero = reviewModule.deriveGmailReviewRestoreLabel({{ selectedCount: 0 }});
 results.reviewRestoreOne = reviewModule.deriveGmailReviewRestoreLabel({{ selectedCount: 1 }});
 results.reviewRestoreTwo = reviewModule.deriveGmailReviewRestoreLabel({{ selectedCount: 2 }});
@@ -888,6 +965,63 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
     assert results["previewInspectOnlyApplied"] == 1
     assert results["previewIsOpen"] is True
     assert results["previewClosedIsOpen"] is False
+    assert results["previewContextClosed"] == {
+        "attachment": None,
+        "href": "",
+        "page": 1,
+        "pageCount": 0,
+        "canApply": False,
+        "isPdf": False,
+        "isImage": False,
+    }
+    assert results["previewContextPdf"] == {
+        "attachment": {"attachment_id": "att-1", "mime_type": "application/pdf", "filename": "doc.pdf"},
+        "href": "/api/gmail/attachment/att-1#page=4",
+        "page": 4,
+        "pageCount": 5,
+        "canApply": True,
+        "isPdf": True,
+        "isImage": False,
+    }
+    assert results["previewContextInspectPdf"] == {
+        "attachment": {"attachment_id": "att-2", "mime_type": "application/pdf", "filename": "inspect.pdf"},
+        "href": "/api/gmail/attachment/att-2#page=1",
+        "page": 1,
+        "pageCount": 7,
+        "canApply": False,
+        "isPdf": True,
+        "isImage": False,
+    }
+    assert results["previewContextImage"] == {
+        "attachment": {"attachment_id": "att-image", "mime_type": "image/png", "filename": "photo.png"},
+        "href": "/api/gmail/attachment/att-image",
+        "page": 7,
+        "pageCount": 0,
+        "canApply": False,
+        "isPdf": False,
+        "isImage": True,
+    }
+    assert results["previewContextFallback"] == {
+        "attachment": {"attachment_id": "att-other", "mime_type": "application/octet-stream", "filename": "other.bin"},
+        "href": "/api/gmail/attachment/att-other",
+        "page": 2,
+        "pageCount": 0,
+        "canApply": False,
+        "isPdf": False,
+        "isImage": False,
+    }
+    assert results["previewContextMissingAttachment"] == results["previewContextClosed"]
+    assert results["previewContextMissingHref"] == results["previewContextClosed"]
+    assert results["previewContextInvalidPage"] == {
+        "attachment": {"attachment_id": "att-1", "mime_type": "application/pdf", "filename": "doc.pdf"},
+        "href": "/api/gmail/attachment/att-1#page=1",
+        "page": 1,
+        "pageCount": 0,
+        "canApply": True,
+        "isPdf": True,
+        "isImage": False,
+    }
+    assert results["previewContextNull"] == results["previewContextClosed"]
     assert results["reviewRestoreZero"] == "Review Attachments — Restore"
     assert results["reviewRestoreOne"] == "Review Attachments — 1 selected"
     assert results["reviewRestoreTwo"] == "Review Attachments — 2 selected"
