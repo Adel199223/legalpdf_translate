@@ -36,6 +36,7 @@ import {
 } from "./gmail_finalize_presentation.js";
 import {
   buildGmailResumeCardPresentation,
+  buildGmailSessionButtonRules,
   buildGmailSessionResultPresentation,
   buildGmailTranslationStepCardPresentation,
   buildGmailTranslationStepContext,
@@ -1640,18 +1641,13 @@ function syncShellState() {
 
 function updateSessionButtons() {
   const activeSession = gmailState.activeSession;
-  const translationReady = Boolean(gmailState.suggestedTranslationLaunch);
-  const interpretationReady = Boolean(gmailState.interpretationSeed);
-  const sessionAvailable = Boolean(activeSession);
-  const rules = [
-    ["gmail-load-translation-launch", activeSession?.kind === "translation" && translationReady],
-    ["gmail-confirm-translation", activeSession?.kind === "translation"],
-    ["gmail-finalize-batch", activeSession?.kind === "translation" && activeSession.completed],
-    ["gmail-load-interpretation-seed", activeSession?.kind === "interpretation" && interpretationReady],
-    ["gmail-finalize-interpretation", activeSession?.kind === "interpretation"],
-  ];
-  renderGmailSessionButtonsInto(rules.map(([id, enabled]) => [qs(id), enabled]));
-  if (!sessionAvailable) {
+  const presentation = buildGmailSessionButtonRules({
+    activeSession,
+    translationReady: Boolean(gmailState.suggestedTranslationLaunch),
+    interpretationReady: Boolean(gmailState.interpretationSeed),
+  });
+  renderGmailSessionButtonsInto(presentation.rules.map(([id, enabled]) => [qs(id), enabled]));
+  if (!presentation.sessionAvailable) {
     closeSessionDrawer();
   }
 }

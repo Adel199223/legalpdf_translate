@@ -1,3 +1,31 @@
+const GMAIL_SESSION_BUTTON_IDS = [
+  "gmail-load-translation-launch",
+  "gmail-confirm-translation",
+  "gmail-finalize-batch",
+  "gmail-load-interpretation-seed",
+  "gmail-finalize-interpretation",
+];
+
+export function buildGmailSessionButtonRules({
+  activeSession = null,
+  translationReady = false,
+  interpretationReady = false,
+} = {}) {
+  const isTranslationSession = activeSession?.kind === "translation";
+  const isInterpretationSession = activeSession?.kind === "interpretation";
+
+  return {
+    sessionAvailable: Boolean(activeSession),
+    rules: [
+      [GMAIL_SESSION_BUTTON_IDS[0], isTranslationSession && Boolean(translationReady)],
+      [GMAIL_SESSION_BUTTON_IDS[1], isTranslationSession],
+      [GMAIL_SESSION_BUTTON_IDS[2], isTranslationSession && Boolean(activeSession?.completed)],
+      [GMAIL_SESSION_BUTTON_IDS[3], isInterpretationSession && Boolean(interpretationReady)],
+      [GMAIL_SESSION_BUTTON_IDS[4], isInterpretationSession],
+    ],
+  };
+}
+
 export function buildGmailResumeCardPresentation({
   activeSession = null,
   cta = {},

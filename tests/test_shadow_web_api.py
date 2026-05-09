@@ -5428,6 +5428,209 @@ console.log(JSON.stringify({
     }
 
 
+def test_gmail_session_presentation_module_builds_session_button_rules() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_js = (static_dir / "gmail_session_presentation.js").read_text(encoding="utf-8")
+
+    assert "buildGmailSessionButtonRules" in gmail_js
+    assert "export function buildGmailSessionButtonRules" in presentation_js
+    button_rules_start = presentation_js.index("export function buildGmailSessionButtonRules")
+    button_rules_end = presentation_js.index("\nexport function", button_rules_start + 1)
+    button_rules_block = presentation_js[button_rules_start:button_rules_end]
+    assert "document." not in button_rules_block
+    assert "innerHTML" not in button_rules_block
+    assert "renderGmailSessionButtonsInto" not in button_rules_block
+    assert "qs(" not in button_rules_block
+
+    script = """
+const presentation = await import(__GMAIL_SESSION_PRESENTATION_MODULE_URL__);
+
+const ids = [
+  "gmail-load-translation-launch",
+  "gmail-confirm-translation",
+  "gmail-finalize-batch",
+  "gmail-load-interpretation-seed",
+  "gmail-finalize-interpretation",
+];
+
+function buttonMap(result) {
+  return Object.fromEntries(result.rules);
+}
+
+function allBooleans(result) {
+  return result.rules.every(([, enabled]) => typeof enabled === "boolean");
+}
+
+const noArgs = presentation.buildGmailSessionButtonRules();
+const noSession = presentation.buildGmailSessionButtonRules({});
+const translationWaiting = presentation.buildGmailSessionButtonRules({
+  activeSession: { kind: "translation", completed: false },
+  translationReady: false,
+  interpretationReady: true,
+});
+const translationReady = presentation.buildGmailSessionButtonRules({
+  activeSession: { kind: "translation", completed: false },
+  translationReady: true,
+  interpretationReady: true,
+});
+const translationCompleted = presentation.buildGmailSessionButtonRules({
+  activeSession: { kind: "translation", completed: true },
+  translationReady: true,
+});
+const interpretationWaiting = presentation.buildGmailSessionButtonRules({
+  activeSession: { kind: "interpretation" },
+  translationReady: true,
+  interpretationReady: false,
+});
+const interpretationReady = presentation.buildGmailSessionButtonRules({
+  activeSession: { kind: "interpretation" },
+  interpretationReady: true,
+});
+const invalidKind = presentation.buildGmailSessionButtonRules({
+  activeSession: { kind: "<img src=x onerror=alert(1)>", completed: true },
+  translationReady: true,
+  interpretationReady: true,
+});
+const truthyCompleted = presentation.buildGmailSessionButtonRules({
+  activeSession: { kind: "translation", completed: "<script>truthy</script>" },
+  translationReady: true,
+});
+
+console.log(JSON.stringify({
+  exportType: typeof presentation.buildGmailSessionButtonRules,
+  ids,
+  noArgs,
+  noSession,
+  translationWaiting: {
+    sessionAvailable: translationWaiting.sessionAvailable,
+    rules: buttonMap(translationWaiting),
+    allBooleans: allBooleans(translationWaiting),
+  },
+  translationReady: {
+    sessionAvailable: translationReady.sessionAvailable,
+    rules: buttonMap(translationReady),
+    allBooleans: allBooleans(translationReady),
+  },
+  translationCompleted: {
+    sessionAvailable: translationCompleted.sessionAvailable,
+    rules: buttonMap(translationCompleted),
+    allBooleans: allBooleans(translationCompleted),
+  },
+  interpretationWaiting: {
+    sessionAvailable: interpretationWaiting.sessionAvailable,
+    rules: buttonMap(interpretationWaiting),
+    allBooleans: allBooleans(interpretationWaiting),
+  },
+  interpretationReady: {
+    sessionAvailable: interpretationReady.sessionAvailable,
+    rules: buttonMap(interpretationReady),
+    allBooleans: allBooleans(interpretationReady),
+  },
+  invalidKind: {
+    sessionAvailable: invalidKind.sessionAvailable,
+    rules: buttonMap(invalidKind),
+    allBooleans: allBooleans(invalidKind),
+  },
+  truthyCompleted: {
+    sessionAvailable: truthyCompleted.sessionAvailable,
+    rules: buttonMap(truthyCompleted),
+    allBooleans: allBooleans(truthyCompleted),
+  },
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_SESSION_PRESENTATION_MODULE_URL__": "gmail_session_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    disabled_rules = {
+        "gmail-load-translation-launch": False,
+        "gmail-confirm-translation": False,
+        "gmail-finalize-batch": False,
+        "gmail-load-interpretation-seed": False,
+        "gmail-finalize-interpretation": False,
+    }
+    disabled_rule_pairs = [[key, value] for key, value in disabled_rules.items()]
+
+    assert results["exportType"] == "function"
+    assert results["ids"] == [
+        "gmail-load-translation-launch",
+        "gmail-confirm-translation",
+        "gmail-finalize-batch",
+        "gmail-load-interpretation-seed",
+        "gmail-finalize-interpretation",
+    ]
+    assert results["noArgs"] == {"sessionAvailable": False, "rules": disabled_rule_pairs}
+    assert results["noSession"] == {"sessionAvailable": False, "rules": disabled_rule_pairs}
+    assert results["translationWaiting"] == {
+        "sessionAvailable": True,
+        "rules": {
+            **disabled_rules,
+            "gmail-confirm-translation": True,
+        },
+        "allBooleans": True,
+    }
+    assert results["translationReady"] == {
+        "sessionAvailable": True,
+        "rules": {
+            **disabled_rules,
+            "gmail-load-translation-launch": True,
+            "gmail-confirm-translation": True,
+        },
+        "allBooleans": True,
+    }
+    assert results["translationCompleted"] == {
+        "sessionAvailable": True,
+        "rules": {
+            **disabled_rules,
+            "gmail-load-translation-launch": True,
+            "gmail-confirm-translation": True,
+            "gmail-finalize-batch": True,
+        },
+        "allBooleans": True,
+    }
+    assert results["interpretationWaiting"] == {
+        "sessionAvailable": True,
+        "rules": {
+            **disabled_rules,
+            "gmail-finalize-interpretation": True,
+        },
+        "allBooleans": True,
+    }
+    assert results["interpretationReady"] == {
+        "sessionAvailable": True,
+        "rules": {
+            **disabled_rules,
+            "gmail-load-interpretation-seed": True,
+            "gmail-finalize-interpretation": True,
+        },
+        "allBooleans": True,
+    }
+    assert results["invalidKind"] == {
+        "sessionAvailable": True,
+        "rules": disabled_rules,
+        "allBooleans": True,
+    }
+    assert results["truthyCompleted"] == {
+        "sessionAvailable": True,
+        "rules": {
+            **disabled_rules,
+            "gmail-load-translation-launch": True,
+            "gmail-confirm-translation": True,
+            "gmail-finalize-batch": True,
+        },
+        "allBooleans": True,
+    }
+
+
 def test_gmail_session_presentation_module_builds_translation_step_card() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -9302,8 +9505,13 @@ def test_gmail_session_ui_module_owns_session_buttons_renderer() -> None:
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     gmail_ui_js = (static_dir / "gmail_ui.js").read_text(encoding="utf-8")
     gmail_session_ui_js = (static_dir / "gmail_session_ui.js").read_text(encoding="utf-8")
+    gmail_session_presentation_js = (
+        static_dir / "gmail_session_presentation.js"
+    ).read_text(encoding="utf-8")
 
     assert "renderGmailSessionButtonsInto" in gmail_js
+    assert "buildGmailSessionButtonRules" in gmail_js
+    assert "export function buildGmailSessionButtonRules" in gmail_session_presentation_js
     assert 'from "./gmail_session_ui.js"' in gmail_ui_js
     assert "renderGmailSessionButtonsInto" in gmail_ui_js
     assert "export function renderGmailSessionButtonsInto" not in gmail_ui_js
@@ -9312,7 +9520,14 @@ def test_gmail_session_ui_module_owns_session_buttons_renderer() -> None:
     update_start = gmail_js.index("function updateSessionButtons()")
     update_end = gmail_js.index("\nfunction renderReviewSurface", update_start)
     update_block = gmail_js[update_start:update_end]
+    assert "buildGmailSessionButtonRules({" in update_block
+    assert "presentation.rules.map" in update_block
     assert "renderGmailSessionButtonsInto(" in update_block
+    assert '["gmail-load-translation-launch"' not in update_block
+    assert '["gmail-load-interpretation-seed"' not in update_block
+    assert 'activeSession?.kind === "translation"' not in update_block
+    assert 'activeSession?.kind === "interpretation"' not in update_block
+    assert "activeSession.completed" not in update_block
     assert "button.disabled =" not in update_block
     assert 'button.classList.toggle("hidden"' not in update_block
     assert "closeSessionDrawer();" in update_block
@@ -28303,6 +28518,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         )
         assert "buildGmailResumeCardPresentation" in gmail_session_presentation_asset.text
         assert "buildGmailSessionResultPresentation" in gmail_session_presentation_asset.text
+        assert "buildGmailSessionButtonRules" in gmail_session_presentation_asset.text
         assert "buildGmailTranslationStepContext" in gmail_session_presentation_asset.text
         assert "buildGmailTranslationStepCardPresentation" in gmail_session_presentation_asset.text
         assert "buildGmailWorkspaceStripPresentation" in gmail_session_presentation_asset.text
