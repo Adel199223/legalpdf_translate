@@ -17,6 +17,7 @@ import {
   renderGmailPrepareActionInto,
   renderGmailReturnToSourceActionInto,
 } from "./gmail_action_ui.js";
+import { buildGmailPrepareActionPresentation } from "./gmail_action_presentation.js";
 import {
   renderGmailAttachmentListInto,
   renderGmailReviewDetailInto,
@@ -1565,23 +1566,13 @@ function updatePrepareActionState() {
   if (!button) {
     return;
   }
-  const workflow = currentWorkflowPresentation();
-  const selections = collectSelections();
-  const runtimeGuard = currentGmailRuntimeGuard();
-  let label = workflow.prepareLabel;
-  let disabled = false;
-  if (!gmailState.loadResult?.ok || !gmailState.loadResult?.message) {
-    label = "Load a Gmail message first";
-    disabled = true;
-  } else if (!selections.length) {
-    label = workflow.emptySelectionLabel;
-    disabled = true;
-  } else if (runtimeGuard.blocked) {
-    label = "Restart live Gmail runtime to continue";
-    disabled = true;
-  }
-  const title = runtimeGuard.blocked ? runtimeGuard.message : "";
-  renderGmailPrepareActionInto(button, { label, disabled, title });
+  const presentation = buildGmailPrepareActionPresentation({
+    workflow: currentWorkflowPresentation(),
+    loadResult: gmailState.loadResult,
+    selections: collectSelections(),
+    runtimeGuard: currentGmailRuntimeGuard(),
+  });
+  renderGmailPrepareActionInto(button, presentation);
 }
 
 function syncShellState() {
