@@ -327,6 +327,17 @@ function normalizeAttachmentList(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function normalizedSelectionStateMap(source) {
+  const next = new Map();
+  for (const [id, rawState] of selectionStateEntries(source)) {
+    if (!id) {
+      continue;
+    }
+    next.set(id, normalizeGmailAttachmentSelectionState(rawState));
+  }
+  return next;
+}
+
 export function deriveGmailAttachmentStartEditable({
   workflowKind = "",
   attachment = null,
@@ -464,6 +475,74 @@ export function buildGmailPrepareSelectionsPayload({
   }
 
   return selections;
+}
+
+export function applyGmailWorkflowSelectionDefaults({
+  attachments = [],
+  selectionState = new Map(),
+  workflowKind = "",
+} = {}) {
+  const next = normalizedSelectionStateMap(selectionState);
+  if (String(workflowKind || "").trim() !== "interpretation") {
+    return next;
+  }
+
+  let kept = false;
+  for (const attachment of normalizeAttachmentList(attachments)) {
+    const id = attachmentId(attachment);
+    if (!id) {
+      continue;
+    }
+    const state = selectionStateFrom(next, id);
+    if (state.selected && !kept) {
+      kept = true;
+      next.set(id, { ...state, selected: true, startPage: 1 });
+      continue;
+    }
+    next.set(id, { ...state, selected: false, startPage: 1 });
+  }
+  return next;
+}
+
+export function buildGmailAttachmentSelectionUpdate({
+  attachments = [],
+  selectionState = new Map(),
+  attachmentId: selectedAttachmentId = "",
+  selected = false,
+  workflowKind = "",
+} = {}) {
+  const normalizedAttachments = normalizeAttachmentList(attachments);
+  const attachment = normalizedAttachments.find((item) => attachmentId(item) === selectedAttachmentId);
+  const next = normalizedSelectionStateMap(selectionState);
+  if (!attachment) {
+    return next;
+  }
+
+  const normalizedWorkflow = String(workflowKind || "").trim();
+  if (normalizedWorkflow === "interpretation" && selected) {
+    for (const other of normalizedAttachments) {
+      const otherId = attachmentId(other);
+      if (!otherId) {
+        continue;
+      }
+      const otherState = selectionStateFrom(next, otherId);
+      next.set(otherId, { ...otherState, selected: false, startPage: 1 });
+    }
+  }
+
+  const state = selectionStateFrom(next, selectedAttachmentId);
+  const pageCount = nonnegativeNumber(state.pageCount);
+  next.set(selectedAttachmentId, {
+    ...state,
+    selected: Boolean(selected),
+    startPage: clampGmailAttachmentStartPage({
+      editable: deriveGmailAttachmentStartEditable({ workflowKind: normalizedWorkflow, attachment }),
+      rawValue: state.startPage,
+      pageCount,
+    }),
+    pageCount,
+  });
+  return next;
 }
 
 export function deriveGmailFocusedAttachmentId({

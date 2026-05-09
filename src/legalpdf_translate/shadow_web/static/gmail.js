@@ -97,7 +97,9 @@ import {
 import { renderGmailResumeActionsInto } from "./gmail_session_ui.js";
 import { renderGmailWorkspaceStripInto } from "./gmail_workspace_ui.js";
 import {
+  applyGmailWorkflowSelectionDefaults,
   applyPreviewStateStartPage,
+  buildGmailAttachmentSelectionUpdate,
   buildGmailPrepareSelectionsPayload,
   buildGmailSelectionStateMap,
   clearConsumedReviewState,
@@ -1133,21 +1135,15 @@ function collectSelections() {
 }
 
 function setWorkflowSelectionDefaults() {
-  if (currentWorkflowKind() !== "interpretation") {
+  const workflowKind = currentWorkflowKind();
+  if (workflowKind !== "interpretation") {
     return;
   }
-  let kept = false;
-  for (const attachment of gmailAttachments()) {
-    const next = attachmentState(attachment.attachment_id);
-    if (next.selected && !kept) {
-      kept = true;
-      next.startPage = 1;
-    } else {
-      next.selected = false;
-      next.startPage = 1;
-    }
-    setAttachmentState(attachment.attachment_id, next);
-  }
+  gmailState.selectionState = applyGmailWorkflowSelectionDefaults({
+    attachments: gmailAttachments(),
+    selectionState: gmailState.selectionState,
+    workflowKind,
+  });
 }
 
 function updateAttachmentSelection(attachmentId, selected) {
@@ -1155,18 +1151,13 @@ function updateAttachmentSelection(attachmentId, selected) {
   if (!attachment) {
     return;
   }
-  if (currentWorkflowKind() === "interpretation" && selected) {
-    for (const other of gmailAttachments()) {
-      const nextOther = attachmentState(other.attachment_id);
-      nextOther.selected = false;
-      nextOther.startPage = 1;
-      setAttachmentState(other.attachment_id, nextOther);
-    }
-  }
-  const next = attachmentState(attachmentId);
-  next.selected = Boolean(selected);
-  next.startPage = clampStartPage(attachment, next.startPage, next.pageCount);
-  setAttachmentState(attachmentId, next);
+  gmailState.selectionState = buildGmailAttachmentSelectionUpdate({
+    attachments: gmailAttachments(),
+    selectionState: gmailState.selectionState,
+    attachmentId,
+    selected,
+    workflowKind: currentWorkflowKind(),
+  });
   focusAttachment(attachmentId);
 }
 

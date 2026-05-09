@@ -225,6 +225,84 @@ const interpretationSelection = reviewModule.buildGmailSelectionStateMap({{
 }});
 results.selectionInterpretationSession = mapEntries(interpretationSelection);
 results.selectionNull = mapEntries(reviewModule.buildGmailSelectionStateMap());
+results.defaultTranslationSelection = mapEntries(reviewModule.applyGmailWorkflowSelectionDefaults({{
+  attachments: [pdfAttachment, imageAttachment],
+  selectionState: new Map([
+    ["att-pdf", {{ selected: true, startPage: "9", pageCount: 5 }}],
+    ["att-image", {{ selected: true, startPage: "4", pageCount: 0 }}],
+    ["stale-att", {{ selected: true, startPage: 8, pageCount: 0 }}],
+  ]),
+  workflowKind: "translation",
+}}));
+results.defaultInterpretationSelection = mapEntries(reviewModule.applyGmailWorkflowSelectionDefaults({{
+  attachments: [pdfAttachment, imageAttachment, otherAttachment],
+  selectionState: new Map([
+    ["att-pdf", {{ selected: true, startPage: 5, pageCount: 7 }}],
+    ["att-image", {{ selected: true, startPage: 4, pageCount: 2 }}],
+    ["stale-att", {{ selected: true, startPage: 8, pageCount: 0 }}],
+  ]),
+  workflowKind: "interpretation",
+}}));
+results.defaultObjectInterpretationSelection = mapEntries(reviewModule.applyGmailWorkflowSelectionDefaults({{
+  attachments: [pdfAttachment, imageAttachment],
+  selectionState: {{
+    "att-pdf": {{ selected: false, startPage: "<script>bad()</script>", pageCount: "bad" }},
+    "att-image": {{ selected: 1, startPage: "7", pageCount: 4 }},
+  }},
+  workflowKind: "interpretation",
+}}));
+results.defaultNullSelection = mapEntries(reviewModule.applyGmailWorkflowSelectionDefaults());
+results.updateTranslationSelection = mapEntries(reviewModule.buildGmailAttachmentSelectionUpdate({{
+  attachments: [pdfAttachment, imageAttachment],
+  selectionState: new Map([
+    ["att-pdf", {{ selected: false, startPage: "<script>bad()</script>", pageCount: 4 }}],
+    ["att-image", {{ selected: true, startPage: 3, pageCount: 0 }}],
+    ["stale-att", {{ selected: true, startPage: 8, pageCount: 0 }}],
+  ]),
+  attachmentId: "att-pdf",
+  selected: true,
+  workflowKind: "translation",
+}}));
+results.updateInterpretationSelection = mapEntries(reviewModule.buildGmailAttachmentSelectionUpdate({{
+  attachments: [pdfAttachment, imageAttachment, otherAttachment],
+  selectionState: new Map([
+    ["att-pdf", {{ selected: true, startPage: 5, pageCount: 7 }}],
+    ["att-image", {{ selected: false, startPage: 3, pageCount: 2 }}],
+    ["att-other", {{ selected: true, startPage: 2, pageCount: 0 }}],
+    ["stale-att", {{ selected: true, startPage: 8, pageCount: 0 }}],
+  ]),
+  attachmentId: "att-image",
+  selected: true,
+  workflowKind: "interpretation",
+}}));
+results.updateInterpretationDeselect = mapEntries(reviewModule.buildGmailAttachmentSelectionUpdate({{
+  attachments: [pdfAttachment, imageAttachment],
+  selectionState: new Map([
+    ["att-pdf", {{ selected: true, startPage: 5, pageCount: 7 }}],
+    ["att-image", {{ selected: true, startPage: 3, pageCount: 2 }}],
+  ]),
+  attachmentId: "att-image",
+  selected: false,
+  workflowKind: "interpretation",
+}}));
+results.updateMissingSelection = mapEntries(reviewModule.buildGmailAttachmentSelectionUpdate({{
+  attachments: [pdfAttachment],
+  selectionState: new Map([
+    ["att-pdf", {{ selected: true, startPage: 2, pageCount: 3 }}],
+  ]),
+  attachmentId: "missing",
+  selected: true,
+  workflowKind: "translation",
+}}));
+results.updateObjectSelection = mapEntries(reviewModule.buildGmailAttachmentSelectionUpdate({{
+  attachments: [pdfAttachment],
+  selectionState: {{
+    "att-pdf": {{ selected: 1, startPage: "99", pageCount: 2 }},
+  }},
+  attachmentId: "att-pdf",
+  selected: true,
+  workflowKind: "translation",
+}}));
 const prepareSelections = reviewModule.buildGmailPrepareSelectionsPayload({{
   attachments: [pdfAttachment, imageAttachment, otherAttachment],
   selectionState: new Map([
@@ -649,6 +727,43 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
         "att-other": {"selected": True, "startPage": 1, "pageCount": 0},
     }
     assert results["selectionNull"] == {}
+    assert results["defaultTranslationSelection"] == {
+        "att-pdf": {"selected": True, "startPage": 9, "pageCount": 5},
+        "att-image": {"selected": True, "startPage": 4, "pageCount": 0},
+        "stale-att": {"selected": True, "startPage": 8, "pageCount": 0},
+    }
+    assert results["defaultInterpretationSelection"] == {
+        "att-pdf": {"selected": True, "startPage": 1, "pageCount": 7},
+        "att-image": {"selected": False, "startPage": 1, "pageCount": 2},
+        "stale-att": {"selected": True, "startPage": 8, "pageCount": 0},
+        "att-other": {"selected": False, "startPage": 1, "pageCount": 0},
+    }
+    assert results["defaultObjectInterpretationSelection"] == {
+        "att-pdf": {"selected": False, "startPage": 1, "pageCount": 0},
+        "att-image": {"selected": True, "startPage": 1, "pageCount": 4},
+    }
+    assert results["defaultNullSelection"] == {}
+    assert results["updateTranslationSelection"] == {
+        "att-pdf": {"selected": True, "startPage": 1, "pageCount": 4},
+        "att-image": {"selected": True, "startPage": 3, "pageCount": 0},
+        "stale-att": {"selected": True, "startPage": 8, "pageCount": 0},
+    }
+    assert results["updateInterpretationSelection"] == {
+        "att-pdf": {"selected": False, "startPage": 1, "pageCount": 7},
+        "att-image": {"selected": True, "startPage": 1, "pageCount": 2},
+        "att-other": {"selected": False, "startPage": 1, "pageCount": 0},
+        "stale-att": {"selected": True, "startPage": 8, "pageCount": 0},
+    }
+    assert results["updateInterpretationDeselect"] == {
+        "att-pdf": {"selected": True, "startPage": 5, "pageCount": 7},
+        "att-image": {"selected": False, "startPage": 1, "pageCount": 2},
+    }
+    assert results["updateMissingSelection"] == {
+        "att-pdf": {"selected": True, "startPage": 2, "pageCount": 3},
+    }
+    assert results["updateObjectSelection"] == {
+        "att-pdf": {"selected": True, "startPage": 2, "pageCount": 2},
+    }
     assert results["prepareSelections"] == [
         {"attachment_id": "att-pdf", "start_page": 4, "page_count": 4},
         {"attachment_id": "att-image", "start_page": 1},
