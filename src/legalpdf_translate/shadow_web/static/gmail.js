@@ -73,6 +73,7 @@ import { buildGmailRestoreBarPresentation } from "./gmail_restore_presentation.j
 import { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
 import {
   buildGmailHomeCtaPresentation,
+  buildGmailPanelStatusPresentation,
   buildGmailStagePresentation,
 } from "./gmail_stage_presentation.js";
 import {
@@ -583,35 +584,18 @@ function currentRecoveredFinalizationAction() {
 }
 
 function gmailHomeStatusMessage() {
-  const clickDiagnostics = currentClickDiagnostics();
-  const recoveredAction = currentRecoveredFinalizationAction();
+  return currentPanelStatusPresentation().gmail.message;
+}
+
+function currentPanelStatusPresentation() {
   const stage = gmailState.stage || currentGmailStage();
-  const presentation = buildGmailStagePresentation({
+  return buildGmailPanelStatusPresentation({
     stage,
     activeSession: gmailState.activeSession,
+    loadResult: gmailState.loadResult,
+    recoveredAction: currentRecoveredFinalizationAction(),
+    clickDiagnostics: currentClickDiagnostics(),
   });
-  if (
-    !gmailState.loadResult
-    && !gmailState.activeSession
-    && recoveredAction.visible
-  ) {
-    return "A previous Gmail result is still available here, but this page is waiting for a new Gmail message.";
-  }
-  switch (stage) {
-    case "translation_recovery":
-    case "translation_prepared":
-    case "translation_running":
-    case "translation_save":
-    case "translation_finalize":
-    case "interpretation_review":
-    case "interpretation_finalize":
-      return presentation.description;
-    default:
-      if (!gmailState.loadResult && !gmailState.activeSession && clickDiagnostics.click_phase && !clickDiagnostics.bridge_context_posted) {
-        return `The last Gmail redirect stopped during ${clickDiagnostics.click_phase.replaceAll("_", " ")}. Use Back to Gmail or refresh this review before trying again.`;
-      }
-      return "Choose the attachment you want to process, preview it if needed, then continue.";
-  }
 }
 
 function loadSuggestedTranslationLaunch({ closeCompletionDrawer = false } = {}) {
@@ -1718,20 +1702,23 @@ export function renderGmailBootstrap(payload) {
   updateGmailFailureReportActionState();
   updateGmailFinalizationReportActionState();
   maybeAutoOpenReview();
+  const panelStage = gmailState.stage || currentGmailStage();
+  const panelStatus = buildGmailPanelStatusPresentation({
+    stage: panelStage,
+    activeSession: gmailState.activeSession,
+    loadResult: gmailState.loadResult,
+    recoveredAction: currentRecoveredFinalizationAction(),
+    clickDiagnostics: currentClickDiagnostics(),
+  });
   setPanelStatus(
     "gmail",
-    gmailState.loadResult?.ok ? "ok" : "",
-    gmailHomeStatusMessage(),
+    panelStatus.gmail.tone,
+    panelStatus.gmail.message,
   );
   setPanelStatus(
     "gmail-session",
-    gmailState.activeSession ? "ok" : "",
-    gmailState.activeSession
-      ? buildGmailStagePresentation({
-        stage: gmailState.stage || currentGmailStage(),
-        activeSession: gmailState.activeSession,
-      }).description
-      : "No Gmail translation or interpretation step is active yet.",
+    panelStatus.session.tone,
+    panelStatus.session.message,
   );
   syncShellState();
 }

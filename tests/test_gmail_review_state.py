@@ -194,6 +194,35 @@ results.ctaTranslationFinalize = stageModule.buildGmailHomeCtaPresentation({{
   stage: "translation_finalize",
   activeSession: {{ kind: "translation", current_item_number: 2, total_items: 2 }},
 }});
+results.panelStatusDefaultReview = stageModule.buildGmailPanelStatusPresentation({{
+  stage: "review",
+  activeSession: null,
+  loadResult: {{ ok: true }},
+}});
+results.panelStatusActiveStage = stageModule.buildGmailPanelStatusPresentation({{
+  stage: "translation_running",
+  activeSession: {{
+    kind: "translation",
+    current_attachment: {{ attachment: {{ filename: "sentença 305.pdf" }} }},
+  }},
+  loadResult: {{ ok: true }},
+}});
+results.panelStatusRecovered = stageModule.buildGmailPanelStatusPresentation({{
+  stage: "idle",
+  activeSession: null,
+  loadResult: null,
+  recoveredAction: {{ visible: true }},
+}});
+results.panelStatusClickDiagnostic = stageModule.buildGmailPanelStatusPresentation({{
+  stage: "idle",
+  activeSession: null,
+  loadResult: null,
+  clickDiagnostics: {{
+    click_phase: "same_tab_redirect_started",
+    bridge_context_posted: false,
+  }},
+}});
+results.panelStatusNull = stageModule.buildGmailPanelStatusPresentation();
 results.redoHidden = reviewModule.deriveGmailRedoAction({{
   activeSession: null,
   translationUi: {{}},
@@ -447,6 +476,28 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
     assert results["ctaTranslationFinalize"]["action"] == "resume-translation-finalize"
     assert results["ctaTranslationFinalize"]["label"] == "Resume Current Step"
     assert results["ctaInterpretationFinalize"]["action"] == "resume-interpretation-finalize"
+    assert results["panelStatusDefaultReview"]["gmail"] == {
+        "tone": "ok",
+        "message": "Choose the attachment you want to process, preview it if needed, then continue.",
+    }
+    assert results["panelStatusDefaultReview"]["session"] == {
+        "tone": "",
+        "message": "No Gmail translation or interpretation step is active yet.",
+    }
+    assert results["panelStatusActiveStage"]["gmail"]["message"] == (
+        "sentença 305.pdf is already in progress. Continue the Gmail step when you want to review progress or the next action."
+    )
+    assert results["panelStatusActiveStage"]["session"] == {
+        "tone": "ok",
+        "message": "sentença 305.pdf is already in progress. Continue the Gmail step when you want to review progress or the next action.",
+    }
+    assert results["panelStatusRecovered"]["gmail"]["message"] == (
+        "A previous Gmail result is still available here, but this page is waiting for a new Gmail message."
+    )
+    assert results["panelStatusClickDiagnostic"]["gmail"]["message"] == (
+        "The last Gmail redirect stopped during same tab redirect started. Use Back to Gmail or refresh this review before trying again."
+    )
+    assert results["panelStatusNull"]["session"]["message"] == "No Gmail translation or interpretation step is active yet."
     assert results["recoveredHidden"]["visible"] is False
     assert results["recoveredVisible"]["visible"] is True
     assert results["recoveredVisible"]["action"] == "open-restored-translation-finalize"
