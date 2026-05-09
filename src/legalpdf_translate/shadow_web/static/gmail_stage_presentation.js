@@ -24,6 +24,18 @@ function activeAttachmentFilename(activeSession) {
   return "";
 }
 
+function stageUsesStageDescription(stage) {
+  return [
+    "translation_recovery",
+    "translation_prepared",
+    "translation_running",
+    "translation_save",
+    "translation_finalize",
+    "interpretation_review",
+    "interpretation_finalize",
+  ].includes(normalizeGmailStage(stage));
+}
+
 export function buildGmailStagePresentation({ stage, activeSession } = {}) {
   const normalizedStage = normalizeGmailStage(stage);
   const filename = activeAttachmentFilename(activeSession) || "this attachment";
@@ -108,6 +120,48 @@ export function buildGmailStagePresentation({ stage, activeSession } = {}) {
         stripDescription: "Review the Gmail message and attachments before you continue.",
       };
   }
+}
+
+export function buildGmailPanelStatusPresentation({
+  stage,
+  activeSession,
+  loadResult,
+  recoveredAction,
+  clickDiagnostics,
+  stagePresentation = null,
+} = {}) {
+  const presentation = stagePresentation || buildGmailStagePresentation({ stage, activeSession });
+  let gmailMessage = "Choose the attachment you want to process, preview it if needed, then continue.";
+  const hasLoadResult = Boolean(loadResult);
+  const hasActiveSession = Boolean(activeSession);
+
+  if (!hasLoadResult && !hasActiveSession && recoveredAction?.visible) {
+    gmailMessage = "A previous Gmail result is still available here, but this page is waiting for a new Gmail message.";
+  } else if (stageUsesStageDescription(stage)) {
+    gmailMessage = presentation.description;
+  } else {
+    const clickPhase = String(clickDiagnostics?.click_phase || "").trim();
+    if (!hasLoadResult && !hasActiveSession && clickPhase && clickDiagnostics?.bridge_context_posted !== true) {
+      gmailMessage = `The last Gmail redirect stopped during ${clickPhase.replaceAll("_", " ")}. Use Back to Gmail or refresh this review before trying again.`;
+    }
+  }
+
+  return {
+    gmail: {
+      tone: loadResult?.ok ? "ok" : "",
+      message: gmailMessage,
+    },
+    session: activeSession
+      ? {
+        tone: "ok",
+        message: presentation.description,
+      }
+      : {
+        tone: "",
+        message: "No Gmail translation or interpretation step is active yet.",
+      },
+    stagePresentation: presentation,
+  };
 }
 
 export function buildGmailHomeCtaPresentation({

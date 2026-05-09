@@ -9395,6 +9395,7 @@ def test_gmail_stage_presentation_module_derives_stage_and_home_cta_state() -> N
 
     assert "export function buildGmailStagePresentation" in presentation_js
     assert "export function buildGmailHomeCtaPresentation" in presentation_js
+    assert "export function buildGmailPanelStatusPresentation" in presentation_js
     assert "document." not in presentation_js
     assert "innerHTML" not in presentation_js
     assert "renderGmail" not in presentation_js
@@ -9411,6 +9412,7 @@ def test_gmail_stage_presentation_module_derives_stage_and_home_cta_state() -> N
     ).group("body")
     assert "buildGmailStagePresentation" in stage_import
     assert "buildGmailHomeCtaPresentation" in stage_import
+    assert "buildGmailPanelStatusPresentation" in stage_import
     review_import = re.search(
         r"import \{(?P<body>.*?)\} from \"\./gmail_review_state\.js\";",
         gmail_js,
@@ -9428,7 +9430,10 @@ def test_gmail_stage_presentation_module_derives_stage_and_home_cta_state() -> N
     home_status_start = gmail_js.index("function gmailHomeStatusMessage()")
     home_status_end = gmail_js.index("\nfunction renderMessageResult", home_status_start)
     home_status_block = gmail_js[home_status_start:home_status_end]
-    assert "buildGmailStagePresentation({" in home_status_block
+    assert "buildGmailPanelStatusPresentation({" in home_status_block
+    assert "A previous Gmail result is still available here" not in home_status_block
+    assert "The last Gmail redirect stopped during" not in home_status_block
+    assert "Choose the attachment you want to process" not in home_status_block
 
     resume_start = gmail_js.index("function renderResumeCard(")
     resume_end = gmail_js.index("\nfunction renderSessionResult", resume_start)
@@ -9444,6 +9449,12 @@ def test_gmail_stage_presentation_module_derives_stage_and_home_cta_state() -> N
     strip_end = gmail_js.index("\nfunction updatePrepareActionState", strip_start)
     strip_block = gmail_js[strip_start:strip_end]
     assert "buildGmailStagePresentation({" in strip_block
+
+    bootstrap_start = gmail_js.index("export function renderGmailBootstrap")
+    bootstrap_end = gmail_js.index("\nasync function refreshGmailState", bootstrap_start)
+    bootstrap_block = gmail_js[bootstrap_start:bootstrap_end]
+    assert "buildGmailPanelStatusPresentation({" in bootstrap_block
+    assert "No Gmail translation or interpretation step is active yet." not in bootstrap_block
 
     script = """
 const presentation = await import(__GMAIL_STAGE_PRESENTATION_MODULE_URL__);
@@ -9527,9 +9538,47 @@ const ctaSuppliedPresentation = presentation.buildGmailHomeCtaPresentation({
 });
 const ctaNull = presentation.buildGmailHomeCtaPresentation();
 
+const panelActiveStage = presentation.buildGmailPanelStatusPresentation({
+  stage: "translation_prepared",
+  activeSession: translationSession,
+  loadResult: { ok: true },
+});
+const panelInactiveSession = presentation.buildGmailPanelStatusPresentation({
+  stage: "review",
+  activeSession: null,
+  loadResult: { ok: true },
+});
+const panelRecovered = presentation.buildGmailPanelStatusPresentation({
+  stage: "idle",
+  activeSession: null,
+  loadResult: null,
+  recoveredAction: { visible: true },
+});
+const panelClickDiagnostic = presentation.buildGmailPanelStatusPresentation({
+  stage: "idle",
+  activeSession: null,
+  loadResult: null,
+  clickDiagnostics: {
+    click_phase: "same_tab_redirect_started",
+    bridge_context_posted: false,
+  },
+});
+const panelDefaultReview = presentation.buildGmailPanelStatusPresentation({
+  stage: "review",
+  activeSession: null,
+  loadResult: { ok: true },
+  recoveredAction: { visible: false },
+  clickDiagnostics: {
+    click_phase: "bridge_context_posted",
+    bridge_context_posted: true,
+  },
+});
+const panelNull = presentation.buildGmailPanelStatusPresentation();
+
 console.log(JSON.stringify({
   stageExportType: typeof presentation.buildGmailStagePresentation,
   ctaExportType: typeof presentation.buildGmailHomeCtaPresentation,
+  panelExportType: typeof presentation.buildGmailPanelStatusPresentation,
   idle,
   review,
   prepared,
@@ -9546,6 +9595,12 @@ console.log(JSON.stringify({
   ctaInterpretation,
   ctaSuppliedPresentation,
   ctaNull,
+  panelActiveStage,
+  panelInactiveSession,
+  panelRecovered,
+  panelClickDiagnostic,
+  panelDefaultReview,
+  panelNull,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -9557,6 +9612,7 @@ console.log(JSON.stringify({
 
     assert results["stageExportType"] == "function"
     assert results["ctaExportType"] == "function"
+    assert results["panelExportType"] == "function"
     assert results["idle"] == {
         "title": "Review Gmail attachments.",
         "description": "Open this from Gmail or load a message manually from details.",
@@ -9603,6 +9659,46 @@ console.log(JSON.stringify({
     assert results["ctaSuppliedPresentation"]["title"] == "Supplied <img src=x onerror=alert(1)><script>bad()</script>"
     assert results["ctaSuppliedPresentation"]["description"] == "Supplied description <img src=x onerror=alert(1)><script>bad()</script>"
     assert results["ctaNull"]["visible"] is False
+    assert results["panelActiveStage"]["gmail"] == {
+        "tone": "ok",
+        "message": "sentença <img src=x onerror=alert(1)><script>bad()</script>.pdf is prepared in the translation screen. Review the settings there and start when you are ready.",
+    }
+    assert results["panelActiveStage"]["session"] == {
+        "tone": "ok",
+        "message": "sentença <img src=x onerror=alert(1)><script>bad()</script>.pdf is prepared in the translation screen. Review the settings there and start when you are ready.",
+    }
+    assert results["panelInactiveSession"]["session"] == {
+        "tone": "",
+        "message": "No Gmail translation or interpretation step is active yet.",
+    }
+    assert results["panelRecovered"]["gmail"] == {
+        "tone": "",
+        "message": "A previous Gmail result is still available here, but this page is waiting for a new Gmail message.",
+    }
+    assert results["panelClickDiagnostic"]["gmail"]["message"] == (
+        "The last Gmail redirect stopped during same tab redirect started. "
+        "Use Back to Gmail or refresh this review before trying again."
+    )
+    assert results["panelDefaultReview"]["gmail"] == {
+        "tone": "ok",
+        "message": "Choose the attachment you want to process, preview it if needed, then continue.",
+    }
+    assert results["panelNull"] == {
+        "gmail": {
+            "tone": "",
+            "message": "Choose the attachment you want to process, preview it if needed, then continue.",
+        },
+        "session": {
+            "tone": "",
+            "message": "No Gmail translation or interpretation step is active yet.",
+        },
+        "stagePresentation": {
+            "title": "Review Gmail attachments.",
+            "description": "Open this from Gmail or load a message manually from details.",
+            "stripTitle": "Gmail attachment ready",
+            "stripDescription": "Review the Gmail message and attachments before you continue.",
+        },
+    }
 
 
 def test_gmail_session_ui_module_owns_session_buttons_renderer() -> None:
@@ -28548,6 +28644,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         )
         assert "buildGmailStagePresentation" in gmail_stage_presentation_asset.text
         assert "buildGmailHomeCtaPresentation" in gmail_stage_presentation_asset.text
+        assert "buildGmailPanelStatusPresentation" in gmail_stage_presentation_asset.text
         gmail_report_ui_asset = client.get(f"/static-build/{asset_version}/gmail_report_ui.js")
         assert gmail_report_ui_asset.status_code == 200
         assert gmail_report_ui_asset.headers["content-type"].startswith("application/javascript")
