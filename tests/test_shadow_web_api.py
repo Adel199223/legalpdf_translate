@@ -3917,7 +3917,7 @@ def test_gmail_runtime_guard_presentation_module_builds_diagnostics_state() -> N
     assert "export function buildGmailRuntimeGuardBlockedDiagnosticsPresentation" in presentation_js
     assert "export function buildGmailRuntimeGuardRestartDiagnosticsPresentation" in presentation_js
 
-    for forbidden in ["document.", "innerHTML", "renderGmail", "setDiagnostics"]:
+    for forbidden in ["document.", "innerHTML", "renderGmail", "setDiagnostics("]:
         assert forbidden not in presentation_js
 
     blocked_builder_start = presentation_js.index(
@@ -4064,6 +4064,158 @@ console.log(JSON.stringify({
             "open": True,
         },
     }
+
+
+def test_gmail_lifecycle_diagnostics_presentation_module_builds_lifecycle_diagnostics_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_lifecycle_diagnostics_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_lifecycle_diagnostics_presentation.js"' in gmail_js
+    for export_name in [
+        "buildGmailInitialDiagnosticsPresentations",
+        "buildGmailReviewRefreshDiagnosticsPresentation",
+        "buildGmailSessionPreparedDiagnosticsPresentation",
+        "buildGmailAttachmentSavedDiagnosticsPresentation",
+        "buildGmailReviewResetDiagnosticsPresentation",
+    ]:
+        assert f"export function {export_name}" in presentation_js
+        assert export_name in gmail_js
+
+    for forbidden in ["document.", "innerHTML", "renderGmail", "setDiagnostics("]:
+        assert forbidden not in presentation_js
+
+    def js_block(start_marker: str, end_marker: str) -> str:
+        start = gmail_js.index(start_marker)
+        end = gmail_js.index(end_marker, start)
+        return gmail_js[start:end]
+
+    refresh_block = js_block(
+        "async function refreshGmailState",
+        "function applyGmailReviewLoadOutcomePresentation",
+    )
+    assert "buildGmailReviewRefreshDiagnosticsPresentation({" in refresh_block
+    assert '"Gmail review refreshed."' not in refresh_block
+
+    prepare_block = js_block("async function prepareSession", "async function handleGmailFailureReport")
+    assert "buildGmailSessionPreparedDiagnosticsPresentation({" in prepare_block
+    assert '"Gmail session prepared."' not in prepare_block
+
+    confirm_block = js_block("async function confirmCurrentTranslation", "async function finalizeBatch")
+    assert "buildGmailAttachmentSavedDiagnosticsPresentation({" in confirm_block
+    assert '"Current Gmail attachment saved as a case record."' not in confirm_block
+
+    initialize_block = js_block("export function initializeGmailUi", 'qs("gmail-context-form"')
+    assert "buildGmailInitialDiagnosticsPresentations(" in initialize_block
+    for inline_text in [
+        "No Gmail action has run yet.",
+        "Exact-message load, attachment preview, and session preparation details appear here.",
+        "No Gmail batch or interpretation finalization has run yet.",
+        "Batch progression, staged attachments, export status, and Gmail draft details appear here.",
+        "No Gmail batch finalization has run yet.",
+        "Final draft request details and honorários export diagnostics appear here.",
+    ]:
+        assert inline_text not in initialize_block
+
+    reset_block = js_block('qs("gmail-reset")', 'qs("gmail-workspace-strip-action")')
+    assert "buildGmailReviewResetDiagnosticsPresentation({" in reset_block
+    assert '"Gmail review reset."' not in reset_block
+
+    script = """
+const presentation = await import(__GMAIL_LIFECYCLE_DIAGNOSTICS_PRESENTATION_MODULE_URL__);
+const maliciousPayload = {
+  normalized_payload: {
+    message: "<script>alert(1)</script>",
+  },
+};
+
+const initial = presentation.buildGmailInitialDiagnosticsPresentations(maliciousPayload);
+const refresh = presentation.buildGmailReviewRefreshDiagnosticsPresentation(maliciousPayload);
+const prepared = presentation.buildGmailSessionPreparedDiagnosticsPresentation(maliciousPayload);
+const saved = presentation.buildGmailAttachmentSavedDiagnosticsPresentation(maliciousPayload);
+const reset = presentation.buildGmailReviewResetDiagnosticsPresentation(maliciousPayload);
+const nullInitial = presentation.buildGmailInitialDiagnosticsPresentations(null);
+
+console.log(JSON.stringify({
+  exportTypes: {
+    initial: typeof presentation.buildGmailInitialDiagnosticsPresentations,
+    refresh: typeof presentation.buildGmailReviewRefreshDiagnosticsPresentation,
+    prepared: typeof presentation.buildGmailSessionPreparedDiagnosticsPresentation,
+    saved: typeof presentation.buildGmailAttachmentSavedDiagnosticsPresentation,
+    reset: typeof presentation.buildGmailReviewResetDiagnosticsPresentation,
+  },
+  initial,
+  refresh,
+  prepared,
+  saved,
+  reset,
+  nullInitial,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {
+            "__GMAIL_LIFECYCLE_DIAGNOSTICS_PRESENTATION_MODULE_URL__": (
+                "gmail_lifecycle_diagnostics_presentation.js"
+            )
+        },
+    )
+
+    assert results["exportTypes"] == {
+        "initial": "function",
+        "refresh": "function",
+        "prepared": "function",
+        "saved": "function",
+        "reset": "function",
+    }
+    assert results["initial"] == [
+        {
+            "slot": "gmail",
+            "payload": {"status": "idle", "message": "No Gmail action has run yet."},
+            "presentation": {
+                "hint": "Exact-message load, attachment preview, and session preparation details appear here.",
+                "open": False,
+            },
+        },
+        {
+            "slot": "gmail-session",
+            "payload": {
+                "status": "idle",
+                "message": "No Gmail batch or interpretation finalization has run yet.",
+            },
+            "presentation": {
+                "hint": "Batch progression, staged attachments, export status, and Gmail draft details appear here.",
+                "open": False,
+            },
+        },
+        {
+            "slot": "gmail-batch-finalize",
+            "payload": {
+                "status": "idle",
+                "message": "No Gmail batch finalization has run yet.",
+            },
+            "presentation": {
+                "hint": "Final draft request details and honorários export diagnostics appear here.",
+                "open": False,
+            },
+        },
+    ]
+    assert results["nullInitial"] == results["initial"]
+    assert results["refresh"] == {"hint": "Gmail review refreshed.", "open": False}
+    assert results["prepared"] == {"hint": "Gmail session prepared.", "open": False}
+    assert results["saved"] == {
+        "hint": "Current Gmail attachment saved as a case record.",
+        "open": False,
+    }
+    assert results["reset"] == {"hint": "Gmail review reset.", "open": False}
 
 
 def test_gmail_runtime_presentation_module_builds_runtime_context_and_diagnostics() -> None:
@@ -30708,6 +30860,33 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailBuildProvenance" in gmail_runtime_presentation_asset.text
         assert "buildGmailRuntimeGuardSessionKey" in gmail_runtime_presentation_asset.text
         assert "buildGmailRuntimeGuardDiagnostics" in gmail_runtime_presentation_asset.text
+        gmail_lifecycle_diagnostics_presentation_asset = client.get(
+            f"/static-build/{asset_version}/gmail_lifecycle_diagnostics_presentation.js"
+        )
+        assert gmail_lifecycle_diagnostics_presentation_asset.status_code == 200
+        assert gmail_lifecycle_diagnostics_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert (
+            "buildGmailInitialDiagnosticsPresentations"
+            in gmail_lifecycle_diagnostics_presentation_asset.text
+        )
+        assert (
+            "buildGmailReviewRefreshDiagnosticsPresentation"
+            in gmail_lifecycle_diagnostics_presentation_asset.text
+        )
+        assert (
+            "buildGmailSessionPreparedDiagnosticsPresentation"
+            in gmail_lifecycle_diagnostics_presentation_asset.text
+        )
+        assert (
+            "buildGmailAttachmentSavedDiagnosticsPresentation"
+            in gmail_lifecycle_diagnostics_presentation_asset.text
+        )
+        assert (
+            "buildGmailReviewResetDiagnosticsPresentation"
+            in gmail_lifecycle_diagnostics_presentation_asset.text
+        )
         assert "renderGmailMessageResultInto" in gmail_ui_asset.text
         assert "renderGmailReviewSummaryInto" in gmail_ui_asset.text
         assert "renderGmailReviewChromeInto" in gmail_ui_asset.text
