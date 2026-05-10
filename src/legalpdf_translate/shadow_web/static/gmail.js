@@ -16,6 +16,13 @@ import {
   buildGmailRuntimeGuardRestartDiagnosticsPresentation,
 } from "./gmail_runtime_guard_presentation.js";
 import {
+  buildGmailBuildIdentity,
+  buildGmailBuildProvenance,
+  buildGmailRuntimeGuardDiagnostics,
+  buildGmailRuntimeGuardSessionKey,
+  buildGmailRuntimePayload,
+} from "./gmail_runtime_presentation.js";
+import {
   renderGmailDemoReviewActionInto,
   renderGmailPrepareActionInto,
   renderGmailReturnToSourceActionInto,
@@ -210,66 +217,34 @@ function browserBootstrapConfig() {
 }
 
 function currentGmailRuntimePayload() {
-  const bootstrap = browserBootstrapConfig();
-  const runtime = appState.bootstrap?.normalized_payload?.runtime || {};
-  return {
-    ...runtime,
-    build_branch: String(runtime.build_branch || bootstrap.buildBranch || "").trim(),
-    build_sha: String(runtime.build_sha || bootstrap.buildSha || "").trim(),
-    asset_version: String(runtime.asset_version || bootstrap.assetVersion || "").trim(),
-    live_data: runtime.live_data === true || appState.runtimeMode === "live",
-  };
+  return buildGmailRuntimePayload({
+    runtime: appState.bootstrap?.normalized_payload?.runtime || {},
+    bootstrap: browserBootstrapConfig(),
+    runtimeMode: appState.runtimeMode,
+  });
 }
 
 function currentGmailBuildIdentity() {
-  const runtime = currentGmailRuntimePayload();
-  const bootstrap = browserBootstrapConfig();
-  const identity = (
-    runtime.build_identity
-    && typeof runtime.build_identity === "object"
-    ? runtime.build_identity
-    : appState.bootstrap?.normalized_payload?.shell?.build_identity
-      && typeof appState.bootstrap.normalized_payload.shell.build_identity === "object"
-      ? appState.bootstrap.normalized_payload.shell.build_identity
-      : bootstrap.buildIdentity
-        && typeof bootstrap.buildIdentity === "object"
-        ? bootstrap.buildIdentity
-        : {}
-  );
-  return {
-    ...identity,
-    branch: String(identity.branch || runtime.build_branch || "").trim(),
-    head_sha: String(identity.head_sha || runtime.build_sha || "").trim(),
-  };
+  return buildGmailBuildIdentity({
+    runtime: currentGmailRuntimePayload(),
+    shellBuildIdentity: appState.bootstrap?.normalized_payload?.shell?.build_identity || null,
+    bootstrap: browserBootstrapConfig(),
+  });
 }
 
 function currentGmailBuildProvenance() {
-  const runtime = currentGmailRuntimePayload();
-  const buildIdentity = currentGmailBuildIdentity();
-  const branch = String(buildIdentity.branch || runtime.build_branch || "").trim();
-  const buildSha = String(buildIdentity.head_sha || runtime.build_sha || "").trim();
-  const assetVersion = String(runtime.asset_version || "").trim();
-  const pieces = [];
-  if (branch && buildSha) {
-    pieces.push(`${branch}@${buildSha}`);
-  } else if (buildSha || branch) {
-    pieces.push(buildSha || branch);
-  }
-  if (assetVersion) {
-    pieces.push(`assets ${assetVersion}`);
-  }
-  return {
-    branch,
-    buildSha,
-    assetVersion,
-    label: pieces.join(" | ") || "Unavailable",
-  };
+  return buildGmailBuildProvenance({
+    runtime: currentGmailRuntimePayload(),
+    buildIdentity: currentGmailBuildIdentity(),
+  });
 }
 
 function gmailRuntimeGuardSessionKey(buildIdentity = currentGmailBuildIdentity()) {
-  const branch = String(buildIdentity.branch || "unknown-branch").trim() || "unknown-branch";
-  const buildSha = String(buildIdentity.head_sha || "unknown-sha").trim() || "unknown-sha";
-  return `legalpdf.gmail.noncanonical.${appState.runtimeMode}.${appState.workspaceId}.${branch}.${buildSha}`;
+  return buildGmailRuntimeGuardSessionKey({
+    runtimeMode: appState.runtimeMode,
+    workspaceId: appState.workspaceId,
+    buildIdentity,
+  });
 }
 
 function gmailRuntimeGuardAcknowledged(buildIdentity = currentGmailBuildIdentity()) {
@@ -311,16 +286,12 @@ function currentGmailRuntimeGuard() {
 }
 
 function gmailRuntimeGuardDiagnostics(guard = currentGmailRuntimeGuard(), operation = "") {
-  return {
-    error: "noncanonical_live_runtime",
-    message: guard.message,
-    operation: String(operation || "").trim(),
-    build_label: guard.buildLabel,
-    build_identity: currentGmailBuildIdentity(),
+  return buildGmailRuntimeGuardDiagnostics({
+    guard,
+    operation,
+    buildIdentity: currentGmailBuildIdentity(),
     runtime: currentGmailRuntimePayload(),
-    details: guard.details,
-    acknowledged: Boolean(guard.acknowledged),
-  };
+  });
 }
 
 function currentGmailFailureReportContext() {
