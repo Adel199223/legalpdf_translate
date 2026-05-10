@@ -148,6 +148,61 @@ export function buildGmailTranslationStepCardPresentation({
   };
 }
 
+export function buildGmailTranslationConfirmationGatePresentation({
+  translationUi = {},
+  jobId = "",
+} = {}) {
+  const resolvedJobId = jobId || "";
+  if (translationUi?.requiresArabicReview && !translationUi?.arabicReviewResolved) {
+    return {
+      blocked: true,
+      message: translationUi.arabicReviewMessage
+        || "Arabic DOCX review is still required before Gmail confirmation can continue.",
+      jobId: resolvedJobId,
+    };
+  }
+
+  if (
+    translationUi?.currentJobRecoveryRequired
+    || translationUi?.currentJobStatus === "failed"
+    || translationUi?.currentJobStatus === "cancelled"
+  ) {
+    const failurePage = Number.isFinite(Number(translationUi.currentJobFailurePage))
+      ? ` on page ${Number(translationUi.currentJobFailurePage)}`
+      : "";
+    const failureReason = String(translationUi.currentJobFailureReason || "").trim();
+    return {
+      blocked: true,
+      message: failureReason
+        ? `This Gmail attachment still needs translation recovery${failurePage}: ${failureReason}`
+        : `This Gmail attachment still needs translation recovery${failurePage} before Gmail confirmation can continue.`,
+      jobId: resolvedJobId,
+    };
+  }
+
+  if (translationUi?.currentJobKind === "rebuild" || !translationUi?.currentJobHasSaveSeed) {
+    return {
+      blocked: true,
+      message: "Only a completed translation with a durable reviewed DOCX can be confirmed for Gmail. Rebuild DOCX does not make this attachment confirmable.",
+      jobId: resolvedJobId,
+    };
+  }
+
+  if (!resolvedJobId) {
+    return {
+      blocked: true,
+      message: "Run a translation job for the current Gmail attachment first.",
+      jobId: resolvedJobId,
+    };
+  }
+
+  return {
+    blocked: false,
+    message: "",
+    jobId: resolvedJobId,
+  };
+}
+
 export function buildGmailWorkspaceStripPresentation({
   show = false,
   loadResult = null,
