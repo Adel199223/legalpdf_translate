@@ -39,6 +39,46 @@ export function buildGmailNumericMismatchWarningPresentation(warning = {}) {
   };
 }
 
+export function buildGmailBatchFinalizePreflightDiagnosticsPresentation({
+  payload = null,
+} = {}) {
+  if (payload?.status === "ok") {
+    return {
+      hint: "Word PDF export canary passed for Gmail finalization.",
+      open: false,
+    };
+  }
+  return {
+    hint: String(
+      payload?.normalized_payload?.finalization_preflight?.message
+        || "Word PDF export is blocked before Gmail finalization.",
+    ),
+    open: true,
+  };
+}
+
+export function buildGmailBatchFinalizeDiagnosticsPresentation({
+  payload = null,
+} = {}) {
+  const ok = payload?.status === "ok";
+  return {
+    hint: ok ? "The Gmail reply is ready." : "The Gmail reply step completed with warnings.",
+    open: !ok,
+  };
+}
+
+export function buildGmailInterpretationFinalizeDiagnosticsPresentation({
+  payload = null,
+} = {}) {
+  const ok = payload?.status === "ok";
+  return {
+    hint: ok
+      ? "Gmail interpretation reply draft is ready."
+      : "Interpretation Gmail finalization completed with warnings.",
+    open: !ok,
+  };
+}
+
 function gmailBatchSummaryCard({
   session,
   recoveredOnly,
