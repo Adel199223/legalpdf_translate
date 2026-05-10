@@ -12,6 +12,20 @@ function attachmentFilename(attachment, fallback) {
   return String(attachment?.filename || fallback);
 }
 
+export function buildGmailPreviewLoadedDiagnosticsPresentation({
+  payload = null,
+  attachment = null,
+} = {}) {
+  const filename = attachmentFilename(
+    payload?.normalized_payload?.attachment || attachment,
+    "attachment",
+  );
+  return {
+    hint: `Preview loaded for ${filename}.`,
+    open: false,
+  };
+}
+
 function resetControls() {
   return {
     applyDisabled: true,
