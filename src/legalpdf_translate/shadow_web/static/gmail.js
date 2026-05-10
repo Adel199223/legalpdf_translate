@@ -104,6 +104,7 @@ import {
   buildGmailAttachmentStartPageUpdate,
   buildGmailPrepareSelectionsPayload,
   buildGmailPreviewPanelContext,
+  buildGmailReviewLoadResetState,
   buildGmailSelectionStateMap,
   clearConsumedReviewState,
   clampGmailAttachmentStartPage,
@@ -1504,6 +1505,20 @@ function mergeBootstrapPayload(gmailPayload) {
   };
 }
 
+function applyGmailReviewLoadResetState(reviewLoadState = {}) {
+  mergeBootstrapPayload(reviewLoadState.bootstrapPatch);
+  gmailState.browserPdfState = reviewLoadState.browserPdfState;
+  gmailState.loadResult = reviewLoadState.loadResult;
+  gmailState.activeSession = reviewLoadState.activeSession;
+  gmailState.restoredCompletedSession = reviewLoadState.restoredCompletedSession;
+  gmailState.interpretationSeed = reviewLoadState.interpretationSeed;
+  gmailState.suggestedTranslationLaunch = reviewLoadState.suggestedTranslationLaunch;
+  gmailState.batchFinalizePreflight = reviewLoadState.batchFinalizePreflight;
+  gmailState.batchFinalizeDrawerSource = reviewLoadState.batchFinalizeDrawerSource;
+  gmailState.batchFinalizeResult = reviewLoadState.batchFinalizeResult;
+  gmailState.lastFinalizationReportPayload = reviewLoadState.lastFinalizationReportPayload;
+}
+
 export function renderGmailBootstrap(payload) {
   const gmailPayload = payload.normalized_payload.gmail || {};
   mergeBootstrapPayload(gmailPayload);
@@ -1586,23 +1601,11 @@ async function loadMessage() {
       },
     }),
   });
-  mergeBootstrapPayload({
-    review_event_id: payload.normalized_payload.review_event_id,
-    message_signature: payload.normalized_payload.message_signature,
-  });
-  gmailState.browserPdfState = new Map();
-  gmailState.loadResult = payload.normalized_payload.load_result || null;
-  gmailState.activeSession = null;
-  gmailState.restoredCompletedSession = null;
-  gmailState.interpretationSeed = null;
-  gmailState.suggestedTranslationLaunch = null;
-  gmailState.batchFinalizePreflight = null;
-  gmailState.batchFinalizeDrawerSource = "active";
+  const reviewLoadState = buildGmailReviewLoadResetState({ payload });
+  applyGmailReviewLoadResetState(reviewLoadState);
   clearGmailFailureReportContext();
   ensureSelectionState(gmailState.loadResult, null);
   resetPreviewState();
-  gmailState.batchFinalizeResult = null;
-  gmailState.lastFinalizationReportPayload = null;
   renderMessageResult(gmailState.loadResult);
   renderReviewSurface();
   renderResumeCard(null);
@@ -1625,23 +1628,11 @@ async function loadDemoReview() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
-  mergeBootstrapPayload({
-    review_event_id: payload.normalized_payload.review_event_id,
-    message_signature: payload.normalized_payload.message_signature,
-  });
-  gmailState.browserPdfState = new Map();
-  gmailState.loadResult = payload.normalized_payload.load_result || null;
-  gmailState.activeSession = null;
-  gmailState.restoredCompletedSession = null;
-  gmailState.interpretationSeed = null;
-  gmailState.suggestedTranslationLaunch = null;
-  gmailState.batchFinalizePreflight = null;
-  gmailState.batchFinalizeDrawerSource = "active";
+  const reviewLoadState = buildGmailReviewLoadResetState({ payload });
+  applyGmailReviewLoadResetState(reviewLoadState);
   clearGmailFailureReportContext();
   ensureSelectionState(gmailState.loadResult, null);
   resetPreviewState();
-  gmailState.batchFinalizeResult = null;
-  gmailState.lastFinalizationReportPayload = null;
   renderMessageResult(gmailState.loadResult);
   renderReviewSurface();
   renderResumeCard(null);

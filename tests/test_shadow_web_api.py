@@ -10437,6 +10437,68 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
     assert "clampStartPage(" not in page_count_block
 
 
+def test_gmail_review_state_module_owns_review_load_reset_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    review_state_js = (static_dir / "gmail_review_state.js").read_text(encoding="utf-8")
+
+    assert "export function buildGmailReviewLoadResetState" in review_state_js
+    assert "document." not in review_state_js
+    assert "innerHTML" not in review_state_js
+
+    review_import = re.search(
+        r"import \{(?P<body>.*?)\} from \"\./gmail_review_state\.js\";",
+        gmail_js,
+        re.S,
+    ).group("body")
+    assert "buildGmailReviewLoadResetState" in review_import
+
+    apply_start = gmail_js.index("function applyGmailReviewLoadResetState(")
+    apply_end = gmail_js.index("\nasync function refreshGmailState", apply_start)
+    apply_block = gmail_js[apply_start:apply_end]
+    assert "mergeBootstrapPayload(reviewLoadState.bootstrapPatch);" in apply_block
+    assert "gmailState.browserPdfState = reviewLoadState.browserPdfState;" in apply_block
+    assert "gmailState.loadResult = reviewLoadState.loadResult;" in apply_block
+    assert "gmailState.activeSession = reviewLoadState.activeSession;" in apply_block
+    assert "gmailState.restoredCompletedSession = reviewLoadState.restoredCompletedSession;" in apply_block
+    assert "gmailState.interpretationSeed = reviewLoadState.interpretationSeed;" in apply_block
+    assert "gmailState.suggestedTranslationLaunch = reviewLoadState.suggestedTranslationLaunch;" in apply_block
+    assert "gmailState.batchFinalizePreflight = reviewLoadState.batchFinalizePreflight;" in apply_block
+    assert "gmailState.batchFinalizeDrawerSource = reviewLoadState.batchFinalizeDrawerSource;" in apply_block
+    assert "gmailState.batchFinalizeResult = reviewLoadState.batchFinalizeResult;" in apply_block
+    assert "gmailState.lastFinalizationReportPayload = reviewLoadState.lastFinalizationReportPayload;" in apply_block
+
+    load_start = gmail_js.index("async function loadMessage()")
+    load_end = gmail_js.index("\nasync function loadDemoReview", load_start)
+    load_block = gmail_js[load_start:load_end]
+    demo_start = gmail_js.index("async function loadDemoReview()")
+    demo_end = gmail_js.index("\nasync function fetchAttachmentPreviewPayload", demo_start)
+    demo_block = gmail_js[demo_start:demo_end]
+
+    for block in [load_block, demo_block]:
+        assert "buildGmailReviewLoadResetState({" in block
+        assert "applyGmailReviewLoadResetState(reviewLoadState);" in block
+        assert "clearGmailFailureReportContext();" in block
+        assert "ensureSelectionState(gmailState.loadResult, null);" in block
+        assert "resetPreviewState();" in block
+        assert "mergeBootstrapPayload({" not in block
+        assert "gmailState.browserPdfState = new Map();" not in block
+        assert "gmailState.activeSession = null;" not in block
+        assert "gmailState.restoredCompletedSession = null;" not in block
+        assert "gmailState.interpretationSeed = null;" not in block
+        assert "gmailState.suggestedTranslationLaunch = null;" not in block
+        assert "gmailState.batchFinalizePreflight = null;" not in block
+        assert 'gmailState.batchFinalizeDrawerSource = "active";' not in block
+        assert "gmailState.batchFinalizeResult = null;" not in block
+        assert "gmailState.lastFinalizationReportPayload = null;" not in block
+
+
 def test_gmail_session_ui_module_owns_session_buttons_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -29406,6 +29468,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailAttachmentPageCountUpdate" in gmail_review_state_asset.text
         assert "buildGmailPreviewPanelContext" in gmail_review_state_asset.text
         assert "deriveGmailFocusedAttachmentId" in gmail_review_state_asset.text
+        assert "buildGmailReviewLoadResetState" in gmail_review_state_asset.text
         gmail_report_ui_asset = client.get(f"/static-build/{asset_version}/gmail_report_ui.js")
         assert gmail_report_ui_asset.status_code == 200
         assert gmail_report_ui_asset.headers["content-type"].startswith("application/javascript")
