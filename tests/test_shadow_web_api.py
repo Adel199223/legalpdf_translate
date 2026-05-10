@@ -5028,6 +5028,181 @@ console.log(JSON.stringify({
     assert results["maliciousMetadata"] == {"available": True, "statusText": expected_status}
 
 
+def test_gmail_control_presentation_module_builds_review_load_outcome_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_js = (static_dir / "gmail_control_presentation.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "buildGmailReviewLoadOutcomePresentation" in gmail_js
+    assert "export function buildGmailReviewLoadOutcomePresentation" in presentation_js
+    presentation_start = presentation_js.index(
+        "export function buildGmailReviewLoadOutcomePresentation"
+    )
+    presentation_block = presentation_js[presentation_start:]
+    assert "document." not in presentation_block
+    assert "innerHTML" not in presentation_block
+    assert "renderGmail" not in presentation_block
+
+    load_start = gmail_js.index("async function loadMessage()")
+    load_end = gmail_js.index("\nasync function loadDemoReview", load_start)
+    load_block = gmail_js[load_start:load_end]
+    demo_start = gmail_js.index("async function loadDemoReview()")
+    demo_end = gmail_js.index("\nasync function fetchAttachmentPreviewPayload", demo_start)
+    demo_block = gmail_js[demo_start:demo_end]
+
+    for block in [load_block, demo_block]:
+        assert "buildGmailReviewLoadOutcomePresentation({" in block
+        assert "applyGmailReviewLoadOutcomePresentation({" in block
+        assert "gmailState.loadResult?.ok && gmailState.loadResult?.message" not in block
+        assert "setPanelStatus(\"gmail\"" not in block
+        assert "setDiagnostics(\"gmail\"" not in block
+    assert "payload.status === \"ok\"" not in load_block
+    assert "Gmail message load complete." not in load_block
+    assert "Demo Gmail attachments loaded for shadow review." not in demo_block
+
+    script = """
+const presentation = await import(__GMAIL_CONTROL_PRESENTATION_MODULE_URL__);
+
+const messageLoaded = presentation.buildGmailReviewLoadOutcomePresentation({
+  source: "message",
+  payload: {
+    status: "ok",
+    normalized_payload: {
+      load_result: {
+        ok: true,
+        status_message: "Loaded <img src=x onerror=alert(1)>",
+        message: { subject: "Subject <script>bad()</script>" },
+      },
+    },
+  },
+});
+const unavailable = presentation.buildGmailReviewLoadOutcomePresentation({
+  source: "message",
+  payload: {
+    status: "unavailable",
+    normalized_payload: {
+      load_result: {
+        ok: false,
+        status_message: "Unavailable <script>bad()</script>",
+        message: null,
+      },
+    },
+  },
+});
+const errorFallback = presentation.buildGmailReviewLoadOutcomePresentation({
+  source: "message",
+  payload: {
+    status: "error",
+    normalized_payload: {},
+  },
+});
+const demoLoaded = presentation.buildGmailReviewLoadOutcomePresentation({
+  source: "demo",
+  payload: {
+    status: "error",
+    normalized_payload: {
+      load_result: {
+        ok: true,
+        status_message: "Ignored status message",
+        message: { subject: "Demo" },
+      },
+    },
+  },
+});
+const explicitLoadResult = presentation.buildGmailReviewLoadOutcomePresentation({
+  source: "message",
+  payload: {
+    status: "ok",
+    normalized_payload: {
+      load_result: { ok: false, message: null },
+    },
+  },
+  loadResult: {
+    ok: true,
+    message: { subject: "Coordinator state wins" },
+  },
+});
+const nullDefaults = presentation.buildGmailReviewLoadOutcomePresentation();
+
+console.log(JSON.stringify({
+  exportType: typeof presentation.buildGmailReviewLoadOutcomePresentation,
+  messageLoaded,
+  unavailable,
+  errorFallback,
+  demoLoaded,
+  explicitLoadResult,
+  nullDefaults,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_CONTROL_PRESENTATION_MODULE_URL__": "gmail_control_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    fallback_message = "Gmail message load complete."
+    demo_message = "Demo Gmail attachments loaded for shadow review."
+    assert results == {
+        "exportType": "function",
+        "messageLoaded": {
+            "panelStatus": {
+                "tone": "ok",
+                "message": "Loaded <img src=x onerror=alert(1)>",
+            },
+            "diagnostics": {
+                "hint": "Loaded <img src=x onerror=alert(1)>",
+                "open": False,
+            },
+            "reviewDrawer": {"open": True},
+            "intakeDetails": {"close": True},
+        },
+        "unavailable": {
+            "panelStatus": {
+                "tone": "warn",
+                "message": "Unavailable <script>bad()</script>",
+            },
+            "diagnostics": {
+                "hint": "Unavailable <script>bad()</script>",
+                "open": True,
+            },
+            "reviewDrawer": {"open": False},
+            "intakeDetails": {"close": True},
+        },
+        "errorFallback": {
+            "panelStatus": {"tone": "bad", "message": fallback_message},
+            "diagnostics": {"hint": fallback_message, "open": True},
+            "reviewDrawer": {"open": False},
+            "intakeDetails": {"close": True},
+        },
+        "demoLoaded": {
+            "panelStatus": {"tone": "ok", "message": demo_message},
+            "diagnostics": {"hint": demo_message, "open": False},
+            "reviewDrawer": {"open": True},
+            "intakeDetails": {"close": False},
+        },
+        "explicitLoadResult": {
+            "panelStatus": {"tone": "ok", "message": fallback_message},
+            "diagnostics": {"hint": fallback_message, "open": False},
+            "reviewDrawer": {"open": True},
+            "intakeDetails": {"close": True},
+        },
+        "nullDefaults": {
+            "panelStatus": {"tone": "bad", "message": fallback_message},
+            "diagnostics": {"hint": fallback_message, "open": True},
+            "reviewDrawer": {"open": False},
+            "intakeDetails": {"close": True},
+        },
+    }
+
+
 def test_gmail_session_ui_module_owns_session_card_renderers() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -29418,6 +29593,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
             "application/javascript"
         )
         assert "buildGmailReviewChromePresentation" in gmail_control_presentation_asset.text
+        assert (
+            "buildGmailReviewLoadOutcomePresentation"
+            in gmail_control_presentation_asset.text
+        )
         gmail_restore_ui_asset = client.get(f"/static-build/{asset_version}/gmail_restore_ui.js")
         assert gmail_restore_ui_asset.status_code == 200
         assert gmail_restore_ui_asset.headers["content-type"].startswith("application/javascript")

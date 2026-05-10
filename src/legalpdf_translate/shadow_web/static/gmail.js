@@ -84,7 +84,10 @@ import {
   buildGmailContextDefaultsPresentation,
   buildGmailSimulatorDefaultsPresentation,
 } from "./gmail_context_presentation.js";
-import { buildGmailReviewChromePresentation } from "./gmail_control_presentation.js";
+import {
+  buildGmailReviewChromePresentation,
+  buildGmailReviewLoadOutcomePresentation,
+} from "./gmail_control_presentation.js";
 import {
   renderGmailContextDefaultsInto,
   renderGmailNumericMismatchWarningInto,
@@ -1587,6 +1590,21 @@ async function refreshGmailState({ auto = false } = {}) {
   }
 }
 
+function applyGmailReviewLoadOutcomePresentation({ payload, presentation }) {
+  setPanelStatus(
+    "gmail",
+    presentation.panelStatus.tone,
+    presentation.panelStatus.message,
+  );
+  setDiagnostics("gmail", payload, presentation.diagnostics);
+  if (presentation.intakeDetails.close) {
+    renderGmailDetailsOpenInto(qs("gmail-intake-details"), { open: false });
+  }
+  if (presentation.reviewDrawer.open) {
+    openReviewDrawer();
+  }
+}
+
 async function loadMessage() {
   const payload = await fetchJson("/api/gmail/load-message", appState, {
     method: "POST",
@@ -1613,12 +1631,12 @@ async function loadMessage() {
   renderTranslationCompletionGmailStepCard(null);
   renderBatchFinalizeSurface(null);
   updateSessionButtons();
-  setPanelStatus("gmail", payload.status === "ok" ? "ok" : payload.status === "unavailable" ? "warn" : "bad", payload.normalized_payload.load_result?.status_message || "Gmail message load complete.");
-  setDiagnostics("gmail", payload, { hint: payload.normalized_payload.load_result?.status_message || "Gmail message load complete.", open: payload.status !== "ok" });
-  renderGmailDetailsOpenInto(qs("gmail-intake-details"), { open: false });
-  if (gmailState.loadResult?.ok && gmailState.loadResult?.message) {
-    openReviewDrawer();
-  }
+  const outcomePresentation = buildGmailReviewLoadOutcomePresentation({
+    source: "message",
+    payload,
+    loadResult: gmailState.loadResult,
+  });
+  applyGmailReviewLoadOutcomePresentation({ payload, presentation: outcomePresentation });
   syncShellState();
 }
 
@@ -1640,11 +1658,12 @@ async function loadDemoReview() {
   renderTranslationCompletionGmailStepCard(null);
   renderBatchFinalizeSurface(null);
   updateSessionButtons();
-  setPanelStatus("gmail", "ok", "Demo Gmail attachments loaded for shadow review.");
-  setDiagnostics("gmail", payload, { hint: "Demo Gmail attachments loaded for shadow review.", open: false });
-  if (gmailState.loadResult?.ok && gmailState.loadResult?.message) {
-    openReviewDrawer();
-  }
+  const outcomePresentation = buildGmailReviewLoadOutcomePresentation({
+    source: "demo",
+    payload,
+    loadResult: gmailState.loadResult,
+  });
+  applyGmailReviewLoadOutcomePresentation({ payload, presentation: outcomePresentation });
   syncShellState();
 }
 
