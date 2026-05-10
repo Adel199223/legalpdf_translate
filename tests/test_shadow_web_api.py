@@ -3900,6 +3900,172 @@ console.log(JSON.stringify({
     assert results["nullResultType"] == "undefined"
 
 
+def test_gmail_runtime_guard_presentation_module_builds_diagnostics_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_runtime_guard_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_runtime_guard_presentation.js"' in gmail_js
+    assert "export function buildGmailRuntimeGuardBlockedDiagnosticsPresentation" in presentation_js
+    assert "export function buildGmailRuntimeGuardRestartDiagnosticsPresentation" in presentation_js
+
+    for forbidden in ["document.", "innerHTML", "renderGmail", "setDiagnostics"]:
+        assert forbidden not in presentation_js
+
+    blocked_builder_start = presentation_js.index(
+        "export function buildGmailRuntimeGuardBlockedDiagnosticsPresentation"
+    )
+    blocked_builder_end = presentation_js.index("\nexport function", blocked_builder_start + 1)
+    blocked_builder_block = presentation_js[blocked_builder_start:blocked_builder_end]
+    assert "status: \"blocked\"" in blocked_builder_block
+    assert "open: true" in blocked_builder_block
+
+    restart_builder_start = presentation_js.index(
+        "export function buildGmailRuntimeGuardRestartDiagnosticsPresentation"
+    )
+    restart_builder_block = presentation_js[restart_builder_start:]
+    assert "status: \"restarting\"" in restart_builder_block
+    assert "open: true" in restart_builder_block
+
+    blocked_flow = re.search(
+        r"function maybeBlockGmailReviewAction\(operation\) \{(?P<body>.*?)\n\}",
+        gmail_js,
+        re.S,
+    ).group("body")
+    assert "buildGmailRuntimeGuardBlockedDiagnosticsPresentation({" in blocked_flow
+    assert "gmailRuntimeGuardDiagnostics(guard, operation)" in blocked_flow
+    assert 'status: "blocked"' not in blocked_flow
+    assert "hint: guard.message" not in blocked_flow
+
+    restart_flow = re.search(
+        r"async function restartCanonicalRuntimeGuidance\(\) \{(?P<body>.*?)\n  const payload = await fetchJson",
+        gmail_js,
+        re.S,
+    ).group("body")
+    assert "buildGmailRuntimeGuardRestartDiagnosticsPresentation({" in restart_flow
+    assert 'gmailRuntimeGuardDiagnostics(guard, "gmail_restart_canonical_runtime")' in restart_flow
+    assert 'status: "restarting"' not in restart_flow
+    assert "Restarting the browser runtime for live Gmail" not in restart_flow
+
+    script = """
+const presentation = await import(__GMAIL_RUNTIME_GUARD_PRESENTATION_MODULE_URL__);
+
+const blocked = presentation.buildGmailRuntimeGuardBlockedDiagnosticsPresentation({
+  guard: { message: "<script>alert(1)</script>" },
+  diagnostics: {
+    error: "noncanonical_live_runtime",
+    operation: "gmail_preview_attachment",
+    message: "<b>unsafe</b>",
+    details: ["first", "<img src=x>"],
+  },
+});
+
+const blockedFallback = presentation.buildGmailRuntimeGuardBlockedDiagnosticsPresentation({
+  guard: { message: "" },
+  diagnostics: { error: "noncanonical_live_runtime", operation: "" },
+});
+
+const restart = presentation.buildGmailRuntimeGuardRestartDiagnosticsPresentation({
+  guard: { message: "<strong>ignored for restart hint</strong>" },
+  diagnostics: {
+    error: "noncanonical_live_runtime",
+    operation: "gmail_restart_canonical_runtime",
+    acknowledged: true,
+  },
+});
+
+const restartNull = presentation.buildGmailRuntimeGuardRestartDiagnosticsPresentation();
+const blockedNull = presentation.buildGmailRuntimeGuardBlockedDiagnosticsPresentation();
+
+console.log(JSON.stringify({
+  blockedExportType: typeof presentation.buildGmailRuntimeGuardBlockedDiagnosticsPresentation,
+  restartExportType: typeof presentation.buildGmailRuntimeGuardRestartDiagnosticsPresentation,
+  blocked,
+  blockedFallback,
+  restart,
+  restartNull,
+  blockedNull,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_RUNTIME_GUARD_PRESENTATION_MODULE_URL__": "gmail_runtime_guard_presentation.js"},
+    )
+
+    assert results["blockedExportType"] == "function"
+    assert results["restartExportType"] == "function"
+    assert results["blocked"] == {
+        "payload": {
+            "status": "blocked",
+            "diagnostics": {
+                "error": "noncanonical_live_runtime",
+                "operation": "gmail_preview_attachment",
+                "message": "<b>unsafe</b>",
+                "details": ["first", "<img src=x>"],
+            },
+        },
+        "presentation": {
+            "hint": "<script>alert(1)</script>",
+            "open": True,
+        },
+    }
+    assert results["blockedFallback"] == {
+        "payload": {
+            "status": "blocked",
+            "diagnostics": {
+                "error": "noncanonical_live_runtime",
+                "operation": "",
+            },
+        },
+        "presentation": {
+            "hint": "Review actions are paused until the live Gmail runtime is canonical.",
+            "open": True,
+        },
+    }
+    assert results["restart"] == {
+        "payload": {
+            "status": "restarting",
+            "diagnostics": {
+                "error": "noncanonical_live_runtime",
+                "operation": "gmail_restart_canonical_runtime",
+                "acknowledged": True,
+            },
+        },
+        "presentation": {
+            "hint": "Restarting the browser runtime for live Gmail. This page will reconnect automatically.",
+            "open": True,
+        },
+    }
+    assert results["restartNull"] == {
+        "payload": {
+            "status": "restarting",
+            "diagnostics": {},
+        },
+        "presentation": {
+            "hint": "Restarting the browser runtime for live Gmail. This page will reconnect automatically.",
+            "open": True,
+        },
+    }
+    assert results["blockedNull"] == {
+        "payload": {
+            "status": "blocked",
+            "diagnostics": {},
+        },
+        "presentation": {
+            "hint": "Review actions are paused until the live Gmail runtime is canonical.",
+            "open": True,
+        },
+    }
+
+
 def test_gmail_result_ui_module_owns_message_result_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -30201,6 +30367,21 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
             "application/javascript"
         )
         assert "renderGmailNoncanonicalRuntimeGuardInto" in gmail_runtime_guard_ui_asset.text
+        gmail_runtime_guard_presentation_asset = client.get(
+            f"/static-build/{asset_version}/gmail_runtime_guard_presentation.js"
+        )
+        assert gmail_runtime_guard_presentation_asset.status_code == 200
+        assert gmail_runtime_guard_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert (
+            "buildGmailRuntimeGuardBlockedDiagnosticsPresentation"
+            in gmail_runtime_guard_presentation_asset.text
+        )
+        assert (
+            "buildGmailRuntimeGuardRestartDiagnosticsPresentation"
+            in gmail_runtime_guard_presentation_asset.text
+        )
         assert "renderGmailMessageResultInto" in gmail_ui_asset.text
         assert "renderGmailReviewSummaryInto" in gmail_ui_asset.text
         assert "renderGmailReviewChromeInto" in gmail_ui_asset.text
