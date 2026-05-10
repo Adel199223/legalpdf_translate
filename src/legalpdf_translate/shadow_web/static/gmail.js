@@ -41,6 +41,7 @@ import {
   buildGmailResumeCardPresentation,
   buildGmailSessionButtonRules,
   buildGmailSessionResultPresentation,
+  buildGmailTranslationConfirmationGatePresentation,
   buildGmailTranslationStepCardPresentation,
   buildGmailTranslationStepContext,
   buildGmailWorkspaceStripAdapterPresentation,
@@ -1946,29 +1947,14 @@ async function refreshBatchFinalizePreflight({ forceRefresh = false } = {}) {
 
 async function confirmCurrentTranslation() {
   const translationUi = translationUiSnapshot();
-  if (translationUi.requiresArabicReview && !translationUi.arabicReviewResolved) {
-    throw new Error(translationUi.arabicReviewMessage || "Arabic DOCX review is still required before Gmail confirmation can continue.");
+  const confirmationGate = buildGmailTranslationConfirmationGatePresentation({
+    translationUi,
+    jobId: gmailState.hooks.getCurrentTranslationJobId?.() || "",
+  });
+  if (confirmationGate.blocked) {
+    throw new Error(confirmationGate.message);
   }
-  if (translationUi.currentJobRecoveryRequired || translationUi.currentJobStatus === "failed" || translationUi.currentJobStatus === "cancelled") {
-    const failurePage = Number.isFinite(Number(translationUi.currentJobFailurePage))
-      ? ` on page ${Number(translationUi.currentJobFailurePage)}`
-      : "";
-    const failureReason = String(translationUi.currentJobFailureReason || "").trim();
-    throw new Error(
-      failureReason
-        ? `This Gmail attachment still needs translation recovery${failurePage}: ${failureReason}`
-        : `This Gmail attachment still needs translation recovery${failurePage} before Gmail confirmation can continue.`,
-    );
-  }
-  if (translationUi.currentJobKind === "rebuild" || !translationUi.currentJobHasSaveSeed) {
-    throw new Error(
-      "Only a completed translation with a durable reviewed DOCX can be confirmed for Gmail. Rebuild DOCX does not make this attachment confirmable.",
-    );
-  }
-  const jobId = gmailState.hooks.getCurrentTranslationJobId?.() || "";
-  if (!jobId) {
-    throw new Error("Run a translation job for the current Gmail attachment first.");
-  }
+  const jobId = confirmationGate.jobId;
   const payload = await fetchJson("/api/gmail/batch/confirm-current", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

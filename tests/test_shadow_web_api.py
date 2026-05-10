@@ -5714,6 +5714,210 @@ console.log(JSON.stringify({
     }
 
 
+def test_gmail_session_presentation_module_builds_translation_confirmation_gate_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_session_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_session_presentation.js"' in gmail_js
+    assert "export function buildGmailTranslationConfirmationGatePresentation" in presentation_js
+
+    builder_start = presentation_js.index(
+        "export function buildGmailTranslationConfirmationGatePresentation"
+    )
+    builder_end = presentation_js.index(
+        "\nexport function buildGmailWorkspaceStripPresentation",
+        builder_start,
+    )
+    builder_block = presentation_js[builder_start:builder_end]
+    assert "document." not in builder_block
+    assert "innerHTML" not in builder_block
+    assert "renderGmail" not in builder_block
+
+    confirm_start = gmail_js.index("async function confirmCurrentTranslation")
+    confirm_end = gmail_js.index("\nasync function finalizeBatch", confirm_start)
+    confirm_block = gmail_js[confirm_start:confirm_end]
+    assert "buildGmailTranslationConfirmationGatePresentation({" in confirm_block
+    assert "const confirmationGate =" in confirm_block
+    assert "if (confirmationGate.blocked)" in confirm_block
+    assert "throw new Error(confirmationGate.message);" in confirm_block
+    assert "const jobId = confirmationGate.jobId;" in confirm_block
+    assert "failurePage" not in confirm_block
+    assert "failureReason" not in confirm_block
+    assert "Arabic DOCX review is still required before Gmail confirmation can continue." not in confirm_block
+    assert "This Gmail attachment still needs translation recovery" not in confirm_block
+    assert "Only a completed translation with a durable reviewed DOCX can be confirmed for Gmail." not in confirm_block
+    assert "Run a translation job for the current Gmail attachment first." not in confirm_block
+
+    script = """
+const presentation = await import(__GMAIL_SESSION_PRESENTATION_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const arabicBlocked = presentation.buildGmailTranslationConfirmationGatePresentation({
+  translationUi: {
+    requiresArabicReview: true,
+    arabicReviewResolved: false,
+    arabicReviewMessage: `Arabic review ${malicious}`,
+    currentJobKind: "translation",
+    currentJobHasSaveSeed: true,
+  },
+  jobId: "job-arabic",
+});
+const arabicFallback = presentation.buildGmailTranslationConfirmationGatePresentation({
+  translationUi: {
+    requiresArabicReview: true,
+    arabicReviewResolved: false,
+    currentJobKind: "translation",
+    currentJobHasSaveSeed: true,
+  },
+  jobId: "job-arabic",
+});
+const recoveryWithReason = presentation.buildGmailTranslationConfirmationGatePresentation({
+  translationUi: {
+    currentJobRecoveryRequired: true,
+    currentJobFailurePage: "7",
+    currentJobFailureReason: `OCR failed ${malicious}`,
+    currentJobKind: "translation",
+    currentJobHasSaveSeed: true,
+  },
+  jobId: "job-recovery",
+});
+const failedWithoutReason = presentation.buildGmailTranslationConfirmationGatePresentation({
+  translationUi: {
+    currentJobStatus: "failed",
+    currentJobFailurePage: "bad",
+    currentJobFailureReason: "   ",
+    currentJobKind: "translation",
+    currentJobHasSaveSeed: true,
+  },
+  jobId: "job-failed",
+});
+const cancelledWithPage = presentation.buildGmailTranslationConfirmationGatePresentation({
+  translationUi: {
+    currentJobStatus: "cancelled",
+    currentJobFailurePage: 3,
+    currentJobKind: "translation",
+    currentJobHasSaveSeed: true,
+  },
+  jobId: "job-cancelled",
+});
+const rebuildBlocked = presentation.buildGmailTranslationConfirmationGatePresentation({
+  translationUi: {
+    currentJobKind: "rebuild",
+    currentJobHasSaveSeed: true,
+  },
+  jobId: "job-rebuild",
+});
+const missingSaveSeed = presentation.buildGmailTranslationConfirmationGatePresentation({
+  translationUi: {
+    currentJobKind: "translation",
+    currentJobHasSaveSeed: false,
+  },
+  jobId: "job-no-seed",
+});
+const missingJob = presentation.buildGmailTranslationConfirmationGatePresentation({
+  translationUi: {
+    currentJobKind: "translation",
+    currentJobHasSaveSeed: true,
+  },
+  jobId: "",
+});
+const allowed = presentation.buildGmailTranslationConfirmationGatePresentation({
+  translationUi: {
+    currentJobStatus: "completed",
+    currentJobKind: "translation",
+    currentJobHasSaveSeed: true,
+  },
+  jobId: "job-123",
+});
+const nullDefaults = presentation.buildGmailTranslationConfirmationGatePresentation();
+
+console.log(JSON.stringify({
+  exportType: typeof presentation.buildGmailTranslationConfirmationGatePresentation,
+  arabicBlocked,
+  arabicFallback,
+  recoveryWithReason,
+  failedWithoutReason,
+  cancelledWithPage,
+  rebuildBlocked,
+  missingSaveSeed,
+  missingJob,
+  allowed,
+  nullDefaults,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_SESSION_PRESENTATION_MODULE_URL__": "gmail_session_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    malicious = "<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["exportType"] == "function"
+    assert results["arabicBlocked"] == {
+        "blocked": True,
+        "message": f"Arabic review {malicious}",
+        "jobId": "job-arabic",
+    }
+    assert results["arabicFallback"] == {
+        "blocked": True,
+        "message": "Arabic DOCX review is still required before Gmail confirmation can continue.",
+        "jobId": "job-arabic",
+    }
+    assert results["recoveryWithReason"] == {
+        "blocked": True,
+        "message": f"This Gmail attachment still needs translation recovery on page 7: OCR failed {malicious}",
+        "jobId": "job-recovery",
+    }
+    assert results["failedWithoutReason"] == {
+        "blocked": True,
+        "message": "This Gmail attachment still needs translation recovery before Gmail confirmation can continue.",
+        "jobId": "job-failed",
+    }
+    assert results["cancelledWithPage"] == {
+        "blocked": True,
+        "message": "This Gmail attachment still needs translation recovery on page 3 before Gmail confirmation can continue.",
+        "jobId": "job-cancelled",
+    }
+    durable_message = (
+        "Only a completed translation with a durable reviewed DOCX can be confirmed for Gmail. "
+        "Rebuild DOCX does not make this attachment confirmable."
+    )
+    assert results["rebuildBlocked"] == {
+        "blocked": True,
+        "message": durable_message,
+        "jobId": "job-rebuild",
+    }
+    assert results["missingSaveSeed"] == {
+        "blocked": True,
+        "message": durable_message,
+        "jobId": "job-no-seed",
+    }
+    assert results["missingJob"] == {
+        "blocked": True,
+        "message": "Run a translation job for the current Gmail attachment first.",
+        "jobId": "",
+    }
+    assert results["allowed"] == {
+        "blocked": False,
+        "message": "",
+        "jobId": "job-123",
+    }
+    assert results["nullDefaults"] == {
+        "blocked": True,
+        "message": durable_message,
+        "jobId": "",
+    }
+
+
 def test_gmail_session_presentation_module_builds_session_button_rules() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -30094,6 +30298,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailSessionButtonRules" in gmail_session_presentation_asset.text
         assert "buildGmailTranslationStepContext" in gmail_session_presentation_asset.text
         assert "buildGmailTranslationStepCardPresentation" in gmail_session_presentation_asset.text
+        assert "buildGmailTranslationConfirmationGatePresentation" in gmail_session_presentation_asset.text
         assert "buildGmailWorkspaceStripPresentation" in gmail_session_presentation_asset.text
         assert "buildGmailWorkspaceStripAdapterPresentation" in gmail_session_presentation_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
