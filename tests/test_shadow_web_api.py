@@ -5975,17 +5975,21 @@ def test_gmail_session_presentation_module_builds_workspace_strip_card() -> None
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     presentation_js = (static_dir / "gmail_session_presentation.js").read_text(encoding="utf-8")
 
-    assert "buildGmailWorkspaceStripPresentation" in gmail_js
+    assert "buildGmailWorkspaceStripAdapterPresentation" in gmail_js
     strip_start = gmail_js.index("function renderWorkspaceStrip()")
     strip_end = gmail_js.index("\nfunction updatePrepareActionState", strip_start)
     strip_block = gmail_js[strip_start:strip_end]
-    assert "buildGmailWorkspaceStripPresentation" in strip_block
+    assert "buildGmailWorkspaceStripAdapterPresentation" in strip_block
+    assert "buildGmailWorkspaceStripPresentation({" not in strip_block
+    assert "const show =" not in strip_block
+    assert "interpretationFocusedShell" not in strip_block
     assert "Gmail attachment ready" not in strip_block
     assert "Review the Gmail message and attachments before you continue." not in strip_block
     assert "Last finalized batch is recoverable." not in strip_block
     assert "You can also redo only this attachment if needed." not in strip_block
 
     assert "export function buildGmailWorkspaceStripPresentation" in presentation_js
+    assert "export function buildGmailWorkspaceStripAdapterPresentation" in presentation_js
     workspace_start = presentation_js.index("export function buildGmailWorkspaceStripPresentation")
     workspace_block = presentation_js[workspace_start:]
     assert "document." not in workspace_block
@@ -6070,9 +6074,56 @@ const defaultCard = presentation.buildGmailWorkspaceStripPresentation({
     title: "Ignored recovered",
   },
 });
+const adapterHiddenFocusedShell = presentation.buildGmailWorkspaceStripAdapterPresentation({
+  activeView: "new-job",
+  interpretationWorkspaceMode: "gmail_review",
+  loadResult: { ok: true },
+  activeSession: { kind: "translation" },
+  cta: { visible: true },
+  stage: "translation_prepared",
+});
+const adapterActiveWithDerivedStage = presentation.buildGmailWorkspaceStripAdapterPresentation({
+  activeView: "gmail-intake",
+  interpretationWorkspaceMode: "gmail_review",
+  loadResult: { ok: true },
+  activeSession: {
+    kind: "translation",
+    current_attachment: {
+      attachment: { filename: "Doc <script>bad()</script>" },
+    },
+  },
+  cta: {
+    visible: true,
+    action: "resume-translation-prepared",
+  },
+  redo: { visible: true },
+  stage: "translation_prepared",
+});
+const adapterRecovered = presentation.buildGmailWorkspaceStripAdapterPresentation({
+  activeView: "new-job",
+  interpretationWorkspaceMode: "standard",
+  loadResult: null,
+  activeSession: null,
+  restoredCompletedSession: { kind: "translation", completed: true },
+  recoveredAction: {
+    visible: true,
+    title: "Recovered adapter <img src=x>",
+    description: "Recovered adapter copy <script>bad()</script>",
+    label: "Open recovered adapter",
+    action: "open-recovered",
+  },
+});
+const adapterDefaultCard = presentation.buildGmailWorkspaceStripAdapterPresentation({
+  activeView: "gmail-intake",
+  interpretationWorkspaceMode: "standard",
+  loadResult: { ok: true },
+  activeSession: null,
+  restoredCompletedSession: null,
+});
 
 console.log(JSON.stringify({
   exportType: typeof presentation.buildGmailWorkspaceStripPresentation,
+  adapterExportType: typeof presentation.buildGmailWorkspaceStripAdapterPresentation,
   hidden,
   activeWithRedo,
   activeWithoutRedo,
@@ -6080,6 +6131,10 @@ console.log(JSON.stringify({
   recovered,
   recoveredFallback,
   defaultCard,
+  adapterHiddenFocusedShell,
+  adapterActiveWithDerivedStage,
+  adapterRecovered,
+  adapterDefaultCard,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -6089,6 +6144,7 @@ console.log(JSON.stringify({
     )
 
     assert results["exportType"] == "function"
+    assert results["adapterExportType"] == "function"
     assert results["hidden"] == {"visible": False}
     assert results["activeWithRedo"] == {
         "visible": True,
@@ -6132,6 +6188,25 @@ console.log(JSON.stringify({
         "actionLabel": "Review Gmail message",
         "action": "open-intake",
     }
+    assert results["adapterHiddenFocusedShell"] == {"visible": False}
+    assert results["adapterActiveWithDerivedStage"] == {
+        "visible": True,
+        "title": "Translation is ready to start",
+        "copy": (
+            "Continue the Gmail step to review the seeded translation settings and start when you are ready. "
+            "You can also redo only this attachment if needed."
+        ),
+        "actionLabel": "Continue Gmail step",
+        "action": "resume-translation-prepared",
+    }
+    assert results["adapterRecovered"] == {
+        "visible": True,
+        "title": "Recovered adapter <img src=x>",
+        "copy": "Recovered adapter copy <script>bad()</script>",
+        "actionLabel": "Open recovered adapter",
+        "action": "open-recovered",
+    }
+    assert results["adapterDefaultCard"] == results["defaultCard"]
 
 
 def test_gmail_attachment_presentation_module_derives_list_and_detail_state() -> None:
@@ -9925,7 +10000,8 @@ def test_gmail_stage_presentation_module_derives_stage_and_home_cta_state() -> N
     strip_start = gmail_js.index("function renderWorkspaceStrip()")
     strip_end = gmail_js.index("\nfunction updatePrepareActionState", strip_start)
     strip_block = gmail_js[strip_start:strip_end]
-    assert "buildGmailStagePresentation({" in strip_block
+    assert "buildGmailWorkspaceStripAdapterPresentation({" in strip_block
+    assert "buildGmailStagePresentation({" not in strip_block
 
     bootstrap_start = gmail_js.index("export function renderGmailBootstrap")
     bootstrap_end = gmail_js.index("\nasync function refreshGmailState", bootstrap_start)
@@ -10749,6 +10825,7 @@ def test_gmail_workspace_ui_module_owns_workspace_strip_renderer() -> None:
     gmail_workspace_ui_js = gmail_workspace_ui_path.read_text(encoding="utf-8")
 
     assert "renderGmailWorkspaceStripInto" in gmail_js
+    assert "buildGmailWorkspaceStripAdapterPresentation" in gmail_js
     assert 'from "./gmail_workspace_ui.js"' in gmail_js
     assert "export function renderGmailWorkspaceStripInto" not in gmail_ui_js
     assert 'from "./gmail_workspace_ui.js"' in gmail_ui_js
@@ -10759,6 +10836,8 @@ def test_gmail_workspace_ui_module_owns_workspace_strip_renderer() -> None:
     strip_end = gmail_js.index("\nfunction updatePrepareActionState", strip_start)
     strip_block = gmail_js[strip_start:strip_end]
     assert "renderGmailWorkspaceStripInto(" in strip_block
+    assert "buildGmailWorkspaceStripAdapterPresentation({" in strip_block
+    assert "buildGmailWorkspaceStripPresentation({" not in strip_block
     assert "strip.classList.toggle" not in strip_block
     assert "title.textContent =" not in strip_block
     assert "copy.textContent =" not in strip_block
@@ -10767,7 +10846,8 @@ def test_gmail_workspace_ui_module_owns_workspace_strip_renderer() -> None:
     assert "currentGmailStage()" in strip_block
     assert "currentHomeCta()" in strip_block
     assert "currentRecoveredFinalizationAction()" in strip_block
-    assert "buildGmailStagePresentation(" in strip_block
+    assert "currentRedoAction()" in strip_block
+    assert "buildGmailStagePresentation(" not in strip_block
 
     renderer_start = gmail_workspace_ui_js.index("export function renderGmailWorkspaceStripInto")
     renderer_block = gmail_workspace_ui_js[renderer_start:]
@@ -29378,6 +29458,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailTranslationStepContext" in gmail_session_presentation_asset.text
         assert "buildGmailTranslationStepCardPresentation" in gmail_session_presentation_asset.text
         assert "buildGmailWorkspaceStripPresentation" in gmail_session_presentation_asset.text
+        assert "buildGmailWorkspaceStripAdapterPresentation" in gmail_session_presentation_asset.text
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")

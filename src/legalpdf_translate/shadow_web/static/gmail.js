@@ -40,7 +40,7 @@ import {
   buildGmailSessionResultPresentation,
   buildGmailTranslationStepCardPresentation,
   buildGmailTranslationStepContext,
-  buildGmailWorkspaceStripPresentation,
+  buildGmailWorkspaceStripAdapterPresentation,
 } from "./gmail_session_presentation.js";
 import {
   renderGmailDrawerChromeInto,
@@ -1412,37 +1412,23 @@ function renderWorkspaceStrip() {
   if (!strip) {
     return;
   }
-  const interpretationMode = String(interpretationUiSnapshot().workspaceMode || "").trim();
-  const interpretationFocusedShell = appState.activeView === "new-job"
-    && (interpretationMode === "gmail_review" || interpretationMode === "gmail_completed");
-  const show = !interpretationFocusedShell && Boolean(gmailState.loadResult || gmailState.activeSession || gmailState.restoredCompletedSession);
-  if (!show) {
-    renderGmailWorkspaceStripInto({ strip }, { visible: false });
-    return;
-  }
   const title = qs("gmail-workspace-strip-title");
   const copy = qs("gmail-workspace-strip-copy");
   const action = qs("gmail-workspace-strip-action");
   gmailState.stage = currentGmailStage();
   const cta = currentHomeCta();
+  const redo = currentRedoAction();
   const recoveredAction = currentRecoveredFinalizationAction();
-  let stagePresentation = {};
-  let redo = {};
-  if (gmailState.activeSession && cta.visible) {
-    stagePresentation = buildGmailStagePresentation({
-      stage: gmailState.stage,
-      activeSession: gmailState.activeSession,
-    });
-    redo = currentRedoAction();
-  }
-  renderGmailWorkspaceStripInto({ strip, title, copy, action }, buildGmailWorkspaceStripPresentation({
-    show,
+  renderGmailWorkspaceStripInto({ strip, title, copy, action }, buildGmailWorkspaceStripAdapterPresentation({
+    activeView: appState.activeView,
+    interpretationWorkspaceMode: interpretationUiSnapshot().workspaceMode,
+    stage: gmailState.stage,
     loadResult: gmailState.loadResult,
     activeSession: gmailState.activeSession,
+    restoredCompletedSession: gmailState.restoredCompletedSession,
     cta,
     redo,
     recoveredAction,
-    stagePresentation,
   }));
 }
 
