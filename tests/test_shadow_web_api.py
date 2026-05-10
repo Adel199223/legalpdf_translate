@@ -4066,6 +4066,320 @@ console.log(JSON.stringify({
     }
 
 
+def test_gmail_runtime_presentation_module_builds_runtime_context_and_diagnostics() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_runtime_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_runtime_presentation.js"' in gmail_js
+    for export_name in [
+        "buildGmailRuntimePayload",
+        "buildGmailBuildIdentity",
+        "buildGmailBuildProvenance",
+        "buildGmailRuntimeGuardSessionKey",
+        "buildGmailRuntimeGuardDiagnostics",
+    ]:
+        assert f"export function {export_name}" in presentation_js
+        assert export_name in gmail_js
+
+    for forbidden in [
+        "document.",
+        "window.",
+        "sessionStorage",
+        "localStorage",
+        "fetch(",
+        "fetchJson",
+        "appState",
+        "setDiagnostics",
+        "renderGmail",
+        "innerHTML",
+    ]:
+        assert forbidden not in presentation_js
+
+    runtime_payload_block = re.search(
+        r"function currentGmailRuntimePayload\(\) \{(?P<body>.*?)\n\}",
+        gmail_js,
+        re.S,
+    ).group("body")
+    assert "buildGmailRuntimePayload({" in runtime_payload_block
+    assert "LEGALPDF_BROWSER_BOOTSTRAP" not in runtime_payload_block
+    assert "live_data:" not in runtime_payload_block
+
+    build_identity_block = re.search(
+        r"function currentGmailBuildIdentity\(\) \{(?P<body>.*?)\n\}",
+        gmail_js,
+        re.S,
+    ).group("body")
+    assert "buildGmailBuildIdentity({" in build_identity_block
+    assert "runtime.build_identity" not in build_identity_block
+    assert "bootstrap.buildIdentity" not in build_identity_block
+
+    provenance_block = re.search(
+        r"function currentGmailBuildProvenance\(\) \{(?P<body>.*?)\n\}",
+        gmail_js,
+        re.S,
+    ).group("body")
+    assert "buildGmailBuildProvenance({" in provenance_block
+    assert "pieces.push" not in provenance_block
+
+    key_block = re.search(
+        r"function gmailRuntimeGuardSessionKey\(buildIdentity = currentGmailBuildIdentity\(\)\) \{(?P<body>.*?)\n\}",
+        gmail_js,
+        re.S,
+    ).group("body")
+    assert "buildGmailRuntimeGuardSessionKey({" in key_block
+    assert "unknown-branch" not in key_block
+
+    diagnostics_block = re.search(
+        r"function gmailRuntimeGuardDiagnostics\(guard = currentGmailRuntimeGuard\(\), operation = \"\"\) \{(?P<body>.*?)\n\}",
+        gmail_js,
+        re.S,
+    ).group("body")
+    assert "buildGmailRuntimeGuardDiagnostics({" in diagnostics_block
+    assert 'error: "noncanonical_live_runtime"' not in diagnostics_block
+
+    script = """
+const presentation = await import(__GMAIL_RUNTIME_PRESENTATION_MODULE_URL__);
+
+const livePayload = presentation.buildGmailRuntimePayload({
+  runtime: {
+    build_branch: " runtime-branch ",
+    build_sha: " runtime-sha ",
+    asset_version: " runtime-assets ",
+    live_data: false,
+    extra_field: "kept",
+  },
+  bootstrap: {
+    buildBranch: "bootstrap-branch",
+    buildSha: "bootstrap-sha",
+    assetVersion: "bootstrap-assets",
+  },
+  runtimeMode: "live",
+});
+
+const shadowPayload = presentation.buildGmailRuntimePayload({
+  runtime: {},
+  bootstrap: {
+    buildBranch: " bootstrap-branch ",
+    buildSha: " bootstrap-sha ",
+    assetVersion: " bootstrap-assets ",
+  },
+  runtimeMode: "shadow",
+});
+
+const runtimeIdentity = presentation.buildGmailBuildIdentity({
+  runtime: {
+    build_branch: "runtime-branch",
+    build_sha: "runtime-sha",
+    build_identity: {
+      branch: " identity-branch ",
+      head_sha: " identity-sha ",
+      is_canonical: false,
+      reasons: ["stale"],
+    },
+  },
+  shellBuildIdentity: {
+    branch: "shell-branch",
+    head_sha: "shell-sha",
+  },
+  bootstrap: {
+    buildIdentity: {
+      branch: "bootstrap-identity-branch",
+      head_sha: "bootstrap-identity-sha",
+    },
+  },
+});
+
+const shellIdentityFallback = presentation.buildGmailBuildIdentity({
+  runtime: {
+    build_branch: " runtime-fallback ",
+    build_sha: " runtime-sha-fallback ",
+  },
+  shellBuildIdentity: {
+    is_canonical: true,
+  },
+  bootstrap: {
+    buildIdentity: {
+      branch: "bootstrap-identity-branch",
+      head_sha: "bootstrap-identity-sha",
+    },
+  },
+});
+
+const bootstrapIdentityFallback = presentation.buildGmailBuildIdentity({
+  runtime: {
+    build_branch: "runtime-branch-fallback",
+    build_sha: "runtime-sha-fallback",
+  },
+  shellBuildIdentity: null,
+  bootstrap: {
+    buildIdentity: {
+      canonical_branch: "main",
+      worktree_path: "C:/feature",
+    },
+  },
+});
+
+const provenance = presentation.buildGmailBuildProvenance({
+  runtime: livePayload,
+  buildIdentity: runtimeIdentity,
+});
+const branchOnlyProvenance = presentation.buildGmailBuildProvenance({
+  runtime: { asset_version: "assets-only" },
+  buildIdentity: { branch: "branch-only" },
+});
+const emptyProvenance = presentation.buildGmailBuildProvenance();
+
+const sessionKey = presentation.buildGmailRuntimeGuardSessionKey({
+  runtimeMode: " live ",
+  workspaceId: " workspace-1 ",
+  buildIdentity: {
+    branch: " main ",
+    head_sha: " abc123 ",
+  },
+});
+const fallbackSessionKey = presentation.buildGmailRuntimeGuardSessionKey();
+
+const diagnostics = presentation.buildGmailRuntimeGuardDiagnostics({
+  guard: {
+    message: "<script>alert(1)</script>",
+    buildLabel: "main@abc123",
+    details: ["first", "<img src=x>"],
+    acknowledged: 1,
+  },
+  operation: " gmail_preview_attachment ",
+  buildIdentity: runtimeIdentity,
+  runtime: livePayload,
+});
+const nullDiagnostics = presentation.buildGmailRuntimeGuardDiagnostics();
+
+console.log(JSON.stringify({
+  exportTypes: {
+    runtimePayload: typeof presentation.buildGmailRuntimePayload,
+    buildIdentity: typeof presentation.buildGmailBuildIdentity,
+    provenance: typeof presentation.buildGmailBuildProvenance,
+    sessionKey: typeof presentation.buildGmailRuntimeGuardSessionKey,
+    diagnostics: typeof presentation.buildGmailRuntimeGuardDiagnostics,
+  },
+  livePayload,
+  shadowPayload,
+  runtimeIdentity,
+  shellIdentityFallback,
+  bootstrapIdentityFallback,
+  provenance,
+  branchOnlyProvenance,
+  emptyProvenance,
+  sessionKey,
+  fallbackSessionKey,
+  diagnostics,
+  nullDiagnostics,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_RUNTIME_PRESENTATION_MODULE_URL__": "gmail_runtime_presentation.js"},
+    )
+
+    assert results["exportTypes"] == {
+        "runtimePayload": "function",
+        "buildIdentity": "function",
+        "provenance": "function",
+        "sessionKey": "function",
+        "diagnostics": "function",
+    }
+    assert results["livePayload"] == {
+        "build_branch": "runtime-branch",
+        "build_sha": "runtime-sha",
+        "asset_version": "runtime-assets",
+        "live_data": True,
+        "extra_field": "kept",
+    }
+    assert results["shadowPayload"] == {
+        "build_branch": "bootstrap-branch",
+        "build_sha": "bootstrap-sha",
+        "asset_version": "bootstrap-assets",
+        "live_data": False,
+    }
+    assert results["runtimeIdentity"] == {
+        "branch": "identity-branch",
+        "head_sha": "identity-sha",
+        "is_canonical": False,
+        "reasons": ["stale"],
+    }
+    assert results["shellIdentityFallback"] == {
+        "is_canonical": True,
+        "branch": "runtime-fallback",
+        "head_sha": "runtime-sha-fallback",
+    }
+    assert results["bootstrapIdentityFallback"] == {
+        "canonical_branch": "main",
+        "worktree_path": "C:/feature",
+        "branch": "runtime-branch-fallback",
+        "head_sha": "runtime-sha-fallback",
+    }
+    assert results["provenance"] == {
+        "branch": "identity-branch",
+        "buildSha": "identity-sha",
+        "assetVersion": "runtime-assets",
+        "label": "identity-branch@identity-sha | assets runtime-assets",
+    }
+    assert results["branchOnlyProvenance"] == {
+        "branch": "branch-only",
+        "buildSha": "",
+        "assetVersion": "assets-only",
+        "label": "branch-only | assets assets-only",
+    }
+    assert results["emptyProvenance"] == {
+        "branch": "",
+        "buildSha": "",
+        "assetVersion": "",
+        "label": "Unavailable",
+    }
+    assert results["sessionKey"] == "legalpdf.gmail.noncanonical.live.workspace-1.main.abc123"
+    assert results["fallbackSessionKey"] == (
+        "legalpdf.gmail.noncanonical.unknown-mode.unknown-workspace.unknown-branch.unknown-sha"
+    )
+    assert results["diagnostics"] == {
+        "error": "noncanonical_live_runtime",
+        "message": "<script>alert(1)</script>",
+        "operation": "gmail_preview_attachment",
+        "build_label": "main@abc123",
+        "build_identity": {
+            "branch": "identity-branch",
+            "head_sha": "identity-sha",
+            "is_canonical": False,
+            "reasons": ["stale"],
+        },
+        "runtime": {
+            "build_branch": "runtime-branch",
+            "build_sha": "runtime-sha",
+            "asset_version": "runtime-assets",
+            "live_data": True,
+            "extra_field": "kept",
+        },
+        "details": ["first", "<img src=x>"],
+        "acknowledged": True,
+    }
+    assert results["nullDiagnostics"] == {
+        "error": "noncanonical_live_runtime",
+        "message": "",
+        "operation": "",
+        "build_label": "",
+        "build_identity": {},
+        "runtime": {},
+        "details": [],
+        "acknowledged": False,
+    }
+
+
 def test_gmail_result_ui_module_owns_message_result_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -30382,6 +30696,18 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
             "buildGmailRuntimeGuardRestartDiagnosticsPresentation"
             in gmail_runtime_guard_presentation_asset.text
         )
+        gmail_runtime_presentation_asset = client.get(
+            f"/static-build/{asset_version}/gmail_runtime_presentation.js"
+        )
+        assert gmail_runtime_presentation_asset.status_code == 200
+        assert gmail_runtime_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailRuntimePayload" in gmail_runtime_presentation_asset.text
+        assert "buildGmailBuildIdentity" in gmail_runtime_presentation_asset.text
+        assert "buildGmailBuildProvenance" in gmail_runtime_presentation_asset.text
+        assert "buildGmailRuntimeGuardSessionKey" in gmail_runtime_presentation_asset.text
+        assert "buildGmailRuntimeGuardDiagnostics" in gmail_runtime_presentation_asset.text
         assert "renderGmailMessageResultInto" in gmail_ui_asset.text
         assert "renderGmailReviewSummaryInto" in gmail_ui_asset.text
         assert "renderGmailReviewChromeInto" in gmail_ui_asset.text
