@@ -806,7 +806,12 @@ def test_gmail_preview_actions_delegate_remaining_action_failure_feedback() -> N
     assert 'from "./action_feedback_presentation.js"' in gmail_source
     assert "function applyActionFailureFeedback" in gmail_source
     assert "diagnosticsHint" in gmail_source
-    assert "gmailFailureHint(error, message)" in gmail_source
+    assert "gmailFailureHint(error, message)" not in gmail_source
+    assert (
+        "diagnosticsHint: (message) => buildGmailBrowserFailureHintPresentation({"
+        in gmail_source
+    )
+    assert "fallbackMessage: message" in gmail_source
     for fallback in [
         "Preview rendering failed.",
         "Attachment preview failed.",

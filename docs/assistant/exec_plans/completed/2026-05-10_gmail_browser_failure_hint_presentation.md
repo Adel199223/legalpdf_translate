@@ -54,6 +54,11 @@ After implementation:
 - `powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1 -Full`
 - Result: targeted report/static coverage passed, focused browser/Gmail suite passed with `200 passed`, and full validation passed. The full validation wrapper hit the known `dart run` AOT launcher issue, then the direct-Dart fallback passed for agent-doc and workspace-hygiene validation.
 
+Post-PR CI follow-up:
+- GitHub Actions initially failed `tests/test_action_feedback_browser_state.py::test_gmail_preview_actions_delegate_remaining_action_failure_feedback` because that full-suite contract still expected the removed local `gmailFailureHint(error, message)` helper.
+- Updated the action-feedback contract to assert delegation through `buildGmailBrowserFailureHintPresentation(...)`.
+- Re-ran `.\.venv311\Scripts\python.exe -m pytest -q tests/test_action_feedback_browser_state.py::test_gmail_preview_actions_delegate_remaining_action_failure_feedback`, `.\.venv311\Scripts\python.exe -m pytest -q tests/test_action_feedback_browser_state.py`, and `.\.venv311\Scripts\python.exe -m pytest -q`; result: `1433 passed`.
+
 Browser smoke:
 - Launch shadow app on port `8888`.
 - Verify `http://127.0.0.1:8888/?mode=shadow&workspace=gmail-browser-failure-hint-smoke#gmail-intake`.
