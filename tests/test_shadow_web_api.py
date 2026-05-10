@@ -7627,6 +7627,181 @@ console.log(JSON.stringify({
     )
 
 
+def test_gmail_finalize_presentation_module_builds_finalize_diagnostics_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_finalize_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_finalize_presentation.js"' in gmail_js
+    assert "export function buildGmailBatchFinalizePreflightDiagnosticsPresentation" in presentation_js
+    assert "export function buildGmailBatchFinalizeDiagnosticsPresentation" in presentation_js
+    assert "export function buildGmailInterpretationFinalizeDiagnosticsPresentation" in presentation_js
+
+    diagnostics_start = presentation_js.index(
+        "export function buildGmailBatchFinalizePreflightDiagnosticsPresentation"
+    )
+    diagnostics_end = presentation_js.index(
+        "\nexport function buildGmailBatchFinalizeSurfacePresentation",
+        diagnostics_start,
+    )
+    diagnostics_block = presentation_js[diagnostics_start:diagnostics_end]
+    assert "document." not in diagnostics_block
+    assert "innerHTML" not in diagnostics_block
+    assert "renderGmailBatchFinalizeSurfaceInto" not in diagnostics_block
+    assert "setDiagnostics" not in diagnostics_block
+
+    assert "buildGmailBatchFinalizePreflightDiagnosticsPresentation" in gmail_js
+    preflight_start = gmail_js.index("async function refreshBatchFinalizePreflight")
+    preflight_end = gmail_js.index("\nasync function confirmCurrentTranslation", preflight_start)
+    preflight_block = gmail_js[preflight_start:preflight_end]
+    assert "buildGmailBatchFinalizePreflightDiagnosticsPresentation({" in preflight_block
+    assert "const preflightDiagnosticsPresentation =" in preflight_block
+    assert 'setDiagnostics("gmail-batch-finalize", payload, preflightDiagnosticsPresentation);' in preflight_block
+    assert "Word PDF export canary passed for Gmail finalization." not in preflight_block
+    assert "Word PDF export is blocked before Gmail finalization." not in preflight_block
+
+    assert "buildGmailBatchFinalizeDiagnosticsPresentation" in gmail_js
+    batch_start = gmail_js.index("async function finalizeBatch")
+    batch_end = gmail_js.index("\nasync function finalizeInterpretation", batch_start)
+    batch_block = gmail_js[batch_start:batch_end]
+    assert "buildGmailBatchFinalizeDiagnosticsPresentation({" in batch_block
+    assert "const batchDiagnosticsPresentation =" in batch_block
+    assert 'setDiagnostics("gmail-batch-finalize", payload, batchDiagnosticsPresentation);' in batch_block
+    assert "The Gmail reply is ready." not in batch_block
+    assert "The Gmail reply step completed with warnings." not in batch_block
+
+    assert "buildGmailInterpretationFinalizeDiagnosticsPresentation" in gmail_js
+    interpretation_start = gmail_js.index("async function finalizeInterpretation")
+    interpretation_end = gmail_js.index("\nfunction clearScheduledRefresh", interpretation_start)
+    interpretation_block = gmail_js[interpretation_start:interpretation_end]
+    assert "buildGmailInterpretationFinalizeDiagnosticsPresentation({" in interpretation_block
+    assert "const interpretationDiagnosticsPresentation =" in interpretation_block
+    assert 'setDiagnostics("gmail-session", payload, interpretationDiagnosticsPresentation);' in interpretation_block
+    assert "Gmail interpretation reply draft is ready." not in interpretation_block
+    assert "Interpretation Gmail finalization completed with warnings." not in interpretation_block
+
+    script = """
+const presentation = await import(__GMAIL_FINALIZE_PRESENTATION_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const preflightOk = presentation.buildGmailBatchFinalizePreflightDiagnosticsPresentation({
+  payload: {
+    status: "ok",
+    normalized_payload: {
+      finalization_preflight: { message: `Ignored ${malicious}` },
+    },
+  },
+});
+const preflightBlocked = presentation.buildGmailBatchFinalizePreflightDiagnosticsPresentation({
+  payload: {
+    status: "warn",
+    normalized_payload: {
+      finalization_preflight: { message: `Blocked ${malicious}` },
+    },
+  },
+});
+const preflightFallback = presentation.buildGmailBatchFinalizePreflightDiagnosticsPresentation({
+  payload: {
+    status: "warn",
+    normalized_payload: {
+      finalization_preflight: {},
+    },
+  },
+});
+const preflightNull = presentation.buildGmailBatchFinalizePreflightDiagnosticsPresentation();
+const batchOk = presentation.buildGmailBatchFinalizeDiagnosticsPresentation({
+  payload: { status: "ok" },
+});
+const batchWarning = presentation.buildGmailBatchFinalizeDiagnosticsPresentation({
+  payload: {
+    status: malicious,
+    normalized_payload: { retry_available: true },
+  },
+});
+const batchNull = presentation.buildGmailBatchFinalizeDiagnosticsPresentation();
+const interpretationOk = presentation.buildGmailInterpretationFinalizeDiagnosticsPresentation({
+  payload: { status: "ok" },
+});
+const interpretationWarning = presentation.buildGmailInterpretationFinalizeDiagnosticsPresentation({
+  payload: { status: malicious },
+});
+const interpretationNull = presentation.buildGmailInterpretationFinalizeDiagnosticsPresentation();
+
+console.log(JSON.stringify({
+  preflightExportType: typeof presentation.buildGmailBatchFinalizePreflightDiagnosticsPresentation,
+  batchExportType: typeof presentation.buildGmailBatchFinalizeDiagnosticsPresentation,
+  interpretationExportType: typeof presentation.buildGmailInterpretationFinalizeDiagnosticsPresentation,
+  preflightOk,
+  preflightBlocked,
+  preflightFallback,
+  preflightNull,
+  batchOk,
+  batchWarning,
+  batchNull,
+  interpretationOk,
+  interpretationWarning,
+  interpretationNull,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_FINALIZE_PRESENTATION_MODULE_URL__": "gmail_finalize_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["preflightExportType"] == "function"
+    assert results["batchExportType"] == "function"
+    assert results["interpretationExportType"] == "function"
+    assert results["preflightOk"] == {
+        "hint": "Word PDF export canary passed for Gmail finalization.",
+        "open": False,
+    }
+    assert results["preflightBlocked"] == {
+        "hint": "Blocked <img src=x onerror=alert(1)><script>bad()</script>",
+        "open": True,
+    }
+    assert results["preflightFallback"] == {
+        "hint": "Word PDF export is blocked before Gmail finalization.",
+        "open": True,
+    }
+    assert results["preflightNull"] == {
+        "hint": "Word PDF export is blocked before Gmail finalization.",
+        "open": True,
+    }
+    assert results["batchOk"] == {
+        "hint": "The Gmail reply is ready.",
+        "open": False,
+    }
+    assert results["batchWarning"] == {
+        "hint": "The Gmail reply step completed with warnings.",
+        "open": True,
+    }
+    assert results["batchNull"] == {
+        "hint": "The Gmail reply step completed with warnings.",
+        "open": True,
+    }
+    assert results["interpretationOk"] == {
+        "hint": "Gmail interpretation reply draft is ready.",
+        "open": False,
+    }
+    assert results["interpretationWarning"] == {
+        "hint": "Interpretation Gmail finalization completed with warnings.",
+        "open": True,
+    }
+    assert results["interpretationNull"] == {
+        "hint": "Interpretation Gmail finalization completed with warnings.",
+        "open": True,
+    }
+
+
 def test_gmail_finalize_ui_module_owns_batch_finalize_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -29856,6 +30031,15 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         )
         assert "buildGmailBatchFinalizeSurfacePresentation" in gmail_finalize_presentation_asset.text
         assert "buildGmailNumericMismatchWarningPresentation" in gmail_finalize_presentation_asset.text
+        assert (
+            "buildGmailBatchFinalizePreflightDiagnosticsPresentation"
+            in gmail_finalize_presentation_asset.text
+        )
+        assert "buildGmailBatchFinalizeDiagnosticsPresentation" in gmail_finalize_presentation_asset.text
+        assert (
+            "buildGmailInterpretationFinalizeDiagnosticsPresentation"
+            in gmail_finalize_presentation_asset.text
+        )
         gmail_preview_ui_asset = client.get(f"/static-build/{asset_version}/gmail_preview_ui.js")
         assert gmail_preview_ui_asset.status_code == 200
         assert gmail_preview_ui_asset.headers["content-type"].startswith("application/javascript")

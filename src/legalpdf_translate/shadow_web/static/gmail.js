@@ -31,7 +31,10 @@ import {
   buildGmailReviewDetailAdapterPresentation,
 } from "./gmail_attachment_presentation.js";
 import {
+  buildGmailBatchFinalizeDiagnosticsPresentation,
+  buildGmailBatchFinalizePreflightDiagnosticsPresentation,
   buildGmailBatchFinalizeSurfacePresentation,
+  buildGmailInterpretationFinalizeDiagnosticsPresentation,
   buildGmailNumericMismatchWarningPresentation,
 } from "./gmail_finalize_presentation.js";
 import {
@@ -1923,12 +1926,10 @@ async function refreshBatchFinalizePreflight({ forceRefresh = false } = {}) {
     renderSessionResult(gmailState.activeSession);
     renderBatchFinalizeSurface(gmailState.activeSession);
     updateSessionButtons();
-    setDiagnostics("gmail-batch-finalize", payload, {
-      hint: payload.status === "ok"
-        ? "Word PDF export canary passed for Gmail finalization."
-        : payload.normalized_payload?.finalization_preflight?.message || "Word PDF export is blocked before Gmail finalization.",
-      open: payload.status !== "ok",
+    const preflightDiagnosticsPresentation = buildGmailBatchFinalizePreflightDiagnosticsPresentation({
+      payload,
     });
+    setDiagnostics("gmail-batch-finalize", payload, preflightDiagnosticsPresentation);
     return payload;
   } catch (error) {
     applyActionFailureFeedback(error, {
@@ -2028,7 +2029,10 @@ async function finalizeBatch() {
   renderSessionResult(gmailState.activeSession);
   renderBatchFinalizeSurface(gmailState.activeSession);
   updateSessionButtons();
-  setDiagnostics("gmail-batch-finalize", payload, { hint: payload.status === "ok" ? "The Gmail reply is ready." : "The Gmail reply step completed with warnings.", open: payload.status !== "ok" });
+  const batchDiagnosticsPresentation = buildGmailBatchFinalizeDiagnosticsPresentation({
+    payload,
+  });
+  setDiagnostics("gmail-batch-finalize", payload, batchDiagnosticsPresentation);
   updateGmailFinalizationReportActionState();
   syncShellState();
 }
@@ -2053,7 +2057,10 @@ async function finalizeInterpretation() {
   updateSessionButtons();
   gmailState.hooks.renderInterpretationExportResult?.(payload);
   gmailState.hooks.renderInterpretationGmailResult?.(payload);
-  setDiagnostics("gmail-session", payload, { hint: payload.status === "ok" ? "Gmail interpretation reply draft is ready." : "Interpretation Gmail finalization completed with warnings.", open: payload.status !== "ok" });
+  const interpretationDiagnosticsPresentation = buildGmailInterpretationFinalizeDiagnosticsPresentation({
+    payload,
+  });
+  setDiagnostics("gmail-session", payload, interpretationDiagnosticsPresentation);
   syncShellState();
 }
 
