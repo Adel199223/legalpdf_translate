@@ -12,6 +12,10 @@ import {
 } from "./diagnostics_ui.js";
 import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import {
+  buildGmailRuntimeGuardBlockedDiagnosticsPresentation,
+  buildGmailRuntimeGuardRestartDiagnosticsPresentation,
+} from "./gmail_runtime_guard_presentation.js";
+import {
   renderGmailDemoReviewActionInto,
   renderGmailPrepareActionInto,
   renderGmailReturnToSourceActionInto,
@@ -442,13 +446,11 @@ function maybeBlockGmailReviewAction(operation) {
     return false;
   }
   setPanelStatus("gmail", "warn", guard.message);
-  setDiagnostics("gmail", {
-    status: "blocked",
+  const diagnosticsPresentation = buildGmailRuntimeGuardBlockedDiagnosticsPresentation({
+    guard,
     diagnostics: gmailRuntimeGuardDiagnostics(guard, operation),
-  }, {
-    hint: guard.message,
-    open: true,
   });
+  setDiagnostics("gmail", diagnosticsPresentation.payload, diagnosticsPresentation.presentation);
   renderReviewSurface();
   return true;
 }
@@ -456,13 +458,11 @@ function maybeBlockGmailReviewAction(operation) {
 async function restartCanonicalRuntimeGuidance() {
   const guard = currentGmailRuntimeGuard();
   setPanelStatus("gmail", "warn", "Restarting the live Gmail browser runtime...");
-  setDiagnostics("gmail", {
-    status: "restarting",
+  const diagnosticsPresentation = buildGmailRuntimeGuardRestartDiagnosticsPresentation({
+    guard,
     diagnostics: gmailRuntimeGuardDiagnostics(guard, "gmail_restart_canonical_runtime"),
-  }, {
-    hint: "Restarting the browser runtime for live Gmail. This page will reconnect automatically.",
-    open: true,
   });
+  setDiagnostics("gmail", diagnosticsPresentation.payload, diagnosticsPresentation.presentation);
   const payload = await fetchJson("/api/gmail/runtime/restart-canonical", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
