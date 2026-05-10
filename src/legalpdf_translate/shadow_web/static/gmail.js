@@ -2,7 +2,6 @@ import { fetchJson } from "./api.js";
 import { applyActionFailureFeedbackToUi } from "./action_feedback_presentation.js";
 import { appState, setActiveView } from "./state.js";
 import {
-  browserPdfDiagnosticsFromError,
   ensureBrowserPdfBundleFromUrl,
   renderBrowserPdfPreviewToCanvas,
 } from "./browser_pdf.js";
@@ -52,6 +51,7 @@ import {
 import { renderGmailBatchFinalizeSurfaceInto } from "./gmail_finalize_ui.js";
 import { renderGmailReportActionInto } from "./gmail_report_ui.js";
 import {
+  buildGmailBrowserFailureHintPresentation,
   buildGmailFailureReportActionPresentation,
   buildGmailFinalizationReportActionPresentation,
 } from "./gmail_report_presentation.js";
@@ -409,22 +409,6 @@ function updateGmailFinalizationReportActionState() {
     finalizationReportContext: currentGmailFinalizationReportContext(),
     lastFinalizationReportPayload: gmailState.lastFinalizationReportPayload,
   }));
-}
-
-function gmailFailureHint(error, fallbackMessage) {
-  const diagnostics = browserPdfDiagnosticsFromError(error);
-  if (
-    diagnostics.error === "browser_pdf_worker_load_failed"
-    || diagnostics.error === "browser_pdf_module_load_failed"
-  ) {
-    const phase = String(diagnostics.worker_boot_phase || diagnostics.phase || "worker_boot").trim().replaceAll("_", " ");
-    const attemptedUrl = String(diagnostics.attempted_url || diagnostics.worker_url || diagnostics.module_url || "").trim();
-    const rawBrowserError = String(diagnostics.raw_browser_error || diagnostics.raw_message || "").trim();
-    const location = attemptedUrl ? ` at ${attemptedUrl}` : "";
-    const rawDetail = rawBrowserError ? ` Browser error: ${rawBrowserError}` : "";
-    return `Browser PDF ${phase} failed${location}.${rawDetail} Generate a failure report here or review the Gmail diagnostics below for the exact asset details.`;
-  }
-  return fallbackMessage;
 }
 
 function renderGmailNoncanonicalRuntimeGuard() {
@@ -1774,7 +1758,10 @@ async function renderActivePdfPreviewCanvas(previewAttachment) {
     const feedback = applyActionFailureFeedback(error, {
       diagnosticsSlot: "gmail",
       fallback: "Preview rendering failed.",
-      diagnosticsHint: (message) => gmailFailureHint(error, message),
+      diagnosticsHint: (message) => buildGmailBrowserFailureHintPresentation({
+        error,
+        fallbackMessage: message,
+      }),
     });
     renderGmailPdfPreviewFallbackInto({ container, status }, {
       containerMessage: "Preview rendering failed for this PDF.",
@@ -2334,7 +2321,10 @@ export function initializeGmailUi(hooks) {
           panelSlot: "gmail",
           diagnosticsSlot: "gmail",
           fallback: "Attachment preview failed.",
-          diagnosticsHint: (message) => gmailFailureHint(error, message),
+          diagnosticsHint: (message) => buildGmailBrowserFailureHintPresentation({
+            error,
+            fallbackMessage: message,
+          }),
         });
         updateGmailFailureReportActionState();
       }
@@ -2421,7 +2411,10 @@ export function initializeGmailUi(hooks) {
           panelSlot: "gmail",
           diagnosticsSlot: "gmail",
           fallback: "Gmail session preparation failed.",
-          diagnosticsHint: (message) => gmailFailureHint(error, message),
+          diagnosticsHint: (message) => buildGmailBrowserFailureHintPresentation({
+            error,
+            fallbackMessage: message,
+          }),
         });
         updateGmailFailureReportActionState();
       }

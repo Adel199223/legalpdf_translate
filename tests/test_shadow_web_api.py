@@ -7885,6 +7885,9 @@ def test_gmail_report_presentation_module_builds_report_action_state() -> None:
     assert 'from "./gmail_report_presentation.js"' in gmail_js
     assert "export function buildGmailFailureReportActionPresentation" in presentation_js
     assert "export function buildGmailFinalizationReportActionPresentation" in presentation_js
+    assert "export function buildGmailBrowserFailureHintPresentation" in presentation_js
+    assert 'browserPdfDiagnosticsFromError' not in gmail_js
+    assert "function gmailFailureHint(" not in gmail_js
     builder_block = presentation_js[
         presentation_js.index("export function buildGmailFailureReportActionPresentation") :
     ]
@@ -7896,9 +7899,28 @@ def test_gmail_report_presentation_module_builds_report_action_state() -> None:
 const presentation = await import(__GMAIL_REPORT_PRESENTATION_MODULE_URL__);
 const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
 
+const workerError = new Error("worker failed");
+workerError.browserPdfDiagnostics = {
+  error: "browser_pdf_worker_load_failed",
+  worker_boot_phase: "worker_import",
+  attempted_url: `https://static.example/pdf.worker.mjs?v=${malicious}`,
+  raw_browser_error: `TypeError: ${malicious}`,
+};
+
+const moduleError = new Error("module failed");
+moduleError.browserPdfDiagnostics = {
+  error: "browser_pdf_module_load_failed",
+  phase: "module_import",
+  module_url: `https://static.example/pdf.mjs?v=${malicious}`,
+  raw_message: `Failed dynamic import ${malicious}`,
+};
+
+const genericError = new Error(`Generic ${malicious}`);
+
 console.log(JSON.stringify({
   failureExportType: typeof presentation.buildGmailFailureReportActionPresentation,
   finalizationExportType: typeof presentation.buildGmailFinalizationReportActionPresentation,
+  hintExportType: typeof presentation.buildGmailBrowserFailureHintPresentation,
   failureMissing: presentation.buildGmailFailureReportActionPresentation({}),
   failureAvailable: presentation.buildGmailFailureReportActionPresentation({
     failureReportContext: { error: malicious },
@@ -7918,6 +7940,19 @@ console.log(JSON.stringify({
     finalizationReportContext: null,
     lastFinalizationReportPayload: { status: malicious },
   }),
+  workerHint: presentation.buildGmailBrowserFailureHintPresentation({
+    error: workerError,
+    fallbackMessage: `Fallback ${malicious}`,
+  }),
+  moduleHint: presentation.buildGmailBrowserFailureHintPresentation({
+    error: moduleError,
+    fallbackMessage: `Fallback ${malicious}`,
+  }),
+  fallbackHint: presentation.buildGmailBrowserFailureHintPresentation({
+    error: genericError,
+    fallbackMessage: `Fallback ${malicious}`,
+  }),
+  nullHint: presentation.buildGmailBrowserFailureHintPresentation(),
 }));
 """
     results = run_browser_esm_json_probe(
@@ -7927,6 +7962,7 @@ console.log(JSON.stringify({
 
     assert results["failureExportType"] == "function"
     assert results["finalizationExportType"] == "function"
+    assert results["hintExportType"] == "function"
     assert results["failureMissing"] == {
         "available": False,
         "label": "Generate Failure Report",
@@ -7955,6 +7991,21 @@ console.log(JSON.stringify({
         "available": False,
         "label": "Generate Updated Finalization Report",
     }
+    malicious = "<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["workerHint"] == (
+        "Browser PDF worker import failed at "
+        f"https://static.example/pdf.worker.mjs?v={malicious}. "
+        f"Browser error: TypeError: {malicious} "
+        "Generate a failure report here or review the Gmail diagnostics below for the exact asset details."
+    )
+    assert results["moduleHint"] == (
+        "Browser PDF module import failed at "
+        f"https://static.example/pdf.mjs?v={malicious}. "
+        f"Browser error: Failed dynamic import {malicious} "
+        "Generate a failure report here or review the Gmail diagnostics below for the exact asset details."
+    )
+    assert results["fallbackHint"] == f"Fallback {malicious}"
+    assert results["nullHint"] == ""
 
 
 def test_gmail_report_context_module_builds_diagnostic_payloads() -> None:
@@ -8279,6 +8330,7 @@ def test_gmail_report_ui_module_owns_report_action_renderer() -> None:
     assert "export function renderGmailReportActionInto" in gmail_report_ui_js
     assert "export function buildGmailFailureReportActionPresentation" in gmail_report_presentation_js
     assert "export function buildGmailFinalizationReportActionPresentation" in gmail_report_presentation_js
+    assert "export function buildGmailBrowserFailureHintPresentation" in gmail_report_presentation_js
 
     failure_start = gmail_js.index("function updateGmailFailureReportActionState")
     failure_end = gmail_js.index("\nfunction updateGmailFinalizationReportActionState", failure_start)
@@ -8292,7 +8344,7 @@ def test_gmail_report_ui_module_owns_report_action_renderer() -> None:
     assert ".dataset.defaultLabel" not in failure_block
 
     finalization_start = gmail_js.index("function updateGmailFinalizationReportActionState")
-    finalization_end = gmail_js.index("\nfunction gmailFailureHint", finalization_start)
+    finalization_end = gmail_js.index("\nfunction renderGmailNoncanonicalRuntimeGuard", finalization_start)
     finalization_block = gmail_js[finalization_start:finalization_end]
     assert "buildGmailFinalizationReportActionPresentation({" in finalization_block
     assert "renderGmailReportActionInto(button," in finalization_block
@@ -29367,6 +29419,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         )
         assert "buildGmailFailureReportActionPresentation" in gmail_report_presentation_asset.text
         assert "buildGmailFinalizationReportActionPresentation" in gmail_report_presentation_asset.text
+        assert "buildGmailBrowserFailureHintPresentation" in gmail_report_presentation_asset.text
         gmail_report_context_asset = client.get(
             f"/static-build/{asset_version}/gmail_report_context.js"
         )
