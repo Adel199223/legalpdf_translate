@@ -275,6 +275,17 @@ function countInnerHtmlWrites(node) {
   return count;
 }
 
+function countClass(node, className) {
+  let count = 0;
+  walk(node, (current) => {
+    const classes = String(current.className || "").split(/\s+/).filter(Boolean);
+    if (classes.includes(className)) {
+      count += 1;
+    }
+  });
+  return count;
+}
+
 function collectButtonLabels(node) {
   const labels = [];
   walk(node, (current) => {
@@ -414,6 +425,20 @@ gmailModule.renderAttachmentListInto(attachmentTable, [{
   },
 });
 
+const defaultAttachmentTable = document.createElement("tbody");
+gmailModule.renderAttachmentListInto(defaultAttachmentTable, [{
+  attachment_id: "att-default",
+  filename: "Default PDF",
+  mime_type: "application/pdf",
+  size_bytes: 1024,
+}], {
+  interpretationWorkflow: false,
+  focusedAttachmentId: "att-default",
+  resolveState() {
+    return { selected: true, startPage: 4, pageCount: 4 };
+  },
+});
+
 const reviewDetailContainer = document.createElement("div");
 gmailModule.renderReviewDetailInto(reviewDetailContainer, {
   attachment_id: "att-1",
@@ -474,6 +499,11 @@ console.log(JSON.stringify({
     imgCount: countTag(attachmentTable, "IMG"),
     innerHTMLWrites: countInnerHtmlWrites(attachmentTable),
     startHeading: startHeading.textContent,
+  },
+  gmailAttachmentDefaults: {
+    text: defaultAttachmentTable.textContent,
+    startInputCount: countClass(defaultAttachmentTable, "attachment-start-page"),
+    staticStartCount: countClass(defaultAttachmentTable, "gmail-review-start-static"),
   },
   gmailReviewDetail: {
     text: reviewDetailContainer.textContent,
@@ -546,6 +576,9 @@ def test_browser_dynamic_renderers_treat_external_values_as_text() -> None:
     assert results["gmailAttachments"]["imgCount"] == 0
     assert results["gmailAttachments"]["innerHTMLWrites"] == 0
     assert results["gmailAttachments"]["startHeading"] == "Start page"
+    assert results["gmailAttachmentDefaults"]["startInputCount"] == 0
+    assert results["gmailAttachmentDefaults"]["staticStartCount"] == 1
+    assert "Default PDF" in results["gmailAttachmentDefaults"]["text"]
 
     assert '<img src=x onerror=alert(1)>' in results["gmailReviewDetail"]["text"]
     assert results["gmailReviewDetail"]["imgCount"] == 0
