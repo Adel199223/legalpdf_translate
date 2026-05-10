@@ -23,6 +23,13 @@ import {
   buildGmailRuntimePayload,
 } from "./gmail_runtime_presentation.js";
 import {
+  buildGmailAttachmentSavedDiagnosticsPresentation,
+  buildGmailInitialDiagnosticsPresentations,
+  buildGmailReviewRefreshDiagnosticsPresentation,
+  buildGmailReviewResetDiagnosticsPresentation,
+  buildGmailSessionPreparedDiagnosticsPresentation,
+} from "./gmail_lifecycle_diagnostics_presentation.js";
+import {
   renderGmailDemoReviewActionInto,
   renderGmailPrepareActionInto,
   renderGmailReturnToSourceActionInto,
@@ -1561,7 +1568,8 @@ async function refreshGmailState({ auto = false } = {}) {
     renderGmailBootstrap({ normalized_payload: { gmail: payload.normalized_payload } });
     gmailState.lastRefreshAt = Date.now();
     if (!auto) {
-      setDiagnostics("gmail", payload, { hint: "Gmail review refreshed.", open: false });
+      const diagnosticsPresentation = buildGmailReviewRefreshDiagnosticsPresentation({ payload });
+      setDiagnostics("gmail", payload, diagnosticsPresentation);
     }
     return payload;
   } finally {
@@ -1820,7 +1828,8 @@ async function prepareSession() {
   updateSessionButtons();
   clearGmailFailureReportContext();
   updateGmailFinalizationReportActionState();
-  setDiagnostics("gmail", payload, { hint: "Gmail session prepared.", open: false });
+  const diagnosticsPresentation = buildGmailSessionPreparedDiagnosticsPresentation({ payload });
+  setDiagnostics("gmail", payload, diagnosticsPresentation);
   closePreviewDrawer({ restore: false });
   closeReviewDrawer({ restore: false });
   closeSessionDrawer();
@@ -1949,7 +1958,8 @@ async function confirmCurrentTranslation() {
   renderTranslationCompletionGmailStepCard(gmailState.activeSession);
   renderBatchFinalizeSurface(gmailState.activeSession);
   updateSessionButtons();
-  setDiagnostics("gmail-session", payload, { hint: "Current Gmail attachment saved as a case record.", open: false });
+  const diagnosticsPresentation = buildGmailAttachmentSavedDiagnosticsPresentation({ payload });
+  setDiagnostics("gmail-session", payload, diagnosticsPresentation);
   if (gmailState.suggestedTranslationLaunch) {
     loadSuggestedTranslationLaunch({ closeCompletionDrawer: true });
   } else if (gmailState.activeSession?.kind === "translation" && gmailState.activeSession.completed) {
@@ -2105,9 +2115,13 @@ function maybeSchedulePassiveRefresh() {
 export function initializeGmailUi(hooks) {
   gmailState.hooks = hooks || {};
   gmailState.lastRouteView = appState.activeView;
-  setDiagnostics("gmail", { status: "idle", message: "No Gmail action has run yet." }, { hint: "Exact-message load, attachment preview, and session preparation details appear here.", open: false });
-  setDiagnostics("gmail-session", { status: "idle", message: "No Gmail batch or interpretation finalization has run yet." }, { hint: "Batch progression, staged attachments, export status, and Gmail draft details appear here.", open: false });
-  setDiagnostics("gmail-batch-finalize", { status: "idle", message: "No Gmail batch finalization has run yet." }, { hint: "Final draft request details and honorários export diagnostics appear here.", open: false });
+  for (const diagnosticsPresentation of buildGmailInitialDiagnosticsPresentations()) {
+    setDiagnostics(
+      diagnosticsPresentation.slot,
+      diagnosticsPresentation.payload,
+      diagnosticsPresentation.presentation,
+    );
+  }
   renderGmailDrawerDatasetDefaultsInto(document.body);
 
   qs("gmail-context-form")?.addEventListener("submit", async (event) => {
@@ -2573,8 +2587,9 @@ export function initializeGmailUi(hooks) {
         closeReviewDrawer({ restore: false });
         closeBatchFinalizeDrawer();
         renderGmailBootstrap({ normalized_payload: { gmail: payload.normalized_payload } });
-        setDiagnostics("gmail-session", payload, { hint: "Gmail review reset.", open: false });
-        setDiagnostics("gmail-batch-finalize", payload, { hint: "Gmail review reset.", open: false });
+        const diagnosticsPresentation = buildGmailReviewResetDiagnosticsPresentation({ payload });
+        setDiagnostics("gmail-session", payload, diagnosticsPresentation);
+        setDiagnostics("gmail-batch-finalize", payload, diagnosticsPresentation);
         closeSessionDrawer();
       } catch (error) {
         applyActionFailureFeedback(error, {
