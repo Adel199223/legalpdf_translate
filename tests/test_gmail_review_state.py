@@ -303,6 +303,56 @@ results.updateObjectSelection = mapEntries(reviewModule.buildGmailAttachmentSele
   selected: true,
   workflowKind: "translation",
 }}));
+results.startPageUpdatePdfHigh = reviewModule.buildGmailAttachmentStartPageUpdate({{
+  attachment: pdfAttachment,
+  state: {{ selected: true, startPage: 2, pageCount: 5 }},
+  value: "8",
+  workflowKind: "translation",
+}});
+results.startPageUpdatePdfInvalid = reviewModule.buildGmailAttachmentStartPageUpdate({{
+  attachment: pdfAttachment,
+  state: {{ selected: false, startPage: 4, pageCount: 5 }},
+  value: "<script>bad()</script>",
+  workflowKind: "translation",
+}});
+results.startPageUpdateImage = reviewModule.buildGmailAttachmentStartPageUpdate({{
+  attachment: imageAttachment,
+  state: {{ selected: true, startPage: 4, pageCount: 3 }},
+  value: "7",
+  workflowKind: "translation",
+}});
+results.startPageUpdateInterpretationPdf = reviewModule.buildGmailAttachmentStartPageUpdate({{
+  attachment: pdfAttachment,
+  state: {{ selected: true, startPage: 5, pageCount: 7 }},
+  value: "6",
+  workflowKind: "interpretation",
+}});
+results.startPageUpdateNull = reviewModule.buildGmailAttachmentStartPageUpdate();
+results.pageCountUpdatePdfClamp = reviewModule.buildGmailAttachmentPageCountUpdate({{
+  attachment: pdfAttachment,
+  state: {{ selected: true, startPage: 9, pageCount: 9 }},
+  pageCount: "4",
+  workflowKind: "translation",
+}});
+results.pageCountUpdatePdfInvalid = reviewModule.buildGmailAttachmentPageCountUpdate({{
+  attachment: pdfAttachment,
+  state: {{ selected: true, startPage: 9, pageCount: 9 }},
+  pageCount: "<script>bad()</script>",
+  workflowKind: "translation",
+}});
+results.pageCountUpdateImage = reviewModule.buildGmailAttachmentPageCountUpdate({{
+  attachment: imageAttachment,
+  state: {{ selected: true, startPage: 4, pageCount: 0 }},
+  pageCount: 3,
+  workflowKind: "translation",
+}});
+results.pageCountUpdateInterpretationPdf = reviewModule.buildGmailAttachmentPageCountUpdate({{
+  attachment: pdfAttachment,
+  state: {{ selected: true, startPage: 5, pageCount: 7 }},
+  pageCount: 2,
+  workflowKind: "interpretation",
+}});
+results.pageCountUpdateNull = reviewModule.buildGmailAttachmentPageCountUpdate();
 const prepareSelections = reviewModule.buildGmailPrepareSelectionsPayload({{
   attachments: [pdfAttachment, imageAttachment, otherAttachment],
   selectionState: new Map([
@@ -841,6 +891,16 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
     assert results["updateObjectSelection"] == {
         "att-pdf": {"selected": True, "startPage": 2, "pageCount": 2},
     }
+    assert results["startPageUpdatePdfHigh"] == {"selected": True, "startPage": 5, "pageCount": 5}
+    assert results["startPageUpdatePdfInvalid"] == {"selected": False, "startPage": 1, "pageCount": 5}
+    assert results["startPageUpdateImage"] == {"selected": True, "startPage": 1, "pageCount": 3}
+    assert results["startPageUpdateInterpretationPdf"] == {"selected": True, "startPage": 1, "pageCount": 7}
+    assert results["startPageUpdateNull"] == {"selected": False, "startPage": 1, "pageCount": 0}
+    assert results["pageCountUpdatePdfClamp"] == {"selected": True, "startPage": 4, "pageCount": 4}
+    assert results["pageCountUpdatePdfInvalid"] == {"selected": True, "startPage": 9, "pageCount": 0}
+    assert results["pageCountUpdateImage"] == {"selected": True, "startPage": 1, "pageCount": 3}
+    assert results["pageCountUpdateInterpretationPdf"] == {"selected": True, "startPage": 1, "pageCount": 2}
+    assert results["pageCountUpdateNull"] == {"selected": False, "startPage": 1, "pageCount": 0}
     assert results["prepareSelections"] == [
         {"attachment_id": "att-pdf", "start_page": 4, "page_count": 4},
         {"attachment_id": "att-image", "start_page": 1},
