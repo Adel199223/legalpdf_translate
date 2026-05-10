@@ -21,6 +21,24 @@ export function buildGmailFinalizationReportActionPresentation({
   };
 }
 
+export function buildGmailBrowserFailureReportDiagnosticsPresentation({
+  payload = null,
+} = {}) {
+  return {
+    hint: payload?.normalized_payload?.report_path || "Gmail browser failure report generated.",
+    open: true,
+  };
+}
+
+export function buildGmailFinalizationReportDiagnosticsPresentation({
+  payload = null,
+} = {}) {
+  return {
+    hint: payload?.normalized_payload?.report_path || "Gmail finalization report generated.",
+    open: true,
+  };
+}
+
 export function buildGmailBrowserFailureHintPresentation({
   error = null,
   fallbackMessage = "",
