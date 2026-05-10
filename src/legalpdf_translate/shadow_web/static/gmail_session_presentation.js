@@ -1,3 +1,5 @@
+import { buildGmailStagePresentation } from "./gmail_stage_presentation.js";
+
 const GMAIL_SESSION_BUTTON_IDS = [
   "gmail-load-translation-launch",
   "gmail-confirm-translation",
@@ -192,6 +194,41 @@ export function buildGmailWorkspaceStripPresentation({
     actionLabel: "Review Gmail message",
     action: "open-intake",
   };
+}
+
+function isInterpretationFocusedShell({ activeView = "", interpretationWorkspaceMode = "" } = {}) {
+  const normalizedMode = String(interpretationWorkspaceMode || "").trim();
+  return activeView === "new-job"
+    && (normalizedMode === "gmail_review" || normalizedMode === "gmail_completed");
+}
+
+export function buildGmailWorkspaceStripAdapterPresentation({
+  activeView = "",
+  interpretationWorkspaceMode = "",
+  stage = "",
+  loadResult = null,
+  activeSession = null,
+  restoredCompletedSession = null,
+  cta = {},
+  redo = {},
+  recoveredAction = {},
+  stagePresentation = null,
+} = {}) {
+  const show = !isInterpretationFocusedShell({ activeView, interpretationWorkspaceMode })
+    && Boolean(loadResult || activeSession || restoredCompletedSession);
+  const resolvedStagePresentation = activeSession && cta.visible
+    ? (stagePresentation || buildGmailStagePresentation({ stage, activeSession }))
+    : {};
+
+  return buildGmailWorkspaceStripPresentation({
+    show,
+    loadResult,
+    activeSession,
+    cta,
+    redo,
+    recoveredAction,
+    stagePresentation: resolvedStagePresentation,
+  });
 }
 
 export function buildGmailSessionResultPresentation({
