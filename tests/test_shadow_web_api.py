@@ -9997,7 +9997,14 @@ def test_gmail_action_presentation_module_derives_prepare_action_state() -> None
     assert "export function buildGmailDemoReviewActionPresentation" in presentation_js
     assert "export function buildGmailPrepareActionPresentation" in presentation_js
     assert "export function buildGmailReturnToSourceActionPresentation" in presentation_js
+    assert "export function deriveGmailSourceUrl" in presentation_js
     assert 'from "./gmail_action_presentation.js"' in gmail_js
+    action_import = re.search(
+        r"import \{(?P<body>.*?)\} from \"\./gmail_action_presentation\.js\";",
+        gmail_js,
+        re.S,
+    ).group("body")
+    assert "deriveGmailSourceUrl" in action_import
 
     demo_start = gmail_js.index("function updateDemoReviewAction()")
     demo_end = gmail_js.index("\nfunction renderResumeCard", demo_start)
@@ -10010,6 +10017,17 @@ def test_gmail_action_presentation_module_derives_prepare_action_state() -> None
     return_block = gmail_js[return_start:return_end]
     assert "buildGmailReturnToSourceActionPresentation({" in return_block
     assert "renderGmailReturnToSourceActionInto(button, presentation);" in return_block
+
+    source_start = gmail_js.index("function currentSourceGmailUrl()")
+    source_end = gmail_js.index("\nfunction updateReturnToGmailAction", source_start)
+    source_block = gmail_js[source_start:source_end]
+    assert "deriveGmailSourceUrl({" in source_block
+    assert "currentHandoffContext: gmailState.bootstrap?.current_handoff_context" in source_block
+    assert "defaults: gmailState.bootstrap?.defaults" in source_block
+    assert "pendingIntakeContext: gmailState.bootstrap?.pending_intake_context" in source_block
+    assert "clickDiagnostics: currentClickDiagnostics()" in source_block
+    assert "|| clickDiagnostics.source_gmail_url" not in source_block
+    assert "String(" not in source_block
 
     update_start = gmail_js.index("function updatePrepareActionState()")
     update_end = gmail_js.index("\nfunction syncShellState", update_start)
@@ -10060,6 +10078,46 @@ const returnMissing = presentation.buildGmailReturnToSourceActionPresentation({
 
 const returnNull = presentation.buildGmailReturnToSourceActionPresentation();
 
+const sourceExplicit = presentation.deriveGmailSourceUrl({
+  sourceUrl: ` https://mail.google.test/explicit/${malicious} `,
+  currentHandoffContext: { source_gmail_url: "https://mail.google.test/handoff" },
+});
+
+const sourceHandoff = presentation.deriveGmailSourceUrl({
+  currentHandoffContext: { source_gmail_url: ` https://mail.google.test/handoff/${malicious} ` },
+  defaults: { message_context: { source_gmail_url: "https://mail.google.test/defaults" } },
+  pendingIntakeContext: { source_gmail_url: "https://mail.google.test/pending" },
+  clickDiagnostics: { source_gmail_url: "https://mail.google.test/click" },
+});
+
+const sourceDefaults = presentation.deriveGmailSourceUrl({
+  currentHandoffContext: {},
+  defaults: { message_context: { source_gmail_url: " https://mail.google.test/defaults " } },
+  pendingIntakeContext: { source_gmail_url: "https://mail.google.test/pending" },
+  clickDiagnostics: { source_gmail_url: "https://mail.google.test/click" },
+});
+
+const sourcePending = presentation.deriveGmailSourceUrl({
+  defaults: { message_context: {} },
+  pendingIntakeContext: { source_gmail_url: " https://mail.google.test/pending " },
+  clickDiagnostics: { source_gmail_url: "https://mail.google.test/click" },
+});
+
+const sourceDiagnostics = presentation.deriveGmailSourceUrl({
+  clickDiagnostics: { source_gmail_url: " https://mail.google.test/click " },
+});
+
+const sourceWhitespaceWins = presentation.deriveGmailSourceUrl({
+  currentHandoffContext: { source_gmail_url: "   " },
+  defaults: { message_context: { source_gmail_url: "https://mail.google.test/defaults" } },
+});
+
+const sourceNullDefaults = presentation.deriveGmailSourceUrl();
+
+const returnFromContexts = presentation.buildGmailReturnToSourceActionPresentation({
+  currentHandoffContext: { source_gmail_url: " https://mail.google.test/handoff " },
+});
+
 const ready = presentation.buildGmailPrepareActionPresentation({
   workflow,
   loadResult: { ok: true, message: "Loaded" },
@@ -10095,6 +10153,7 @@ const missingWorkflow = presentation.buildGmailPrepareActionPresentation({
 
 console.log(JSON.stringify({
   demoExportType: typeof presentation.buildGmailDemoReviewActionPresentation,
+  sourceExportType: typeof presentation.deriveGmailSourceUrl,
   returnExportType: typeof presentation.buildGmailReturnToSourceActionPresentation,
   exportType: typeof presentation.buildGmailPrepareActionPresentation,
   demoEmpty,
@@ -10104,6 +10163,14 @@ console.log(JSON.stringify({
   returnVisible,
   returnMissing,
   returnNull,
+  sourceExplicit,
+  sourceHandoff,
+  sourceDefaults,
+  sourcePending,
+  sourceDiagnostics,
+  sourceWhitespaceWins,
+  sourceNullDefaults,
+  returnFromContexts,
   ready,
   noMessage,
   emptySelection,
@@ -10119,6 +10186,7 @@ console.log(JSON.stringify({
     )
 
     assert results["demoExportType"] == "function"
+    assert results["sourceExportType"] == "function"
     assert results["returnExportType"] == "function"
     assert results["exportType"] == "function"
     assert results["demoEmpty"] == {"visible": True}
@@ -10131,6 +10199,23 @@ console.log(JSON.stringify({
     }
     assert results["returnMissing"] == {"visible": False, "sourceUrl": ""}
     assert results["returnNull"] == {"visible": False, "sourceUrl": ""}
+    assert (
+        results["sourceExplicit"]
+        == "https://mail.google.test/explicit/<img src=x onerror=alert(1)><script>bad()</script>"
+    )
+    assert (
+        results["sourceHandoff"]
+        == "https://mail.google.test/handoff/<img src=x onerror=alert(1)><script>bad()</script>"
+    )
+    assert results["sourceDefaults"] == "https://mail.google.test/defaults"
+    assert results["sourcePending"] == "https://mail.google.test/pending"
+    assert results["sourceDiagnostics"] == "https://mail.google.test/click"
+    assert results["sourceWhitespaceWins"] == ""
+    assert results["sourceNullDefaults"] == ""
+    assert results["returnFromContexts"] == {
+        "visible": True,
+        "sourceUrl": "https://mail.google.test/handoff",
+    }
     assert results["ready"] == {
         "label": "Continue <img src=x onerror=alert(1)><script>bad()</script>",
         "disabled": False,
@@ -29625,6 +29710,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailDemoReviewActionPresentation" in gmail_action_presentation_asset.text
         assert "buildGmailPrepareActionPresentation" in gmail_action_presentation_asset.text
         assert "buildGmailReturnToSourceActionPresentation" in gmail_action_presentation_asset.text
+        assert "deriveGmailSourceUrl" in gmail_action_presentation_asset.text
         gmail_stage_presentation_asset = client.get(
             f"/static-build/{asset_version}/gmail_stage_presentation.js"
         )

@@ -34,10 +34,25 @@ export function buildGmailPrepareActionPresentation({
   };
 }
 
-export function buildGmailReturnToSourceActionPresentation({
+export function deriveGmailSourceUrl({
   sourceUrl = "",
+  currentHandoffContext = null,
+  defaults = null,
+  pendingIntakeContext = null,
+  clickDiagnostics = null,
 } = {}) {
-  const normalizedSourceUrl = String(sourceUrl ?? "").trim();
+  return String(
+    sourceUrl
+    || currentHandoffContext?.source_gmail_url
+    || defaults?.message_context?.source_gmail_url
+    || pendingIntakeContext?.source_gmail_url
+    || clickDiagnostics?.source_gmail_url
+    || "",
+  ).trim();
+}
+
+export function buildGmailReturnToSourceActionPresentation(context = {}) {
+  const normalizedSourceUrl = deriveGmailSourceUrl(context);
   return {
     visible: normalizedSourceUrl !== "",
     sourceUrl: normalizedSourceUrl,

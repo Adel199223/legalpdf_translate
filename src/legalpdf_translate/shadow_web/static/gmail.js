@@ -20,6 +20,7 @@ import {
   buildGmailDemoReviewActionPresentation,
   buildGmailPrepareActionPresentation,
   buildGmailReturnToSourceActionPresentation,
+  deriveGmailSourceUrl,
 } from "./gmail_action_presentation.js";
 import {
   renderGmailAttachmentListInto,
@@ -673,14 +674,12 @@ function currentClickDiagnostics() {
 }
 
 function currentSourceGmailUrl() {
-  const clickDiagnostics = currentClickDiagnostics();
-  return String(
-    gmailState.bootstrap?.current_handoff_context?.source_gmail_url
-    || gmailState.bootstrap?.defaults?.message_context?.source_gmail_url
-    || gmailState.bootstrap?.pending_intake_context?.source_gmail_url
-    || clickDiagnostics.source_gmail_url
-    || "",
-  ).trim();
+  return deriveGmailSourceUrl({
+    currentHandoffContext: gmailState.bootstrap?.current_handoff_context,
+    defaults: gmailState.bootstrap?.defaults,
+    pendingIntakeContext: gmailState.bootstrap?.pending_intake_context,
+    clickDiagnostics: currentClickDiagnostics(),
+  });
 }
 
 function updateReturnToGmailAction() {
