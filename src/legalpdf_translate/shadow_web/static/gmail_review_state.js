@@ -300,6 +300,10 @@ function attachmentId(attachment) {
   return attachment?.attachment_id || "";
 }
 
+function attachmentMime(attachment) {
+  return String(attachment?.mime_type || "").trim().toLowerCase();
+}
+
 function selectionStateFrom(source, id) {
   if (!id) {
     return normalizeGmailAttachmentSelectionState();
@@ -543,6 +547,55 @@ export function buildGmailAttachmentSelectionUpdate({
     pageCount,
   });
   return next;
+}
+
+function emptyGmailPreviewPanelContext() {
+  return {
+    attachment: null,
+    href: "",
+    page: 1,
+    pageCount: 0,
+    canApply: false,
+    isPdf: false,
+    isImage: false,
+  };
+}
+
+export function buildGmailPreviewPanelContext({
+  attachments = [],
+  previewState = createClosedPreviewState(),
+  workflowKind = "",
+} = {}) {
+  const previewHref = normalizeSignature(previewState?.previewHref);
+  if (!isPreviewStateOpen(previewState) || !previewHref) {
+    return emptyGmailPreviewPanelContext();
+  }
+
+  const normalizedAttachmentId = normalizeSignature(previewState?.attachmentId);
+  const attachment = normalizeAttachmentList(attachments).find((item) => attachmentId(item) === normalizedAttachmentId) || null;
+  if (!attachment) {
+    return emptyGmailPreviewPanelContext();
+  }
+
+  const pageCount = nonnegativeNumber(previewState?.pageCount);
+  const page = clampGmailAttachmentStartPage({
+    editable: true,
+    rawValue: previewState?.page,
+    pageCount,
+  });
+  const mimeType = attachmentMime(attachment);
+  const isPdf = mimeType === "application/pdf";
+  const isImage = mimeType.startsWith("image/");
+
+  return {
+    attachment,
+    href: isPdf ? `${previewHref}#page=${page}` : previewHref,
+    page,
+    pageCount,
+    canApply: deriveGmailAttachmentStartEditable({ workflowKind, attachment }),
+    isPdf,
+    isImage,
+  };
 }
 
 export function deriveGmailFocusedAttachmentId({

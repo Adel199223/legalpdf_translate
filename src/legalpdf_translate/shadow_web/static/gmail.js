@@ -101,6 +101,7 @@ import {
   applyPreviewStateStartPage,
   buildGmailAttachmentSelectionUpdate,
   buildGmailPrepareSelectionsPayload,
+  buildGmailPreviewPanelContext,
   buildGmailSelectionStateMap,
   clearConsumedReviewState,
   clampGmailAttachmentStartPage,
@@ -367,6 +368,7 @@ function clearGmailFailureReportContext() {
 }
 
 function rememberGmailFailureReport(error, options = {}) {
+  const previewContext = currentPreviewPanelContext();
   gmailState.lastFailureReportContext = buildGmailFailureReportContext({
     error,
     operation: options.operation || "",
@@ -385,8 +387,8 @@ function rememberGmailFailureReport(error, options = {}) {
     previewOpen: isPreviewStateOpen(gmailState.previewState),
     previewState: {
       ...gmailState.previewState,
-      page: previewPage(),
-      pageCount: previewPageCount(),
+      page: previewContext.page,
+      pageCount: previewContext.pageCount,
     },
   });
   gmailState.lastFailureReportPayload = null;
@@ -890,31 +892,12 @@ function focusedAttachment() {
   return syncFocusedAttachment();
 }
 
-function previewAttachmentRecord() {
-  if (!isPreviewStateOpen(gmailState.previewState)) {
-    return null;
-  }
-  return getAttachmentById(gmailState.previewState.attachmentId);
-}
-
-function previewPageCount() {
-  return Math.max(0, Number(gmailState.previewState.pageCount || 0));
-}
-
-function previewPage() {
-  return Math.max(1, Number(gmailState.previewState.page || 1));
-}
-
-function resolvedPreviewHref() {
-  const previewAttachment = previewAttachmentRecord();
-  const previewHref = String(gmailState.previewState.previewHref || "").trim();
-  if (!previewAttachment || !previewHref) {
-    return "";
-  }
-  if (isPdfAttachment(previewAttachment)) {
-    return `${previewHref}#page=${previewPage()}`;
-  }
-  return previewHref;
+function currentPreviewPanelContext() {
+  return buildGmailPreviewPanelContext({
+    attachments: gmailAttachments(),
+    previewState: gmailState.previewState,
+    workflowKind: currentWorkflowKind(),
+  });
 }
 
 function setReviewDrawerOpen(open) {
@@ -1336,20 +1319,23 @@ function renderPreviewPanel() {
   const prevButton = qs("gmail-preview-prev");
   const nextButton = qs("gmail-preview-next");
   const pageInput = qs("gmail-preview-page");
-  const previewAttachment = previewAttachmentRecord();
-  const previewHref = resolvedPreviewHref();
+  const previewContext = buildGmailPreviewPanelContext({
+    attachments: gmailAttachments(),
+    previewState: gmailState.previewState,
+    workflowKind: currentWorkflowKind(),
+  });
   if (!container || !summary || !status || !openTab || !applyButton || !prevButton || !nextButton || !pageInput) {
     return;
   }
 
   const presentation = buildGmailPreviewPanelPresentation({
-    attachment: previewAttachment,
-    href: previewHref,
-    page: previewPage(),
-    pageCount: previewPageCount(),
-    canApply: previewAttachment ? canEditStartPage(previewAttachment) : false,
-    isPdf: previewAttachment ? isPdfAttachment(previewAttachment) : false,
-    isImage: previewAttachment ? isImageAttachment(previewAttachment) : false,
+    attachment: previewContext.attachment,
+    href: previewContext.href,
+    page: previewContext.page,
+    pageCount: previewContext.pageCount,
+    canApply: previewContext.canApply,
+    isPdf: previewContext.isPdf,
+    isImage: previewContext.isImage,
   });
   const renderResult = renderGmailPreviewPanelInto({
     container,
@@ -1362,7 +1348,7 @@ function renderPreviewPanel() {
     pageInput,
   }, presentation);
   if (renderResult?.shouldRenderPdfCanvas) {
-    void renderActivePdfPreviewCanvas(previewAttachment);
+    void renderActivePdfPreviewCanvas(previewContext.attachment);
   }
 }
 
@@ -1804,7 +1790,7 @@ async function renderActivePdfPreviewCanvas(previewAttachment) {
       sourcePath,
       url: previewHref,
       attachmentId: previewAttachment.attachment_id,
-      pageNumber: previewPage(),
+      pageNumber: currentPreviewPanelContext().page,
       canvas,
       preferredWidth: Math.max(0, container.clientWidth - 32),
     });
@@ -2404,7 +2390,7 @@ export function initializeGmailUi(hooks) {
     if (!isPreviewStateOpen(gmailState.previewState)) {
       return;
     }
-    gmailState.previewState = setPreviewStatePage(gmailState.previewState, previewPage() - 1);
+    gmailState.previewState = setPreviewStatePage(gmailState.previewState, currentPreviewPanelContext().page - 1);
     renderPreviewPanel();
   });
 
@@ -2412,8 +2398,9 @@ export function initializeGmailUi(hooks) {
     if (!isPreviewStateOpen(gmailState.previewState)) {
       return;
     }
-    const upperBound = previewPageCount() > 0 ? previewPageCount() : previewPage() + 1;
-    const next = Math.min(upperBound, previewPage() + 1);
+    const previewContext = currentPreviewPanelContext();
+    const upperBound = previewContext.pageCount > 0 ? previewContext.pageCount : previewContext.page + 1;
+    const next = Math.min(upperBound, previewContext.page + 1);
     gmailState.previewState = setPreviewStatePage(gmailState.previewState, next);
     renderPreviewPanel();
   });
@@ -2424,13 +2411,13 @@ export function initializeGmailUi(hooks) {
     }
     const input = event.target;
     gmailState.previewState = setPreviewStatePage(gmailState.previewState, input.value);
-    const clamped = previewPage();
+    const clamped = currentPreviewPanelContext().page;
     renderGmailInputValueInto(input, clamped);
     renderPreviewPanel();
   });
 
   qs("gmail-preview-apply")?.addEventListener("click", () => {
-    const attachment = previewAttachmentRecord();
+    const attachment = currentPreviewPanelContext().attachment;
     if (!attachment || !isPreviewStateOpen(gmailState.previewState)) {
       return;
     }

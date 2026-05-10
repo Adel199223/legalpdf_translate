@@ -10015,6 +10015,7 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
         "buildGmailPrepareSelectionsPayload",
         "applyGmailWorkflowSelectionDefaults",
         "buildGmailAttachmentSelectionUpdate",
+        "buildGmailPreviewPanelContext",
         "deriveGmailActiveSessionAttachmentId",
         "deriveGmailFocusedAttachmentId",
     ]
@@ -10037,6 +10038,7 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
         "buildGmailPrepareSelectionsPayload",
         "applyGmailWorkflowSelectionDefaults",
         "buildGmailAttachmentSelectionUpdate",
+        "buildGmailPreviewPanelContext",
         "deriveGmailFocusedAttachmentId",
     ]
     for export_name in expected_imports:
@@ -11005,11 +11007,20 @@ def test_gmail_preview_ui_module_owns_preview_panel_renderer() -> None:
     assert 'from "./gmail_preview_presentation.js"' in gmail_js
     assert "renderGmailPreviewPanelInto" in gmail_js
     assert "buildGmailPreviewPanelPresentation" in gmail_js
+    assert "function previewAttachmentRecord(" not in gmail_js
+    assert "function previewPageCount(" not in gmail_js
+    assert "function previewPage(" not in gmail_js
+    assert "function resolvedPreviewHref(" not in gmail_js
     preview_panel_start = gmail_js.index("function renderPreviewPanel()")
     preview_panel_end = gmail_js.index("\nfunction renderGmailRestoreBar", preview_panel_start)
     preview_panel_block = gmail_js[preview_panel_start:preview_panel_end]
     assert "renderGmailPreviewPanelInto" in preview_panel_block
     assert "buildGmailPreviewPanelPresentation({" in preview_panel_block
+    assert "buildGmailPreviewPanelContext({" in preview_panel_block
+    assert "previewAttachmentRecord()" not in preview_panel_block
+    assert "resolvedPreviewHref()" not in preview_panel_block
+    assert "previewPage()" not in preview_panel_block
+    assert "previewPageCount()" not in preview_panel_block
     assert "summary.innerHTML" not in preview_panel_block
     assert "container.innerHTML" not in preview_panel_block
 
@@ -29057,6 +29068,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailPrepareSelectionsPayload" in gmail_review_state_asset.text
         assert "applyGmailWorkflowSelectionDefaults" in gmail_review_state_asset.text
         assert "buildGmailAttachmentSelectionUpdate" in gmail_review_state_asset.text
+        assert "buildGmailPreviewPanelContext" in gmail_review_state_asset.text
         assert "deriveGmailFocusedAttachmentId" in gmail_review_state_asset.text
         gmail_report_ui_asset = client.get(f"/static-build/{asset_version}/gmail_report_ui.js")
         assert gmail_report_ui_asset.status_code == 200
