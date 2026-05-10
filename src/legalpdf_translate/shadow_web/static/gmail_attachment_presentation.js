@@ -274,6 +274,66 @@ export function buildGmailAttachmentListAdapterPresentation({
   });
 }
 
+function resolveReviewDetailStartEditable({
+  canEditStart,
+  resolveCanEditStart,
+  workflowKind,
+  attachment,
+}) {
+  if (typeof resolveCanEditStart === "function") {
+    return resolveCanEditStart(attachment) === true;
+  }
+  if (typeof canEditStart === "boolean") {
+    return canEditStart;
+  }
+  return deriveGmailAttachmentStartEditable({ workflowKind, attachment });
+}
+
+export function buildGmailReviewDetailAdapterPresentation(input = {}) {
+  const source = input || {};
+  const {
+    attachment = null,
+    state = {},
+    workflowKind = "",
+    interpretationWorkflow = false,
+    previewLoaded = false,
+    runtimeGuard = { blocked: false },
+    kindLabel = "",
+    resolveCanEditStart = null,
+    resolveKindLabel = null,
+    resolveStartPage = null,
+  } = source;
+  const normalizedState = normalizeGmailAttachmentSelectionState(state);
+  const normalizedWorkflow = normalizedWorkflowKind({ workflowKind, interpretationWorkflow });
+  const editable = resolveReviewDetailStartEditable({
+    canEditStart: source.canEditStart,
+    resolveCanEditStart,
+    workflowKind: normalizedWorkflow,
+    attachment,
+  });
+  const resolvedKindLabel = kindLabel
+    ? String(kindLabel)
+    : String(resolveAdapterKindLabel({ resolveKindLabel, attachment }));
+  const startPage = Object.prototype.hasOwnProperty.call(source, "startPage")
+    ? source.startPage
+    : resolveAdapterStartPage({
+      resolveStartPage,
+      attachment,
+      state: normalizedState,
+      editable,
+    });
+
+  return buildGmailReviewDetailPresentation({
+    attachment,
+    state: normalizedState,
+    canEditStart: editable,
+    previewLoaded: previewLoaded === true,
+    runtimeGuard: runtimeGuard || { blocked: false },
+    kindLabel: resolvedKindLabel,
+    startPage,
+  });
+}
+
 export function buildGmailReviewDetailPresentation({
   attachment = null,
   state = {},
