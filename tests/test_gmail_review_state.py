@@ -1096,3 +1096,139 @@ def test_gmail_review_state_storage_and_auto_open_rules() -> None:
     assert results["ignoreRowFocusForButton"] is True
     assert results["keepRowFocusForPlainCell"] is False
     assert results["afterClear"] == {"reviewEventId": 0, "messageSignature": ""}
+
+
+def test_gmail_review_state_builds_review_load_reset_state() -> None:
+    script = """
+const reviewModule = await import(__GMAIL_REVIEW_MODULE_URL__);
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const loaded = reviewModule.buildGmailReviewLoadResetState({
+  payload: {
+    normalized_payload: {
+      review_event_id: `evt-${malicious}`,
+      message_signature: `sig-${malicious}`,
+      load_result: {
+        ok: true,
+        status_message: `Loaded ${malicious}`,
+        message: {
+          message_id: `msg-${malicious}`,
+          attachments: [
+            {
+              attachment_id: `att-${malicious}`,
+              filename: `document ${malicious}.pdf`,
+            },
+          ],
+        },
+      },
+    },
+  },
+});
+
+const unavailable = reviewModule.buildGmailReviewLoadResetState({
+  payload: {
+    normalized_payload: {
+      review_event_id: 7,
+      message_signature: "sig-7",
+      load_result: null,
+    },
+  },
+});
+
+const malformed = reviewModule.buildGmailReviewLoadResetState({
+  payload: {
+    normalized_payload: `bad ${malicious}`,
+  },
+});
+
+const empty = reviewModule.buildGmailReviewLoadResetState();
+
+function summarize(state) {
+  return {
+    bootstrapPatch: state.bootstrapPatch,
+    bootstrapKeys: Object.keys(state.bootstrapPatch).sort(),
+    loadResult: state.loadResult,
+    activeSession: state.activeSession,
+    restoredCompletedSession: state.restoredCompletedSession,
+    interpretationSeed: state.interpretationSeed,
+    suggestedTranslationLaunch: state.suggestedTranslationLaunch,
+    batchFinalizePreflight: state.batchFinalizePreflight,
+    batchFinalizeDrawerSource: state.batchFinalizeDrawerSource,
+    batchFinalizeResult: state.batchFinalizeResult,
+    lastFinalizationReportPayload: state.lastFinalizationReportPayload,
+    browserPdfStateIsMap: state.browserPdfState instanceof Map,
+    browserPdfStateSize: state.browserPdfState?.size ?? -1,
+  };
+}
+
+console.log(JSON.stringify({
+  exportType: typeof reviewModule.buildGmailReviewLoadResetState,
+  loaded: summarize(loaded),
+  unavailable: summarize(unavailable),
+  malformed: summarize(malformed),
+  empty: summarize(empty),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_REVIEW_MODULE_URL__": "gmail_review_state.js"},
+        timeout_seconds=20,
+    )
+
+    malicious = "<img src=x onerror=alert(1)><script>bad()</script>"
+    expected_reset = {
+        "activeSession": None,
+        "restoredCompletedSession": None,
+        "interpretationSeed": None,
+        "suggestedTranslationLaunch": None,
+        "batchFinalizePreflight": None,
+        "batchFinalizeDrawerSource": "active",
+        "batchFinalizeResult": None,
+        "lastFinalizationReportPayload": None,
+        "browserPdfStateIsMap": True,
+        "browserPdfStateSize": 0,
+    }
+
+    assert results["exportType"] == "function"
+    assert results["loaded"] == {
+        "bootstrapPatch": {
+            "review_event_id": f"evt-{malicious}",
+            "message_signature": f"sig-{malicious}",
+        },
+        "bootstrapKeys": ["message_signature", "review_event_id"],
+        "loadResult": {
+            "ok": True,
+            "status_message": f"Loaded {malicious}",
+            "message": {
+                "message_id": f"msg-{malicious}",
+                "attachments": [
+                    {
+                        "attachment_id": f"att-{malicious}",
+                        "filename": f"document {malicious}.pdf",
+                    },
+                ],
+            },
+        },
+        **expected_reset,
+    }
+    assert results["unavailable"] == {
+        "bootstrapPatch": {
+            "review_event_id": 7,
+            "message_signature": "sig-7",
+        },
+        "bootstrapKeys": ["message_signature", "review_event_id"],
+        "loadResult": None,
+        **expected_reset,
+    }
+    assert results["malformed"] == {
+        "bootstrapPatch": {},
+        "bootstrapKeys": ["message_signature", "review_event_id"],
+        "loadResult": None,
+        **expected_reset,
+    }
+    assert results["empty"] == {
+        "bootstrapPatch": {},
+        "bootstrapKeys": ["message_signature", "review_event_id"],
+        "loadResult": None,
+        **expected_reset,
+    }

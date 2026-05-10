@@ -508,6 +508,28 @@ export function applyGmailWorkflowSelectionDefaults({
   return next;
 }
 
+export function buildGmailReviewLoadResetState({ payload = null } = {}) {
+  const normalizedPayload = payload?.normalized_payload && typeof payload.normalized_payload === "object"
+    ? payload.normalized_payload
+    : {};
+  return {
+    bootstrapPatch: {
+      review_event_id: normalizedPayload.review_event_id,
+      message_signature: normalizedPayload.message_signature,
+    },
+    browserPdfState: new Map(),
+    loadResult: normalizedPayload.load_result || null,
+    activeSession: null,
+    restoredCompletedSession: null,
+    interpretationSeed: null,
+    suggestedTranslationLaunch: null,
+    batchFinalizePreflight: null,
+    batchFinalizeDrawerSource: "active",
+    batchFinalizeResult: null,
+    lastFinalizationReportPayload: null,
+  };
+}
+
 export function buildGmailAttachmentSelectionUpdate({
   attachments = [],
   selectionState = new Map(),
