@@ -73,7 +73,10 @@ import {
   renderGmailPdfPreviewFallbackInto,
   renderGmailPreviewPanelInto,
 } from "./gmail_preview_ui.js";
-import { buildGmailPreviewPanelPresentation } from "./gmail_preview_presentation.js";
+import {
+  buildGmailPreviewLoadedDiagnosticsPresentation,
+  buildGmailPreviewPanelPresentation,
+} from "./gmail_preview_presentation.js";
 import { buildGmailRestoreBarPresentation } from "./gmail_restore_presentation.js";
 import { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
 import {
@@ -1803,7 +1806,11 @@ async function previewAttachment(attachmentId) {
   renderPreviewPanel();
   openPreviewDrawer();
   clearGmailFailureReportContext();
-  setDiagnostics("gmail", payload, { hint: `Preview loaded for ${payload.normalized_payload.attachment?.filename || "attachment"}.`, open: false });
+  const diagnosticsPresentation = buildGmailPreviewLoadedDiagnosticsPresentation({
+    payload,
+    attachment,
+  });
+  setDiagnostics("gmail", payload, diagnosticsPresentation);
   updateGmailFailureReportActionState();
 }
 

@@ -11470,11 +11470,20 @@ def test_gmail_preview_presentation_module_derives_preview_panel_state() -> None
     assert gmail_preview_presentation_path.exists()
     gmail_preview_presentation_js = gmail_preview_presentation_path.read_text(encoding="utf-8")
     assert "export function buildGmailPreviewPanelPresentation" in gmail_preview_presentation_js
+    assert "export function buildGmailPreviewLoadedDiagnosticsPresentation" in gmail_preview_presentation_js
     builder_start = gmail_preview_presentation_js.index("export function buildGmailPreviewPanelPresentation")
     builder_block = gmail_preview_presentation_js[builder_start:]
     assert "document." not in builder_block
     assert "innerHTML" not in builder_block
     assert "renderGmailPreviewPanelInto" not in builder_block
+    diagnostics_start = gmail_preview_presentation_js.index(
+        "export function buildGmailPreviewLoadedDiagnosticsPresentation"
+    )
+    diagnostics_end = gmail_preview_presentation_js.index("\nfunction resetControls", diagnostics_start)
+    diagnostics_block = gmail_preview_presentation_js[diagnostics_start:diagnostics_end]
+    assert "document." not in diagnostics_block
+    assert "innerHTML" not in diagnostics_block
+    assert "setDiagnostics" not in diagnostics_block
 
     script = """
 const presentation = await import(__GMAIL_PREVIEW_PRESENTATION_MODULE_URL__);
@@ -11526,15 +11535,47 @@ const fallback = presentation.buildGmailPreviewPanelPresentation({
   isPdf: false,
   isImage: false,
 });
+const diagnosticsNamed = presentation.buildGmailPreviewLoadedDiagnosticsPresentation({
+  payload: {
+    normalized_payload: {
+      attachment: { filename: `Diagnostic ${malicious}` },
+    },
+  },
+});
+const diagnosticsMissingFilename = presentation.buildGmailPreviewLoadedDiagnosticsPresentation({
+  payload: {
+    normalized_payload: {
+      attachment: {},
+    },
+  },
+});
+const diagnosticsAttachmentFallback = presentation.buildGmailPreviewLoadedDiagnosticsPresentation({
+  attachment: { filename: `Fallback ${malicious}` },
+});
+const diagnosticsPayloadWins = presentation.buildGmailPreviewLoadedDiagnosticsPresentation({
+  payload: {
+    normalized_payload: {
+      attachment: { filename: "payload.pdf" },
+    },
+  },
+  attachment: { filename: "fallback.pdf" },
+});
+const diagnosticsNullDefaults = presentation.buildGmailPreviewLoadedDiagnosticsPresentation();
 
 console.log(JSON.stringify({
   exportType: typeof presentation.buildGmailPreviewPanelPresentation,
+  diagnosticsExportType: typeof presentation.buildGmailPreviewLoadedDiagnosticsPresentation,
   empty,
   missingHref,
   pdf,
   inspectPdf,
   image,
   fallback,
+  diagnosticsNamed,
+  diagnosticsMissingFilename,
+  diagnosticsAttachmentFallback,
+  diagnosticsPayloadWins,
+  diagnosticsNullDefaults,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -11544,6 +11585,7 @@ console.log(JSON.stringify({
     )
 
     assert results["exportType"] == "function"
+    assert results["diagnosticsExportType"] == "function"
     assert results["empty"] == {
         "summary": {
             "kind": "empty",
@@ -11640,6 +11682,26 @@ console.log(JSON.stringify({
     assert results["fallback"]["summary"]["message"] == "Preview ready"
     assert results["fallback"]["statusText"] == "This attachment type is available through the new-tab fallback."
     assert results["fallback"]["shouldRenderPdfCanvas"] is False
+    assert results["diagnosticsNamed"] == {
+        "hint": "Preview loaded for Diagnostic <img src=x onerror=alert(1)><script>bad()</script>.",
+        "open": False,
+    }
+    assert results["diagnosticsMissingFilename"] == {
+        "hint": "Preview loaded for attachment.",
+        "open": False,
+    }
+    assert results["diagnosticsAttachmentFallback"] == {
+        "hint": "Preview loaded for Fallback <img src=x onerror=alert(1)><script>bad()</script>.",
+        "open": False,
+    }
+    assert results["diagnosticsPayloadWins"] == {
+        "hint": "Preview loaded for payload.pdf.",
+        "open": False,
+    }
+    assert results["diagnosticsNullDefaults"] == {
+        "hint": "Preview loaded for attachment.",
+        "open": False,
+    }
 
 
 def test_gmail_preview_ui_module_owns_preview_panel_renderer() -> None:
@@ -11663,6 +11725,7 @@ def test_gmail_preview_ui_module_owns_preview_panel_renderer() -> None:
     assert 'from "./gmail_preview_presentation.js"' in gmail_js
     assert "renderGmailPreviewPanelInto" in gmail_js
     assert "buildGmailPreviewPanelPresentation" in gmail_js
+    assert "buildGmailPreviewLoadedDiagnosticsPresentation" in gmail_js
     assert "function previewAttachmentRecord(" not in gmail_js
     assert "function previewPageCount(" not in gmail_js
     assert "function previewPage(" not in gmail_js
@@ -11679,11 +11742,19 @@ def test_gmail_preview_ui_module_owns_preview_panel_renderer() -> None:
     assert "previewPageCount()" not in preview_panel_block
     assert "summary.innerHTML" not in preview_panel_block
     assert "container.innerHTML" not in preview_panel_block
+    preview_attachment_start = gmail_js.index("async function previewAttachment(")
+    preview_attachment_end = gmail_js.index("\nasync function prepareSession", preview_attachment_start)
+    preview_attachment_block = gmail_js[preview_attachment_start:preview_attachment_end]
+    assert "buildGmailPreviewLoadedDiagnosticsPresentation({" in preview_attachment_block
+    assert "const diagnosticsPresentation =" in preview_attachment_block
+    assert 'setDiagnostics("gmail", payload, diagnosticsPresentation);' in preview_attachment_block
+    assert "Preview loaded for ${payload.normalized_payload.attachment?.filename" not in preview_attachment_block
 
     assert 'from "./gmail_preview_ui.js"' in gmail_ui_js
     assert "renderGmailPreviewPanelInto" in gmail_ui_js
     assert "export function renderGmailPreviewPanelInto" in gmail_preview_ui_js
     assert "export function buildGmailPreviewPanelPresentation" in gmail_preview_presentation_js
+    assert "export function buildGmailPreviewLoadedDiagnosticsPresentation" in gmail_preview_presentation_js
     renderer_start = gmail_preview_ui_js.index("export function renderGmailPreviewPanelInto")
     renderer_block = gmail_preview_ui_js[renderer_start:gmail_preview_ui_js.index("\nexport function renderGmailPdfPreviewFallbackInto", renderer_start)]
     assert "innerHTML" not in renderer_block
@@ -29798,6 +29869,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
             "application/javascript"
         )
         assert "buildGmailPreviewPanelPresentation" in gmail_preview_presentation_asset.text
+        assert "buildGmailPreviewLoadedDiagnosticsPresentation" in gmail_preview_presentation_asset.text
         gmail_attachment_ui_asset = client.get(f"/static-build/{asset_version}/gmail_attachment_ui.js")
         assert gmail_attachment_ui_asset.status_code == 200
         assert gmail_attachment_ui_asset.headers["content-type"].startswith("application/javascript")
