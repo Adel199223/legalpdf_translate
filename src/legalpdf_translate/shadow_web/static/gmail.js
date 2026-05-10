@@ -27,7 +27,7 @@ import {
   renderGmailReviewDetailInto,
 } from "./gmail_attachment_ui.js";
 import {
-  buildGmailAttachmentListPresentation,
+  buildGmailAttachmentListAdapterPresentation,
   buildGmailReviewDetailPresentation,
 } from "./gmail_attachment_presentation.js";
 import {
@@ -644,18 +644,6 @@ async function runRedoCurrentTranslation() {
   closeSessionDrawer();
 }
 
-function formatBytes(value) {
-  const bytes = Number(value || 0);
-  if (!Number.isFinite(bytes) || bytes <= 0) {
-    return "0 B";
-  }
-  const units = ["B", "KB", "MB", "GB"];
-  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
-  const scaled = bytes / (1024 ** index);
-  const precision = scaled >= 10 || index === 0 ? 0 : 1;
-  return `${scaled.toFixed(precision)} ${units[index]}`;
-}
-
 function currentWorkflowPresentation() {
   return deriveGmailWorkflowPresentation({ workflowKind: currentWorkflowKind() });
 }
@@ -1229,36 +1217,19 @@ export function renderAttachmentListInto(
   options = {},
 ) {
   const normalizedAttachments = Array.isArray(attachments) ? attachments : [];
-  const resolveState = options.resolveState || (() => ({ selected: false, startPage: 1, pageCount: 0 }));
-  const resolveCanEditStart = options.resolveCanEditStart || (() => false);
-  const resolveKindLabel = options.resolveKindLabel || attachmentKindLabel;
-  const resolveStartPage = options.resolveStartPage || ((attachment, state = {}) => (
-    clampStartPage(attachment, state.startPage, state.pageCount)
-  ));
-  const formatSizeLabel = options.formatSizeLabel || formatBytes;
-  const attachmentStates = new Map();
-  const canEditStartByAttachmentId = new Map();
-  const kindLabelsByAttachmentId = new Map();
-  const startPagesByAttachmentId = new Map();
-  const sizeLabelsByAttachmentId = new Map();
-  for (const attachment of normalizedAttachments) {
-    const attachmentId = attachment?.attachment_id || "";
-    const state = resolveState(attachmentId) || {};
-    attachmentStates.set(attachmentId, state);
-    canEditStartByAttachmentId.set(attachmentId, resolveCanEditStart(attachment) === true);
-    kindLabelsByAttachmentId.set(attachmentId, resolveKindLabel(attachment));
-    startPagesByAttachmentId.set(attachmentId, resolveStartPage(attachment, state));
-    sizeLabelsByAttachmentId.set(attachmentId, formatSizeLabel(attachment?.size_bytes || 0));
-  }
-  const presentation = buildGmailAttachmentListPresentation({
+  const presentation = buildGmailAttachmentListAdapterPresentation({
     attachments: normalizedAttachments,
+    selectionState: options.selectionState || {},
+    workflowKind: options.workflowKind || "",
     interpretationWorkflow: options.interpretationWorkflow === true,
     focusedAttachmentId: options.focusedAttachmentId || "",
-    attachmentStates,
-    canEditStartByAttachmentId,
-    kindLabelsByAttachmentId,
-    startPagesByAttachmentId,
-    sizeLabelsByAttachmentId,
+    resolveState: options.resolveState || null,
+    resolveCanEditStart: typeof options.resolveCanEditStart === "function"
+      ? options.resolveCanEditStart
+      : (() => false),
+    resolveKindLabel: options.resolveKindLabel || null,
+    resolveStartPage: options.resolveStartPage || null,
+    formatSizeLabel: options.formatSizeLabel || null,
   });
   renderGmailAttachmentListInto(container, presentation, { startHeading: options.startHeading || null });
 }
@@ -1274,9 +1245,10 @@ function renderAttachmentList(loadResult) {
   syncFocusedAttachment();
   renderAttachmentListInto(container, attachments, {
     startHeading,
+    workflowKind: currentWorkflowKind(),
     interpretationWorkflow,
     focusedAttachmentId: gmailState.reviewFocusedAttachmentId,
-    resolveState: (attachmentId) => attachmentState(attachmentId),
+    selectionState: gmailState.selectionState,
     resolveCanEditStart: (attachment) => canEditStartPage(attachment),
   });
 }

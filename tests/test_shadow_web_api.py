@@ -6145,6 +6145,7 @@ def test_gmail_attachment_presentation_module_derives_list_and_detail_state() ->
     gmail_attachment_presentation_path = static_dir / "gmail_attachment_presentation.js"
     assert gmail_attachment_presentation_path.exists()
     gmail_attachment_presentation_js = gmail_attachment_presentation_path.read_text(encoding="utf-8")
+    assert "export function buildGmailAttachmentListAdapterPresentation" in gmail_attachment_presentation_js
     assert "export function buildGmailAttachmentListPresentation" in gmail_attachment_presentation_js
     assert "export function buildGmailReviewDetailPresentation" in gmail_attachment_presentation_js
     builder_block = gmail_attachment_presentation_js[
@@ -6162,6 +6163,7 @@ const pdfId = `pdf-${malicious}`;
 const imageId = `image-${malicious}`;
 
 const emptyList = presentation.buildGmailAttachmentListPresentation({});
+const adapterEmptyList = presentation.buildGmailAttachmentListAdapterPresentation({});
 const populatedList = presentation.buildGmailAttachmentListPresentation({
   attachments: [
     {
@@ -6198,6 +6200,50 @@ const populatedList = presentation.buildGmailAttachmentListPresentation({
     [pdfId]: "1536 bytes",
     [imageId]: "256 bytes",
   },
+});
+const adapterList = presentation.buildGmailAttachmentListAdapterPresentation({
+  attachments: [
+    {
+      attachment_id: pdfId,
+      filename: `PDF ${malicious}`,
+      mime_type: "application/pdf",
+      size_bytes: 1536,
+    },
+    {
+      attachment_id: imageId,
+      filename: `Image ${malicious}`,
+      mime_type: "image/png",
+      size_bytes: 256,
+    },
+  ],
+  focusedAttachmentId: pdfId,
+  workflowKind: "translation",
+  selectionState: new Map([
+    [pdfId, { selected: true, startPage: 9, pageCount: 4 }],
+    [imageId, { selected: false, startPage: 7, pageCount: 3 }],
+  ]),
+});
+const adapterInterpretationList = presentation.buildGmailAttachmentListAdapterPresentation({
+  attachments: [
+    { attachment_id: "notice-pdf", filename: "Notice", mime_type: "application/pdf", size_bytes: 2048 },
+  ],
+  workflowKind: "interpretation",
+  focusedAttachmentId: "notice-pdf",
+  selectionState: {
+    "notice-pdf": { selected: true, startPage: 8, pageCount: 12 },
+  },
+});
+const adapterCustomList = presentation.buildGmailAttachmentListAdapterPresentation({
+  attachments: [
+    { attachment_id: "custom-pdf", filename: "Custom PDF", mime_type: "application/pdf", size_bytes: 1 },
+  ],
+  focusedAttachmentId: "custom-pdf",
+  interpretationWorkflow: true,
+  resolveState: () => ({ selected: true, startPage: 7, pageCount: 9 }),
+  resolveCanEditStart: () => true,
+  resolveKindLabel: () => "Custom Kind",
+  resolveStartPage: () => 6,
+  formatSizeLabel: () => "custom-size",
 });
 const interpretationList = presentation.buildGmailAttachmentListPresentation({
   attachments: [
@@ -6243,9 +6289,14 @@ const staticDetail = presentation.buildGmailReviewDetailPresentation({
 
 console.log(JSON.stringify({
   listExportType: typeof presentation.buildGmailAttachmentListPresentation,
+  adapterListExportType: typeof presentation.buildGmailAttachmentListAdapterPresentation,
   detailExportType: typeof presentation.buildGmailReviewDetailPresentation,
   emptyList,
+  adapterEmptyList,
   populatedList,
+  adapterList,
+  adapterInterpretationList,
+  adapterCustomList,
   interpretationList,
   emptyDetail,
   populatedDetail,
@@ -6259,6 +6310,7 @@ console.log(JSON.stringify({
     )
 
     assert results["listExportType"] == "function"
+    assert results["adapterListExportType"] == "function"
     assert results["detailExportType"] == "function"
     assert results["emptyList"] == {
         "startHeadingLabel": "Start page",
@@ -6270,6 +6322,7 @@ console.log(JSON.stringify({
         },
         "rows": [],
     }
+    assert results["adapterEmptyList"] == results["emptyList"]
     populated_rows = results["populatedList"]["rows"]
     assert results["populatedList"]["startHeadingLabel"] == "Start page"
     assert results["populatedList"]["selectedInputType"] == "checkbox"
@@ -6319,6 +6372,40 @@ console.log(JSON.stringify({
         "text": "1",
         "className": "gmail-review-start-static",
     }
+    adapter_rows = results["adapterList"]["rows"]
+    assert results["adapterList"]["selectedInputType"] == "checkbox"
+    assert len(adapter_rows) == 2
+    assert adapter_rows[0]["attachmentId"] == "pdf-<img src=x onerror=alert(1)><script>bad()</script>"
+    assert adapter_rows[0]["rowClassName"] == "gmail-review-row is-selected is-focused"
+    assert adapter_rows[0]["file"]["text"] == "PDF <img src=x onerror=alert(1)><script>bad()</script>"
+    assert adapter_rows[0]["kind"] == {"cellClassName": "", "text": "PDF", "title": "application/pdf"}
+    assert adapter_rows[0]["size"] == {"cellClassName": "", "text": "1.5 KB"}
+    assert adapter_rows[0]["start"] == {
+        "cellClassName": "",
+        "kind": "input",
+        "inputType": "number",
+        "className": "attachment-start-page",
+        "min": "1",
+        "step": "1",
+        "value": "4",
+        "dataset": {"attachmentStartPage": "pdf-<img src=x onerror=alert(1)><script>bad()</script>"},
+    }
+    assert adapter_rows[1]["kind"] == {"cellClassName": "", "text": "Image", "title": "image/png"}
+    assert adapter_rows[1]["size"] == {"cellClassName": "", "text": "256 B"}
+    assert adapter_rows[1]["start"] == {
+        "cellClassName": "",
+        "kind": "static",
+        "text": "1",
+        "className": "gmail-review-start-static",
+    }
+    assert results["adapterInterpretationList"]["selectedInputType"] == "radio"
+    assert results["adapterInterpretationList"]["rows"][0]["select"]["inputType"] == "radio"
+    assert results["adapterInterpretationList"]["rows"][0]["start"]["kind"] == "static"
+    assert results["adapterInterpretationList"]["rows"][0]["start"]["text"] == "1"
+    assert results["adapterCustomList"]["selectedInputType"] == "radio"
+    assert results["adapterCustomList"]["rows"][0]["kind"]["text"] == "Custom Kind"
+    assert results["adapterCustomList"]["rows"][0]["size"]["text"] == "custom-size"
+    assert results["adapterCustomList"]["rows"][0]["start"]["value"] == "6"
     assert results["interpretationList"]["selectedInputType"] == "radio"
     assert results["interpretationList"]["rows"][0]["select"]["inputType"] == "radio"
     assert results["interpretationList"]["rows"][0]["size"]["text"] == "99 B"
@@ -6395,13 +6482,20 @@ def test_gmail_attachment_ui_module_owns_review_attachment_renderers() -> None:
     assert "renderGmailReviewDetailInto" in gmail_js
     assert 'from "./gmail_attachment_ui.js"' in gmail_js
     assert 'from "./gmail_attachment_presentation.js"' in gmail_js
-    assert "buildGmailAttachmentListPresentation" in gmail_js
+    assert "buildGmailAttachmentListAdapterPresentation" in gmail_js
     assert "buildGmailReviewDetailPresentation" in gmail_js
     attachment_start = gmail_js.index("export function renderAttachmentListInto")
     attachment_end = gmail_js.index("\nfunction renderAttachmentList", attachment_start)
     attachment_block = gmail_js[attachment_start:attachment_end]
     assert "renderGmailAttachmentListInto" in attachment_block
-    assert "buildGmailAttachmentListPresentation({" in attachment_block
+    assert "buildGmailAttachmentListAdapterPresentation({" in attachment_block
+    assert "buildGmailAttachmentListPresentation({" not in attachment_block
+    assert "new Map(" not in attachment_block
+    assert "for (const attachment of normalizedAttachments)" not in attachment_block
+    assert "canEditStartByAttachmentId" not in attachment_block
+    assert "kindLabelsByAttachmentId" not in attachment_block
+    assert "startPagesByAttachmentId" not in attachment_block
+    assert "sizeLabelsByAttachmentId" not in attachment_block
     assert "document.createElement" not in attachment_block
     assert "appendChild" not in attachment_block
     assert "createTextElement" not in attachment_block
@@ -6425,6 +6519,7 @@ def test_gmail_attachment_ui_module_owns_review_attachment_renderers() -> None:
     assert "export function renderGmailReviewDetailInto" not in gmail_ui_js
     assert "export function renderGmailAttachmentListInto" in gmail_attachment_ui_js
     assert "export function renderGmailReviewDetailInto" in gmail_attachment_ui_js
+    assert "export function buildGmailAttachmentListAdapterPresentation" in gmail_attachment_presentation_js
     assert "export function buildGmailAttachmentListPresentation" in gmail_attachment_presentation_js
     assert "export function buildGmailReviewDetailPresentation" in gmail_attachment_presentation_js
     assert "innerHTML" not in gmail_attachment_ui_js
@@ -29168,6 +29263,7 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
             "application/javascript"
         )
         assert "buildGmailAttachmentListPresentation" in gmail_attachment_presentation_asset.text
+        assert "buildGmailAttachmentListAdapterPresentation" in gmail_attachment_presentation_asset.text
         assert "buildGmailReviewDetailPresentation" in gmail_attachment_presentation_asset.text
         gmail_workspace_ui_asset = client.get(f"/static-build/{asset_version}/gmail_workspace_ui.js")
         assert gmail_workspace_ui_asset.status_code == 200

@@ -1,3 +1,10 @@
+import {
+  clampGmailAttachmentStartPage,
+  deriveGmailAttachmentKindLabel,
+  deriveGmailAttachmentStartEditable,
+  normalizeGmailAttachmentSelectionState,
+} from "./gmail_review_state.js";
+
 function normalizeAttachments(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -12,6 +19,13 @@ function attachmentFilename(attachment) {
 
 function attachmentMime(attachment) {
   return String(attachment?.mime_type || "Unknown");
+}
+
+function normalizedWorkflowKind({ workflowKind = "", interpretationWorkflow = false } = {}) {
+  if (String(workflowKind || "").trim() === "interpretation" || interpretationWorkflow === true) {
+    return "interpretation";
+  }
+  return "translation";
 }
 
 function readByAttachmentId(source, id, fallback = undefined) {
@@ -66,6 +80,38 @@ function attachmentState(states, id) {
     startPage: normalizeStartPage(state?.startPage),
     pageCount: Math.max(0, Number(state?.pageCount || 0)),
   };
+}
+
+function resolveAdapterAttachmentState({ resolveState, selectionState, id }) {
+  if (typeof resolveState === "function") {
+    return normalizeGmailAttachmentSelectionState(resolveState(id));
+  }
+  return normalizeGmailAttachmentSelectionState(readByAttachmentId(selectionState, id, {}));
+}
+
+function resolveAdapterStartEditable({ resolveCanEditStart, workflowKind, attachment }) {
+  if (typeof resolveCanEditStart === "function") {
+    return resolveCanEditStart(attachment) === true;
+  }
+  return deriveGmailAttachmentStartEditable({ workflowKind, attachment });
+}
+
+function resolveAdapterKindLabel({ resolveKindLabel, attachment }) {
+  if (typeof resolveKindLabel === "function") {
+    return resolveKindLabel(attachment);
+  }
+  return deriveGmailAttachmentKindLabel(attachmentMime(attachment));
+}
+
+function resolveAdapterStartPage({ resolveStartPage, attachment, state, editable }) {
+  if (typeof resolveStartPage === "function") {
+    return resolveStartPage(attachment, state);
+  }
+  return clampGmailAttachmentStartPage({
+    editable,
+    rawValue: state.startPage,
+    pageCount: state.pageCount,
+  });
 }
 
 function buildAttachmentRow({
@@ -173,6 +219,59 @@ export function buildGmailAttachmentListPresentation({
       sizeLabelsByAttachmentId,
     })),
   };
+}
+
+export function buildGmailAttachmentListAdapterPresentation({
+  attachments = [],
+  selectionState = {},
+  workflowKind = "",
+  interpretationWorkflow = false,
+  focusedAttachmentId = "",
+  resolveState = null,
+  resolveCanEditStart = null,
+  resolveKindLabel = null,
+  resolveStartPage = null,
+  formatSizeLabel: customFormatSizeLabel = null,
+} = {}) {
+  const normalizedAttachments = normalizeAttachments(attachments);
+  const normalizedWorkflow = normalizedWorkflowKind({ workflowKind, interpretationWorkflow });
+  const attachmentStates = new Map();
+  const canEditStartByAttachmentId = new Map();
+  const kindLabelsByAttachmentId = new Map();
+  const startPagesByAttachmentId = new Map();
+  const sizeLabelsByAttachmentId = new Map();
+  const sizeFormatter = typeof customFormatSizeLabel === "function" ? customFormatSizeLabel : formatSizeLabel;
+
+  for (const attachment of normalizedAttachments) {
+    const id = attachmentId(attachment);
+    const state = resolveAdapterAttachmentState({ resolveState, selectionState, id });
+    const editable = resolveAdapterStartEditable({
+      resolveCanEditStart,
+      workflowKind: normalizedWorkflow,
+      attachment,
+    });
+    attachmentStates.set(id, state);
+    canEditStartByAttachmentId.set(id, editable);
+    kindLabelsByAttachmentId.set(id, resolveAdapterKindLabel({ resolveKindLabel, attachment }));
+    startPagesByAttachmentId.set(id, resolveAdapterStartPage({
+      resolveStartPage,
+      attachment,
+      state,
+      editable,
+    }));
+    sizeLabelsByAttachmentId.set(id, sizeFormatter(attachment?.size_bytes || 0));
+  }
+
+  return buildGmailAttachmentListPresentation({
+    attachments: normalizedAttachments,
+    interpretationWorkflow: normalizedWorkflow === "interpretation",
+    focusedAttachmentId,
+    attachmentStates,
+    canEditStartByAttachmentId,
+    kindLabelsByAttachmentId,
+    startPagesByAttachmentId,
+    sizeLabelsByAttachmentId,
+  });
 }
 
 export function buildGmailReviewDetailPresentation({
