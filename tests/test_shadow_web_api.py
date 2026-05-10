@@ -8562,6 +8562,135 @@ console.log(JSON.stringify({
     assert results["nullHint"] == ""
 
 
+def test_gmail_report_presentation_module_builds_report_diagnostics_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_report_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_report_presentation.js"' in gmail_js
+    assert "export function buildGmailBrowserFailureReportDiagnosticsPresentation" in presentation_js
+    assert "export function buildGmailFinalizationReportDiagnosticsPresentation" in presentation_js
+
+    diagnostics_start = presentation_js.index(
+        "export function buildGmailBrowserFailureReportDiagnosticsPresentation"
+    )
+    diagnostics_end = presentation_js.index(
+        "\nexport function buildGmailBrowserFailureHintPresentation",
+        diagnostics_start,
+    )
+    diagnostics_block = presentation_js[diagnostics_start:diagnostics_end]
+    assert "document." not in diagnostics_block
+    assert "innerHTML" not in diagnostics_block
+    assert "renderGmail" not in diagnostics_block
+    assert "setDiagnostics" not in diagnostics_block
+
+    failure_start = gmail_js.index("async function handleGmailFailureReport")
+    failure_end = gmail_js.index("\nasync function handleGmailFinalizationReport", failure_start)
+    failure_block = gmail_js[failure_start:failure_end]
+    assert "buildGmailBrowserFailureReportDiagnosticsPresentation({" in failure_block
+    assert "const diagnosticsPresentation =" in failure_block
+    assert 'setDiagnostics("gmail", payload, diagnosticsPresentation);' in failure_block
+    assert "hint:" not in failure_block
+    assert "normalized_payload?.report_path" not in failure_block
+
+    finalization_start = gmail_js.index("async function handleGmailFinalizationReport")
+    finalization_end = gmail_js.index("\nasync function refreshBatchFinalizePreflight", finalization_start)
+    finalization_block = gmail_js[finalization_start:finalization_end]
+    assert "buildGmailFinalizationReportDiagnosticsPresentation({" in finalization_block
+    assert "const diagnosticsPresentation =" in finalization_block
+    assert 'setDiagnostics("gmail-batch-finalize", payload, diagnosticsPresentation);' in finalization_block
+    assert "hint:" not in finalization_block
+    assert "normalized_payload?.report_path" not in finalization_block
+
+    script = """
+const presentation = await import(__GMAIL_REPORT_PRESENTATION_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const failureWithPath = presentation.buildGmailBrowserFailureReportDiagnosticsPresentation({
+  payload: {
+    status: "ok",
+    normalized_payload: {
+      report_path: `C:/reports/browser failure ${malicious}.zip`,
+    },
+  },
+});
+const failureFallback = presentation.buildGmailBrowserFailureReportDiagnosticsPresentation({
+  payload: {
+    status: "ok",
+    normalized_payload: {},
+  },
+});
+const failureNull = presentation.buildGmailBrowserFailureReportDiagnosticsPresentation();
+const finalizationWithPath = presentation.buildGmailFinalizationReportDiagnosticsPresentation({
+  payload: {
+    status: "ok",
+    normalized_payload: {
+      report_path: `C:/reports/finalization ${malicious}.zip`,
+    },
+  },
+});
+const finalizationFallback = presentation.buildGmailFinalizationReportDiagnosticsPresentation({
+  payload: {
+    status: "ok",
+    normalized_payload: {},
+  },
+});
+const finalizationNull = presentation.buildGmailFinalizationReportDiagnosticsPresentation();
+
+console.log(JSON.stringify({
+  failureExportType: typeof presentation.buildGmailBrowserFailureReportDiagnosticsPresentation,
+  finalizationExportType: typeof presentation.buildGmailFinalizationReportDiagnosticsPresentation,
+  failureWithPath,
+  failureFallback,
+  failureNull,
+  finalizationWithPath,
+  finalizationFallback,
+  finalizationNull,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_REPORT_PRESENTATION_MODULE_URL__": "gmail_report_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    malicious = "<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["failureExportType"] == "function"
+    assert results["finalizationExportType"] == "function"
+    assert results["failureWithPath"] == {
+        "hint": f"C:/reports/browser failure {malicious}.zip",
+        "open": True,
+    }
+    assert results["failureFallback"] == {
+        "hint": "Gmail browser failure report generated.",
+        "open": True,
+    }
+    assert results["failureNull"] == {
+        "hint": "Gmail browser failure report generated.",
+        "open": True,
+    }
+    assert results["finalizationWithPath"] == {
+        "hint": f"C:/reports/finalization {malicious}.zip",
+        "open": True,
+    }
+    assert results["finalizationFallback"] == {
+        "hint": "Gmail finalization report generated.",
+        "open": True,
+    }
+    assert results["finalizationNull"] == {
+        "hint": "Gmail finalization report generated.",
+        "open": True,
+    }
+
+
 def test_gmail_report_context_module_builds_diagnostic_payloads() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -30197,6 +30326,14 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         )
         assert "buildGmailFailureReportActionPresentation" in gmail_report_presentation_asset.text
         assert "buildGmailFinalizationReportActionPresentation" in gmail_report_presentation_asset.text
+        assert (
+            "buildGmailBrowserFailureReportDiagnosticsPresentation"
+            in gmail_report_presentation_asset.text
+        )
+        assert (
+            "buildGmailFinalizationReportDiagnosticsPresentation"
+            in gmail_report_presentation_asset.text
+        )
         assert "buildGmailBrowserFailureHintPresentation" in gmail_report_presentation_asset.text
         gmail_report_context_asset = client.get(
             f"/static-build/{asset_version}/gmail_report_context.js"

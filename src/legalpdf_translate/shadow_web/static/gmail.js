@@ -57,7 +57,9 @@ import { renderGmailBatchFinalizeSurfaceInto } from "./gmail_finalize_ui.js";
 import { renderGmailReportActionInto } from "./gmail_report_ui.js";
 import {
   buildGmailBrowserFailureHintPresentation,
+  buildGmailBrowserFailureReportDiagnosticsPresentation,
   buildGmailFailureReportActionPresentation,
+  buildGmailFinalizationReportDiagnosticsPresentation,
   buildGmailFinalizationReportActionPresentation,
 } from "./gmail_report_presentation.js";
 import {
@@ -1878,10 +1880,10 @@ async function handleGmailFailureReport() {
   });
   gmailState.lastFailureReportPayload = payload;
   setPanelStatus("gmail", "ok", "Gmail browser failure report generated for the current preview or prepare failure.");
-  setDiagnostics("gmail", payload, {
-    hint: payload.normalized_payload?.report_path || "Gmail browser failure report generated.",
-    open: true,
+  const diagnosticsPresentation = buildGmailBrowserFailureReportDiagnosticsPresentation({
+    payload,
   });
+  setDiagnostics("gmail", payload, diagnosticsPresentation);
   updateGmailFailureReportActionState();
 }
 
@@ -1899,10 +1901,10 @@ async function handleGmailFinalizationReport() {
   });
   gmailState.lastFinalizationReportPayload = payload;
   setPanelStatus("gmail-batch-finalize", "ok", "Gmail finalization report generated.");
-  setDiagnostics("gmail-batch-finalize", payload, {
-    hint: payload.normalized_payload?.report_path || "Gmail finalization report generated.",
-    open: true,
+  const diagnosticsPresentation = buildGmailFinalizationReportDiagnosticsPresentation({
+    payload,
   });
+  setDiagnostics("gmail-batch-finalize", payload, diagnosticsPresentation);
   updateGmailFinalizationReportActionState();
 }
 
