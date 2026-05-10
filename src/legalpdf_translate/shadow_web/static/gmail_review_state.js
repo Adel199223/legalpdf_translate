@@ -549,6 +549,44 @@ export function buildGmailAttachmentSelectionUpdate({
   return next;
 }
 
+export function buildGmailAttachmentStartPageUpdate({
+  attachment = null,
+  state = {},
+  value = 1,
+  workflowKind = "",
+} = {}) {
+  const normalizedState = normalizeGmailAttachmentSelectionState(state);
+  const editable = Boolean(attachment && deriveGmailAttachmentStartEditable({ workflowKind, attachment }));
+  return {
+    ...normalizedState,
+    startPage: clampGmailAttachmentStartPage({
+      editable,
+      rawValue: value,
+      pageCount: normalizedState.pageCount,
+    }),
+  };
+}
+
+export function buildGmailAttachmentPageCountUpdate({
+  attachment = null,
+  state = {},
+  pageCount = 0,
+  workflowKind = "",
+} = {}) {
+  const normalizedState = normalizeGmailAttachmentSelectionState(state);
+  const nextPageCount = nonnegativeNumber(pageCount);
+  const editable = Boolean(attachment && deriveGmailAttachmentStartEditable({ workflowKind, attachment }));
+  return {
+    ...normalizedState,
+    pageCount: nextPageCount,
+    startPage: clampGmailAttachmentStartPage({
+      editable,
+      rawValue: normalizedState.startPage,
+      pageCount: nextPageCount,
+    }),
+  };
+}
+
 function emptyGmailPreviewPanelContext() {
   return {
     attachment: null,

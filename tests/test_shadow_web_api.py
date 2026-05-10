@@ -10015,6 +10015,8 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
         "buildGmailPrepareSelectionsPayload",
         "applyGmailWorkflowSelectionDefaults",
         "buildGmailAttachmentSelectionUpdate",
+        "buildGmailAttachmentStartPageUpdate",
+        "buildGmailAttachmentPageCountUpdate",
         "buildGmailPreviewPanelContext",
         "deriveGmailActiveSessionAttachmentId",
         "deriveGmailFocusedAttachmentId",
@@ -10038,6 +10040,8 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
         "buildGmailPrepareSelectionsPayload",
         "applyGmailWorkflowSelectionDefaults",
         "buildGmailAttachmentSelectionUpdate",
+        "buildGmailAttachmentStartPageUpdate",
+        "buildGmailAttachmentPageCountUpdate",
         "buildGmailPreviewPanelContext",
         "deriveGmailFocusedAttachmentId",
     ]
@@ -10105,6 +10109,22 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
     assert "buildGmailAttachmentSelectionUpdate({" in update_block
     assert "for (const other of gmailAttachments())" not in update_block
     assert "setAttachmentState(attachmentId, next)" not in update_block
+
+    start_update_start = gmail_js.index("function updateAttachmentStartPage(")
+    start_update_end = gmail_js.index("\nfunction applyPreviewPageCount", start_update_start)
+    start_update_block = gmail_js[start_update_start:start_update_end]
+    assert "buildGmailAttachmentStartPageUpdate({" in start_update_block
+    assert "next.startPage =" not in start_update_block
+    assert "clampStartPage(" not in start_update_block
+
+    page_count_start = gmail_js.index("function applyPreviewPageCount(")
+    page_count_end = gmail_js.index("\nfunction renderMessageResult", page_count_start)
+    page_count_block = gmail_js[page_count_start:page_count_end]
+    assert "buildGmailAttachmentPageCountUpdate({" in page_count_block
+    assert "next.pageCount =" not in page_count_block
+    assert "next.startPage =" not in page_count_block
+    assert "Math.max(0, Number(pageCount" not in page_count_block
+    assert "clampStartPage(" not in page_count_block
 
 
 def test_gmail_session_ui_module_owns_session_buttons_renderer() -> None:
@@ -29068,6 +29088,8 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailPrepareSelectionsPayload" in gmail_review_state_asset.text
         assert "applyGmailWorkflowSelectionDefaults" in gmail_review_state_asset.text
         assert "buildGmailAttachmentSelectionUpdate" in gmail_review_state_asset.text
+        assert "buildGmailAttachmentStartPageUpdate" in gmail_review_state_asset.text
+        assert "buildGmailAttachmentPageCountUpdate" in gmail_review_state_asset.text
         assert "buildGmailPreviewPanelContext" in gmail_review_state_asset.text
         assert "deriveGmailFocusedAttachmentId" in gmail_review_state_asset.text
         gmail_report_ui_asset = client.get(f"/static-build/{asset_version}/gmail_report_ui.js")

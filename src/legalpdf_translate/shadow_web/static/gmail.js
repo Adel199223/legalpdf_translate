@@ -99,7 +99,9 @@ import { renderGmailWorkspaceStripInto } from "./gmail_workspace_ui.js";
 import {
   applyGmailWorkflowSelectionDefaults,
   applyPreviewStateStartPage,
+  buildGmailAttachmentPageCountUpdate,
   buildGmailAttachmentSelectionUpdate,
+  buildGmailAttachmentStartPageUpdate,
   buildGmailPrepareSelectionsPayload,
   buildGmailPreviewPanelContext,
   buildGmailSelectionStateMap,
@@ -1149,8 +1151,12 @@ function updateAttachmentStartPage(attachmentId, value) {
   if (!attachment) {
     return 1;
   }
-  const next = attachmentState(attachmentId);
-  next.startPage = clampStartPage(attachment, value, next.pageCount);
+  const next = buildGmailAttachmentStartPageUpdate({
+    attachment,
+    state: attachmentState(attachmentId),
+    value,
+    workflowKind: currentWorkflowKind(),
+  });
   setAttachmentState(attachmentId, next);
   return next.startPage;
 }
@@ -1160,9 +1166,12 @@ function applyPreviewPageCount(attachmentId, pageCount) {
   if (!attachment) {
     return;
   }
-  const next = attachmentState(attachmentId);
-  next.pageCount = Math.max(0, Number(pageCount || 0));
-  next.startPage = clampStartPage(attachment, next.startPage, next.pageCount);
+  const next = buildGmailAttachmentPageCountUpdate({
+    attachment,
+    state: attachmentState(attachmentId),
+    pageCount,
+    workflowKind: currentWorkflowKind(),
+  });
   setAttachmentState(attachmentId, next);
 }
 
