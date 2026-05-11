@@ -41,13 +41,9 @@ import {
   deriveGmailSourceUrl,
 } from "./gmail_action_presentation.js";
 import {
-  renderGmailAttachmentListInto,
-  renderGmailReviewDetailInto,
-} from "./gmail_attachment_ui.js";
-import {
-  buildGmailAttachmentListAdapterPresentation,
-  buildGmailReviewDetailAdapterPresentation,
-} from "./gmail_attachment_presentation.js";
+  renderAttachmentListInto,
+  renderReviewDetailInto,
+} from "./gmail_attachment_adapter.js";
 import {
   buildGmailBatchFinalizeDiagnosticsPresentation,
   buildGmailBatchFinalizePreflightDiagnosticsPresentation,
@@ -142,7 +138,6 @@ import {
   buildGmailReviewLoadResetState,
   buildGmailSelectionStateMap,
   clearConsumedReviewState,
-  clampGmailAttachmentStartPage,
   deriveGmailOverlayDismissalAction,
   deriveGmailAttachmentStartEditable,
   deriveGmailAttachmentKindLabel,
@@ -164,6 +159,7 @@ import {
   shouldIgnoreReviewRowFocusTarget,
   writeConsumedReviewState,
 } from "./gmail_review_state.js";
+export { renderAttachmentListInto, renderReviewDetailInto } from "./gmail_attachment_adapter.js";
 const AUTO_REFRESH_DELAY_MS = 220;
 const AUTO_REFRESH_THROTTLE_MS = 1400;
 const PASSIVE_REFRESH_COOLDOWN_MS = 6000;
@@ -779,18 +775,6 @@ function canEditStartPage(attachment) {
   });
 }
 
-function clampStartPage(attachment, rawValue, pageCountOverride = null) {
-  return clampGmailAttachmentStartPage({
-    editable: Boolean(attachment && canEditStartPage(attachment)),
-    rawValue,
-    pageCount: pageCountOverride ?? (gmailState.selectionState.get(attachment?.attachment_id)?.pageCount || 0),
-  });
-}
-
-function hasOwnOption(options, key) {
-  return Object.prototype.hasOwnProperty.call(options || {}, key);
-}
-
 function attachmentState(attachmentId) {
   return normalizeGmailAttachmentSelectionState(gmailState.selectionState.get(attachmentId));
 }
@@ -1205,29 +1189,6 @@ function renderReviewSummary(loadResult) {
   );
 }
 
-export function renderAttachmentListInto(
-  container,
-  attachments,
-  options = {},
-) {
-  const normalizedAttachments = Array.isArray(attachments) ? attachments : [];
-  const presentation = buildGmailAttachmentListAdapterPresentation({
-    attachments: normalizedAttachments,
-    selectionState: options.selectionState || {},
-    workflowKind: options.workflowKind || "",
-    interpretationWorkflow: options.interpretationWorkflow === true,
-    focusedAttachmentId: options.focusedAttachmentId || "",
-    resolveState: options.resolveState || null,
-    resolveCanEditStart: typeof options.resolveCanEditStart === "function"
-      ? options.resolveCanEditStart
-      : (() => false),
-    resolveKindLabel: options.resolveKindLabel || null,
-    resolveStartPage: options.resolveStartPage || null,
-    formatSizeLabel: options.formatSizeLabel || null,
-  });
-  renderGmailAttachmentListInto(container, presentation, { startHeading: options.startHeading || null });
-}
-
 function renderAttachmentList(loadResult) {
   const container = qs("gmail-attachment-list");
   const startHeading = qs("gmail-review-start-heading");
@@ -1245,27 +1206,6 @@ function renderAttachmentList(loadResult) {
     selectionState: gmailState.selectionState,
     resolveCanEditStart: (attachment) => canEditStartPage(attachment),
   });
-}
-
-export function renderReviewDetailInto(
-  container,
-  attachment,
-  options = {},
-) {
-  const state = options.state || {};
-  const canEditStart = options.canEditStart === true;
-  const previewLoaded = options.previewLoaded === true;
-  const presentation = buildGmailReviewDetailAdapterPresentation({
-    attachment,
-    state,
-    canEditStart,
-    previewLoaded,
-    runtimeGuard: options.runtimeGuard || { blocked: false },
-    kindLabel: options.kindLabel || "",
-    resolveStartPage: () => clampStartPage(attachment, state.startPage, state.pageCount),
-    ...(hasOwnOption(options, "startPage") ? { startPage: options.startPage } : {}),
-  });
-  renderGmailReviewDetailInto(container, presentation);
 }
 
 function renderReviewDetail() {

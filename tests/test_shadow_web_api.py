@@ -5252,7 +5252,7 @@ def test_gmail_result_presentation_module_builds_review_summary_cards() -> None:
     assert 'from "./gmail_result_presentation.js"' in gmail_js
     assert "buildGmailReviewSummaryPresentation" in gmail_js
     review_summary_start = gmail_js.index("function renderReviewSummary(loadResult)")
-    review_summary_end = gmail_js.index("\nexport function renderAttachmentListInto", review_summary_start)
+    review_summary_end = gmail_js.index("\nfunction renderAttachmentList", review_summary_start)
     review_summary_block = gmail_js[review_summary_start:review_summary_end]
     assert "buildGmailReviewSummaryPresentation({" in review_summary_block
     assert "renderGmailReviewSummaryInto(" in review_summary_block
@@ -5394,7 +5394,7 @@ def test_gmail_result_ui_module_owns_review_summary_renderer() -> None:
     assert 'from "./gmail_result_ui.js"' in gmail_js
     assert "renderGmailReviewSummaryInto" in gmail_js
     review_summary_start = gmail_js.index("function renderReviewSummary(loadResult)")
-    review_summary_end = gmail_js.index("\nexport function renderAttachmentListInto", review_summary_start)
+    review_summary_end = gmail_js.index("\nfunction renderAttachmentList", review_summary_start)
     review_summary_block = gmail_js[review_summary_start:review_summary_end]
     assert "renderGmailReviewSummaryInto" in review_summary_block
     assert "summary.innerHTML" not in review_summary_block
@@ -5661,7 +5661,7 @@ def test_gmail_control_ui_module_centralizes_review_chrome_renderer() -> None:
     assert "renderGmailReviewChromeInto" in gmail_js
     assert "renderGmailReviewChromeInto," in gmail_js
     review_summary_start = gmail_js.index("function renderReviewSummary(loadResult)")
-    review_summary_end = gmail_js.index("\nexport function renderAttachmentListInto", review_summary_start)
+    review_summary_end = gmail_js.index("\nfunction renderAttachmentList", review_summary_start)
     review_summary_block = gmail_js[review_summary_start:review_summary_end]
     assert "buildGmailReviewChromePresentation({" in review_summary_block
     assert "renderGmailReviewChromeInto({" in review_summary_block
@@ -5808,7 +5808,7 @@ def test_gmail_control_presentation_module_builds_review_chrome_state() -> None:
     assert "innerHTML" not in presentation_block
     assert "renderGmail" not in presentation_block
     review_summary_start = gmail_js.index("function renderReviewSummary(loadResult)")
-    review_summary_end = gmail_js.index("\nexport function renderAttachmentListInto", review_summary_start)
+    review_summary_end = gmail_js.index("\nfunction renderAttachmentList", review_summary_start)
     review_summary_block = gmail_js[review_summary_start:review_summary_end]
     assert "buildGmailReviewChromePresentation({" in review_summary_block
     assert "Boolean(loadResult?.ok && loadResult?.message)" not in review_summary_block
@@ -7849,6 +7849,417 @@ console.log(JSON.stringify({
     assert results["staticDetail"]["previewButton"]["disabled"] is False
 
 
+def test_gmail_attachment_adapter_module_owns_review_attachment_adapters() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_attachment_adapter_path = static_dir / "gmail_attachment_adapter.js"
+
+    assert gmail_attachment_adapter_path.exists()
+    gmail_attachment_adapter_js = gmail_attachment_adapter_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_attachment_adapter.js"' in gmail_js
+    assert (
+        'export { renderAttachmentListInto, renderReviewDetailInto } from "./gmail_attachment_adapter.js";'
+        in gmail_js
+    )
+    assert "export function renderAttachmentListInto" not in gmail_js
+    assert "export function renderReviewDetailInto" not in gmail_js
+    assert "buildGmailAttachmentListAdapterPresentation" not in gmail_js
+    assert "buildGmailReviewDetailAdapterPresentation" not in gmail_js
+
+    attachment_start = gmail_js.index("function renderAttachmentList(loadResult)")
+    attachment_end = gmail_js.index("\nfunction renderReviewDetail", attachment_start)
+    attachment_block = gmail_js[attachment_start:attachment_end]
+    assert "renderAttachmentListInto(container, attachments, {" in attachment_block
+    assert "renderGmailAttachmentListInto" not in attachment_block
+    assert "buildGmailAttachmentListAdapterPresentation" not in attachment_block
+    assert "innerHTML" not in attachment_block
+
+    detail_start = gmail_js.index("function renderReviewDetail()")
+    detail_end = gmail_js.index("\nfunction renderPreviewPanel", detail_start)
+    detail_block = gmail_js[detail_start:detail_end]
+    assert "renderReviewDetailInto(container, attachment, {" in detail_block
+    assert "renderGmailReviewDetailInto" not in detail_block
+    assert "buildGmailReviewDetailAdapterPresentation" not in detail_block
+    assert "innerHTML" not in detail_block
+
+    assert 'from "./gmail_attachment_presentation.js"' in gmail_attachment_adapter_js
+    assert 'from "./gmail_attachment_ui.js"' in gmail_attachment_adapter_js
+    assert 'from "./gmail_review_state.js"' in gmail_attachment_adapter_js
+    assert "export function renderAttachmentListInto" in gmail_attachment_adapter_js
+    assert "export function renderReviewDetailInto" in gmail_attachment_adapter_js
+    assert "buildGmailAttachmentListAdapterPresentation({" in gmail_attachment_adapter_js
+    assert "buildGmailReviewDetailAdapterPresentation({" in gmail_attachment_adapter_js
+    assert "renderGmailAttachmentListInto" in gmail_attachment_adapter_js
+    assert "renderGmailReviewDetailInto" in gmail_attachment_adapter_js
+    assert "document." not in gmail_attachment_adapter_js
+    assert "innerHTML" not in gmail_attachment_adapter_js
+    assert "fetchJson" not in gmail_attachment_adapter_js
+    assert '"/api/' not in gmail_attachment_adapter_js
+
+    script = """
+const adapter = await import(__GMAIL_ATTACHMENT_ADAPTER_MODULE_URL__);
+
+function makeElement(tagName = "div") {
+  const element = {
+    tagName: String(tagName || "div").toUpperCase(),
+    children: [],
+    className: "",
+    dataset: {},
+    attributes: {},
+    innerHTMLAssignments: [],
+    checked: false,
+    colSpan: 0,
+    disabled: false,
+    htmlFor: "",
+    id: "",
+    max: "",
+    min: "",
+    name: "",
+    step: "",
+    tabIndex: null,
+    title: "",
+    type: "",
+    value: "",
+    appendChild(child) {
+      if (child) {
+        child.parentNode = this;
+        this.children.push(child);
+      }
+      return child;
+    },
+    replaceChildren(...children) {
+      this.children = [];
+      this._textContent = "";
+      this._innerHTML = "";
+      children.forEach((child) => this.appendChild(child));
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value ?? "");
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null;
+    },
+  };
+  Object.defineProperty(element, "textContent", {
+    get() {
+      const ownText = this._textContent || "";
+      return `${ownText}${this.children.map((child) => child.textContent || "").join("")}`;
+    },
+    set(value) {
+      this._textContent = String(value ?? "");
+      this.children = [];
+      this._innerHTML = "";
+    },
+  });
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return this._innerHTML || "";
+    },
+    set(value) {
+      const next = String(value ?? "");
+      this._innerHTML = next;
+      this._textContent = "";
+      this.children = [];
+      this.innerHTMLAssignments.push(next);
+      for (const match of next.matchAll(/<\\s*([a-zA-Z0-9-]+)/g)) {
+        this.appendChild(makeElement(match[1]));
+      }
+    },
+  });
+  return element;
+}
+
+globalThis.document = {
+  createElement(tagName) {
+    return makeElement(tagName);
+  },
+};
+
+function walk(node, visitor) {
+  if (!node) {
+    return;
+  }
+  visitor(node);
+  for (const child of node.children || []) {
+    walk(child, visitor);
+  }
+}
+
+function findAll(node, predicate) {
+  const matches = [];
+  walk(node, (current) => {
+    if (predicate(current)) {
+      matches.push(current);
+    }
+  });
+  return matches;
+}
+
+function countTag(node, tagName) {
+  const target = String(tagName || "").toUpperCase();
+  return findAll(node, (current) => current.tagName === target).length;
+}
+
+function countInnerHTMLWrites(node) {
+  return findAll(node, () => true)
+    .reduce((total, current) => total + (current.innerHTMLAssignments || []).length, 0);
+}
+
+function summarizeTable(node) {
+  const rows = node.children || [];
+  const inputs = findAll(node, (current) => current.tagName === "INPUT");
+  return {
+    text: node.textContent,
+    rowCount: rows.length,
+    rowClasses: rows.map((row) => row.className),
+    rowDatasets: rows.map((row) => ({ ...row.dataset })),
+    inputTypes: inputs.map((input) => input.type),
+    inputNames: inputs.map((input) => input.name),
+    inputValues: inputs.map((input) => input.value),
+    inputChecked: inputs.map((input) => input.checked),
+    inputDatasets: inputs.map((input) => ({ ...input.dataset })),
+    emptyColSpan: rows[0]?.children?.[0]?.colSpan || 0,
+    imgCount: countTag(node, "img"),
+    scriptCount: countTag(node, "script"),
+    innerHTMLWrites: countInnerHTMLWrites(node),
+  };
+}
+
+function summarizeDetail(node) {
+  const inputs = findAll(node, (current) => current.tagName === "INPUT");
+  const buttons = findAll(node, (current) => current.tagName === "BUTTON");
+  return {
+    className: node.className,
+    text: node.textContent,
+    inputs: inputs.map((input) => ({
+      id: input.id,
+      type: input.type,
+      min: input.min,
+      step: input.step,
+      value: input.value,
+      dataset: { ...input.dataset },
+    })),
+    buttons: buttons.map((button) => ({
+      id: button.id,
+      type: button.type,
+      className: button.className,
+      text: button.textContent,
+      disabled: button.disabled,
+      dataset: { ...button.dataset },
+    })),
+    imgCount: countTag(node, "img"),
+    scriptCount: countTag(node, "script"),
+    innerHTMLWrites: countInnerHTMLWrites(node),
+  };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const pdfId = `pdf-${malicious}`;
+const imageId = `image-${malicious}`;
+
+const emptyTable = makeElement("tbody");
+const emptyHeading = makeElement("th");
+const emptyListResult = adapter.renderAttachmentListInto(emptyTable, null, {
+  startHeading: emptyHeading,
+});
+
+const table = makeElement("tbody");
+const startHeading = makeElement("th");
+const listResult = adapter.renderAttachmentListInto(
+  table,
+  [
+    {
+      attachment_id: pdfId,
+      filename: `PDF ${malicious}`,
+      mime_type: "application/pdf",
+      size_bytes: 1536,
+    },
+    {
+      attachment_id: imageId,
+      filename: `Image ${malicious}`,
+      mime_type: "image/png",
+      size_bytes: 256,
+    },
+  ],
+  {
+    startHeading,
+    workflowKind: "translation",
+    focusedAttachmentId: pdfId,
+    selectionState: new Map([
+      [pdfId, { selected: true, startPage: 9, pageCount: 4 }],
+      [imageId, { selected: false, startPage: 7, pageCount: 3 }],
+    ]),
+    resolveCanEditStart: (attachment) => attachment?.mime_type === "application/pdf",
+  },
+);
+
+const interpretationTable = makeElement("tbody");
+adapter.renderAttachmentListInto(
+  interpretationTable,
+  [{ attachment_id: "notice-pdf", filename: "Notice", mime_type: "application/pdf", size_bytes: 2048 }],
+  {
+    workflowKind: "interpretation",
+    focusedAttachmentId: "notice-pdf",
+    selectionState: {
+      "notice-pdf": { selected: true, startPage: 8, pageCount: 12 },
+    },
+  },
+);
+
+const emptyDetail = makeElement("article");
+const emptyDetailResult = adapter.renderReviewDetailInto(emptyDetail, null);
+
+const detail = makeElement("article");
+const detailResult = adapter.renderReviewDetailInto(
+  detail,
+  {
+    attachment_id: pdfId,
+    filename: `PDF ${malicious}`,
+    mime_type: "application/pdf",
+  },
+  {
+    state: { selected: true, startPage: 9, pageCount: 4 },
+    canEditStart: true,
+    previewLoaded: true,
+    runtimeGuard: { blocked: true },
+    kindLabel: `PDF ${malicious}`,
+  },
+);
+
+const explicitStartDetail = makeElement("article");
+adapter.renderReviewDetailInto(
+  explicitStartDetail,
+  {
+    attachment_id: "explicit-pdf",
+    filename: "Explicit PDF",
+    mime_type: "application/pdf",
+  },
+  {
+    state: { selected: true, startPage: "999", pageCount: 12 },
+    canEditStart: true,
+    previewLoaded: false,
+    kindLabel: "PDF",
+    startPage: "6",
+  },
+);
+
+const nullListResult = adapter.renderAttachmentListInto(null, []);
+const nullDetailResult = adapter.renderReviewDetailInto(null, { attachment_id: "ignored" });
+
+console.log(JSON.stringify({
+  listExportType: typeof adapter.renderAttachmentListInto,
+  detailExportType: typeof adapter.renderReviewDetailInto,
+  emptyHeading: emptyHeading.textContent,
+  emptyTable: summarizeTable(emptyTable),
+  emptyListReturnType: typeof emptyListResult,
+  populatedHeading: startHeading.textContent,
+  populatedTable: summarizeTable(table),
+  listReturnType: typeof listResult,
+  interpretationTable: summarizeTable(interpretationTable),
+  emptyDetail: summarizeDetail(emptyDetail),
+  emptyDetailReturnType: typeof emptyDetailResult,
+  populatedDetail: summarizeDetail(detail),
+  detailReturnType: typeof detailResult,
+  explicitStartDetail: summarizeDetail(explicitStartDetail),
+  nullListReturnType: typeof nullListResult,
+  nullDetailReturnType: typeof nullDetailResult,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_ATTACHMENT_ADAPTER_MODULE_URL__": "gmail_attachment_adapter.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["listExportType"] == "function"
+    assert results["detailExportType"] == "function"
+    assert results["nullListReturnType"] == "undefined"
+    assert results["nullDetailReturnType"] == "undefined"
+
+    assert results["emptyHeading"] == "Start page"
+    assert results["emptyTable"]["text"] == "No supported PDF or image attachments were found in this message."
+    assert results["emptyTable"]["rowCount"] == 1
+    assert results["emptyTable"]["emptyColSpan"] == 5
+    assert results["emptyTable"]["imgCount"] == 0
+    assert results["emptyTable"]["scriptCount"] == 0
+    assert results["emptyTable"]["innerHTMLWrites"] == 0
+    assert results["emptyListReturnType"] == "undefined"
+
+    assert results["populatedHeading"] == "Start page"
+    assert results["populatedTable"]["rowCount"] == 2
+    assert results["populatedTable"]["rowClasses"][0] == "gmail-review-row is-selected is-focused"
+    assert results["populatedTable"]["rowDatasets"][0]["attachmentRow"] == (
+        "pdf-<img src=x onerror=alert(1)><script>bad()</script>"
+    )
+    assert results["populatedTable"]["inputTypes"] == ["checkbox", "number", "checkbox"]
+    assert results["populatedTable"]["inputNames"] == ["gmail-review-selection", "", "gmail-review-selection"]
+    assert results["populatedTable"]["inputValues"] == ["", "4", ""]
+    assert results["populatedTable"]["inputChecked"] == [True, False, False]
+    assert results["populatedTable"]["inputDatasets"][0]["attachmentCheckbox"] == (
+        "pdf-<img src=x onerror=alert(1)><script>bad()</script>"
+    )
+    assert results["populatedTable"]["inputDatasets"][1]["attachmentStartPage"] == (
+        "pdf-<img src=x onerror=alert(1)><script>bad()</script>"
+    )
+    assert "PDF <img src=x onerror=alert(1)><script>bad()</script>" in results["populatedTable"]["text"]
+    assert "PDF" in results["populatedTable"]["text"]
+    assert "1.5 KB" in results["populatedTable"]["text"]
+    assert results["populatedTable"]["imgCount"] == 0
+    assert results["populatedTable"]["scriptCount"] == 0
+    assert results["populatedTable"]["innerHTMLWrites"] == 0
+    assert results["listReturnType"] == "undefined"
+
+    assert results["interpretationTable"]["inputTypes"] == ["radio"]
+    assert results["interpretationTable"]["text"].endswith("PDF2.0 KB1")
+
+    assert results["emptyDetail"]["className"] == "result-card empty-state"
+    assert results["emptyDetail"]["text"] == (
+        "Choose an attachment row to see the document details, optional preview, and start page."
+    )
+    assert results["emptyDetail"]["imgCount"] == 0
+    assert results["emptyDetail"]["scriptCount"] == 0
+    assert results["emptyDetail"]["innerHTMLWrites"] == 0
+    assert results["emptyDetailReturnType"] == "undefined"
+
+    assert results["populatedDetail"]["className"] == "result-card"
+    assert "PDF <img src=x onerror=alert(1)><script>bad()</script>" in results["populatedDetail"]["text"]
+    assert "Selected" in results["populatedDetail"]["text"]
+    assert "4 pages" in results["populatedDetail"]["text"]
+    assert "Preview ready" in results["populatedDetail"]["text"]
+    assert results["populatedDetail"]["inputs"] == [
+        {
+            "id": "gmail-review-detail-start",
+            "type": "number",
+            "min": "1",
+            "step": "1",
+            "value": "4",
+            "dataset": {"detailStartPage": "pdf-<img src=x onerror=alert(1)><script>bad()</script>"},
+        }
+    ]
+    assert results["populatedDetail"]["buttons"] == [
+        {
+            "id": "gmail-preview-selected",
+            "type": "button",
+            "className": "ghost-button",
+            "text": "Preview",
+            "disabled": True,
+            "dataset": {"previewSelected": "pdf-<img src=x onerror=alert(1)><script>bad()</script>"},
+        }
+    ]
+    assert results["populatedDetail"]["imgCount"] == 0
+    assert results["populatedDetail"]["scriptCount"] == 0
+    assert results["populatedDetail"]["innerHTMLWrites"] == 0
+    assert results["detailReturnType"] == "undefined"
+    assert results["explicitStartDetail"]["inputs"][0]["value"] == "6"
+
+
 def test_gmail_attachment_ui_module_owns_review_attachment_renderers() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -7867,17 +8278,19 @@ def test_gmail_attachment_ui_module_owns_review_attachment_renderers() -> None:
     gmail_attachment_ui_js = gmail_attachment_ui_path.read_text(encoding="utf-8")
     gmail_attachment_presentation_js = gmail_attachment_presentation_path.read_text(encoding="utf-8")
 
-    assert "renderGmailAttachmentListInto" in gmail_js
-    assert "renderGmailReviewDetailInto" in gmail_js
-    assert 'from "./gmail_attachment_ui.js"' in gmail_js
-    assert 'from "./gmail_attachment_presentation.js"' in gmail_js
-    assert "buildGmailAttachmentListAdapterPresentation" in gmail_js
-    assert "buildGmailReviewDetailAdapterPresentation" in gmail_js
-    attachment_start = gmail_js.index("export function renderAttachmentListInto")
-    attachment_end = gmail_js.index("\nfunction renderAttachmentList", attachment_start)
+    assert "renderAttachmentListInto" in gmail_js
+    assert "renderReviewDetailInto" in gmail_js
+    assert 'from "./gmail_attachment_adapter.js"' in gmail_js
+    assert 'from "./gmail_attachment_ui.js"' not in gmail_js
+    assert 'from "./gmail_attachment_presentation.js"' not in gmail_js
+    assert "buildGmailAttachmentListAdapterPresentation" not in gmail_js
+    assert "buildGmailReviewDetailAdapterPresentation" not in gmail_js
+    attachment_start = gmail_js.index("function renderAttachmentList(loadResult)")
+    attachment_end = gmail_js.index("\nfunction renderReviewDetail", attachment_start)
     attachment_block = gmail_js[attachment_start:attachment_end]
-    assert "renderGmailAttachmentListInto" in attachment_block
-    assert "buildGmailAttachmentListAdapterPresentation({" in attachment_block
+    assert "renderAttachmentListInto(container, attachments, {" in attachment_block
+    assert "renderGmailAttachmentListInto" not in attachment_block
+    assert "buildGmailAttachmentListAdapterPresentation({" not in attachment_block
     assert "buildGmailAttachmentListPresentation({" not in attachment_block
     assert "new Map(" not in attachment_block
     assert "for (const attachment of normalizedAttachments)" not in attachment_block
@@ -7890,11 +8303,12 @@ def test_gmail_attachment_ui_module_owns_review_attachment_renderers() -> None:
     assert "createTextElement" not in attachment_block
     assert "clearNode" not in attachment_block
     assert "innerHTML" not in attachment_block
-    detail_start = gmail_js.index("export function renderReviewDetailInto")
-    detail_end = gmail_js.index("\nfunction renderReviewDetail", detail_start)
+    detail_start = gmail_js.index("function renderReviewDetail()")
+    detail_end = gmail_js.index("\nfunction renderPreviewPanel", detail_start)
     detail_block = gmail_js[detail_start:detail_end]
-    assert "renderGmailReviewDetailInto" in detail_block
-    assert "buildGmailReviewDetailAdapterPresentation({" in detail_block
+    assert "renderReviewDetailInto(container, attachment, {" in detail_block
+    assert "renderGmailReviewDetailInto" not in detail_block
+    assert "buildGmailReviewDetailAdapterPresentation({" not in detail_block
     assert "buildGmailReviewDetailPresentation({" not in detail_block
     assert 'Object.prototype.hasOwnProperty.call(options, "startPage")' not in detail_block
     assert "canEditStart: options.canEditStart === true" not in detail_block
@@ -11936,6 +12350,7 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
         / "static"
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    gmail_attachment_adapter_js = (static_dir / "gmail_attachment_adapter.js").read_text(encoding="utf-8")
     review_state_js = (static_dir / "gmail_review_state.js").read_text(encoding="utf-8")
 
     expected_exports = [
@@ -11965,7 +12380,6 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
     ).group("body")
     expected_imports = [
         "deriveGmailAttachmentStartEditable",
-        "clampGmailAttachmentStartPage",
         "normalizeGmailAttachmentSelectionState",
         "buildGmailSelectionStateMap",
         "buildGmailPrepareSelectionsPayload",
@@ -11979,19 +12393,20 @@ def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
     for export_name in expected_imports:
         assert export_name in review_import
 
+    assert "clampGmailAttachmentStartPage" not in review_import
+    assert "clampGmailAttachmentStartPage" in gmail_attachment_adapter_js
+
     assert "function activeSessionAttachmentId(" not in gmail_js
 
     can_edit_start = gmail_js.index("function canEditStartPage(")
-    can_edit_end = gmail_js.index("\nfunction clampStartPage", can_edit_start)
+    can_edit_end = gmail_js.index("\nfunction attachmentState", can_edit_start)
     can_edit_block = gmail_js[can_edit_start:can_edit_end]
     assert "deriveGmailAttachmentStartEditable({" in can_edit_block
     assert "isPdfAttachment(attachment)" not in can_edit_block
 
-    clamp_start = gmail_js.index("function clampStartPage(")
-    clamp_end = gmail_js.index("\nfunction attachmentState", clamp_start)
-    clamp_block = gmail_js[clamp_start:clamp_end]
-    assert "clampGmailAttachmentStartPage({" in clamp_block
-    assert "Number.parseInt" not in clamp_block
+    assert "function clampStartPage(" not in gmail_js
+    assert "clampGmailAttachmentStartPage({" in gmail_attachment_adapter_js
+    assert "Number.parseInt" not in gmail_attachment_adapter_js
 
     attachment_state_start = gmail_js.index("function attachmentState(")
     attachment_state_end = gmail_js.index("\nfunction browserPdfAttachmentState", attachment_state_start)
@@ -31334,6 +31749,15 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailAttachmentListAdapterPresentation" in gmail_attachment_presentation_asset.text
         assert "buildGmailReviewDetailPresentation" in gmail_attachment_presentation_asset.text
         assert "buildGmailReviewDetailAdapterPresentation" in gmail_attachment_presentation_asset.text
+        gmail_attachment_adapter_asset = client.get(
+            f"/static-build/{asset_version}/gmail_attachment_adapter.js"
+        )
+        assert gmail_attachment_adapter_asset.status_code == 200
+        assert gmail_attachment_adapter_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "renderAttachmentListInto" in gmail_attachment_adapter_asset.text
+        assert "renderReviewDetailInto" in gmail_attachment_adapter_asset.text
         gmail_workspace_ui_asset = client.get(f"/static-build/{asset_version}/gmail_workspace_ui.js")
         assert gmail_workspace_ui_asset.status_code == 200
         assert gmail_workspace_ui_asset.headers["content-type"].startswith("application/javascript")
