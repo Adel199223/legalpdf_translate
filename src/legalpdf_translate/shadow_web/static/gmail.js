@@ -113,8 +113,12 @@ import {
   buildGmailSimulatorDefaultsPresentation,
 } from "./gmail_context_presentation.js";
 import {
+  buildGmailBatchFinalizeDrawerChromePresentation,
+  buildGmailPreviewDrawerChromePresentation,
+  buildGmailReviewDrawerChromePresentation,
   buildGmailReviewChromePresentation,
   buildGmailReviewLoadOutcomePresentation,
+  buildGmailSessionDrawerChromePresentation,
 } from "./gmail_control_presentation.js";
 import {
   renderGmailContextDefaultsInto,
@@ -873,16 +877,19 @@ function setReviewDrawerOpen(open) {
   if (!backdrop) {
     return;
   }
-  const nextOpen = Boolean(open) && Boolean(gmailState.loadResult?.ok && gmailState.loadResult?.message);
-  gmailState.reviewDrawerOpen = nextOpen;
-  if (nextOpen) {
+  const drawerPresentation = buildGmailReviewDrawerChromePresentation({
+    open,
+    loadResult: gmailState.loadResult,
+  });
+  gmailState.reviewDrawerOpen = drawerPresentation.open;
+  if (drawerPresentation.open) {
     gmailState.reviewDrawerMinimized = false;
   }
   renderGmailDrawerChromeInto(
     { backdrop, body: document.body },
-    { open: nextOpen, bodyDatasetKey: "gmailReviewDrawer" },
+    drawerPresentation,
   );
-  if (nextOpen) {
+  if (drawerPresentation.open) {
     rememberCurrentReviewEvent();
   }
   renderGmailRestoreBar();
@@ -907,15 +914,18 @@ function setPreviewDrawerOpen(open) {
   if (!backdrop) {
     return;
   }
-  const nextOpen = Boolean(open) && isPreviewStateOpen(gmailState.previewState);
-  gmailState.previewDrawerOpen = nextOpen;
-  if (nextOpen) {
+  const drawerPresentation = buildGmailPreviewDrawerChromePresentation({
+    open,
+    previewState: gmailState.previewState,
+  });
+  gmailState.previewDrawerOpen = drawerPresentation.open;
+  if (drawerPresentation.open) {
     gmailState.previewDrawerMinimized = false;
     gmailState.previewState = restorePreviewState(gmailState.previewState);
   }
   renderGmailDrawerChromeInto(
     { backdrop, body: document.body },
-    { open: nextOpen, bodyDatasetKey: "gmailPreviewDrawer" },
+    drawerPresentation,
   );
   renderGmailRestoreBar();
 }
@@ -945,10 +955,14 @@ function setSessionDrawerOpen(open) {
   if (!backdrop) {
     return;
   }
-  gmailState.sessionDrawerOpen = Boolean(open) && Boolean(gmailState.activeSession);
+  const drawerPresentation = buildGmailSessionDrawerChromePresentation({
+    open,
+    activeSession: gmailState.activeSession,
+  });
+  gmailState.sessionDrawerOpen = drawerPresentation.open;
   renderGmailDrawerChromeInto(
     { backdrop, body: document.body },
-    { open: gmailState.sessionDrawerOpen, bodyDatasetKey: "gmailSessionDrawer" },
+    drawerPresentation,
   );
 }
 
@@ -973,14 +987,16 @@ function setBatchFinalizeDrawerOpen(open, { source = "active" } = {}) {
   } else {
     gmailState.batchFinalizeDrawerSource = "active";
   }
-  const activeOpen = Boolean(open) && Boolean(gmailState.activeSession?.kind === "translation" && gmailState.activeSession?.completed);
-  const restoredOpen = Boolean(open)
-    && gmailState.batchFinalizeDrawerSource === "restored"
-    && Boolean(gmailState.restoredCompletedSession?.kind === "translation" && gmailState.restoredCompletedSession?.completed);
-  gmailState.batchFinalizeDrawerOpen = activeOpen || restoredOpen;
+  const drawerPresentation = buildGmailBatchFinalizeDrawerChromePresentation({
+    open,
+    source: gmailState.batchFinalizeDrawerSource,
+    activeSession: gmailState.activeSession,
+    restoredCompletedSession: gmailState.restoredCompletedSession,
+  });
+  gmailState.batchFinalizeDrawerOpen = drawerPresentation.open;
   renderGmailDrawerChromeInto(
     { backdrop, body: document.body },
-    { open: gmailState.batchFinalizeDrawerOpen, bodyDatasetKey: "gmailBatchFinalizeDrawer" },
+    drawerPresentation,
   );
 }
 

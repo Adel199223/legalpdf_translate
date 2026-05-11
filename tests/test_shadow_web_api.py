@@ -3706,6 +3706,227 @@ console.log(JSON.stringify({
     assert "gmailBatchFinalizeDrawer" not in results["bodyDataset"]
 
 
+def test_gmail_control_presentation_module_builds_drawer_chrome_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "gmail_control_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_control_presentation.js"' in gmail_js
+    for export_name in [
+        "buildGmailReviewDrawerChromePresentation",
+        "buildGmailPreviewDrawerChromePresentation",
+        "buildGmailSessionDrawerChromePresentation",
+        "buildGmailBatchFinalizeDrawerChromePresentation",
+    ]:
+        assert f"export function {export_name}" in presentation_js
+        assert export_name in gmail_js
+
+    presentation_start = presentation_js.index("export function buildGmailReviewDrawerChromePresentation")
+    presentation_block = presentation_js[presentation_start:]
+    for forbidden in ["document.", "innerHTML", "renderGmail", "setDiagnostics("]:
+        assert forbidden not in presentation_block
+
+    drawer_blocks = {
+        "review": gmail_js[
+            gmail_js.index("function setReviewDrawerOpen"):
+            gmail_js.index("\nfunction openReviewDrawer")
+        ],
+        "preview": gmail_js[
+            gmail_js.index("function setPreviewDrawerOpen"):
+            gmail_js.index("\nfunction openPreviewDrawer")
+        ],
+        "session": gmail_js[
+            gmail_js.index("function setSessionDrawerOpen"):
+            gmail_js.index("\nfunction openSessionDrawer")
+        ],
+        "batch": gmail_js[
+            gmail_js.index("function setBatchFinalizeDrawerOpen"):
+            gmail_js.index("\nfunction openBatchFinalizeDrawer")
+        ],
+    }
+    expected_builders = {
+        "review": "buildGmailReviewDrawerChromePresentation({",
+        "preview": "buildGmailPreviewDrawerChromePresentation({",
+        "session": "buildGmailSessionDrawerChromePresentation({",
+        "batch": "buildGmailBatchFinalizeDrawerChromePresentation({",
+    }
+    inline_dataset_literals = {
+        "review": 'bodyDatasetKey: "gmailReviewDrawer"',
+        "preview": 'bodyDatasetKey: "gmailPreviewDrawer"',
+        "session": 'bodyDatasetKey: "gmailSessionDrawer"',
+        "batch": 'bodyDatasetKey: "gmailBatchFinalizeDrawer"',
+    }
+    for name, block in drawer_blocks.items():
+        assert expected_builders[name] in block
+        assert inline_dataset_literals[name] not in block
+        assert "renderGmailDrawerChromeInto(" in block
+        assert "backdrop.classList.toggle" not in block
+        assert 'backdrop.setAttribute("aria-hidden"' not in block
+        assert "document.body.dataset.gmail" not in block
+
+    script = """
+const presentation = await import(__GMAIL_CONTROL_PRESENTATION_MODULE_URL__);
+
+const loadedMessage = {
+  ok: true,
+  message: { subject: "Subject <script>bad()</script>" },
+};
+const validPreviewState = {
+  open: true,
+  attachmentId: "att-1",
+  previewHref: "/api/gmail/attachment/att-1",
+  page: 2,
+};
+const maliciousPreviewState = {
+  open: true,
+  attachmentId: "   ",
+  previewHref: "<script>alert(1)</script>",
+};
+const activeCompleted = { kind: "translation", completed: true };
+const restoredCompleted = {
+  kind: "translation",
+  completed: true,
+  restored_from_report: true,
+};
+
+const results = {
+  exportTypes: {
+    review: typeof presentation.buildGmailReviewDrawerChromePresentation,
+    preview: typeof presentation.buildGmailPreviewDrawerChromePresentation,
+    session: typeof presentation.buildGmailSessionDrawerChromePresentation,
+    batch: typeof presentation.buildGmailBatchFinalizeDrawerChromePresentation,
+  },
+  reviewOpen: presentation.buildGmailReviewDrawerChromePresentation({
+    open: true,
+    loadResult: loadedMessage,
+  }),
+  reviewMissingMessage: presentation.buildGmailReviewDrawerChromePresentation({
+    open: true,
+    loadResult: { ok: true, message: null },
+  }),
+  reviewClosed: presentation.buildGmailReviewDrawerChromePresentation({
+    open: false,
+    loadResult: loadedMessage,
+  }),
+  previewOpen: presentation.buildGmailPreviewDrawerChromePresentation({
+    open: true,
+    previewState: validPreviewState,
+  }),
+  previewMaliciousClosed: presentation.buildGmailPreviewDrawerChromePresentation({
+    open: true,
+    previewState: maliciousPreviewState,
+  }),
+  previewClosed: presentation.buildGmailPreviewDrawerChromePresentation({
+    open: false,
+    previewState: validPreviewState,
+  }),
+  sessionOpen: presentation.buildGmailSessionDrawerChromePresentation({
+    open: true,
+    activeSession: { kind: "interpretation" },
+  }),
+  sessionMissing: presentation.buildGmailSessionDrawerChromePresentation({
+    open: true,
+    activeSession: null,
+  }),
+  batchActiveOpen: presentation.buildGmailBatchFinalizeDrawerChromePresentation({
+    open: true,
+    source: "active",
+    activeSession: activeCompleted,
+    restoredCompletedSession: restoredCompleted,
+  }),
+  batchActiveMissing: presentation.buildGmailBatchFinalizeDrawerChromePresentation({
+    open: true,
+    source: "active",
+    activeSession: { kind: "translation", completed: false },
+    restoredCompletedSession: restoredCompleted,
+  }),
+  batchRestoredOpen: presentation.buildGmailBatchFinalizeDrawerChromePresentation({
+    open: true,
+    source: "restored",
+    activeSession: null,
+    restoredCompletedSession: restoredCompleted,
+  }),
+  batchRestoredInvalidSource: presentation.buildGmailBatchFinalizeDrawerChromePresentation({
+    open: true,
+    source: "<script>restored</script>",
+    activeSession: null,
+    restoredCompletedSession: restoredCompleted,
+  }),
+  batchClosed: presentation.buildGmailBatchFinalizeDrawerChromePresentation({
+    open: false,
+    source: "restored",
+    activeSession: activeCompleted,
+    restoredCompletedSession: restoredCompleted,
+  }),
+  nullDefaults: {
+    review: presentation.buildGmailReviewDrawerChromePresentation(),
+    preview: presentation.buildGmailPreviewDrawerChromePresentation(),
+    session: presentation.buildGmailSessionDrawerChromePresentation(),
+    batch: presentation.buildGmailBatchFinalizeDrawerChromePresentation(),
+  },
+};
+
+console.log(JSON.stringify(results));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_CONTROL_PRESENTATION_MODULE_URL__": "gmail_control_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportTypes"] == {
+        "review": "function",
+        "preview": "function",
+        "session": "function",
+        "batch": "function",
+    }
+    assert results["reviewOpen"] == {"open": True, "bodyDatasetKey": "gmailReviewDrawer"}
+    assert results["reviewMissingMessage"] == {"open": False, "bodyDatasetKey": "gmailReviewDrawer"}
+    assert results["reviewClosed"] == {"open": False, "bodyDatasetKey": "gmailReviewDrawer"}
+    assert results["previewOpen"] == {"open": True, "bodyDatasetKey": "gmailPreviewDrawer"}
+    assert results["previewMaliciousClosed"] == {
+        "open": False,
+        "bodyDatasetKey": "gmailPreviewDrawer",
+    }
+    assert results["previewClosed"] == {"open": False, "bodyDatasetKey": "gmailPreviewDrawer"}
+    assert results["sessionOpen"] == {"open": True, "bodyDatasetKey": "gmailSessionDrawer"}
+    assert results["sessionMissing"] == {"open": False, "bodyDatasetKey": "gmailSessionDrawer"}
+    assert results["batchActiveOpen"] == {
+        "open": True,
+        "bodyDatasetKey": "gmailBatchFinalizeDrawer",
+    }
+    assert results["batchActiveMissing"] == {
+        "open": False,
+        "bodyDatasetKey": "gmailBatchFinalizeDrawer",
+    }
+    assert results["batchRestoredOpen"] == {
+        "open": True,
+        "bodyDatasetKey": "gmailBatchFinalizeDrawer",
+    }
+    assert results["batchRestoredInvalidSource"] == {
+        "open": False,
+        "bodyDatasetKey": "gmailBatchFinalizeDrawer",
+    }
+    assert results["batchClosed"] == {
+        "open": False,
+        "bodyDatasetKey": "gmailBatchFinalizeDrawer",
+    }
+    assert results["nullDefaults"] == {
+        "review": {"open": False, "bodyDatasetKey": "gmailReviewDrawer"},
+        "preview": {"open": False, "bodyDatasetKey": "gmailPreviewDrawer"},
+        "session": {"open": False, "bodyDatasetKey": "gmailSessionDrawer"},
+        "batch": {"open": False, "bodyDatasetKey": "gmailBatchFinalizeDrawer"},
+    }
+
+
 def test_gmail_runtime_guard_ui_module_centralizes_noncanonical_runtime_guard_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -30945,6 +31166,22 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailReviewChromePresentation" in gmail_control_presentation_asset.text
         assert (
             "buildGmailReviewLoadOutcomePresentation"
+            in gmail_control_presentation_asset.text
+        )
+        assert (
+            "buildGmailReviewDrawerChromePresentation"
+            in gmail_control_presentation_asset.text
+        )
+        assert (
+            "buildGmailPreviewDrawerChromePresentation"
+            in gmail_control_presentation_asset.text
+        )
+        assert (
+            "buildGmailSessionDrawerChromePresentation"
+            in gmail_control_presentation_asset.text
+        )
+        assert (
+            "buildGmailBatchFinalizeDrawerChromePresentation"
             in gmail_control_presentation_asset.text
         )
         gmail_restore_ui_asset = client.get(f"/static-build/{asset_version}/gmail_restore_ui.js")
