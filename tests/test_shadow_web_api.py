@@ -13525,6 +13525,266 @@ console.log(JSON.stringify({
     }
 
 
+def test_gmail_review_persistence_module_owns_review_consumption_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    review_state_js = (static_dir / "gmail_review_state.js").read_text(encoding="utf-8")
+    persistence_path = static_dir / "gmail_review_persistence.js"
+    assert persistence_path.exists()
+    persistence_js = persistence_path.read_text(encoding="utf-8")
+
+    expected_exports = [
+        "gmailReviewStorageKey",
+        "readConsumedReviewState",
+        "writeConsumedReviewState",
+        "clearConsumedReviewState",
+        "shouldAutoOpenReview",
+    ]
+    for export_name in expected_exports:
+        assert f"export function {export_name}" in persistence_js
+
+    assert 'from "./gmail_review_persistence.js"' in gmail_js
+    assert 'from "./gmail_review_persistence.js"' in review_state_js
+    for export_name in expected_exports:
+        assert export_name in review_state_js
+
+    for forbidden in [
+        "document.",
+        "window.",
+        "sessionStorage",
+        "localStorage",
+        "fetch(",
+        "fetchJson",
+        "appState",
+        "setDiagnostics",
+        "setPanelStatus",
+        "renderGmail",
+        "innerHTML",
+    ]:
+        assert forbidden not in persistence_js
+
+    review_import = re.search(
+        r"import \{(?P<body>.*?)\} from \"\./gmail_review_state\.js\";",
+        gmail_js,
+        re.S,
+    ).group("body")
+    persistence_import = re.search(
+        r"import \{(?P<body>.*?)\} from \"\./gmail_review_persistence\.js\";",
+        gmail_js,
+        re.S,
+    ).group("body")
+    for export_name in [
+        "readConsumedReviewState",
+        "writeConsumedReviewState",
+        "clearConsumedReviewState",
+        "shouldAutoOpenReview",
+    ]:
+        assert export_name in persistence_import
+        assert export_name not in review_import
+
+    assert "function normalizeReviewEventId" not in review_state_js
+    assert "function normalizeSignature" not in review_state_js
+    assert "export function shouldAutoOpenReview" not in review_state_js
+
+    script = """
+const persistence = await import(__GMAIL_REVIEW_PERSISTENCE_MODULE_URL__);
+const reviewState = await import(__GMAIL_REVIEW_STATE_MODULE_URL__);
+
+function makeStorage(initial = {}) {
+  const data = { ...initial };
+  const calls = [];
+  return {
+    data,
+    calls,
+    getItem(key) {
+      calls.push(["get", key]);
+      return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : null;
+    },
+    setItem(key, value) {
+      calls.push(["set", key, value]);
+      data[key] = String(value ?? "");
+    },
+    removeItem(key) {
+      calls.push(["remove", key]);
+      delete data[key];
+    },
+  };
+}
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const context = { runtimeMode: " shadow ", workspaceId: " workspace-1 " };
+const storageKey = persistence.gmailReviewStorageKey(context);
+const defaultKey = persistence.gmailReviewStorageKey({});
+const storage = makeStorage();
+
+const initial = persistence.readConsumedReviewState(storage, context);
+const afterWrite = persistence.writeConsumedReviewState(storage, context, {
+  reviewEventId: `5-${malicious}`,
+  messageSignature: ` sig-${malicious} `,
+});
+const storedRaw = storage.data[storageKey];
+const afterRead = persistence.readConsumedReviewState(storage, context);
+const afterInvalid = persistence.readConsumedReviewState(
+  makeStorage({ [storageKey]: "{bad json" }),
+  context,
+);
+const nullRead = persistence.readConsumedReviewState(null, context);
+const afterRemoveWrite = persistence.writeConsumedReviewState(storage, context, {
+  reviewEventId: "<script>0</script>",
+  messageSignature: "   ",
+});
+const removedByWrite = Object.prototype.hasOwnProperty.call(storage.data, storageKey);
+persistence.writeConsumedReviewState(storage, context, {
+  reviewEventId: 9,
+  messageSignature: "sig-9",
+});
+persistence.clearConsumedReviewState(storage, context);
+const removedByClear = Object.prototype.hasOwnProperty.call(storage.data, storageKey);
+
+const openRules = {
+  noLoadedMessage: persistence.shouldAutoOpenReview({
+    reviewEventId: 5,
+    messageSignature: "sig-5",
+    consumedReviewEventId: 0,
+    consumedMessageSignature: "",
+    loadResult: null,
+    activeSession: null,
+  }),
+  activeSession: persistence.shouldAutoOpenReview({
+    reviewEventId: 5,
+    messageSignature: "sig-5",
+    consumedReviewEventId: 0,
+    consumedMessageSignature: "",
+    loadResult: { ok: true, message: { message_id: "m-1" } },
+    activeSession: { session_id: "s-1" },
+  }),
+  fresh: persistence.shouldAutoOpenReview({
+    reviewEventId: 5,
+    messageSignature: "sig-5",
+    consumedReviewEventId: 0,
+    consumedMessageSignature: "",
+    loadResult: { ok: true, message: { message_id: "m-1" } },
+    activeSession: null,
+  }),
+  same: persistence.shouldAutoOpenReview({
+    reviewEventId: 5,
+    messageSignature: "sig-5",
+    consumedReviewEventId: 5,
+    consumedMessageSignature: "sig-5",
+    loadResult: { ok: true, message: { message_id: "m-1" } },
+    activeSession: null,
+  }),
+  newerEvent: persistence.shouldAutoOpenReview({
+    reviewEventId: 6,
+    messageSignature: "sig-5",
+    consumedReviewEventId: 5,
+    consumedMessageSignature: "sig-5",
+    loadResult: { ok: true, message: { message_id: "m-1" } },
+    activeSession: null,
+  }),
+  changedSignature: persistence.shouldAutoOpenReview({
+    reviewEventId: 5,
+    messageSignature: `sig-${malicious}`,
+    consumedReviewEventId: 5,
+    consumedMessageSignature: "sig-5",
+    loadResult: { ok: true, message: { message_id: "m-1" } },
+    activeSession: null,
+  }),
+  missingEvent: persistence.shouldAutoOpenReview({
+    reviewEventId: 0,
+    messageSignature: `sig-${malicious}`,
+    consumedReviewEventId: 0,
+    consumedMessageSignature: "",
+    loadResult: { ok: true, message: { message_id: "m-1" } },
+    activeSession: null,
+  }),
+};
+
+console.log(JSON.stringify({
+  exportTypes: {
+    key: typeof persistence.gmailReviewStorageKey,
+    read: typeof persistence.readConsumedReviewState,
+    write: typeof persistence.writeConsumedReviewState,
+    clear: typeof persistence.clearConsumedReviewState,
+    autoOpen: typeof persistence.shouldAutoOpenReview,
+  },
+  sameReexports: {
+    key: reviewState.gmailReviewStorageKey === persistence.gmailReviewStorageKey,
+    read: reviewState.readConsumedReviewState === persistence.readConsumedReviewState,
+    write: reviewState.writeConsumedReviewState === persistence.writeConsumedReviewState,
+    clear: reviewState.clearConsumedReviewState === persistence.clearConsumedReviewState,
+    autoOpen: reviewState.shouldAutoOpenReview === persistence.shouldAutoOpenReview,
+  },
+  storageKey,
+  defaultKey,
+  initial,
+  afterWrite,
+  storedRaw,
+  afterRead,
+  afterInvalid,
+  nullRead,
+  afterRemoveWrite,
+  removedByWrite,
+  removedByClear,
+  calls: storage.calls,
+  openRules,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {
+            "__GMAIL_REVIEW_PERSISTENCE_MODULE_URL__": "gmail_review_persistence.js",
+            "__GMAIL_REVIEW_STATE_MODULE_URL__": "gmail_review_state.js",
+        },
+        timeout_seconds=30,
+    )
+
+    assert results["exportTypes"] == {
+        "key": "function",
+        "read": "function",
+        "write": "function",
+        "clear": "function",
+        "autoOpen": "function",
+    }
+    assert results["sameReexports"] == {
+        "key": True,
+        "read": True,
+        "write": True,
+        "clear": True,
+        "autoOpen": True,
+    }
+    assert results["storageKey"] == "legalpdf:gmail-review:shadow:workspace-1"
+    assert results["defaultKey"] == "legalpdf:gmail-review:live:workspace-1"
+    assert results["initial"] == {"reviewEventId": 0, "messageSignature": ""}
+    assert results["afterWrite"] == {
+        "reviewEventId": 5,
+        "messageSignature": "sig-<img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert json.loads(results["storedRaw"]) == results["afterWrite"]
+    assert results["afterRead"] == results["afterWrite"]
+    assert results["afterInvalid"] == {"reviewEventId": 0, "messageSignature": ""}
+    assert results["nullRead"] == {"reviewEventId": 0, "messageSignature": ""}
+    assert results["afterRemoveWrite"] == {"reviewEventId": 0, "messageSignature": ""}
+    assert results["removedByWrite"] is False
+    assert results["removedByClear"] is False
+    assert ["remove", "legalpdf:gmail-review:shadow:workspace-1"] in results["calls"]
+    assert results["openRules"] == {
+        "noLoadedMessage": False,
+        "activeSession": False,
+        "fresh": True,
+        "same": False,
+        "newerEvent": True,
+        "changedSignature": True,
+        "missingEvent": False,
+    }
+
+
 def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -33490,6 +33750,18 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailPreviewPanelContext" in gmail_review_state_asset.text
         assert "deriveGmailFocusedAttachmentId" in gmail_review_state_asset.text
         assert "buildGmailReviewLoadResetState" in gmail_review_state_asset.text
+        gmail_review_persistence_asset = client.get(
+            f"/static-build/{asset_version}/gmail_review_persistence.js"
+        )
+        assert gmail_review_persistence_asset.status_code == 200
+        assert gmail_review_persistence_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "gmailReviewStorageKey" in gmail_review_persistence_asset.text
+        assert "readConsumedReviewState" in gmail_review_persistence_asset.text
+        assert "writeConsumedReviewState" in gmail_review_persistence_asset.text
+        assert "clearConsumedReviewState" in gmail_review_persistence_asset.text
+        assert "shouldAutoOpenReview" in gmail_review_persistence_asset.text
         gmail_attachment_kind_asset = client.get(
             f"/static-build/{asset_version}/gmail_attachment_kind.js"
         )
