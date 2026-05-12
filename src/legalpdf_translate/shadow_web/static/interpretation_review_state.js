@@ -620,6 +620,51 @@ export function deriveInterpretationReviewPresentation({
   };
 }
 
+export function buildInterpretationSessionChip({
+  session = null,
+  workspaceMode = "",
+  completionPayload = null,
+  presentation = null,
+} = {}) {
+  const mode = normalizeWorkspaceMode(workspaceMode);
+  const resolvedPresentation = presentation && typeof presentation === "object"
+    ? presentation
+    : deriveInterpretationReviewPresentation({
+      activeSession: session,
+      workspaceMode: mode,
+      completionPayload,
+    });
+  const gmailResult = resolvedPresentation?.gmailResult
+    || deriveInterpretationReviewPresentation().gmailResult;
+  const status = String(session?.status || "").trim();
+  if (mode === "gmail_completed") {
+    const completionStatus = String(completionPayload?.status || "").trim();
+    if (completionStatus === "ok") {
+      return { tone: "ok", label: gmailResult.createdLabel };
+    }
+    if (completionStatus === "local_only") {
+      return { tone: "warn", label: gmailResult.localOnlyLabel };
+    }
+    if (completionStatus === "draft_unavailable") {
+      return { tone: "warn", label: gmailResult.warningLabel };
+    }
+    if (completionStatus) {
+      return { tone: "bad", label: gmailResult.warningLabel };
+    }
+    if (session?.draft_created || status === "draft_ready") {
+      return { tone: "ok", label: gmailResult.createdLabel };
+    }
+    if (String(session?.draft_failure_reason || "").trim() || status === "draft_failed") {
+      return { tone: "bad", label: gmailResult.warningLabel };
+    }
+    return { tone: "info", label: gmailResult.localOnlyLabel };
+  }
+  if (status) {
+    return { tone: "info", label: status.replaceAll("_", " ") };
+  }
+  return { tone: "info", label: "Ready" };
+}
+
 export function deriveInterpretationDrawerLayout({
   workspaceMode = "blank",
   activeSession = null,

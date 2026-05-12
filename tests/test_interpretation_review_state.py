@@ -461,6 +461,145 @@ console.log(JSON.stringify({{
     )
 
 
+def test_interpretation_review_state_builds_session_chip_presentation() -> None:
+    script = r"""
+const reviewModule = await import(__INTERPRETATION_REVIEW_STATE_MODULE_URL__);
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const maliciousPresentation = {
+  gmailResult: {
+    createdLabel: `Created ${malicious}`,
+    localOnlyLabel: `Local ${malicious}`,
+    warningLabel: `Warning ${malicious}`,
+  },
+};
+
+const cases = {
+  nullSafe: reviewModule.buildInterpretationSessionChip(),
+  ready: reviewModule.buildInterpretationSessionChip({
+    session: { kind: "interpretation" },
+    workspaceMode: "gmail_review",
+  }),
+  status: reviewModule.buildInterpretationSessionChip({
+    session: { kind: "interpretation", status: `draft_ready_${malicious}` },
+    workspaceMode: "gmail_review",
+  }),
+  completedOk: reviewModule.buildInterpretationSessionChip({
+    session: { kind: "interpretation", status: "prepared" },
+    workspaceMode: "gmail_completed",
+    completionPayload: { status: "ok" },
+    presentation: maliciousPresentation,
+  }),
+  completedLocalOnly: reviewModule.buildInterpretationSessionChip({
+    session: { kind: "interpretation" },
+    workspaceMode: "gmail_completed",
+    completionPayload: { status: "local_only" },
+    presentation: maliciousPresentation,
+  }),
+  completedDraftUnavailable: reviewModule.buildInterpretationSessionChip({
+    session: { kind: "interpretation" },
+    workspaceMode: "gmail_completed",
+    completionPayload: { status: "draft_unavailable" },
+    presentation: maliciousPresentation,
+  }),
+  completedUnknownFailure: reviewModule.buildInterpretationSessionChip({
+    session: { kind: "interpretation" },
+    workspaceMode: "gmail_completed",
+    completionPayload: { status: `blocked_${malicious}` },
+    presentation: maliciousPresentation,
+  }),
+  completedDraftCreated: reviewModule.buildInterpretationSessionChip({
+    session: { kind: "interpretation", draft_created: true },
+    workspaceMode: "gmail_completed",
+    presentation: maliciousPresentation,
+  }),
+  completedDraftReady: reviewModule.buildInterpretationSessionChip({
+    session: { kind: "interpretation", status: "draft_ready" },
+    workspaceMode: "gmail_completed",
+    presentation: maliciousPresentation,
+  }),
+  completedFailureReason: reviewModule.buildInterpretationSessionChip({
+    session: { kind: "interpretation", draft_failure_reason: `No draft ${malicious}` },
+    workspaceMode: "gmail_completed",
+    presentation: maliciousPresentation,
+  }),
+  completedDraftFailed: reviewModule.buildInterpretationSessionChip({
+    session: { kind: "interpretation", status: "draft_failed" },
+    workspaceMode: "gmail_completed",
+    presentation: maliciousPresentation,
+  }),
+  completedFallback: reviewModule.buildInterpretationSessionChip({
+    session: { kind: "interpretation" },
+    workspaceMode: "gmail_completed",
+    presentation: maliciousPresentation,
+  }),
+  invalidModeStatus: reviewModule.buildInterpretationSessionChip({
+    session: { kind: "interpretation", status: "review_loaded" },
+    workspaceMode: `unknown_${malicious}`,
+    presentation: maliciousPresentation,
+  }),
+};
+
+console.log(JSON.stringify({
+  exportType: typeof reviewModule.buildInterpretationSessionChip,
+  cases,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REVIEW_STATE_MODULE_URL__": "interpretation_review_state.js"},
+        timeout_seconds=20,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["cases"]["nullSafe"] == {"tone": "info", "label": "Ready"}
+    assert results["cases"]["ready"] == {"tone": "info", "label": "Ready"}
+    assert results["cases"]["status"] == {
+        "tone": "info",
+        "label": "draft ready <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["cases"]["completedOk"] == {
+        "tone": "ok",
+        "label": "Created <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["cases"]["completedLocalOnly"] == {
+        "tone": "warn",
+        "label": "Local <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["cases"]["completedDraftUnavailable"] == {
+        "tone": "warn",
+        "label": "Warning <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["cases"]["completedUnknownFailure"] == {
+        "tone": "bad",
+        "label": "Warning <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["cases"]["completedDraftCreated"] == {
+        "tone": "ok",
+        "label": "Created <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["cases"]["completedDraftReady"] == {
+        "tone": "ok",
+        "label": "Created <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["cases"]["completedFailureReason"] == {
+        "tone": "bad",
+        "label": "Warning <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["cases"]["completedDraftFailed"] == {
+        "tone": "bad",
+        "label": "Warning <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["cases"]["completedFallback"] == {
+        "tone": "info",
+        "label": "Local <img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["cases"]["invalidModeStatus"] == {
+        "tone": "info",
+        "label": "review loaded",
+    }
+
+
 def test_interpretation_review_state_blocks_unknown_city_and_guides_distance_prompt() -> None:
     results = _run_interpretation_review_state_probe()
 

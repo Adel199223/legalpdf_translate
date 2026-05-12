@@ -26027,7 +26027,7 @@ def test_interpretation_review_ui_module_centralizes_safe_context_rendering() ->
     details_shell_start = app_js.index("function syncInterpretationReviewDetailsShell", review_context_start)
     review_context_block = app_js[review_context_start:details_shell_start]
     assert "currentInterpretationPresentation(snapshot)" in review_context_block
-    assert "interpretationSessionChip(activeSession, workspaceMode)" in review_context_block
+    assert "buildInterpretationSessionChip({" in review_context_block
     assert "presentation.actions.finalizeGmail" in review_context_block
     assert "innerHTML" not in review_context_block
     assert "escapeHtml" not in review_context_block
@@ -26358,6 +26358,67 @@ console.log(JSON.stringify({
     assert "nullContainerResult" not in results
 
 
+def test_interpretation_review_state_module_owns_session_chip_presentation() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    review_state_path = static_dir / "interpretation_review_state.js"
+    review_state_js = review_state_path.read_text(encoding="utf-8")
+
+    assert "export function buildInterpretationSessionChip" in review_state_js
+    assert "buildInterpretationSessionChip" in app_js
+    assert "function interpretationSessionChip(" not in app_js
+
+    builder_start = review_state_js.index("export function buildInterpretationSessionChip")
+    next_export = review_state_js.find("\nexport function ", builder_start + 1)
+    builder_block = review_state_js[builder_start:next_export if next_export != -1 else len(review_state_js)]
+    for forbidden in [
+        "document.",
+        "window.",
+        "sessionStorage",
+        "localStorage",
+        "fetch(",
+        "fetchJson",
+        "appState",
+        "setDiagnostics",
+        "setPanelStatus",
+        "renderInterpretation",
+        "innerHTML",
+    ]:
+        assert forbidden not in builder_block
+
+    render_blocks = {
+        "session_shell": (
+            app_js.index("function renderInterpretationSessionShell"),
+            app_js.index("\nfunction renderInterpretationSeedCard"),
+        ),
+        "review_summary": (
+            app_js.index("function renderInterpretationReviewSummary"),
+            app_js.index("\nfunction renderInterpretationReviewContext"),
+        ),
+        "review_context": (
+            app_js.index("function renderInterpretationReviewContext"),
+            app_js.index("\nfunction syncInterpretationReviewDetailsShell"),
+        ),
+        "completion_card": (
+            app_js.index("function renderInterpretationCompletionCard"),
+            app_js.index("\nfunction setInterpretationLocationGuard"),
+        ),
+    }
+    for start, end in render_blocks.values():
+        block = app_js[start:end]
+        assert "buildInterpretationSessionChip({" in block
+        assert "session: activeSession," in block
+        assert "workspaceMode" in block or "workspaceMode: mode," in block
+        assert "completionPayload: interpretationUiState.completionPayload," in block
+        assert "presentation," in block
+
+
 def test_interpretation_review_ui_module_centralizes_safe_session_shell_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -26380,7 +26441,7 @@ def test_interpretation_review_ui_module_centralizes_safe_session_shell_renderin
     session_shell_block = app_js[session_shell_start:seed_card_start]
     assert "interpretationWorkspaceMode(snapshot, activeSession)" in session_shell_block
     assert "currentInterpretationPresentation(snapshot)" in session_shell_block
-    assert "interpretationSessionChip(activeSession, mode)" in session_shell_block
+    assert "buildInterpretationSessionChip({" in session_shell_block
     assert "renderInterpretationSessionCardInto(result, {" in session_shell_block
     assert "document.body.dataset.interpretationWorkspaceMode" not in session_shell_block
     assert ".classList.toggle(\"hidden\"" not in session_shell_block
@@ -34056,6 +34117,14 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert google_photos_ui_asset.status_code == 200
         assert google_photos_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGooglePhotosSummaryInto" in google_photos_ui_asset.text
+        interpretation_review_state_asset = client.get(
+            f"/static-build/{asset_version}/interpretation_review_state.js"
+        )
+        assert interpretation_review_state_asset.status_code == 200
+        assert interpretation_review_state_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildInterpretationSessionChip" in interpretation_review_state_asset.text
         gmail_ui_asset = client.get(f"/static-build/{asset_version}/gmail_ui.js")
         assert gmail_ui_asset.status_code == 200
         assert gmail_ui_asset.headers["content-type"].startswith("application/javascript")
