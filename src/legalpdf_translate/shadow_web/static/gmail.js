@@ -53,6 +53,7 @@ import {
   deriveGmailPendingStatus,
   deriveGmailSourceUrl,
 } from "./gmail_handoff_state.js";
+import { buildGmailShellSyncState } from "./gmail_shell_state.js";
 import {
   renderAttachmentListInto,
   renderReviewDetailInto,
@@ -1378,19 +1379,19 @@ function updatePrepareActionState() {
 function syncShellState() {
   gmailState.stage = currentGmailStage();
   if (appState.bootstrap?.normalized_payload) {
-    appState.bootstrap.normalized_payload.gmail = {
-      ...(appState.bootstrap.normalized_payload.gmail || {}),
-      ...gmailState.bootstrap,
-      load_result: gmailState.loadResult,
-      active_session: gmailState.activeSession,
-      restored_completed_session: gmailState.restoredCompletedSession,
-      interpretation_seed: gmailState.interpretationSeed,
-      suggested_translation_launch: gmailState.suggestedTranslationLaunch,
-      pending_status: gmailState.bootstrap?.pending_status || "",
-      pending_intake_context: pendingIntakeContext(),
-      pending_review_open: pendingReviewOpen(),
+    appState.bootstrap.normalized_payload.gmail = buildGmailShellSyncState({
+      existingGmail: appState.bootstrap.normalized_payload.gmail,
+      bootstrap: gmailState.bootstrap,
+      loadResult: gmailState.loadResult,
+      activeSession: gmailState.activeSession,
+      restoredCompletedSession: gmailState.restoredCompletedSession,
+      interpretationSeed: gmailState.interpretationSeed,
+      suggestedTranslationLaunch: gmailState.suggestedTranslationLaunch,
+      pendingStatus: gmailState.bootstrap?.pending_status || "",
+      pendingIntakeContext: pendingIntakeContext(),
+      pendingReviewOpen: pendingReviewOpen(),
       stage: gmailState.stage,
-    };
+    });
   }
   renderWorkspaceStrip();
   syncRefreshSchedule();
