@@ -44,8 +44,15 @@ import {
   buildGmailDemoReviewActionPresentation,
   buildGmailPrepareActionPresentation,
   buildGmailReturnToSourceActionPresentation,
-  deriveGmailSourceUrl,
 } from "./gmail_action_presentation.js";
+import {
+  deriveGmailBootstrapMessageContext,
+  deriveGmailClickDiagnostics,
+  deriveGmailPendingIntakeContext,
+  deriveGmailPendingReviewOpen,
+  deriveGmailPendingStatus,
+  deriveGmailSourceUrl,
+} from "./gmail_handoff_state.js";
 import {
   renderAttachmentListInto,
   renderReviewDetailInto,
@@ -642,15 +649,15 @@ function currentWorkflowKind() {
 }
 
 function bootstrapMessageContext() {
-  return gmailState.bootstrap?.defaults?.message_context || {};
+  return deriveGmailBootstrapMessageContext({ bootstrap: gmailState.bootstrap });
 }
 
 function pendingIntakeContext() {
-  return gmailState.bootstrap?.pending_intake_context || {};
+  return deriveGmailPendingIntakeContext({ bootstrap: gmailState.bootstrap });
 }
 
 function currentClickDiagnostics() {
-  return gmailState.bootstrap?.click_diagnostics || {};
+  return deriveGmailClickDiagnostics({ bootstrap: gmailState.bootstrap });
 }
 
 function currentSourceGmailUrl() {
@@ -674,11 +681,11 @@ function updateReturnToGmailAction() {
 }
 
 function pendingStatus() {
-  return String(gmailState.bootstrap?.pending_status || "").trim().toLowerCase();
+  return deriveGmailPendingStatus({ bootstrap: gmailState.bootstrap });
 }
 
 function pendingReviewOpen() {
-  return gmailState.bootstrap?.pending_review_open === true;
+  return deriveGmailPendingReviewOpen({ bootstrap: gmailState.bootstrap });
 }
 
 function isWarmupPendingStatus(value) {
@@ -1380,8 +1387,8 @@ function syncShellState() {
       interpretation_seed: gmailState.interpretationSeed,
       suggested_translation_launch: gmailState.suggestedTranslationLaunch,
       pending_status: gmailState.bootstrap?.pending_status || "",
-      pending_intake_context: gmailState.bootstrap?.pending_intake_context || {},
-      pending_review_open: gmailState.bootstrap?.pending_review_open === true,
+      pending_intake_context: pendingIntakeContext(),
+      pending_review_open: pendingReviewOpen(),
       stage: gmailState.stage,
     };
   }

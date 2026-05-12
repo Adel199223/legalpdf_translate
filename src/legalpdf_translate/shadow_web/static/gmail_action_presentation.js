@@ -1,3 +1,7 @@
+import { deriveGmailSourceUrl } from "./gmail_handoff_state.js";
+
+export { deriveGmailSourceUrl } from "./gmail_handoff_state.js";
+
 export function buildGmailDemoReviewActionPresentation({
   runtimeMode = "",
   loadResult = null,
@@ -32,23 +36,6 @@ export function buildGmailPrepareActionPresentation({
     disabled,
     title: runtimeGuard.blocked ? String(runtimeGuard.message || "") : "",
   };
-}
-
-export function deriveGmailSourceUrl({
-  sourceUrl = "",
-  currentHandoffContext = null,
-  defaults = null,
-  pendingIntakeContext = null,
-  clickDiagnostics = null,
-} = {}) {
-  return String(
-    sourceUrl
-    || currentHandoffContext?.source_gmail_url
-    || defaults?.message_context?.source_gmail_url
-    || pendingIntakeContext?.source_gmail_url
-    || clickDiagnostics?.source_gmail_url
-    || "",
-  ).trim();
 }
 
 export function buildGmailReturnToSourceActionPresentation(context = {}) {

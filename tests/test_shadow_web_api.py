@@ -12505,14 +12505,21 @@ def test_gmail_action_presentation_module_derives_prepare_action_state() -> None
     assert "export function buildGmailDemoReviewActionPresentation" in presentation_js
     assert "export function buildGmailPrepareActionPresentation" in presentation_js
     assert "export function buildGmailReturnToSourceActionPresentation" in presentation_js
-    assert "export function deriveGmailSourceUrl" in presentation_js
+    assert 'from "./gmail_handoff_state.js"' in presentation_js
+    assert 'from "./gmail_handoff_state.js"' in gmail_js
     assert 'from "./gmail_action_presentation.js"' in gmail_js
     action_import = re.search(
         r"import \{(?P<body>.*?)\} from \"\./gmail_action_presentation\.js\";",
         gmail_js,
         re.S,
     ).group("body")
-    assert "deriveGmailSourceUrl" in action_import
+    handoff_import = re.search(
+        r"import \{(?P<body>.*?)\} from \"\./gmail_handoff_state\.js\";",
+        gmail_js,
+        re.S,
+    ).group("body")
+    assert "deriveGmailSourceUrl" not in action_import
+    assert "deriveGmailSourceUrl" in handoff_import
 
     demo_start = gmail_js.index("function updateDemoReviewAction()")
     demo_end = gmail_js.index("\nfunction renderResumeCard", demo_start)
@@ -12749,6 +12756,338 @@ console.log(JSON.stringify({
         "disabled": False,
         "title": "",
     }
+
+
+def test_gmail_handoff_state_module_owns_pending_review_and_launch_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    action_presentation_js = (static_dir / "gmail_action_presentation.js").read_text(encoding="utf-8")
+    handoff_path = static_dir / "gmail_handoff_state.js"
+    assert handoff_path.exists()
+    handoff_js = handoff_path.read_text(encoding="utf-8")
+
+    expected_exports = [
+        "deriveClientLaunchSessionUrlState",
+        "deriveClientGmailHandoffState",
+        "deriveClientLaunchSessionId",
+        "deriveClientHandoffSessionId",
+        "deriveClientLaunchSessionSchemaVersion",
+        "deriveGmailBootstrapMessageContext",
+        "deriveGmailPendingIntakeContext",
+        "deriveGmailClickDiagnostics",
+        "deriveGmailPendingStatus",
+        "deriveGmailPendingReviewOpen",
+        "deriveGmailSourceUrl",
+    ]
+    for export_name in expected_exports:
+        assert f"export function {export_name}" in handoff_js
+
+    assert 'from "./gmail_handoff_state.js"' in app_js
+    assert 'from "./gmail_handoff_state.js"' in gmail_js
+    assert 'from "./gmail_handoff_state.js"' in action_presentation_js
+    assert 'export { deriveGmailSourceUrl } from "./gmail_handoff_state.js";' in action_presentation_js
+
+    for forbidden in [
+        "document.",
+        "window.",
+        "sessionStorage",
+        "localStorage",
+        "fetch(",
+        "fetchJson",
+        "appState",
+        "setDiagnostics",
+        "setPanelStatus",
+        "renderGmail",
+        "innerHTML",
+    ]:
+        assert forbidden not in handoff_js
+
+    for removed_app_helper in [
+        "function defaultClientGmailHandoffState",
+        "function deriveClientLaunchSessionUrlState",
+        "function deriveClientGmailHandoffState",
+        "function deriveClientLaunchSessionId",
+        "function deriveClientHandoffSessionId",
+        "function deriveClientLaunchSessionSchemaVersion",
+    ]:
+        assert removed_app_helper not in app_js
+
+    assert "String(gmailState.bootstrap?.pending_status" not in gmail_js
+    assert "gmailState.bootstrap?.pending_review_open === true" not in gmail_js
+    assert "gmailState.bootstrap?.pending_intake_context || {}" not in gmail_js
+    assert "gmailState.bootstrap?.click_diagnostics || {}" not in gmail_js
+    assert "gmailState.bootstrap?.defaults?.message_context || {}" not in gmail_js
+    assert "export function deriveGmailSourceUrl" not in action_presentation_js
+
+    app_import = re.search(
+        r"import \{(?P<body>.*?)\} from \"\./gmail_handoff_state\.js\";",
+        app_js,
+        re.S,
+    ).group("body")
+    gmail_import = re.search(
+        r"import \{(?P<body>.*?)\} from \"\./gmail_handoff_state\.js\";",
+        gmail_js,
+        re.S,
+    ).group("body")
+    for export_name in [
+        "deriveClientGmailHandoffState",
+        "deriveClientHandoffSessionId",
+        "deriveClientLaunchSessionId",
+        "deriveClientLaunchSessionSchemaVersion",
+    ]:
+        assert export_name in app_import
+    for export_name in [
+        "deriveGmailBootstrapMessageContext",
+        "deriveGmailPendingIntakeContext",
+        "deriveGmailClickDiagnostics",
+        "deriveGmailPendingStatus",
+        "deriveGmailPendingReviewOpen",
+        "deriveGmailSourceUrl",
+    ]:
+        assert export_name in gmail_import
+
+    script = """
+const handoff = await import(__GMAIL_HANDOFF_STATE_MODULE_URL__);
+const actionPresentation = await import(__GMAIL_ACTION_PRESENTATION_MODULE_URL__);
+
+const malicious = "<IMG SRC=x ONERROR=alert(1)><SCRIPT>bad()</SCRIPT>";
+const href = `http://127.0.0.1:8877/?launch_session_id=url-launch-${malicious}&handoff_session_id=url-handoff-${malicious}&launch_session_schema_version=7#gmail-intake`;
+const payload = {
+  gmail: {
+    pending_review_open: true,
+    pending_status: `WARMING-${malicious}`,
+    load_result: { ok: true, message: { message_id: "msg-1" } },
+    handoff_session_id: "gmail-handoff",
+  },
+  shell: {
+    launch_session: {
+      launch_session_id: "shell-launch",
+      handoff_session_id: "shell-handoff",
+    },
+    extension_launch_session_schema_version: "4",
+  },
+  runtime: {
+    launch_session: {
+      launch_session_id: "runtime-launch",
+      handoff_session_id: "runtime-handoff",
+    },
+  },
+};
+const bootstrap = {
+  pending_status: ` READY-${malicious} `,
+  pending_review_open: true,
+  pending_intake_context: { source_gmail_url: " https://mail.google.test/pending " },
+  click_diagnostics: { source_gmail_url: " https://mail.google.test/click " },
+  current_handoff_context: { source_gmail_url: " https://mail.google.test/handoff " },
+  defaults: {
+    message_context: {
+      subject: "Subject",
+      source_gmail_url: " https://mail.google.test/defaults ",
+    },
+  },
+};
+
+const directGmailPayload = { handoff_session_id: "direct-gmail" };
+const shellOnlyPayload = {
+  shell: {
+    launch_session: {
+      launch_session_id: "shell-only-launch",
+      handoff_session_id: "shell-only-handoff",
+    },
+    extension_launch_session_schema_version: "5",
+  },
+  runtime: {
+    launch_session: {
+      launch_session_id: "runtime-only-launch",
+      handoff_session_id: "runtime-only-handoff",
+    },
+  },
+};
+const runtimeOnlyPayload = {
+  runtime: {
+    launch_session: {
+      launch_session_id: "runtime-only-launch",
+      handoff_session_id: "runtime-only-handoff",
+    },
+  },
+};
+
+console.log(JSON.stringify({
+  exportTypes: Object.fromEntries([
+    "deriveClientLaunchSessionUrlState",
+    "deriveClientGmailHandoffState",
+    "deriveClientLaunchSessionId",
+    "deriveClientHandoffSessionId",
+    "deriveClientLaunchSessionSchemaVersion",
+    "deriveGmailBootstrapMessageContext",
+    "deriveGmailPendingIntakeContext",
+    "deriveGmailClickDiagnostics",
+    "deriveGmailPendingStatus",
+    "deriveGmailPendingReviewOpen",
+    "deriveGmailSourceUrl",
+  ].map((name) => [name, typeof handoff[name]])),
+  sameSourceReexport: actionPresentation.deriveGmailSourceUrl === handoff.deriveGmailSourceUrl,
+  urlState: handoff.deriveClientLaunchSessionUrlState({ href }),
+  invalidUrlState: handoff.deriveClientLaunchSessionUrlState({ href: "not a url" }),
+  handoffStates: {
+    pending: handoff.deriveClientGmailHandoffState({ payload, workspaceId: "workspace-1" }),
+    loaded: handoff.deriveClientGmailHandoffState({
+      payload: { gmail: { load_result: { ok: true, message: { id: "m" } } } },
+      workspaceId: "workspace-1",
+    }),
+    loadFailed: handoff.deriveClientGmailHandoffState({
+      payload: { gmail: { load_result: { ok: false } } },
+      workspaceId: "workspace-1",
+    }),
+    gmailDefault: handoff.deriveClientGmailHandoffState({ payload: {}, workspaceId: "gmail-intake" }),
+    otherDefault: handoff.deriveClientGmailHandoffState({ payload: {}, workspaceId: "case-workspace" }),
+  },
+  launchIds: {
+    url: handoff.deriveClientLaunchSessionId({ payload, href }),
+    shell: handoff.deriveClientLaunchSessionId({ payload: shellOnlyPayload, href: "" }),
+    runtime: handoff.deriveClientLaunchSessionId({ payload: runtimeOnlyPayload, href: "" }),
+    missing: handoff.deriveClientLaunchSessionId(),
+  },
+  handoffIds: {
+    url: handoff.deriveClientHandoffSessionId({ payload, href }),
+    gmail: handoff.deriveClientHandoffSessionId({ payload: directGmailPayload, href: "" }),
+    shell: handoff.deriveClientHandoffSessionId({ payload: shellOnlyPayload, href: "" }),
+    runtime: handoff.deriveClientHandoffSessionId({ payload: runtimeOnlyPayload, href: "" }),
+    missing: handoff.deriveClientHandoffSessionId(),
+  },
+  schemaVersions: {
+    url: handoff.deriveClientLaunchSessionSchemaVersion({ payload, href }),
+    shell: handoff.deriveClientLaunchSessionSchemaVersion({ payload: shellOnlyPayload, href: "" }),
+    invalid: handoff.deriveClientLaunchSessionSchemaVersion({
+      payload: { shell: { extension_launch_session_schema_version: `bad-${malicious}` } },
+      href: "not a url",
+    }),
+    missing: handoff.deriveClientLaunchSessionSchemaVersion(),
+  },
+  bootstrapState: {
+    messageContext: handoff.deriveGmailBootstrapMessageContext({ bootstrap }),
+    pendingContext: handoff.deriveGmailPendingIntakeContext({ bootstrap }),
+    clickDiagnostics: handoff.deriveGmailClickDiagnostics({ bootstrap }),
+    pendingStatus: handoff.deriveGmailPendingStatus({ bootstrap }),
+    pendingOpen: handoff.deriveGmailPendingReviewOpen({ bootstrap }),
+    nullMessageContext: handoff.deriveGmailBootstrapMessageContext(),
+    nullPendingContext: handoff.deriveGmailPendingIntakeContext(),
+    nullClickDiagnostics: handoff.deriveGmailClickDiagnostics(),
+    nullPendingStatus: handoff.deriveGmailPendingStatus(),
+    nullPendingOpen: handoff.deriveGmailPendingReviewOpen(),
+  },
+  sourceUrls: {
+    explicit: handoff.deriveGmailSourceUrl({
+      sourceUrl: ` https://mail.google.test/explicit/${malicious} `,
+      currentHandoffContext: bootstrap.current_handoff_context,
+    }),
+    handoff: handoff.deriveGmailSourceUrl({ ...bootstrap }),
+    defaults: handoff.deriveGmailSourceUrl({
+      currentHandoffContext: {},
+      defaults: bootstrap.defaults,
+      pendingIntakeContext: bootstrap.pending_intake_context,
+      clickDiagnostics: bootstrap.click_diagnostics,
+    }),
+    pending: handoff.deriveGmailSourceUrl({
+      defaults: { message_context: {} },
+      pendingIntakeContext: bootstrap.pending_intake_context,
+      clickDiagnostics: bootstrap.click_diagnostics,
+    }),
+    diagnostics: handoff.deriveGmailSourceUrl({
+      clickDiagnostics: bootstrap.click_diagnostics,
+    }),
+    whitespaceWins: handoff.deriveGmailSourceUrl({
+      currentHandoffContext: { source_gmail_url: "   " },
+      defaults: bootstrap.defaults,
+    }),
+    missing: handoff.deriveGmailSourceUrl(),
+  },
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {
+            "__GMAIL_HANDOFF_STATE_MODULE_URL__": "gmail_handoff_state.js",
+            "__GMAIL_ACTION_PRESENTATION_MODULE_URL__": "gmail_action_presentation.js",
+        },
+        timeout_seconds=30,
+    )
+
+    assert set(results["exportTypes"].values()) == {"function"}
+    assert results["sameSourceReexport"] is True
+    assert results["urlState"] == {
+        "launchSessionId": "url-launch-<IMG SRC=x ONERROR=alert(1)><SCRIPT>bad()</SCRIPT>",
+        "handoffSessionId": "url-handoff-<IMG SRC=x ONERROR=alert(1)><SCRIPT>bad()</SCRIPT>",
+        "launchSessionSchemaVersion": 7,
+    }
+    assert results["invalidUrlState"] == {
+        "launchSessionId": "",
+        "handoffSessionId": "",
+        "launchSessionSchemaVersion": 0,
+    }
+    assert results["handoffStates"] == {
+        "pending": "warming-<img src=x onerror=alert(1)><script>bad()</script>",
+        "loaded": "loaded",
+        "loadFailed": "load_failed",
+        "gmailDefault": "warming",
+        "otherDefault": "idle",
+    }
+    assert results["launchIds"] == {
+        "url": "url-launch-<IMG SRC=x ONERROR=alert(1)><SCRIPT>bad()</SCRIPT>",
+        "shell": "shell-only-launch",
+        "runtime": "runtime-only-launch",
+        "missing": "",
+    }
+    assert results["handoffIds"] == {
+        "url": "url-handoff-<IMG SRC=x ONERROR=alert(1)><SCRIPT>bad()</SCRIPT>",
+        "gmail": "direct-gmail",
+        "shell": "shell-only-handoff",
+        "runtime": "runtime-only-handoff",
+        "missing": "",
+    }
+    assert results["schemaVersions"] == {
+        "url": 7,
+        "shell": 5,
+        "invalid": 0,
+        "missing": 0,
+    }
+    assert results["bootstrapState"]["messageContext"] == {
+        "subject": "Subject",
+        "source_gmail_url": " https://mail.google.test/defaults ",
+    }
+    assert results["bootstrapState"]["pendingContext"] == {
+        "source_gmail_url": " https://mail.google.test/pending ",
+    }
+    assert results["bootstrapState"]["clickDiagnostics"] == {
+        "source_gmail_url": " https://mail.google.test/click ",
+    }
+    assert (
+        results["bootstrapState"]["pendingStatus"]
+        == "ready-<img src=x onerror=alert(1)><script>bad()</script>"
+    )
+    assert results["bootstrapState"]["pendingOpen"] is True
+    assert results["bootstrapState"]["nullMessageContext"] == {}
+    assert results["bootstrapState"]["nullPendingContext"] == {}
+    assert results["bootstrapState"]["nullClickDiagnostics"] == {}
+    assert results["bootstrapState"]["nullPendingStatus"] == ""
+    assert results["bootstrapState"]["nullPendingOpen"] is False
+    assert (
+        results["sourceUrls"]["explicit"]
+        == "https://mail.google.test/explicit/<IMG SRC=x ONERROR=alert(1)><SCRIPT>bad()</SCRIPT>"
+    )
+    assert results["sourceUrls"]["handoff"] == "https://mail.google.test/handoff"
+    assert results["sourceUrls"]["defaults"] == "https://mail.google.test/defaults"
+    assert results["sourceUrls"]["pending"] == "https://mail.google.test/pending"
+    assert results["sourceUrls"]["diagnostics"] == "https://mail.google.test/click"
+    assert results["sourceUrls"]["whitespaceWins"] == ""
+    assert results["sourceUrls"]["missing"] == ""
 
 
 def test_gmail_stage_presentation_module_derives_stage_and_home_cta_state() -> None:
@@ -31334,27 +31673,37 @@ def test_shadow_web_tiny_presentation_cleanup_copy_is_distinct() -> None:
 
 
 def test_shadow_web_client_prefers_url_launch_session_state_over_stale_bootstrap() -> None:
-    app_js = (
+    static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
         / "legalpdf_translate"
         / "shadow_web"
         / "static"
-        / "app.js"
-    ).read_text(encoding="utf-8")
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    handoff_js = (static_dir / "gmail_handoff_state.js").read_text(encoding="utf-8")
 
-    launch_start = app_js.index("function deriveClientLaunchSessionId")
-    handoff_start = app_js.index("function deriveClientHandoffSessionId")
-    launch_block = app_js[launch_start:handoff_start]
-    assert launch_block.index("urlState.launchSessionId") < launch_block.index("shellLaunchSession.launch_session_id")
-
-    schema_start = app_js.index("function deriveClientLaunchSessionSchemaVersion")
-    handoff_block = app_js[handoff_start:schema_start]
-    assert handoff_block.index("urlState.handoffSessionId") < handoff_block.index("gmailPayload.handoff_session_id")
-
+    assert 'from "./gmail_handoff_state.js"' in app_js
     marker_start = app_js.index("function setClientHydrationMarker")
-    schema_block = app_js[schema_start:marker_start]
-    assert "if (urlState.launchSessionSchemaVersion > 0)" in schema_block
+    marker_end = app_js.index("\nfunction syncClientHydrationMarker", marker_start)
+    marker_block = app_js[marker_start:marker_end]
+    assert 'const href = globalThis.window?.location?.href || "";' in marker_block
+    assert "deriveClientLaunchSessionId({ payload: markerPayload, href })" in marker_block
+    assert "deriveClientHandoffSessionId({ payload: markerPayload, href })" in marker_block
+    assert "deriveClientLaunchSessionSchemaVersion({ payload: markerPayload, href })" in marker_block
+
+    launch_start = handoff_js.index("export function deriveClientLaunchSessionId")
+    handoff_start = handoff_js.index("export function deriveClientHandoffSessionId")
+    launch_block = handoff_js[launch_start:handoff_start]
+    assert launch_block.index("nextUrlState.launchSessionId") < launch_block.index("shellLaunchSession.launch_session_id")
+
+    schema_start = handoff_js.index("export function deriveClientLaunchSessionSchemaVersion")
+    handoff_block = handoff_js[handoff_start:schema_start]
+    assert handoff_block.index("nextUrlState.handoffSessionId") < handoff_block.index("gmailPayload.handoff_session_id")
+
+    schema_end = handoff_js.index("\nexport function deriveGmailBootstrapMessageContext", schema_start)
+    schema_block = handoff_js[schema_start:schema_end]
+    assert "if (nextUrlState.launchSessionSchemaVersion > 0)" in schema_block
 
 
 def test_shadow_web_runtime_ready_endpoint_exposes_lightweight_readiness(tmp_path: Path, monkeypatch) -> None:
@@ -33762,6 +34111,18 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "writeConsumedReviewState" in gmail_review_persistence_asset.text
         assert "clearConsumedReviewState" in gmail_review_persistence_asset.text
         assert "shouldAutoOpenReview" in gmail_review_persistence_asset.text
+        gmail_handoff_state_asset = client.get(
+            f"/static-build/{asset_version}/gmail_handoff_state.js"
+        )
+        assert gmail_handoff_state_asset.status_code == 200
+        assert gmail_handoff_state_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "deriveClientLaunchSessionUrlState" in gmail_handoff_state_asset.text
+        assert "deriveClientGmailHandoffState" in gmail_handoff_state_asset.text
+        assert "deriveClientHandoffSessionId" in gmail_handoff_state_asset.text
+        assert "deriveGmailPendingStatus" in gmail_handoff_state_asset.text
+        assert "deriveGmailSourceUrl" in gmail_handoff_state_asset.text
         gmail_attachment_kind_asset = client.get(
             f"/static-build/{asset_version}/gmail_attachment_kind.js"
         )
