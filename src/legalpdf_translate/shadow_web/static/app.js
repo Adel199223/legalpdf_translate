@@ -124,13 +124,15 @@ import {
 } from "./profile_ui.js";
 import {
   buildInterpretationCompletionCardPresentation,
-  buildInterpretationReference,
   buildInterpretationSessionChip,
   deriveInterpretationDisclosurePresentation,
   deriveInterpretationDrawerLayout,
+  deriveInterpretationReviewPresentation,
+} from "./interpretation_review_presentation.js";
+import {
+  buildInterpretationReference,
   deriveInterpretationDistanceSync,
   deriveInterpretationGuardState,
-  deriveInterpretationReviewPresentation,
   deriveInterpretationSeedServiceDefaults,
   deriveInterpretationWorkspaceMode,
   deriveCourtEmailSelection,

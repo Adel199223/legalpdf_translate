@@ -26404,7 +26404,7 @@ console.log(JSON.stringify({
     assert "nullContainerResult" not in results
 
 
-def test_interpretation_review_state_module_owns_session_chip_presentation() -> None:
+def test_interpretation_review_presentation_module_owns_review_surface_state() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -26415,30 +26415,70 @@ def test_interpretation_review_state_module_owns_session_chip_presentation() -> 
     app_js = (static_dir / "app.js").read_text(encoding="utf-8")
     review_state_path = static_dir / "interpretation_review_state.js"
     review_state_js = review_state_path.read_text(encoding="utf-8")
+    review_presentation_path = static_dir / "interpretation_review_presentation.js"
+    assert review_presentation_path.exists()
+    review_presentation_js = review_presentation_path.read_text(encoding="utf-8")
 
-    assert "export function buildInterpretationSessionChip" in review_state_js
+    for export_name in [
+        "deriveInterpretationDisclosurePresentation",
+        "deriveInterpretationReviewPresentation",
+        "buildInterpretationSessionChip",
+        "buildInterpretationCompletionCardPresentation",
+        "deriveInterpretationDrawerLayout",
+    ]:
+        assert f"export function {export_name}" in review_presentation_js
+        assert f"export function {export_name}" not in review_state_js
+
+    assert 'from "./interpretation_review_presentation.js"' in app_js
+    assert 'from "./interpretation_review_state.js"' in app_js
+    assert "deriveInterpretationDisclosurePresentation" in app_js
+    assert "deriveInterpretationReviewPresentation" in app_js
     assert "buildInterpretationSessionChip" in app_js
+    assert "buildInterpretationCompletionCardPresentation" in app_js
+    assert "deriveInterpretationDrawerLayout" in app_js
     assert "function interpretationSessionChip(" not in app_js
 
-    builder_start = review_state_js.index("export function buildInterpretationSessionChip")
-    next_export = review_state_js.find("\nexport function ", builder_start + 1)
-    builder_block = review_state_js[builder_start:next_export if next_export != -1 else len(review_state_js)]
-    for forbidden in [
-        "document.",
-        "window.",
-        "sessionStorage",
-        "localStorage",
-        "fetch(",
-        "fetchJson",
-        "appState",
-        "setDiagnostics",
-        "setPanelStatus",
-        "renderInterpretation",
-        "innerHTML",
+    for export_name in [
+        "deriveInterpretationDisclosurePresentation",
+        "deriveInterpretationReviewPresentation",
+        "buildInterpretationSessionChip",
+        "buildInterpretationCompletionCardPresentation",
+        "deriveInterpretationDrawerLayout",
     ]:
-        assert forbidden not in builder_block
+        builder_start = review_presentation_js.index(f"export function {export_name}")
+        next_export = review_presentation_js.find("\nexport function ", builder_start + 1)
+        builder_block = review_presentation_js[
+            builder_start : next_export if next_export != -1 else len(review_presentation_js)
+        ]
+        for forbidden in [
+            "document.body",
+            "document.querySelector",
+            "document.getElementById",
+            "document.createElement",
+            "window.",
+            "sessionStorage",
+            "localStorage",
+            "fetch(",
+            "fetchJson",
+            "appState",
+            "setDiagnostics",
+            "setPanelStatus",
+            "renderInterpretation",
+            "renderInterpretationCompletionCardInto",
+            "syncInterpretationCompletionCardVisibilityInto",
+            "innerHTML",
+        ]:
+            assert forbidden not in builder_block
 
     render_blocks = {
+        "disclosure": (
+            app_js.index("function syncInterpretationDisclosureState"),
+            app_js.index("\nfunction interpretationActiveSession"),
+        ),
+        "current_presentation": (
+            app_js.index("function currentInterpretationPresentation"),
+            app_js.index("\nfunction interpretationReviewButtonLabel"),
+        ),
         "session_shell": (
             app_js.index("function renderInterpretationSessionShell"),
             app_js.index("\nfunction renderInterpretationSeedCard"),
@@ -26451,8 +26491,23 @@ def test_interpretation_review_state_module_owns_session_chip_presentation() -> 
             app_js.index("function renderInterpretationReviewContext"),
             app_js.index("\nfunction syncInterpretationReviewDetailsShell"),
         ),
+        "completion_card": (
+            app_js.index("function renderInterpretationCompletionCard"),
+            app_js.index("\nfunction setInterpretationLocationGuard"),
+        ),
+        "review_surface": (
+            app_js.index("function syncInterpretationReviewSurface"),
+            app_js.index("\nfunction focusInterpretationField"),
+        ),
     }
-    for start, end in render_blocks.values():
+    assert "deriveInterpretationDrawerLayout({" in app_js[
+        render_blocks["disclosure"][0] : render_blocks["disclosure"][1]
+    ]
+    assert "deriveInterpretationReviewPresentation({" in app_js[
+        render_blocks["current_presentation"][0] : render_blocks["current_presentation"][1]
+    ]
+    for block_name in ["session_shell", "review_summary", "review_context"]:
+        start, end = render_blocks[block_name]
         block = app_js[start:end]
         assert "buildInterpretationSessionChip({" in block
         assert "session: activeSession," in block
@@ -26460,49 +26515,7 @@ def test_interpretation_review_state_module_owns_session_chip_presentation() -> 
         assert "completionPayload: interpretationUiState.completionPayload," in block
         assert "presentation," in block
 
-
-def test_interpretation_review_state_module_owns_completion_card_presentation() -> None:
-    static_dir = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "legalpdf_translate"
-        / "shadow_web"
-        / "static"
-    )
-    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
-    review_state_js = (static_dir / "interpretation_review_state.js").read_text(
-        encoding="utf-8"
-    )
-
-    assert "export function buildInterpretationCompletionCardPresentation" in review_state_js
-    assert "buildInterpretationCompletionCardPresentation" in app_js
-
-    builder_start = review_state_js.index(
-        "export function buildInterpretationCompletionCardPresentation"
-    )
-    next_export = review_state_js.find("\nexport function ", builder_start + 1)
-    builder_block = review_state_js[
-        builder_start : next_export if next_export != -1 else len(review_state_js)
-    ]
-    for forbidden in [
-        "document.",
-        "window.",
-        "sessionStorage",
-        "localStorage",
-        "fetch(",
-        "fetchJson",
-        "appState",
-        "setDiagnostics",
-        "setPanelStatus",
-        "renderInterpretation",
-        "renderInterpretationCompletionCardInto",
-        "syncInterpretationCompletionCardVisibilityInto",
-        "innerHTML",
-    ]:
-        assert forbidden not in builder_block
-
-    completion_start = app_js.index("function renderInterpretationCompletionCard")
-    completion_end = app_js.index("\nfunction setInterpretationLocationGuard", completion_start)
+    completion_start, completion_end = render_blocks["completion_card"]
     completion_block = app_js[completion_start:completion_end]
     assert "buildInterpretationCompletionCardPresentation({" in completion_block
     assert "activeSession," in completion_block
@@ -26524,6 +26537,10 @@ def test_interpretation_review_state_module_owns_completion_card_presentation() 
         "buildInterpretationSessionChip({",
     ]:
         assert removed_inline not in completion_block
+
+    review_surface_start, review_surface_end = render_blocks["review_surface"]
+    review_surface_block = app_js[review_surface_start:review_surface_end]
+    assert "deriveInterpretationDrawerLayout({" in review_surface_block
 
 
 def test_interpretation_result_presentation_module_owns_export_and_gmail_result_state() -> None:
@@ -34396,11 +34413,35 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert interpretation_review_state_asset.headers["content-type"].startswith(
             "application/javascript"
         )
-        assert "buildInterpretationSessionChip" in interpretation_review_state_asset.text
+        assert "deriveInterpretationGuardState" in interpretation_review_state_asset.text
         assert (
-            "buildInterpretationCompletionCardPresentation"
+            "deriveInterpretationWorkspaceMode"
             in interpretation_review_state_asset.text
         )
+        interpretation_review_presentation_asset = client.get(
+            f"/static-build/{asset_version}/interpretation_review_presentation.js"
+        )
+        assert interpretation_review_presentation_asset.status_code == 200
+        assert interpretation_review_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert (
+            "deriveInterpretationReviewPresentation"
+            in interpretation_review_presentation_asset.text
+        )
+        assert (
+            "deriveInterpretationDisclosurePresentation"
+            in interpretation_review_presentation_asset.text
+        )
+        assert (
+            "buildInterpretationSessionChip"
+            in interpretation_review_presentation_asset.text
+        )
+        assert (
+            "buildInterpretationCompletionCardPresentation"
+            in interpretation_review_presentation_asset.text
+        )
+        assert "deriveInterpretationDrawerLayout" in interpretation_review_presentation_asset.text
         interpretation_result_presentation_asset = client.get(
             f"/static-build/{asset_version}/interpretation_result_presentation.js"
         )

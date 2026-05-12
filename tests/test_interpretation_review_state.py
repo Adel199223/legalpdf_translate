@@ -7,6 +7,7 @@ from .browser_esm_probe import run_browser_esm_json_probe
 def _run_interpretation_review_state_probe() -> dict[str, object]:
     script = """
 const reviewModule = await import(__INTERPRETATION_REVIEW_STATE_MODULE_URL__);
+const presentationModule = await import(__INTERPRETATION_REVIEW_PRESENTATION_MODULE_URL__);
 
 const reference = reviewModule.buildInterpretationReference(
   {{
@@ -330,25 +331,25 @@ const workspaceModes = {{
 }};
 
 const drawerLayouts = {{
-  gmailReview: reviewModule.deriveInterpretationDrawerLayout({{
+  gmailReview: presentationModule.deriveInterpretationDrawerLayout({{
     workspaceMode: "gmail_review",
     activeSession: {{ kind: "interpretation", status: "prepared" }},
     serviceSame: true,
     validationField: "",
   }}),
-  gmailReviewServiceValidation: reviewModule.deriveInterpretationDrawerLayout({{
+  gmailReviewServiceValidation: presentationModule.deriveInterpretationDrawerLayout({{
     workspaceMode: "gmail_review",
     activeSession: {{ kind: "interpretation", status: "prepared" }},
     serviceSame: true,
     validationField: "service_city",
   }}),
-  manualSeed: reviewModule.deriveInterpretationDrawerLayout({{
+  manualSeed: presentationModule.deriveInterpretationDrawerLayout({{
     workspaceMode: "manual_seed",
     activeSession: null,
     serviceSame: true,
     validationField: "",
   }}),
-  gmailCompleted: reviewModule.deriveInterpretationDrawerLayout({{
+  gmailCompleted: presentationModule.deriveInterpretationDrawerLayout({{
     workspaceMode: "gmail_completed",
     activeSession: {{ kind: "interpretation", status: "draft_ready", draft_created: true }},
     serviceSame: true,
@@ -357,13 +358,13 @@ const drawerLayouts = {{
 }};
 
 const presentations = {{
-  blank: reviewModule.deriveInterpretationReviewPresentation({{
+  blank: presentationModule.deriveInterpretationReviewPresentation({{
     snapshot: {{}},
     activeSession: null,
     workspaceMode: "blank",
     hasReviewData: false,
   }}),
-  manualSeed: reviewModule.deriveInterpretationReviewPresentation({{
+  manualSeed: presentationModule.deriveInterpretationReviewPresentation({{
     snapshot: {{
       caseNumber: "305/23.2GCBJA",
       caseCity: "Beja",
@@ -373,7 +374,7 @@ const presentations = {{
     workspaceMode: "manual_seed",
     hasReviewData: true,
   }}),
-  savedRow: reviewModule.deriveInterpretationReviewPresentation({{
+  savedRow: presentationModule.deriveInterpretationReviewPresentation({{
     snapshot: {{
       rowId: "41",
       caseNumber: "305/23.2GCBJA",
@@ -384,7 +385,7 @@ const presentations = {{
     workspaceMode: "manual_seed",
     hasReviewData: true,
   }}),
-  gmailReview: reviewModule.deriveInterpretationReviewPresentation({{
+  gmailReview: presentationModule.deriveInterpretationReviewPresentation({{
     snapshot: {{
       caseNumber: "305/23.2GCBJA",
       caseCity: "Beja",
@@ -393,7 +394,7 @@ const presentations = {{
     workspaceMode: "gmail_review",
     hasReviewData: true,
   }}),
-  gmailCompleted: reviewModule.deriveInterpretationReviewPresentation({{
+  gmailCompleted: presentationModule.deriveInterpretationReviewPresentation({{
     snapshot: {{
       caseNumber: "305/23.2GCBJA",
       caseCity: "Beja",
@@ -411,14 +412,14 @@ const presentations = {{
 }};
 
 const disclosures = {{
-  defaults: reviewModule.deriveInterpretationDisclosurePresentation({{
+  defaults: presentationModule.deriveInterpretationDisclosurePresentation({{
     serviceSame: true,
     textCustomized: false,
     recipientOverride: "",
     amountsTouched: false,
     includeTransport: true,
   }}),
-  customized: reviewModule.deriveInterpretationDisclosurePresentation({{
+  customized: presentationModule.deriveInterpretationDisclosurePresentation({{
     serviceSame: false,
     textCustomized: true,
     recipientOverride: "Tribunal Judicial",
@@ -456,14 +457,19 @@ console.log(JSON.stringify({{
 """.replace("{{", "{").replace("}}", "}")
     return run_browser_esm_json_probe(
         script,
-        {"__INTERPRETATION_REVIEW_STATE_MODULE_URL__": "interpretation_review_state.js"},
+        {
+            "__INTERPRETATION_REVIEW_STATE_MODULE_URL__": "interpretation_review_state.js",
+            "__INTERPRETATION_REVIEW_PRESENTATION_MODULE_URL__": (
+                "interpretation_review_presentation.js"
+            ),
+        },
         timeout_seconds=20,
     )
 
 
 def test_interpretation_review_state_builds_session_chip_presentation() -> None:
     script = r"""
-const reviewModule = await import(__INTERPRETATION_REVIEW_STATE_MODULE_URL__);
+const reviewModule = await import(__INTERPRETATION_REVIEW_PRESENTATION_MODULE_URL__);
 
 const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
 const maliciousPresentation = {
@@ -547,7 +553,11 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__INTERPRETATION_REVIEW_STATE_MODULE_URL__": "interpretation_review_state.js"},
+        {
+            "__INTERPRETATION_REVIEW_PRESENTATION_MODULE_URL__": (
+                "interpretation_review_presentation.js"
+            )
+        },
         timeout_seconds=20,
     )
 
@@ -602,7 +612,7 @@ console.log(JSON.stringify({
 
 def test_interpretation_review_state_builds_completion_card_presentation() -> None:
     script = r"""
-const reviewModule = await import(__INTERPRETATION_REVIEW_STATE_MODULE_URL__);
+const reviewModule = await import(__INTERPRETATION_REVIEW_PRESENTATION_MODULE_URL__);
 
 const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
 const maliciousPresentation = {
@@ -708,7 +718,11 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__INTERPRETATION_REVIEW_STATE_MODULE_URL__": "interpretation_review_state.js"},
+        {
+            "__INTERPRETATION_REVIEW_PRESENTATION_MODULE_URL__": (
+                "interpretation_review_presentation.js"
+            )
+        },
         timeout_seconds=20,
     )
 
