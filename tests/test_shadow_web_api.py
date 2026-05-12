@@ -20295,7 +20295,7 @@ def test_result_card_ui_module_centralizes_translation_result_card_renderer() ->
     result_start = translation_js.index("function renderTranslationResultCard")
     result_end = translation_js.index("\nfunction maybeRefreshNumericMismatchWarning", result_start)
     result_block = translation_js[result_start:result_end]
-    assert "renderTranslationResultCardInto(container, {" in result_block
+    assert "renderTranslationResultCardInto(container, card);" in result_block
     assert ".innerHTML" not in result_block
     assert "escapeHtml" not in result_block
 
@@ -20553,6 +20553,52 @@ console.log(JSON.stringify({
     assert results["completed"]["text"] == "Translation complete.Completed pages: 3Run ID: run-123completed"
     assert results["completed"]["brCount"] == 1
     assert "status-chip ok" in results["completed"]["classes"]
+
+
+def test_translation_result_presentation_module_owns_result_card_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "translation_result_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert "export function buildTranslationResultCardPresentation" in presentation_js
+    assert "export function deriveTranslationRecoveryState" in presentation_js
+    assert 'from "./translation_result_presentation.js"' in translation_js
+    assert 'deriveTranslationRecoveryState } from "./translation_result_presentation.js"' in translation_js
+
+    for export_name in [
+        "buildTranslationResultCardPresentation",
+        "deriveTranslationRecoveryState",
+    ]:
+        builder_start = presentation_js.index(f"export function {export_name}")
+        next_export = presentation_js.find("\nexport function ", builder_start + 1)
+        builder_block = presentation_js[
+            builder_start : next_export if next_export != -1 else len(presentation_js)
+        ]
+        for forbidden in ["document.", "innerHTML", "renderTranslation", "setDiagnostics(", "qs("]:
+            assert forbidden not in builder_block
+
+    result_start = translation_js.index("function renderTranslationResultCard")
+    result_end = translation_js.index("\nfunction maybeRefreshNumericMismatchWarning", result_start)
+    result_block = translation_js[result_start:result_end]
+    assert "const card = buildTranslationResultCardPresentation({" in result_block
+    assert "renderTranslationResultCardInto(container, card);" in result_block
+    for moved_phrase in [
+        "Prepared Gmail attachment is ready to start.",
+        "Source file is ready.",
+        "Choose a source file to see translation progress and results here.",
+        "Recovery: open Browser Settings",
+        "Selected pages:",
+        "Translation complete.",
+    ]:
+        assert moved_phrase not in result_block
 
 
 def test_result_card_ui_module_centralizes_arabic_review_card_renderer() -> None:
@@ -34326,6 +34372,15 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert translation_source_presentation_asset.status_code == 200
         assert translation_source_presentation_asset.headers["content-type"].startswith("application/javascript")
         assert "buildTranslationSourceCardPresentation" in translation_source_presentation_asset.text
+        translation_result_presentation_asset = client.get(
+            f"/static-build/{asset_version}/translation_result_presentation.js"
+        )
+        assert translation_result_presentation_asset.status_code == 200
+        assert translation_result_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildTranslationResultCardPresentation" in translation_result_presentation_asset.text
+        assert "deriveTranslationRecoveryState" in translation_result_presentation_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")
