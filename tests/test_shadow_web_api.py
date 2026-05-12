@@ -13982,8 +13982,8 @@ console.log(JSON.stringify({
         timeout_seconds=30,
     )
 
-    assert set(results["exportTypes"]) == set(expected_exports)
-    assert all(value == "function" for value in results["exportTypes"].values())
+    assert set(expected_exports).issubset(set(results["exportTypes"]))
+    assert all(results["exportTypes"][name] == "function" for name in expected_exports)
     malicious = "<img src=x onerror=alert(1)><script>bad()</script>"
     assert results["built"]["prepare"] == {
         "workflow_kind": "translation",
@@ -14041,6 +14041,172 @@ console.log(JSON.stringify({
     }
     assert results["selectionsSameReference"] is True
     assert results["formValuesSameReference"] is True
+
+
+def test_gmail_request_payloads_module_builds_intake_report_and_runtime_payloads() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    payload_path = static_dir / "gmail_request_payloads.js"
+    assert payload_path.exists()
+    payload_js = payload_path.read_text(encoding="utf-8")
+
+    expected_exports = [
+        "buildGmailRestartCanonicalRuntimeRequestPayload",
+        "buildGmailLoadMessageRequestPayload",
+        "buildGmailEmptyRequestPayload",
+        "buildGmailBrowserFailureReportRequestPayload",
+        "buildGmailFinalizationReportRequestPayload",
+    ]
+    for export_name in expected_exports:
+        assert f"export function {export_name}" in payload_js
+
+    assert "document." not in payload_js
+    assert "innerHTML" not in payload_js
+    assert "fetchJson" not in payload_js
+    assert "setDiagnostics" not in payload_js
+    assert "renderGmail" not in payload_js
+    assert "appState" not in payload_js
+
+    payload_import = re.search(
+        r"import \{(?P<body>.*?)\} from \"\./gmail_request_payloads\.js\";",
+        gmail_js,
+        re.S,
+    ).group("body")
+    for export_name in expected_exports:
+        assert export_name in payload_import
+
+    expected_call_markers = [
+        "body: JSON.stringify(buildGmailRestartCanonicalRuntimeRequestPayload({",
+        "body: JSON.stringify(buildGmailLoadMessageRequestPayload({",
+        "body: JSON.stringify(buildGmailEmptyRequestPayload()),",
+        "body: JSON.stringify(buildGmailBrowserFailureReportRequestPayload({",
+        "body: JSON.stringify(buildGmailFinalizationReportRequestPayload({",
+    ]
+    for marker in expected_call_markers:
+        assert marker in gmail_js
+
+    removed_inline_markers = [
+        "workspace_id: appState.workspaceId",
+        "message_context: {",
+        "message_id: fieldValue(\"gmail-message-id\")",
+        "thread_id: fieldValue(\"gmail-thread-id\")",
+        "account_email: fieldValue(\"gmail-account-email\")",
+        "source_gmail_url: currentSourceGmailUrl()",
+        "browser_failure_context: reportContext",
+        "gmail_finalization_context: reportContext",
+        "body: JSON.stringify({}),",
+    ]
+    for marker in removed_inline_markers:
+        assert marker not in gmail_js
+
+    script = """
+const payloads = await import(__GMAIL_REQUEST_PAYLOAD_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const browserReport = {
+  error: `browser-${malicious}`,
+  nested: { value: malicious },
+};
+const finalizationReport = {
+  status: `final-${malicious}`,
+  nested: { value: malicious },
+};
+
+const built = {
+  restart: payloads.buildGmailRestartCanonicalRuntimeRequestPayload({
+    mode: `shadow-${malicious}`,
+    workspaceId: `workspace-${malicious}`,
+  }),
+  restartDefaults: payloads.buildGmailRestartCanonicalRuntimeRequestPayload(),
+  loadMessage: payloads.buildGmailLoadMessageRequestPayload({
+    messageId: `message-${malicious}`,
+    threadId: `thread-${malicious}`,
+    subject: `subject-${malicious}`,
+    accountEmail: `account-${malicious}@example.test`,
+    sourceGmailUrl: `https://mail.google.com/${malicious}`,
+  }),
+  loadMessageDefaults: payloads.buildGmailLoadMessageRequestPayload(),
+  empty: payloads.buildGmailEmptyRequestPayload(),
+  browserReport: payloads.buildGmailBrowserFailureReportRequestPayload({ reportContext: browserReport }),
+  browserReportDefaults: payloads.buildGmailBrowserFailureReportRequestPayload(),
+  finalizationReport: payloads.buildGmailFinalizationReportRequestPayload({ reportContext: finalizationReport }),
+  finalizationReportDefaults: payloads.buildGmailFinalizationReportRequestPayload(),
+};
+
+console.log(JSON.stringify({
+  exportTypes: Object.fromEntries(expectedExports().map((name) => [name, typeof payloads[name]])),
+  built,
+  browserReportSameReference: built.browserReport.browser_failure_context === browserReport,
+  finalizationReportSameReference: built.finalizationReport.gmail_finalization_context === finalizationReport,
+}));
+
+function expectedExports() {
+  return [
+    "buildGmailRestartCanonicalRuntimeRequestPayload",
+    "buildGmailLoadMessageRequestPayload",
+    "buildGmailEmptyRequestPayload",
+    "buildGmailBrowserFailureReportRequestPayload",
+    "buildGmailFinalizationReportRequestPayload",
+  ];
+}
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_REQUEST_PAYLOAD_MODULE_URL__": "gmail_request_payloads.js"},
+        timeout_seconds=30,
+    )
+
+    assert set(results["exportTypes"]) == set(expected_exports)
+    assert all(value == "function" for value in results["exportTypes"].values())
+    malicious = "<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["built"]["restart"] == {
+        "mode": f"shadow-{malicious}",
+        "workspace_id": f"workspace-{malicious}",
+    }
+    assert results["built"]["restartDefaults"] == {
+        "mode": "",
+        "workspace_id": "",
+    }
+    assert results["built"]["loadMessage"] == {
+        "message_context": {
+            "message_id": f"message-{malicious}",
+            "thread_id": f"thread-{malicious}",
+            "subject": f"subject-{malicious}",
+            "account_email": f"account-{malicious}@example.test",
+            "source_gmail_url": f"https://mail.google.com/{malicious}",
+        },
+    }
+    assert results["built"]["loadMessageDefaults"] == {
+        "message_context": {
+            "message_id": "",
+            "thread_id": "",
+            "subject": "",
+            "account_email": "",
+            "source_gmail_url": "",
+        },
+    }
+    assert results["built"]["empty"] == {}
+    assert results["built"]["browserReport"] == {
+        "browser_failure_context": {
+            "error": f"browser-{malicious}",
+            "nested": {"value": malicious},
+        },
+    }
+    assert results["built"]["browserReportDefaults"] == {"browser_failure_context": {}}
+    assert results["built"]["finalizationReport"] == {
+        "gmail_finalization_context": {
+            "status": f"final-{malicious}",
+            "nested": {"value": malicious},
+        },
+    }
+    assert results["built"]["finalizationReportDefaults"] == {"gmail_finalization_context": {}}
+    assert results["browserReportSameReference"] is True
+    assert results["finalizationReportSameReference"] is True
 
 
 def test_gmail_preview_presentation_module_derives_preview_panel_state() -> None:
@@ -32572,6 +32738,11 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailConfirmCurrentTranslationRequestPayload" in gmail_request_payloads_asset.text
         assert "buildGmailBatchFinalizeRequestPayload" in gmail_request_payloads_asset.text
         assert "buildGmailInterpretationFinalizeRequestPayload" in gmail_request_payloads_asset.text
+        assert "buildGmailRestartCanonicalRuntimeRequestPayload" in gmail_request_payloads_asset.text
+        assert "buildGmailLoadMessageRequestPayload" in gmail_request_payloads_asset.text
+        assert "buildGmailEmptyRequestPayload" in gmail_request_payloads_asset.text
+        assert "buildGmailBrowserFailureReportRequestPayload" in gmail_request_payloads_asset.text
+        assert "buildGmailFinalizationReportRequestPayload" in gmail_request_payloads_asset.text
         gmail_attachment_ui_asset = client.get(f"/static-build/{asset_version}/gmail_attachment_ui.js")
         assert gmail_attachment_ui_asset.status_code == 200
         assert gmail_attachment_ui_asset.headers["content-type"].startswith("application/javascript")

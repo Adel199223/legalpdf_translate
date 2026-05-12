@@ -6,6 +6,54 @@ function objectOrEmpty(value) {
   return value && typeof value === "object" ? value : {};
 }
 
+export function buildGmailRestartCanonicalRuntimeRequestPayload({
+  mode = "",
+  workspaceId = "",
+} = {}) {
+  return {
+    mode: stringOrEmpty(mode),
+    workspace_id: stringOrEmpty(workspaceId),
+  };
+}
+
+export function buildGmailLoadMessageRequestPayload({
+  messageId = "",
+  threadId = "",
+  subject = "",
+  accountEmail = "",
+  sourceGmailUrl = "",
+} = {}) {
+  return {
+    message_context: {
+      message_id: stringOrEmpty(messageId),
+      thread_id: stringOrEmpty(threadId),
+      subject: stringOrEmpty(subject),
+      account_email: stringOrEmpty(accountEmail),
+      source_gmail_url: stringOrEmpty(sourceGmailUrl),
+    },
+  };
+}
+
+export function buildGmailEmptyRequestPayload() {
+  return {};
+}
+
+export function buildGmailBrowserFailureReportRequestPayload({
+  reportContext = {},
+} = {}) {
+  return {
+    browser_failure_context: objectOrEmpty(reportContext),
+  };
+}
+
+export function buildGmailFinalizationReportRequestPayload({
+  reportContext = {},
+} = {}) {
+  return {
+    gmail_finalization_context: objectOrEmpty(reportContext),
+  };
+}
+
 export function buildGmailPrepareSessionRequestPayload({
   workflowKind = "",
   targetLang = "",
