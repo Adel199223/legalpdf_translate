@@ -4604,6 +4604,262 @@ console.log(JSON.stringify({
     assert results["reset"] == {"hint": "Gmail review reset.", "open": False}
 
 
+def test_gmail_refresh_policy_module_builds_refresh_scheduling_decisions() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    policy_path = static_dir / "gmail_refresh_policy.js"
+    assert policy_path.exists()
+    policy_js = policy_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_refresh_policy.js"' in gmail_js
+    for export_name in [
+        "GMAIL_REFRESH_POLICY_DEFAULTS",
+        "isGmailWarmupPendingStatus",
+        "buildGmailWarmupPollingDecision",
+        "buildGmailPassiveRefreshDecision",
+    ]:
+        assert f"export {'const' if export_name == 'GMAIL_REFRESH_POLICY_DEFAULTS' else 'function'} {export_name}" in policy_js
+        assert export_name in gmail_js
+
+    for forbidden in [
+        "document.",
+        "window.",
+        "fetchJson",
+        "setDiagnostics(",
+        "setPanelStatus(",
+        "renderGmail",
+        "setTimeout",
+        "clearTimeout",
+    ]:
+        assert forbidden not in policy_js
+
+    sync_block = gmail_js[
+        gmail_js.index("function syncRefreshSchedule"):
+        gmail_js.index("function maybeSchedulePassiveRefresh")
+    ]
+    assert "buildGmailWarmupPollingDecision({" in sync_block
+    assert "WARMUP_POLL_INTERVAL_MS - Math.max" not in sync_block
+    assert "gmailState.warmupPollUntil = now + WARMUP_POLL_TIMEOUT_MS" not in sync_block
+
+    passive_block = gmail_js[
+        gmail_js.index("function maybeSchedulePassiveRefresh"):
+        gmail_js.index("export function initializeGmailUi")
+    ]
+    assert "buildGmailPassiveRefreshDecision({" in passive_block
+    assert "PASSIVE_REFRESH_COOLDOWN_MS" not in passive_block
+    assert "AUTO_REFRESH_THROTTLE_MS - elapsed" not in passive_block
+
+    script = """
+const policy = await import(__GMAIL_REFRESH_POLICY_MODULE_URL__);
+
+const statuses = {
+  warming: policy.isGmailWarmupPendingStatus("warming"),
+  delayed: policy.isGmailWarmupPendingStatus(" DELAYED "),
+  malicious: policy.isGmailWarmupPendingStatus("<script>warming</script>"),
+  nullish: policy.isGmailWarmupPendingStatus(null),
+};
+
+const warmupInactive = policy.buildGmailWarmupPollingDecision({
+  activeView: "new-job",
+  needsWarmupPolling: true,
+  warmupPollUntil: 16000,
+  lastRefreshAt: 700,
+  now: 1000,
+});
+const warmupNoNeed = policy.buildGmailWarmupPollingDecision({
+  activeView: "gmail-intake",
+  needsWarmupPolling: false,
+  warmupPollUntil: 16000,
+  lastRefreshAt: 700,
+  now: 1000,
+});
+const warmupInitial = policy.buildGmailWarmupPollingDecision({
+  activeView: "gmail-intake",
+  needsWarmupPolling: true,
+  warmupPollUntil: 0,
+  lastRefreshAt: 700,
+  now: 1000,
+});
+const warmupExpiredExact = policy.buildGmailWarmupPollingDecision({
+  activeView: "gmail-intake",
+  needsWarmupPolling: true,
+  warmupPollUntil: 1000,
+  lastRefreshAt: 700,
+  now: 1000,
+});
+const warmupLongElapsed = policy.buildGmailWarmupPollingDecision({
+  activeView: "gmail-intake",
+  needsWarmupPolling: true,
+  warmupPollUntil: 16000,
+  lastRefreshAt: 0,
+  now: 2000,
+});
+
+const passiveInactive = policy.buildGmailPassiveRefreshDecision({
+  activeView: "new-job",
+  needsWarmupPolling: false,
+  stableWorkspaceState: false,
+  lastPassiveRefreshAt: 0,
+  lastRefreshAt: 100,
+  now: 1000,
+});
+const passiveWarmup = policy.buildGmailPassiveRefreshDecision({
+  activeView: "gmail-intake",
+  needsWarmupPolling: true,
+  stableWorkspaceState: false,
+  lastPassiveRefreshAt: 0,
+  lastRefreshAt: 100,
+  now: 1000,
+});
+const passiveStable = policy.buildGmailPassiveRefreshDecision({
+  activeView: "gmail-intake",
+  needsWarmupPolling: false,
+  stableWorkspaceState: true,
+  lastPassiveRefreshAt: 0,
+  lastRefreshAt: 100,
+  now: 1000,
+});
+const passiveCooldown = policy.buildGmailPassiveRefreshDecision({
+  activeView: "gmail-intake",
+  needsWarmupPolling: false,
+  stableWorkspaceState: false,
+  lastPassiveRefreshAt: 900,
+  lastRefreshAt: 100,
+  now: 1000,
+});
+const passiveSchedule = policy.buildGmailPassiveRefreshDecision({
+  activeView: "gmail-intake",
+  needsWarmupPolling: false,
+  stableWorkspaceState: false,
+  lastPassiveRefreshAt: 0,
+  lastRefreshAt: 6100,
+  now: 7000,
+});
+const passiveLongElapsed = policy.buildGmailPassiveRefreshDecision({
+  activeView: "gmail-intake",
+  needsWarmupPolling: false,
+  stableWorkspaceState: false,
+  lastPassiveRefreshAt: 0,
+  lastRefreshAt: 0,
+  now: 8000,
+});
+
+console.log(JSON.stringify({
+  exportTypes: {
+    defaults: typeof policy.GMAIL_REFRESH_POLICY_DEFAULTS,
+    status: typeof policy.isGmailWarmupPendingStatus,
+    warmup: typeof policy.buildGmailWarmupPollingDecision,
+    passive: typeof policy.buildGmailPassiveRefreshDecision,
+  },
+  defaults: policy.GMAIL_REFRESH_POLICY_DEFAULTS,
+  statuses,
+  warmupInactive,
+  warmupNoNeed,
+  warmupInitial,
+  warmupExpiredExact,
+  warmupLongElapsed,
+  passiveInactive,
+  passiveWarmup,
+  passiveStable,
+  passiveCooldown,
+  passiveSchedule,
+  passiveLongElapsed,
+  nullWarmup: policy.buildGmailWarmupPollingDecision(null),
+  nullPassive: policy.buildGmailPassiveRefreshDecision(null),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_REFRESH_POLICY_MODULE_URL__": "gmail_refresh_policy.js"},
+    )
+
+    assert results["exportTypes"] == {
+        "defaults": "object",
+        "status": "function",
+        "warmup": "function",
+        "passive": "function",
+    }
+    assert results["defaults"] == {
+        "autoRefreshDelayMs": 220,
+        "autoRefreshThrottleMs": 1400,
+        "passiveRefreshCooldownMs": 6000,
+        "warmupPollIntervalMs": 900,
+        "warmupPollTimeoutMs": 15000,
+    }
+    assert results["statuses"] == {
+        "warming": True,
+        "delayed": True,
+        "malicious": False,
+        "nullish": False,
+    }
+    assert results["warmupInactive"] == {"action": "stop", "delayMs": 0, "warmupPollUntil": 0}
+    assert results["warmupNoNeed"] == {"action": "stop", "delayMs": 0, "warmupPollUntil": 0}
+    assert results["warmupInitial"] == {
+        "action": "schedule",
+        "delayMs": 600,
+        "warmupPollUntil": 16000,
+    }
+    assert results["warmupExpiredExact"] == {
+        "action": "stop",
+        "delayMs": 0,
+        "warmupPollUntil": 0,
+    }
+    assert results["warmupLongElapsed"] == {
+        "action": "schedule",
+        "delayMs": 220,
+        "warmupPollUntil": 16000,
+    }
+    assert results["passiveInactive"] == {
+        "action": "stop",
+        "delayMs": 0,
+        "lastPassiveRefreshAt": 0,
+        "replace": False,
+    }
+    assert results["passiveWarmup"] == {
+        "action": "warmup",
+        "delayMs": 0,
+        "lastPassiveRefreshAt": 0,
+        "replace": False,
+    }
+    assert results["passiveStable"] == {
+        "action": "stop",
+        "delayMs": 0,
+        "lastPassiveRefreshAt": 0,
+        "replace": False,
+    }
+    assert results["passiveCooldown"] == {
+        "action": "skip",
+        "delayMs": 0,
+        "lastPassiveRefreshAt": 900,
+        "replace": False,
+    }
+    assert results["passiveSchedule"] == {
+        "action": "schedule",
+        "delayMs": 500,
+        "lastPassiveRefreshAt": 7000,
+        "replace": True,
+    }
+    assert results["passiveLongElapsed"] == {
+        "action": "schedule",
+        "delayMs": 220,
+        "lastPassiveRefreshAt": 8000,
+        "replace": True,
+    }
+    assert results["nullWarmup"] == {"action": "stop", "delayMs": 0, "warmupPollUntil": 0}
+    assert results["nullPassive"] == {
+        "action": "stop",
+        "delayMs": 0,
+        "lastPassiveRefreshAt": 0,
+        "replace": False,
+    }
+
+
 def test_gmail_runtime_presentation_module_builds_runtime_context_and_diagnostics() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -33087,6 +33343,17 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
             "buildGmailReviewResetDiagnosticsPresentation"
             in gmail_lifecycle_diagnostics_presentation_asset.text
         )
+        gmail_refresh_policy_asset = client.get(
+            f"/static-build/{asset_version}/gmail_refresh_policy.js"
+        )
+        assert gmail_refresh_policy_asset.status_code == 200
+        assert gmail_refresh_policy_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "GMAIL_REFRESH_POLICY_DEFAULTS" in gmail_refresh_policy_asset.text
+        assert "isGmailWarmupPendingStatus" in gmail_refresh_policy_asset.text
+        assert "buildGmailWarmupPollingDecision" in gmail_refresh_policy_asset.text
+        assert "buildGmailPassiveRefreshDecision" in gmail_refresh_policy_asset.text
         assert "renderGmailMessageResultInto" in gmail_ui_asset.text
         assert "renderGmailReviewSummaryInto" in gmail_ui_asset.text
         assert "renderGmailReviewChromeInto" in gmail_ui_asset.text
