@@ -52,6 +52,11 @@ import {
   buildGmailNumericMismatchWarningPresentation,
 } from "./gmail_finalize_presentation.js";
 import {
+  buildGmailBatchFinalizeSurfaceState,
+  selectGmailBatchFinalizePreflight,
+  selectGmailDisplayedBatchFinalizeSession,
+} from "./gmail_batch_finalize_state.js";
+import {
   buildGmailResumeCardPresentation,
   buildGmailSessionButtonRules,
   buildGmailSessionResultPresentation,
@@ -348,51 +353,14 @@ function currentGmailFailureReportContext() {
     : null;
 }
 
-function currentDisplayedBatchFinalizeSession() {
-  if (gmailState.batchFinalizeDrawerSource === "restored") {
-    return gmailState.restoredCompletedSession?.kind === "translation" && gmailState.restoredCompletedSession?.completed
-      ? gmailState.restoredCompletedSession
-      : null;
-  }
-  return gmailState.activeSession?.kind === "translation" && gmailState.activeSession?.completed
-    ? gmailState.activeSession
-    : null;
-}
-
-function currentBatchFinalizePreflight() {
-  if (gmailState.batchFinalizeDrawerSource === "restored") {
-    return null;
-  }
-  if (gmailState.batchFinalizePreflight && typeof gmailState.batchFinalizePreflight === "object") {
-    return { ...gmailState.batchFinalizePreflight };
-  }
-  const session = currentDisplayedBatchFinalizeSession();
-  if (session?.finalization_preflight && typeof session.finalization_preflight === "object") {
-    return { ...session.finalization_preflight };
-  }
-  return null;
-}
-
-function currentBatchFinalizeState() {
-  const payloadState = String(gmailState.batchFinalizeResult?.normalized_payload?.finalization_state || "").trim();
-  if (payloadState) {
-    return payloadState;
-  }
-  const sessionState = String(currentDisplayedBatchFinalizeSession()?.finalization_state || "").trim();
-  if (sessionState) {
-    return sessionState;
-  }
-  const preflight = currentBatchFinalizePreflight();
-  if (preflight) {
-    return preflight.finalization_ready ? "ready_to_finalize" : "blocked_word_pdf_export";
-  }
-  return "";
-}
-
 function currentGmailFinalizationReportContext() {
   return buildGmailFinalizationReportContext({
     batchFinalizeResult: gmailState.batchFinalizeResult,
-    displayedSession: currentDisplayedBatchFinalizeSession(),
+    displayedSession: selectGmailDisplayedBatchFinalizeSession({
+      drawerSource: gmailState.batchFinalizeDrawerSource,
+      activeSession: gmailState.activeSession,
+      restoredCompletedSession: gmailState.restoredCompletedSession,
+    }),
     runtimeMode: appState.runtimeMode,
     workspaceId: appState.workspaceId,
     activeView: appState.activeView,
@@ -1049,7 +1017,7 @@ function closeBatchFinalizeDrawer() {
   setBatchFinalizeDrawerOpen(false);
 }
 
-function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinalizeSession()) {
+function renderBatchFinalizeSurface(activeSession = null) {
   const nodes = {
     status: qs("gmail-batch-finalize-status"),
     summary: qs("gmail-batch-finalize-summary"),
@@ -1060,20 +1028,19 @@ function renderBatchFinalizeSurface(activeSession = currentDisplayedBatchFinaliz
   if (!nodes.status || !nodes.summary || !nodes.result || !nodes.button) {
     return;
   }
-  const session = activeSession || currentDisplayedBatchFinalizeSession();
-  const recoveredOnly = gmailState.batchFinalizeDrawerSource === "restored";
-  const preflight = currentBatchFinalizePreflight();
-  const payload = gmailState.batchFinalizeResult;
-  const finalizationState = currentBatchFinalizeState();
+  const surfaceState = buildGmailBatchFinalizeSurfaceState({
+    activeSessionOverride: activeSession,
+    drawerSource: gmailState.batchFinalizeDrawerSource,
+    activeSession: gmailState.activeSession,
+    restoredCompletedSession: gmailState.restoredCompletedSession,
+    batchFinalizePreflight: gmailState.batchFinalizePreflight,
+    batchFinalizeResult: gmailState.batchFinalizeResult,
+    batchFinalizePreflightInFlight: gmailState.batchFinalizePreflightInFlight,
+  });
   const provenance = currentGmailBuildProvenance();
   const outputFolder = fieldValue("gmail-output-dir") || gmailState.bootstrap?.defaults?.default_output_dir || "Use default folder";
   const presentation = buildGmailBatchFinalizeSurfacePresentation({
-    session,
-    recoveredOnly,
-    preflight,
-    payload,
-    finalizationState,
-    preflightInFlight: gmailState.batchFinalizePreflightInFlight,
+    ...surfaceState,
     outputFolder,
     provenance,
   });
@@ -1934,7 +1901,15 @@ async function confirmCurrentTranslation() {
 
 async function finalizeBatch() {
   const preflightPayload = await refreshBatchFinalizePreflight({ forceRefresh: false });
-  const preflight = preflightPayload?.normalized_payload?.finalization_preflight || currentBatchFinalizePreflight();
+  const preflight = preflightPayload?.normalized_payload?.finalization_preflight || selectGmailBatchFinalizePreflight({
+    drawerSource: gmailState.batchFinalizeDrawerSource,
+    batchFinalizePreflight: gmailState.batchFinalizePreflight,
+    displayedSession: selectGmailDisplayedBatchFinalizeSession({
+      drawerSource: gmailState.batchFinalizeDrawerSource,
+      activeSession: gmailState.activeSession,
+      restoredCompletedSession: gmailState.restoredCompletedSession,
+    }),
+  });
   if (!preflight?.finalization_ready) {
     setPanelStatus(
       "gmail-batch-finalize",
