@@ -12506,6 +12506,180 @@ console.log(JSON.stringify({
     }
 
 
+def test_gmail_stage_action_plan_module_builds_stage_action_effects() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    plan_path = static_dir / "gmail_stage_action_plan.js"
+    assert plan_path.exists()
+    plan_js = plan_path.read_text(encoding="utf-8")
+
+    assert "export function buildGmailStageActionPlan" in plan_js
+    assert "document." not in plan_js
+    assert "innerHTML" not in plan_js
+    assert "renderGmail" not in plan_js
+    assert "setActiveView(" not in plan_js
+    assert "openBatchFinalizeDrawer(" not in plan_js
+    assert "gmailState" not in plan_js
+
+    assert 'from "./gmail_stage_action_plan.js"' in gmail_js
+    stage_plan_import = re.search(
+        r"import \{(?P<body>.*?)\} from \"\./gmail_stage_action_plan\.js\";",
+        gmail_js,
+        re.S,
+    ).group("body")
+    assert "buildGmailStageActionPlan" in stage_plan_import
+
+    stage_action_start = gmail_js.index("function runStageAction(")
+    stage_action_end = gmail_js.index("\nasync function runRedoCurrentTranslation", stage_action_start)
+    stage_action_block = gmail_js[stage_action_start:stage_action_end]
+    assert "buildGmailStageActionPlan({" in stage_action_block
+    assert "switch (action)" not in stage_action_block
+    assert "case \"resume-translation" not in stage_action_block
+    assert "case \"resume-interpretation" not in stage_action_block
+
+    direct_translation_start = gmail_js.index('qs("gmail-load-translation-launch")')
+    direct_translation_end = gmail_js.index('qs("gmail-load-interpretation-seed")', direct_translation_start)
+    direct_translation_block = gmail_js[direct_translation_start:direct_translation_end]
+    assert 'runStageAction("resume-translation-running")' in direct_translation_block
+
+    direct_interpretation_start = gmail_js.index('qs("gmail-load-interpretation-seed")')
+    direct_interpretation_end = gmail_js.index(
+        'window.addEventListener("legalpdf:open-gmail-session-drawer"',
+        direct_interpretation_start,
+    )
+    direct_interpretation_block = gmail_js[direct_interpretation_start:direct_interpretation_end]
+    assert 'runStageAction("resume-interpretation-review")' in direct_interpretation_block
+
+    script = """
+const planner = await import(__GMAIL_STAGE_ACTION_PLAN_MODULE_URL__);
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const planned = {
+  recovery: planner.buildGmailStageActionPlan({
+    action: "resume-translation-recovery",
+    suggestedTranslationLaunch: { source_path: malicious },
+  }),
+  prepared: planner.buildGmailStageActionPlan({
+    action: "resume-translation-prepared",
+    suggestedTranslationLaunch: { source_path: malicious },
+  }),
+  runningNoLaunch: planner.buildGmailStageActionPlan({
+    action: "resume-translation-running",
+    suggestedTranslationLaunch: null,
+  }),
+  save: planner.buildGmailStageActionPlan({
+    action: "resume-translation-save",
+    suggestedTranslationLaunch: { source_path: malicious },
+  }),
+  finalize: planner.buildGmailStageActionPlan({
+    action: "resume-translation-finalize",
+    suggestedTranslationLaunch: { source_path: malicious },
+  }),
+  restoredFinalize: planner.buildGmailStageActionPlan({
+    action: "open-restored-translation-finalize",
+  }),
+  interpretationSeed: planner.buildGmailStageActionPlan({
+    action: "resume-interpretation-review",
+    interpretationSeed: { id: malicious },
+  }),
+  interpretationNoSeed: planner.buildGmailStageActionPlan({
+    action: "resume-interpretation-finalize",
+    interpretationSeed: null,
+  }),
+  review: planner.buildGmailStageActionPlan({ action: "review" }),
+  intake: planner.buildGmailStageActionPlan({ action: "open-intake" }),
+  unknown: planner.buildGmailStageActionPlan({ action: malicious }),
+  empty: planner.buildGmailStageActionPlan({ action: "" }),
+  nullSafe: planner.buildGmailStageActionPlan(),
+};
+
+console.log(JSON.stringify({
+  exportType: typeof planner.buildGmailStageActionPlan,
+  planned,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {
+            "__GMAIL_STAGE_ACTION_PLAN_MODULE_URL__": "gmail_stage_action_plan.js",
+        },
+    )
+
+    assert results["exportType"] == "function"
+    assert results["planned"]["recovery"] == {
+        "activeView": "new-job",
+        "applyTranslationLaunch": True,
+        "applyInterpretationSeed": False,
+        "openInterpretationReviewDrawer": False,
+        "openTranslationCompletionDrawer": False,
+        "openBatchFinalizeDrawer": False,
+        "batchFinalizeSource": "",
+        "openReviewDrawer": False,
+        "closeSessionDrawer": True,
+    }
+    assert results["planned"]["prepared"] == results["planned"]["recovery"]
+    assert results["planned"]["runningNoLaunch"] == {
+        **results["planned"]["recovery"],
+        "applyTranslationLaunch": False,
+    }
+    assert results["planned"]["save"] == {
+        **results["planned"]["recovery"],
+        "openTranslationCompletionDrawer": True,
+    }
+    assert results["planned"]["finalize"] == {
+        **results["planned"]["recovery"],
+        "activeView": "",
+        "applyTranslationLaunch": False,
+        "openBatchFinalizeDrawer": True,
+        "closeSessionDrawer": False,
+    }
+    assert results["planned"]["restoredFinalize"] == {
+        **results["planned"]["finalize"],
+        "batchFinalizeSource": "restored",
+    }
+    assert results["planned"]["interpretationSeed"] == {
+        "activeView": "new-job",
+        "applyTranslationLaunch": False,
+        "applyInterpretationSeed": True,
+        "openInterpretationReviewDrawer": False,
+        "openTranslationCompletionDrawer": False,
+        "openBatchFinalizeDrawer": False,
+        "batchFinalizeSource": "",
+        "openReviewDrawer": False,
+        "closeSessionDrawer": True,
+    }
+    assert results["planned"]["interpretationNoSeed"] == {
+        **results["planned"]["interpretationSeed"],
+        "applyInterpretationSeed": False,
+        "openInterpretationReviewDrawer": True,
+    }
+    assert results["planned"]["review"] == {
+        "activeView": "",
+        "applyTranslationLaunch": False,
+        "applyInterpretationSeed": False,
+        "openInterpretationReviewDrawer": False,
+        "openTranslationCompletionDrawer": False,
+        "openBatchFinalizeDrawer": False,
+        "batchFinalizeSource": "",
+        "openReviewDrawer": True,
+        "closeSessionDrawer": False,
+    }
+    assert results["planned"]["intake"] == {
+        **results["planned"]["review"],
+        "activeView": "gmail-intake",
+        "openReviewDrawer": False,
+    }
+    assert results["planned"]["unknown"] == results["planned"]["intake"]
+    assert results["planned"]["empty"] == results["planned"]["intake"]
+    assert results["planned"]["nullSafe"] == results["planned"]["intake"]
+
+
 def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -31803,6 +31977,14 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailStagePresentation" in gmail_stage_presentation_asset.text
         assert "buildGmailHomeCtaPresentation" in gmail_stage_presentation_asset.text
         assert "buildGmailPanelStatusPresentation" in gmail_stage_presentation_asset.text
+        gmail_stage_action_plan_asset = client.get(
+            f"/static-build/{asset_version}/gmail_stage_action_plan.js"
+        )
+        assert gmail_stage_action_plan_asset.status_code == 200
+        assert gmail_stage_action_plan_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailStageActionPlan" in gmail_stage_action_plan_asset.text
         gmail_review_state_asset = client.get(f"/static-build/{asset_version}/gmail_review_state.js")
         assert gmail_review_state_asset.status_code == 200
         assert gmail_review_state_asset.headers["content-type"].startswith("application/javascript")

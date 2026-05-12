@@ -104,6 +104,7 @@ import {
   buildGmailPanelStatusPresentation,
   buildGmailStagePresentation,
 } from "./gmail_stage_presentation.js";
+import { buildGmailStageActionPlan } from "./gmail_stage_action_plan.js";
 import {
   buildGmailContextDefaultsPresentation,
   buildGmailSimulatorDefaultsPresentation,
@@ -576,49 +577,44 @@ function loadSuggestedTranslationLaunch({ closeCompletionDrawer = false } = {}) 
   return true;
 }
 
-function runStageAction(action) {
-  switch (action) {
-    case "resume-translation-recovery":
-    case "resume-translation-prepared":
-    case "resume-translation-running":
-      if (gmailState.suggestedTranslationLaunch) {
-        gmailState.hooks.applyTranslationLaunch?.(gmailState.suggestedTranslationLaunch);
-      }
-      setActiveView("new-job");
-      closeSessionDrawer();
-      break;
-    case "resume-translation-save":
-      if (gmailState.suggestedTranslationLaunch) {
-        gmailState.hooks.applyTranslationLaunch?.(gmailState.suggestedTranslationLaunch);
-      }
-      setActiveView("new-job");
-      gmailState.hooks.openTranslationCompletionDrawer?.();
-      closeSessionDrawer();
-      break;
-    case "resume-translation-finalize":
-      openBatchFinalizeDrawer();
-      break;
-    case "open-restored-translation-finalize":
-      openBatchFinalizeDrawer({ source: "restored" });
-      break;
-    case "resume-interpretation-review":
-    case "resume-interpretation-finalize":
-      if (gmailState.interpretationSeed) {
-        gmailState.hooks.applyInterpretationSeed?.(gmailState.interpretationSeed, { openReview: true });
-      } else {
-        gmailState.hooks.openInterpretationReviewDrawer?.();
-      }
-      setActiveView("new-job");
-      closeSessionDrawer();
-      break;
-    case "review":
-      openReviewDrawer();
-      break;
-    case "open-intake":
-    default:
-      setActiveView("gmail-intake");
-      break;
+function applyGmailStageActionPlan(plan) {
+  if (plan.applyTranslationLaunch && gmailState.suggestedTranslationLaunch) {
+    gmailState.hooks.applyTranslationLaunch?.(gmailState.suggestedTranslationLaunch);
   }
+  if (plan.applyInterpretationSeed && gmailState.interpretationSeed) {
+    gmailState.hooks.applyInterpretationSeed?.(gmailState.interpretationSeed, { openReview: true });
+  }
+  if (plan.openInterpretationReviewDrawer) {
+    gmailState.hooks.openInterpretationReviewDrawer?.();
+  }
+  if (plan.activeView) {
+    setActiveView(plan.activeView);
+  }
+  if (plan.openTranslationCompletionDrawer) {
+    gmailState.hooks.openTranslationCompletionDrawer?.();
+  }
+  if (plan.closeSessionDrawer) {
+    closeSessionDrawer();
+  }
+  if (plan.openBatchFinalizeDrawer) {
+    if (plan.batchFinalizeSource === "restored") {
+      openBatchFinalizeDrawer({ source: "restored" });
+    } else {
+      openBatchFinalizeDrawer();
+    }
+  }
+  if (plan.openReviewDrawer) {
+    openReviewDrawer();
+  }
+}
+
+function runStageAction(action) {
+  const plan = buildGmailStageActionPlan({
+    action,
+    suggestedTranslationLaunch: gmailState.suggestedTranslationLaunch,
+    interpretationSeed: gmailState.interpretationSeed,
+  });
+  applyGmailStageActionPlan(plan);
 }
 
 async function runRedoCurrentTranslation() {
@@ -2458,17 +2454,13 @@ export function initializeGmailUi(hooks) {
 
   qs("gmail-load-translation-launch")?.addEventListener("click", () => {
     if (gmailState.suggestedTranslationLaunch) {
-      gmailState.hooks.applyTranslationLaunch?.(gmailState.suggestedTranslationLaunch);
-      setActiveView("new-job");
-      closeSessionDrawer();
+      runStageAction("resume-translation-running");
     }
   });
 
   qs("gmail-load-interpretation-seed")?.addEventListener("click", () => {
     if (gmailState.interpretationSeed) {
-      gmailState.hooks.applyInterpretationSeed?.(gmailState.interpretationSeed, { openReview: true });
-      setActiveView("new-job");
-      closeSessionDrawer();
+      runStageAction("resume-interpretation-review");
     }
   });
 
