@@ -105,9 +105,14 @@ import {
 import {
   buildGmailBatchFinalizePreflightRequestPayload,
   buildGmailBatchFinalizeRequestPayload,
+  buildGmailBrowserFailureReportRequestPayload,
   buildGmailConfirmCurrentTranslationRequestPayload,
+  buildGmailEmptyRequestPayload,
+  buildGmailFinalizationReportRequestPayload,
   buildGmailInterpretationFinalizeRequestPayload,
+  buildGmailLoadMessageRequestPayload,
   buildGmailPrepareSessionRequestPayload,
+  buildGmailRestartCanonicalRuntimeRequestPayload,
 } from "./gmail_request_payloads.js";
 import { buildGmailRestoreBarPresentation } from "./gmail_restore_presentation.js";
 import { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
@@ -480,10 +485,10 @@ async function restartCanonicalRuntimeGuidance() {
   const payload = await fetchJson("/api/gmail/runtime/restart-canonical", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+    body: JSON.stringify(buildGmailRestartCanonicalRuntimeRequestPayload({
       mode: appState.runtimeMode,
-      workspace_id: appState.workspaceId,
-    }),
+      workspaceId: appState.workspaceId,
+    })),
   });
   const browserUrl = String(payload.normalized_payload?.browser_url || window.location.href).trim() || window.location.href;
   const shellReadyUrl = String(payload.normalized_payload?.shell_ready_url || "").trim();
@@ -1583,15 +1588,13 @@ async function loadMessage() {
   const payload = await fetchJson("/api/gmail/load-message", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message_context: {
-        message_id: fieldValue("gmail-message-id"),
-        thread_id: fieldValue("gmail-thread-id"),
-        subject: fieldValue("gmail-subject"),
-        account_email: fieldValue("gmail-account-email"),
-        source_gmail_url: currentSourceGmailUrl(),
-      },
-    }),
+    body: JSON.stringify(buildGmailLoadMessageRequestPayload({
+      messageId: fieldValue("gmail-message-id"),
+      threadId: fieldValue("gmail-thread-id"),
+      subject: fieldValue("gmail-subject"),
+      accountEmail: fieldValue("gmail-account-email"),
+      sourceGmailUrl: currentSourceGmailUrl(),
+    })),
   });
   const reviewLoadState = buildGmailReviewLoadResetState({ payload });
   applyGmailReviewLoadResetState(reviewLoadState);
@@ -1618,7 +1621,7 @@ async function loadDemoReview() {
   const payload = await fetchJson("/api/gmail/demo-review", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
+    body: JSON.stringify(buildGmailEmptyRequestPayload()),
   });
   const reviewLoadState = buildGmailReviewLoadResetState({ payload });
   applyGmailReviewLoadResetState(reviewLoadState);
@@ -1811,9 +1814,9 @@ async function handleGmailFailureReport() {
   const payload = await fetchJson("/api/power-tools/diagnostics/run-report", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      browser_failure_context: reportContext,
-    }),
+    body: JSON.stringify(buildGmailBrowserFailureReportRequestPayload({
+      reportContext,
+    })),
   });
   gmailState.lastFailureReportPayload = payload;
   setPanelStatus("gmail", "ok", "Gmail browser failure report generated for the current preview or prepare failure.");
@@ -1832,9 +1835,9 @@ async function handleGmailFinalizationReport() {
   const payload = await fetchJson("/api/power-tools/diagnostics/run-report", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      gmail_finalization_context: reportContext,
-    }),
+    body: JSON.stringify(buildGmailFinalizationReportRequestPayload({
+      reportContext,
+    })),
   });
   gmailState.lastFinalizationReportPayload = payload;
   setPanelStatus("gmail-batch-finalize", "ok", "Gmail finalization report generated.");
@@ -2530,7 +2533,7 @@ export function initializeGmailUi(hooks) {
         const payload = await fetchJson("/api/gmail/reset", appState, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
+          body: JSON.stringify(buildGmailEmptyRequestPayload()),
         });
         forgetConsumedReviewEvent();
         resetPreviewState();
