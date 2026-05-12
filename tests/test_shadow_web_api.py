@@ -13864,6 +13864,185 @@ console.log(JSON.stringify({
     )
 
 
+def test_gmail_request_payloads_module_builds_session_and_finalization_payloads() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    payload_path = static_dir / "gmail_request_payloads.js"
+    assert payload_path.exists()
+    payload_js = payload_path.read_text(encoding="utf-8")
+
+    expected_exports = [
+        "buildGmailPrepareSessionRequestPayload",
+        "buildGmailBatchFinalizePreflightRequestPayload",
+        "buildGmailConfirmCurrentTranslationRequestPayload",
+        "buildGmailBatchFinalizeRequestPayload",
+        "buildGmailInterpretationFinalizeRequestPayload",
+    ]
+    for export_name in expected_exports:
+        assert f"export function {export_name}" in payload_js
+
+    assert "document." not in payload_js
+    assert "innerHTML" not in payload_js
+    assert "fetchJson" not in payload_js
+    assert "setDiagnostics" not in payload_js
+    assert "renderGmail" not in payload_js
+    assert "appState" not in payload_js
+
+    assert 'from "./gmail_request_payloads.js"' in gmail_js
+    payload_import = re.search(
+        r"import \{(?P<body>.*?)\} from \"\./gmail_request_payloads\.js\";",
+        gmail_js,
+        re.S,
+    ).group("body")
+    for export_name in expected_exports:
+        assert export_name in payload_import
+
+    expected_call_markers = [
+        "body: JSON.stringify(buildGmailPrepareSessionRequestPayload({",
+        "body: JSON.stringify(buildGmailBatchFinalizePreflightRequestPayload({",
+        "body: JSON.stringify(buildGmailConfirmCurrentTranslationRequestPayload({",
+        "body: JSON.stringify(buildGmailBatchFinalizeRequestPayload({",
+        "body: JSON.stringify(buildGmailInterpretationFinalizeRequestPayload({",
+    ]
+    for marker in expected_call_markers:
+        assert marker in gmail_js
+
+    removed_inline_markers = [
+        "workflow_kind: currentWorkflowKind()",
+        "force_refresh: forceRefresh",
+        "job_id: jobId",
+        "completion_key: translationUi.arabicReviewCompletionKey",
+        "form_values: gmailState.hooks.collectCurrentTranslationSaveValues",
+        "profile_id: qs(\"profile-id\")?.value",
+        "form_values: gmailState.hooks.collectInterpretationFormValues",
+        "service_same_checked: Boolean(qs(\"service-same\")?.checked)",
+    ]
+    for marker in removed_inline_markers:
+        assert marker not in gmail_js
+
+    script = """
+const payloads = await import(__GMAIL_REQUEST_PAYLOAD_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const selections = [
+  { attachment_id: `att-${malicious}`, start_page: 2, page_count: 5 },
+];
+const formValues = {
+  notes: `form-${malicious}`,
+  nested: { value: malicious },
+};
+
+const built = {
+  prepare: payloads.buildGmailPrepareSessionRequestPayload({
+    workflowKind: "translation",
+    targetLang: `fr-${malicious}`,
+    outputDir: `C:/out/${malicious}`,
+    selections,
+  }),
+  prepareDefaults: payloads.buildGmailPrepareSessionRequestPayload(),
+  preflightTrue: payloads.buildGmailBatchFinalizePreflightRequestPayload({ forceRefresh: true }),
+  preflightDefaults: payloads.buildGmailBatchFinalizePreflightRequestPayload(),
+  confirm: payloads.buildGmailConfirmCurrentTranslationRequestPayload({
+    jobId: `job-${malicious}`,
+    completionKey: `key-${malicious}`,
+    formValues,
+    rowId: `row-${malicious}`,
+  }),
+  confirmDefaults: payloads.buildGmailConfirmCurrentTranslationRequestPayload(),
+  batchFinalize: payloads.buildGmailBatchFinalizeRequestPayload({
+    profileId: `profile-${malicious}`,
+    outputFilename: `final-${malicious}.pdf`,
+  }),
+  batchFinalizeDefaults: payloads.buildGmailBatchFinalizeRequestPayload(),
+  interpretationFinalize: payloads.buildGmailInterpretationFinalizeRequestPayload({
+    formValues,
+    profileId: `profile-${malicious}`,
+    serviceSameChecked: true,
+    outputFilename: `interpretation-${malicious}.pdf`,
+  }),
+  interpretationFinalizeDefaults: payloads.buildGmailInterpretationFinalizeRequestPayload(),
+};
+
+console.log(JSON.stringify({
+  exportTypes: Object.fromEntries(Object.keys(payloads).map((name) => [name, typeof payloads[name]])),
+  built,
+  selectionsSameReference: built.prepare.selections === selections,
+  formValuesSameReference: built.confirm.form_values === formValues
+    && built.interpretationFinalize.form_values === formValues,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_REQUEST_PAYLOAD_MODULE_URL__": "gmail_request_payloads.js"},
+        timeout_seconds=30,
+    )
+
+    assert set(results["exportTypes"]) == set(expected_exports)
+    assert all(value == "function" for value in results["exportTypes"].values())
+    malicious = "<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["built"]["prepare"] == {
+        "workflow_kind": "translation",
+        "target_lang": f"fr-{malicious}",
+        "output_dir": f"C:/out/{malicious}",
+        "selections": [
+            {"attachment_id": f"att-{malicious}", "start_page": 2, "page_count": 5},
+        ],
+    }
+    assert results["built"]["prepareDefaults"] == {
+        "workflow_kind": "",
+        "target_lang": "",
+        "output_dir": "",
+        "selections": [],
+    }
+    assert results["built"]["preflightTrue"] == {"force_refresh": True}
+    assert results["built"]["preflightDefaults"] == {"force_refresh": False}
+    assert results["built"]["confirm"] == {
+        "job_id": f"job-{malicious}",
+        "completion_key": f"key-{malicious}",
+        "form_values": {
+            "notes": f"form-{malicious}",
+            "nested": {"value": malicious},
+        },
+        "row_id": f"row-{malicious}",
+    }
+    assert results["built"]["confirmDefaults"] == {
+        "job_id": "",
+        "completion_key": "",
+        "form_values": {},
+        "row_id": None,
+    }
+    assert results["built"]["batchFinalize"] == {
+        "profile_id": f"profile-{malicious}",
+        "output_filename": f"final-{malicious}.pdf",
+    }
+    assert results["built"]["batchFinalizeDefaults"] == {
+        "profile_id": "",
+        "output_filename": "",
+    }
+    assert results["built"]["interpretationFinalize"] == {
+        "form_values": {
+            "notes": f"form-{malicious}",
+            "nested": {"value": malicious},
+        },
+        "profile_id": f"profile-{malicious}",
+        "service_same_checked": True,
+        "output_filename": f"interpretation-{malicious}.pdf",
+    }
+    assert results["built"]["interpretationFinalizeDefaults"] == {
+        "form_values": {},
+        "profile_id": "",
+        "service_same_checked": False,
+        "output_filename": "",
+    }
+    assert results["selectionsSameReference"] is True
+    assert results["formValuesSameReference"] is True
+
+
 def test_gmail_preview_presentation_module_derives_preview_panel_state() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -32381,6 +32560,18 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "fetchGmailAttachmentPreviewPayload" in gmail_preview_bundle_asset.text
         assert "ensureGmailBrowserPdfBundleForAttachment" in gmail_preview_bundle_asset.text
         assert "ensureGmailBrowserPdfBundlesForSelections" in gmail_preview_bundle_asset.text
+        gmail_request_payloads_asset = client.get(
+            f"/static-build/{asset_version}/gmail_request_payloads.js"
+        )
+        assert gmail_request_payloads_asset.status_code == 200
+        assert gmail_request_payloads_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailPrepareSessionRequestPayload" in gmail_request_payloads_asset.text
+        assert "buildGmailBatchFinalizePreflightRequestPayload" in gmail_request_payloads_asset.text
+        assert "buildGmailConfirmCurrentTranslationRequestPayload" in gmail_request_payloads_asset.text
+        assert "buildGmailBatchFinalizeRequestPayload" in gmail_request_payloads_asset.text
+        assert "buildGmailInterpretationFinalizeRequestPayload" in gmail_request_payloads_asset.text
         gmail_attachment_ui_asset = client.get(f"/static-build/{asset_version}/gmail_attachment_ui.js")
         assert gmail_attachment_ui_asset.status_code == 200
         assert gmail_attachment_ui_asset.headers["content-type"].startswith("application/javascript")
