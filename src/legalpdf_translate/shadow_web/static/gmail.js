@@ -102,6 +102,13 @@ import {
   ensureGmailBrowserPdfBundlesForSelections,
   fetchGmailAttachmentPreviewPayload,
 } from "./gmail_preview_bundle.js";
+import {
+  buildGmailBatchFinalizePreflightRequestPayload,
+  buildGmailBatchFinalizeRequestPayload,
+  buildGmailConfirmCurrentTranslationRequestPayload,
+  buildGmailInterpretationFinalizeRequestPayload,
+  buildGmailPrepareSessionRequestPayload,
+} from "./gmail_request_payloads.js";
 import { buildGmailRestoreBarPresentation } from "./gmail_restore_presentation.js";
 import { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
 import {
@@ -1754,12 +1761,12 @@ async function prepareSession() {
   const payload = await fetchJson("/api/gmail/prepare-session", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      workflow_kind: currentWorkflowKind(),
-      target_lang: fieldValue("gmail-target-lang"),
-      output_dir: fieldValue("gmail-output-dir"),
+    body: JSON.stringify(buildGmailPrepareSessionRequestPayload({
+      workflowKind: currentWorkflowKind(),
+      targetLang: fieldValue("gmail-target-lang"),
+      outputDir: fieldValue("gmail-output-dir"),
       selections: collectSelections(),
-    }),
+    })),
   });
   gmailState.activeSession = payload.normalized_payload.active_session || null;
   gmailState.restoredCompletedSession = payload.normalized_payload.restored_completed_session || null;
@@ -1850,7 +1857,9 @@ async function refreshBatchFinalizePreflight({ forceRefresh = false } = {}) {
     const payload = await fetchJson("/api/gmail/batch/finalize-preflight", appState, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ force_refresh: forceRefresh }),
+      body: JSON.stringify(buildGmailBatchFinalizePreflightRequestPayload({
+        forceRefresh,
+      })),
     });
   gmailState.activeSession = payload.normalized_payload.active_session || gmailState.activeSession;
   gmailState.restoredCompletedSession = payload.normalized_payload.restored_completed_session || gmailState.restoredCompletedSession;
@@ -1890,12 +1899,12 @@ async function confirmCurrentTranslation() {
   const payload = await fetchJson("/api/gmail/batch/confirm-current", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      job_id: jobId,
-      completion_key: translationUi.arabicReviewCompletionKey || "",
-      form_values: gmailState.hooks.collectCurrentTranslationSaveValues?.() || {},
-      row_id: qs("translation-row-id")?.value || null,
-    }),
+    body: JSON.stringify(buildGmailConfirmCurrentTranslationRequestPayload({
+      jobId,
+      completionKey: translationUi.arabicReviewCompletionKey || "",
+      formValues: gmailState.hooks.collectCurrentTranslationSaveValues?.() || {},
+      rowId: qs("translation-row-id")?.value || null,
+    })),
   });
   gmailState.activeSession = payload.normalized_payload.active_session || null;
   gmailState.restoredCompletedSession = payload.normalized_payload.restored_completed_session || null;
@@ -1935,10 +1944,10 @@ async function finalizeBatch() {
   const payload = await fetchJson("/api/gmail/batch/finalize", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      profile_id: qs("profile-id")?.value || "",
-      output_filename: fieldValue("gmail-batch-final-output-filename") || fieldValue("gmail-final-output-filename"),
-    }),
+    body: JSON.stringify(buildGmailBatchFinalizeRequestPayload({
+      profileId: qs("profile-id")?.value || "",
+      outputFilename: fieldValue("gmail-batch-final-output-filename") || fieldValue("gmail-final-output-filename"),
+    })),
   });
   gmailState.activeSession = payload.normalized_payload.active_session || null;
   gmailState.restoredCompletedSession = payload.normalized_payload.restored_completed_session || null;
@@ -1961,12 +1970,12 @@ async function finalizeInterpretation() {
   const payload = await fetchJson("/api/gmail/interpretation/finalize", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      form_values: gmailState.hooks.collectInterpretationFormValues?.() || {},
-      profile_id: qs("profile-id")?.value || "",
-      service_same_checked: Boolean(qs("service-same")?.checked),
-      output_filename: fieldValue("gmail-final-output-filename"),
-    }),
+    body: JSON.stringify(buildGmailInterpretationFinalizeRequestPayload({
+      formValues: gmailState.hooks.collectInterpretationFormValues?.() || {},
+      profileId: qs("profile-id")?.value || "",
+      serviceSameChecked: Boolean(qs("service-same")?.checked),
+      outputFilename: fieldValue("gmail-final-output-filename"),
+    })),
   });
   gmailState.activeSession = payload.normalized_payload.active_session || null;
   gmailState.restoredCompletedSession = payload.normalized_payload.restored_completed_session || null;
