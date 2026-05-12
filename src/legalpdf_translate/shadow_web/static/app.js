@@ -65,6 +65,10 @@ import {
   syncInterpretationCompletionCardVisibilityInto,
 } from "./interpretation_result_ui.js";
 import {
+  buildInterpretationExportResultPresentation,
+  buildInterpretationGmailResultPresentation,
+} from "./interpretation_result_presentation.js";
+import {
   focusInterpretationFieldInto,
   renderInterpretationDisclosureSectionsInto,
   renderInterpretationReviewContextInto,
@@ -2081,11 +2085,14 @@ function renderStatus(payload) {
 
 export function renderInterpretationExportResult(payload) {
   const container = qs("export-result");
+  const card = buildInterpretationExportResultPresentation({
+    payload,
+    presentation: currentInterpretationPresentation(),
+  });
   renderInterpretationExportPanelResultInto(
     qs("interpretation-review-export-panel"),
     container,
-    payload,
-    currentInterpretationPresentation(),
+    card,
   );
   openInterpretationReviewDrawer();
   syncInterpretationReviewSurface();
@@ -2098,7 +2105,11 @@ export function renderInterpretationGmailResult(payload) {
     return;
   }
   interpretationUiState.completionPayload = payload;
-  renderInterpretationGmailResultInto(container, payload, currentInterpretationPresentation());
+  const card = buildInterpretationGmailResultPresentation({
+    payload,
+    presentation: currentInterpretationPresentation(),
+  });
+  renderInterpretationGmailResultInto(container, card);
   openInterpretationReviewDrawer();
   syncInterpretationReviewSurface();
   notifyInterpretationUiStateChanged();

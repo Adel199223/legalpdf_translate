@@ -26480,6 +26480,96 @@ def test_interpretation_review_state_module_owns_completion_card_presentation() 
         assert removed_inline not in completion_block
 
 
+def test_interpretation_result_presentation_module_owns_export_and_gmail_result_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    result_ui_js = (static_dir / "interpretation_result_ui.js").read_text(encoding="utf-8")
+    result_presentation_path = static_dir / "interpretation_result_presentation.js"
+    assert result_presentation_path.exists()
+    result_presentation_js = result_presentation_path.read_text(encoding="utf-8")
+
+    assert "export function buildInterpretationExportResultPresentation" in result_presentation_js
+    assert "export function buildInterpretationGmailResultPresentation" in result_presentation_js
+    assert 'from "./interpretation_result_presentation.js"' in app_js
+    assert "buildInterpretationExportResultPresentation({" in app_js
+    assert "buildInterpretationGmailResultPresentation({" in app_js
+
+    for export_name in [
+        "buildInterpretationExportResultPresentation",
+        "buildInterpretationGmailResultPresentation",
+    ]:
+        builder_start = result_presentation_js.index(f"export function {export_name}")
+        next_export = result_presentation_js.find("\nexport function ", builder_start + 1)
+        builder_block = result_presentation_js[
+            builder_start : next_export if next_export != -1 else len(result_presentation_js)
+        ]
+        for forbidden in [
+            "document.",
+            "window.",
+            "sessionStorage",
+            "localStorage",
+            "fetch(",
+            "fetchJson",
+            "appState",
+            "setDiagnostics",
+            "setPanelStatus",
+            "renderInterpretation",
+            "createResultHeader",
+            "appendResultGridItem",
+            "innerHTML",
+        ]:
+            assert forbidden not in builder_block
+
+    export_start = result_ui_js.index("export function renderInterpretationExportResultInto")
+    export_panel_start = result_ui_js.index(
+        "export function renderInterpretationExportPanelResultInto", export_start
+    )
+    export_block = result_ui_js[export_start:export_panel_start]
+    gmail_start = result_ui_js.index("export function renderInterpretationGmailResultInto")
+    completion_start = result_ui_js.index(
+        "export function renderInterpretationCompletionCardInto", gmail_start
+    )
+    gmail_block = result_ui_js[gmail_start:completion_start]
+    for block in [export_block, gmail_block]:
+        assert "renderCardGridInto(container, card" in block
+        for removed_inline in [
+            "payload.normalized_payload",
+            "payload.diagnostics",
+            "payload.status",
+            "presentation.export",
+            "presentation.gmailResult",
+            "presentation.drawer",
+            "gmail_draft_result",
+            "draft_prereqs",
+            "pdf_export",
+            "appendResultGridItem(grid",
+            "createResultHeader({",
+        ]:
+            assert removed_inline not in block
+
+    export_result_start = app_js.index("export function renderInterpretationExportResult")
+    gmail_result_start = app_js.index(
+        "export function renderInterpretationGmailResult", export_result_start
+    )
+    export_app_block = app_js[export_result_start:gmail_result_start]
+    dashboard_start = app_js.index("function renderDashboard", gmail_result_start)
+    gmail_app_block = app_js[gmail_result_start:dashboard_start]
+    assert "const card = buildInterpretationExportResultPresentation({" in export_app_block
+    assert "payload," in export_app_block
+    assert "presentation: currentInterpretationPresentation()," in export_app_block
+    assert "renderInterpretationExportPanelResultInto(" in export_app_block
+    assert "const card = buildInterpretationGmailResultPresentation({" in gmail_app_block
+    assert "payload," in gmail_app_block
+    assert "presentation: currentInterpretationPresentation()," in gmail_app_block
+    assert "renderInterpretationGmailResultInto(container, card);" in gmail_app_block
+
+
 def test_interpretation_review_ui_module_centralizes_safe_session_shell_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -28154,7 +28244,7 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
     assert "export function renderInterpretationLocationGuardInto" in interpretation_result_ui_text
     assert "export function resetInterpretationExportResultInto" in interpretation_result_ui_text
     assert "renderInterpretationExportPanelResultInto(" in app_js
-    assert "renderInterpretationGmailResultInto(container, payload, currentInterpretationPresentation());" in app_js
+    assert "renderInterpretationGmailResultInto(container, card);" in app_js
     assert "renderInterpretationCompletionCardInto(container, {" in app_js
     assert "renderInterpretationSessionCardInto(result, {" in app_js
     assert "renderInterpretationSeedCardStateInto(container, {" in app_js
@@ -28242,6 +28332,7 @@ def test_interpretation_result_ui_module_centralizes_safe_interpretation_result_
 
     script = r"""
 const interpretationResultUi = await import(__INTERPRETATION_RESULT_UI_MODULE_URL__);
+const interpretationResultPresentation = await import(__INTERPRETATION_RESULT_PRESENTATION_MODULE_URL__);
 
 function syncClassList(element, classes) {
   element.className = Array.from(classes).join(" ");
@@ -28446,127 +28537,187 @@ const presentation = {
 };
 const okContainer = document.createElement("div");
 okContainer.className = "result-card empty-state";
-interpretationResultUi.renderInterpretationExportResultInto(okContainer, {
-  status: "ok",
-  normalized_payload: {
-    docx_path: `C:/cases/result ${malicious}.docx`,
-    pdf_path: `C:/cases/result ${malicious}.pdf`,
-  },
-  diagnostics: {
-    pdf_export: {
-      ok: true,
-      failure_message: `Ignored ${malicious}`,
+interpretationResultUi.renderInterpretationExportResultInto(
+  okContainer,
+  interpretationResultPresentation.buildInterpretationExportResultPresentation({
+    payload: {
+      status: "ok",
+      normalized_payload: {
+        docx_path: `C:/cases/result ${malicious}.docx`,
+        pdf_path: `C:/cases/result ${malicious}.pdf`,
+      },
+      diagnostics: {
+        pdf_export: {
+          ok: true,
+          failure_message: `Ignored ${malicious}`,
+        },
+      },
     },
-  },
-}, presentation);
+    presentation,
+  }),
+);
 
 const localOnlyContainer = document.createElement("div");
 localOnlyContainer.className = "result-card empty-state";
-interpretationResultUi.renderInterpretationExportResultInto(localOnlyContainer, {
-  status: "local_only",
-  normalized_payload: {},
-  diagnostics: {
-    pdf_export: {
-      ok: false,
-      failure_message: `PDF failure ${malicious}`,
+interpretationResultUi.renderInterpretationExportResultInto(
+  localOnlyContainer,
+  interpretationResultPresentation.buildInterpretationExportResultPresentation({
+    payload: {
+      status: "local_only",
+      normalized_payload: {},
+      diagnostics: {
+        pdf_export: {
+          ok: false,
+          failure_message: `PDF failure ${malicious}`,
+        },
+      },
     },
-  },
-}, presentation);
+    presentation,
+  }),
+);
 
 const failedContainer = document.createElement("div");
 failedContainer.className = "result-card empty-state";
-interpretationResultUi.renderInterpretationExportResultInto(failedContainer, {
-  status: "error",
-  diagnostics: {
-    pdf_export: {
-      ok: false,
+interpretationResultUi.renderInterpretationExportResultInto(
+  failedContainer,
+  interpretationResultPresentation.buildInterpretationExportResultPresentation({
+    payload: {
+      status: "error",
+      diagnostics: {
+        pdf_export: {
+          ok: false,
+        },
+      },
     },
-  },
-}, presentation);
+    presentation,
+  }),
+);
 
 const exportPanel = document.createElement("section");
 exportPanel.className = "export-panel hidden";
 const exportPanelResult = document.createElement("div");
 exportPanelResult.className = "result-card empty-state";
-interpretationResultUi.renderInterpretationExportPanelResultInto(exportPanel, exportPanelResult, {
-  status: "ok",
-  normalized_payload: {
-    docx_path: `C:/cases/panel ${malicious}.docx`,
-    pdf_path: `C:/cases/panel ${malicious}.pdf`,
-  },
-  diagnostics: {
-    pdf_export: {
-      ok: true,
-      failure_message: `Ignored panel ${malicious}`,
+interpretationResultUi.renderInterpretationExportPanelResultInto(
+  exportPanel,
+  exportPanelResult,
+  interpretationResultPresentation.buildInterpretationExportResultPresentation({
+    payload: {
+      status: "ok",
+      normalized_payload: {
+        docx_path: `C:/cases/panel ${malicious}.docx`,
+        pdf_path: `C:/cases/panel ${malicious}.pdf`,
+      },
+      diagnostics: {
+        pdf_export: {
+          ok: true,
+          failure_message: `Ignored panel ${malicious}`,
+        },
+      },
     },
-  },
-}, presentation);
+    presentation,
+  }),
+);
 
 const exportPanelMissingPanelResult = document.createElement("div");
 exportPanelMissingPanelResult.className = "result-card empty-state";
-interpretationResultUi.renderInterpretationExportPanelResultInto(null, exportPanelMissingPanelResult, {
-  status: "local_only",
-  normalized_payload: {},
-  diagnostics: {
-    pdf_export: {
-      ok: false,
-      failure_message: `Panel PDF failure ${malicious}`,
+interpretationResultUi.renderInterpretationExportPanelResultInto(
+  null,
+  exportPanelMissingPanelResult,
+  interpretationResultPresentation.buildInterpretationExportResultPresentation({
+    payload: {
+      status: "local_only",
+      normalized_payload: {},
+      diagnostics: {
+        pdf_export: {
+          ok: false,
+          failure_message: `Panel PDF failure ${malicious}`,
+        },
+      },
     },
-  },
-}, presentation);
+    presentation,
+  }),
+);
 const nullExportPanelResult = interpretationResultUi.renderInterpretationExportPanelResultInto(
   document.createElement("section"),
   null,
-  {
-    status: "ok",
-    normalized_payload: {},
-  },
-  presentation,
+  interpretationResultPresentation.buildInterpretationExportResultPresentation({
+    payload: {
+      status: "ok",
+      normalized_payload: {},
+    },
+    presentation,
+  }),
 );
 
 const gmailOkContainer = document.createElement("div");
 gmailOkContainer.className = "result-card empty-state";
-interpretationResultUi.renderInterpretationGmailResultInto(gmailOkContainer, {
-  status: "ok",
-  normalized_payload: {
-    docx_path: `C:/cases/gmail ${malicious}.docx`,
-    pdf_path: `C:/cases/gmail ${malicious}.pdf`,
-    gmail_draft_result: {
-      message: `Draft ready ${malicious}`,
+interpretationResultUi.renderInterpretationGmailResultInto(
+  gmailOkContainer,
+  interpretationResultPresentation.buildInterpretationGmailResultPresentation({
+    payload: {
+      status: "ok",
+      normalized_payload: {
+        docx_path: `C:/cases/gmail ${malicious}.docx`,
+        pdf_path: `C:/cases/gmail ${malicious}.pdf`,
+        gmail_draft_result: {
+          message: `Draft ready ${malicious}`,
+        },
+      },
     },
-  },
-}, presentation);
+    presentation,
+  }),
+);
 
 const gmailLocalOnlyContainer = document.createElement("div");
 gmailLocalOnlyContainer.className = "result-card empty-state";
-interpretationResultUi.renderInterpretationGmailResultInto(gmailLocalOnlyContainer, {
-  status: "local_only",
-  normalized_payload: {
-    draft_prereqs: {
-      message: `Draft prerequisites ${malicious}`,
+interpretationResultUi.renderInterpretationGmailResultInto(
+  gmailLocalOnlyContainer,
+  interpretationResultPresentation.buildInterpretationGmailResultPresentation({
+    payload: {
+      status: "local_only",
+      normalized_payload: {
+        draft_prereqs: {
+          message: `Draft prerequisites ${malicious}`,
+        },
+      },
     },
-  },
-}, presentation);
+    presentation,
+  }),
+);
 
 const gmailWarningContainer = document.createElement("div");
 gmailWarningContainer.className = "result-card empty-state";
-interpretationResultUi.renderInterpretationGmailResultInto(gmailWarningContainer, {
-  status: "warning",
-  normalized_payload: {
-    pdf_path: `C:/cases/fallback ${malicious}.pdf`,
-  },
-}, presentation);
+interpretationResultUi.renderInterpretationGmailResultInto(
+  gmailWarningContainer,
+  interpretationResultPresentation.buildInterpretationGmailResultPresentation({
+    payload: {
+      status: "warning",
+      normalized_payload: {
+        pdf_path: `C:/cases/fallback ${malicious}.pdf`,
+      },
+    },
+    presentation,
+  }),
+);
 
 const gmailEmptyContainer = document.createElement("div");
 gmailEmptyContainer.className = "result-card empty-state";
-interpretationResultUi.renderInterpretationGmailResultInto(gmailEmptyContainer, {
-  status: "error",
-  normalized_payload: {},
-}, presentation);
+interpretationResultUi.renderInterpretationGmailResultInto(
+  gmailEmptyContainer,
+  interpretationResultPresentation.buildInterpretationGmailResultPresentation({
+    payload: {
+      status: "error",
+      normalized_payload: {},
+    },
+    presentation,
+  }),
+);
 const nullContainerResult = interpretationResultUi.renderInterpretationGmailResultInto(null, {
-  status: "ok",
-  normalized_payload: {},
-}, presentation);
+  title: "Ignored",
+  message: "Ignored",
+  chip: { label: "Ignored", tone: "ok" },
+  items: [],
+});
 
 const completionContainer = document.createElement("div");
 completionContainer.className = "result-card empty-state";
@@ -28890,7 +29041,12 @@ console.log(JSON.stringify({
 """
     results = run_browser_esm_json_probe(
         script,
-        {"__INTERPRETATION_RESULT_UI_MODULE_URL__": "interpretation_result_ui.js"},
+        {
+            "__INTERPRETATION_RESULT_UI_MODULE_URL__": "interpretation_result_ui.js",
+            "__INTERPRETATION_RESULT_PRESENTATION_MODULE_URL__": (
+                "interpretation_result_presentation.js"
+            ),
+        },
         timeout_seconds=30,
     )
 
@@ -34189,6 +34345,21 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert (
             "buildInterpretationCompletionCardPresentation"
             in interpretation_review_state_asset.text
+        )
+        interpretation_result_presentation_asset = client.get(
+            f"/static-build/{asset_version}/interpretation_result_presentation.js"
+        )
+        assert interpretation_result_presentation_asset.status_code == 200
+        assert interpretation_result_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert (
+            "buildInterpretationExportResultPresentation"
+            in interpretation_result_presentation_asset.text
+        )
+        assert (
+            "buildInterpretationGmailResultPresentation"
+            in interpretation_result_presentation_asset.text
         )
         gmail_ui_asset = client.get(f"/static-build/{asset_version}/gmail_ui.js")
         assert gmail_ui_asset.status_code == 200

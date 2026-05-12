@@ -22,7 +22,12 @@ function renderCardGridInto(container, { title = "", message = "", chip = {}, it
   const grid = document.createElement("div");
   grid.className = "result-grid";
   for (const item of items) {
-    appendResultGridItem(grid, item.label, valueOrNotSet(item.value), { className: "word-break" });
+    appendResultGridItem(
+      grid,
+      item.label,
+      valueOrNotSet(item.value),
+      { className: item.className ?? "word-break" },
+    );
   }
   container.appendChild(grid);
 }
@@ -117,50 +122,22 @@ export function renderInterpretationLocationGuardInto(card, { message = "", tone
   }));
 }
 
-export function renderInterpretationExportResultInto(container, payload, presentation) {
-  const result = payload.normalized_payload || {};
-  const pdf = payload.diagnostics?.pdf_export || {};
-  const isOk = payload.status === "ok";
-  const isLocalOnly = payload.status === "local_only";
-  const tone = isOk ? "ok" : isLocalOnly ? "warn" : "bad";
-  const label = isOk
-    ? presentation.export.readyLabel
-    : isLocalOnly
-      ? presentation.export.localOnlyLabel
-      : presentation.export.failedLabel;
-  const message = isOk
-    ? presentation.export.readyTitle
-    : isLocalOnly
-      ? pdf.failure_message || presentation.export.localOnlyTitle
-      : presentation.export.failedTitle;
+export function renderInterpretationExportResultInto(container, card = {}) {
+  if (!container) {
+    return;
+  }
   container.classList.remove("empty-state");
-  clearNode(container);
-  container.appendChild(createResultHeader({
-    title: message,
-    message: "",
-    label,
-    tone: tone === "ok" ? "ok" : tone === "bad" ? "bad" : "warn",
-  }));
-  const grid = document.createElement("div");
-  grid.className = "result-grid";
-  appendResultGridItem(grid, "DOCX", result.docx_path || "Unavailable", { className: "word-break" });
-  appendResultGridItem(grid, "PDF", result.pdf_path || "Unavailable", { className: "word-break" });
-  appendResultGridItem(
-    grid,
-    "PDF Export",
-    pdf.ok ? presentation.export.pdfReadyLabel : pdf.failure_message || "Unavailable",
-  );
-  container.appendChild(grid);
+  renderCardGridInto(container, card);
 }
 
-export function renderInterpretationExportPanelResultInto(panel, container, payload, presentation) {
+export function renderInterpretationExportPanelResultInto(panel, container, card = {}) {
   if (!container) {
     return;
   }
   if (panel) {
     panel.classList.remove("hidden");
   }
-  renderInterpretationExportResultInto(container, payload, presentation);
+  renderInterpretationExportResultInto(container, card);
 }
 
 export function resetInterpretationExportResultInto(panel, result, emptyText = "") {
@@ -173,42 +150,12 @@ export function resetInterpretationExportResultInto(panel, result, emptyText = "
   }
 }
 
-export function renderInterpretationGmailResultInto(container, payload, presentation) {
+export function renderInterpretationGmailResultInto(container, card = {}) {
   if (!container) {
     return;
   }
-  const result = payload.normalized_payload || {};
-  const status = payload.status || "ok";
-  const draftMessage = result.gmail_draft_result?.message
-    || result.draft_prereqs?.message
-    || result.pdf_path
-    || result.docx_path
-    || presentation.drawer.gmailResultEmpty;
-  const title = status === "ok"
-    ? presentation.gmailResult.createdTitle
-    : status === "local_only"
-      ? presentation.gmailResult.localOnlyTitle
-      : presentation.gmailResult.warningTitle;
-  const label = status === "ok"
-    ? presentation.gmailResult.createdLabel
-    : status === "local_only"
-      ? presentation.gmailResult.localOnlyLabel
-      : presentation.gmailResult.warningLabel;
-  const tone = status === "ok" ? "ok" : status === "local_only" ? "warn" : "bad";
   container.classList.remove("empty-state");
-  clearNode(container);
-  container.appendChild(createResultHeader({
-    title,
-    message: draftMessage,
-    label,
-    tone,
-  }));
-  const grid = document.createElement("div");
-  grid.className = "result-grid";
-  appendResultGridItem(grid, "DOCX", result.docx_path || "Unavailable", { className: "word-break" });
-  appendResultGridItem(grid, "PDF", result.pdf_path || "Unavailable", { className: "word-break" });
-  appendResultGridItem(grid, "Reply status", label);
-  container.appendChild(grid);
+  renderCardGridInto(container, card);
 }
 
 export function renderInterpretationCompletionCardInto(container, card = {}) {
