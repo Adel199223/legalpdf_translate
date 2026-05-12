@@ -120,6 +120,7 @@ import {
 } from "./profile_ui.js";
 import {
   buildInterpretationReference,
+  buildInterpretationSessionChip,
   deriveInterpretationDisclosurePresentation,
   deriveInterpretationDrawerLayout,
   deriveInterpretationDistanceSync,
@@ -772,43 +773,6 @@ function interpretationReviewButtonLabel(snapshot = interpretationSnapshot()) {
   return currentInterpretationPresentation(snapshot).actions.openReview;
 }
 
-function interpretationSessionChip(session, mode, completionPayload = interpretationUiState.completionPayload) {
-  const presentation = deriveInterpretationReviewPresentation({
-    snapshot: interpretationSnapshot(),
-    activeSession: session,
-    workspaceMode: mode,
-    hasReviewData: hasInterpretationReviewData(interpretationSnapshot()),
-    completionPayload,
-  });
-  const status = String(session?.status || "").trim();
-  if (mode === "gmail_completed") {
-    const completionStatus = String(completionPayload?.status || "").trim();
-    if (completionStatus === "ok") {
-      return { tone: "ok", label: presentation.gmailResult.createdLabel };
-    }
-    if (completionStatus === "local_only") {
-      return { tone: "warn", label: presentation.gmailResult.localOnlyLabel };
-    }
-    if (completionStatus === "draft_unavailable") {
-      return { tone: "warn", label: presentation.gmailResult.warningLabel };
-    }
-    if (completionStatus) {
-      return { tone: "bad", label: presentation.gmailResult.warningLabel };
-    }
-    if (session?.draft_created || status === "draft_ready") {
-      return { tone: "ok", label: presentation.gmailResult.createdLabel };
-    }
-    if (String(session?.draft_failure_reason || "").trim() || status === "draft_failed") {
-      return { tone: "bad", label: presentation.gmailResult.warningLabel };
-    }
-    return { tone: "info", label: presentation.gmailResult.localOnlyLabel };
-  }
-  if (status) {
-    return { tone: "info", label: status.replaceAll("_", " ") };
-  }
-  return { tone: "info", label: "Ready" };
-}
-
 function renderInterpretationSessionShell(snapshot = interpretationSnapshot()) {
   const shell = qs("interpretation-session-shell");
   const result = qs("interpretation-session-result");
@@ -836,7 +800,12 @@ function renderInterpretationSessionShell(snapshot = interpretationSnapshot()) {
     return;
   }
   const presentation = currentInterpretationPresentation(snapshot);
-  const chip = interpretationSessionChip(activeSession, mode);
+  const chip = buildInterpretationSessionChip({
+    session: activeSession,
+    workspaceMode: mode,
+    completionPayload: interpretationUiState.completionPayload,
+    presentation,
+  });
   const noticeFilename = interpretationNoticeFilename(activeSession) || "Notice PDF";
   const locationSummary = interpretationLocationSummary(snapshot);
   renderInterpretationSessionShellInto(chromeNodes, {
@@ -892,7 +861,12 @@ function renderInterpretationReviewSummary(snapshot = interpretationSnapshot()) 
   const presentation = currentInterpretationPresentation(snapshot);
   const noticeFilename = interpretationNoticeFilename(activeSession);
   const empty = !hasInterpretationReviewData(snapshot) && !noticeFilename;
-  const chip = interpretationSessionChip(activeSession, workspaceMode);
+  const chip = buildInterpretationSessionChip({
+    session: activeSession,
+    workspaceMode,
+    completionPayload: interpretationUiState.completionPayload,
+    presentation,
+  });
   const subtitle = noticeFilename && workspaceMode !== "gmail_completed"
     ? noticeFilename
     : presentation.drawer.summarySubtitle;
@@ -925,7 +899,12 @@ function renderInterpretationReviewContext(snapshot = interpretationSnapshot()) 
   const presentation = currentInterpretationPresentation(snapshot);
   const reviewMode = workspaceMode === "gmail_review";
   const gmailButton = qs("interpretation-finalize-gmail");
-  const chip = reviewMode ? interpretationSessionChip(activeSession, workspaceMode) : {};
+  const chip = reviewMode ? buildInterpretationSessionChip({
+    session: activeSession,
+    workspaceMode,
+    completionPayload: interpretationUiState.completionPayload,
+    presentation,
+  }) : {};
   renderInterpretationReviewContextInto({
     container,
     titleNode,
@@ -985,7 +964,12 @@ function renderInterpretationCompletionCard(snapshot = interpretationSnapshot())
           : presentation.gmailResult.localOnlyTitle);
   const pdfPath = String(payload.pdf_path || payload.pdfPath || activeSession?.pdf_export?.pdf_path || activeSession?.pdf_export?.pdfPath || "").trim();
   const docxPath = String(payload.docx_path || payload.docxPath || "").trim();
-  const chip = interpretationSessionChip(activeSession, workspaceMode);
+  const chip = buildInterpretationSessionChip({
+    session: activeSession,
+    workspaceMode,
+    completionPayload: interpretationUiState.completionPayload,
+    presentation,
+  });
   const title = (completionStatus === "ok" || activeSession?.draft_created || activeSession?.status === "draft_ready")
     ? presentation.gmailResult.createdTitle
     : completionStatus === "local_only"
