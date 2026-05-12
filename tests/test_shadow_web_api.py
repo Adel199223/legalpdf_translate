@@ -13573,6 +13573,297 @@ console.log(JSON.stringify({
     assert results["partialAction"]["action"] == "partial"
 
 
+def test_gmail_preview_bundle_module_owns_preview_payload_and_pdf_bundle_readiness() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    bundle_path = static_dir / "gmail_preview_bundle.js"
+    assert bundle_path.exists()
+    bundle_js = bundle_path.read_text(encoding="utf-8")
+
+    expected_exports = [
+        "buildGmailAttachmentPreviewRequestPayload",
+        "buildGmailBrowserPdfAttachmentStateFromPreviewPayload",
+        "fetchGmailAttachmentPreviewPayload",
+        "ensureGmailBrowserPdfBundleForAttachment",
+        "ensureGmailBrowserPdfBundlesForSelections",
+    ]
+    for export_name in expected_exports:
+        assert re.search(rf"export (async )?function {export_name}\b", bundle_js)
+
+    assert "document." not in bundle_js
+    assert "innerHTML" not in bundle_js
+    assert "renderGmail" not in bundle_js
+    assert "setDiagnostics" not in bundle_js
+    assert "openPreviewDrawer" not in bundle_js
+
+    assert 'from "./gmail_preview_bundle.js"' in gmail_js
+    preview_bundle_import = re.search(
+        r"import \{(?P<body>.*?)\} from \"\./gmail_preview_bundle\.js\";",
+        gmail_js,
+        re.S,
+    ).group("body")
+    for export_name in [
+        "fetchGmailAttachmentPreviewPayload",
+        "ensureGmailBrowserPdfBundleForAttachment",
+        "ensureGmailBrowserPdfBundlesForSelections",
+    ]:
+        assert export_name in preview_bundle_import
+
+    assert 'fetchJson("/api/gmail/preview-attachment"' not in gmail_js
+    assert "body: JSON.stringify({ attachment_id:" not in gmail_js
+    assert "ensureBrowserPdfBundleFromUrl({" not in gmail_js
+    assert "fetchGmailAttachmentPreviewPayload({" in gmail_js
+    assert "ensureGmailBrowserPdfBundleForAttachment({" in gmail_js
+    assert "ensureGmailBrowserPdfBundlesForSelections({" in gmail_js
+
+    script = """
+const bundle = await import(__GMAIL_PREVIEW_BUNDLE_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const appState = { workspace: "gmail-preview-bundle-probe" };
+const browserStates = new Map();
+const calls = [];
+const payloads = new Map([
+  ["pdf-1", {
+    normalized_payload: {
+      preview_path: " C:/tmp/pdf-1.pdf ",
+      preview_href: " /api/gmail/attachment/pdf-1 ",
+      page_count: 7,
+      attachment: { filename: `PDF ${malicious}.pdf`, mime_type: "application/pdf" },
+    },
+  }],
+  ["pdf-demand", {
+    normalized_payload: {
+      preview_path: "C:/tmp/demand.pdf",
+      preview_href: "/api/gmail/attachment/pdf-demand",
+      page_count: 4,
+    },
+  }],
+  ["pdf-missing", {
+    normalized_payload: {
+      preview_path: "",
+      preview_href: "",
+      page_count: 0,
+    },
+  }],
+]);
+
+function getBrowserPdfAttachmentState(attachmentId) {
+  return browserStates.get(attachmentId) || {};
+}
+
+function setBrowserPdfAttachmentState(attachmentId, nextValue) {
+  calls.push({ type: "setState", attachmentId, nextValue });
+  browserStates.set(attachmentId, {
+    ...getBrowserPdfAttachmentState(attachmentId),
+    ...nextValue,
+  });
+}
+
+function applyPreviewPageCount(attachmentId, pageCount) {
+  calls.push({ type: "applyPageCount", attachmentId, pageCount });
+}
+
+async function fetchJson(url, passedAppState, options) {
+  const body = JSON.parse(options.body);
+  calls.push({
+    type: "fetchJson",
+    url,
+    appState: passedAppState,
+    method: options.method,
+    headers: options.headers,
+    body,
+  });
+  return payloads.get(body.attachment_id);
+}
+
+async function ensureBrowserPdfBundleFromUrl(request) {
+  calls.push({ type: "bundle", request });
+  return { page_count: 9 };
+}
+
+const requestPayload = bundle.buildGmailAttachmentPreviewRequestPayload({ attachmentId: `id-${malicious}` });
+const missingRequestPayload = bundle.buildGmailAttachmentPreviewRequestPayload();
+const stateFromNull = bundle.buildGmailBrowserPdfAttachmentStateFromPreviewPayload();
+const fetched = await bundle.fetchGmailAttachmentPreviewPayload({
+  attachmentId: "pdf-1",
+  fetchJson,
+  appState,
+  setBrowserPdfAttachmentState,
+  applyPreviewPageCount,
+});
+const pdfBundle = await bundle.ensureGmailBrowserPdfBundleForAttachment({
+  attachment: { attachment_id: "pdf-1", filename: `PDF ${malicious}.pdf`, mime_type: "application/pdf" },
+  previewPayload: fetched,
+  appState,
+  getBrowserPdfAttachmentState,
+  setBrowserPdfAttachmentState,
+  applyPreviewPageCount,
+  ensureBrowserPdfBundleFromUrl,
+});
+const demandBundle = await bundle.ensureGmailBrowserPdfBundleForAttachment({
+  attachment: { attachment_id: "pdf-demand", filename: "Demand.pdf", mime_type: "application/pdf" },
+  appState,
+  getBrowserPdfAttachmentState,
+  setBrowserPdfAttachmentState,
+  applyPreviewPageCount,
+  ensureBrowserPdfBundleFromUrl,
+  fetchAttachmentPreviewPayload: async (attachmentId) => {
+    calls.push({ type: "fetchPreviewDependency", attachmentId });
+    const payload = payloads.get(attachmentId);
+    setBrowserPdfAttachmentState(attachmentId, bundle.buildGmailBrowserPdfAttachmentStateFromPreviewPayload({ payload }));
+    applyPreviewPageCount(attachmentId, payload.normalized_payload.page_count);
+    return payload;
+  },
+});
+const imageBundle = await bundle.ensureGmailBrowserPdfBundleForAttachment({
+  attachment: { attachment_id: "img-1", filename: "Image.png", mime_type: "image/png" },
+  appState,
+  getBrowserPdfAttachmentState,
+  ensureBrowserPdfBundleFromUrl,
+});
+let missingError = "";
+try {
+  await bundle.ensureGmailBrowserPdfBundleForAttachment({
+    attachment: { attachment_id: "pdf-missing", filename: `Missing ${malicious}.pdf`, mime_type: "application/pdf" },
+    previewPayload: payloads.get("pdf-missing"),
+    appState,
+    getBrowserPdfAttachmentState,
+    setBrowserPdfAttachmentState,
+    applyPreviewPageCount,
+    ensureBrowserPdfBundleFromUrl,
+  });
+} catch (error) {
+  missingError = error.message;
+}
+const ensuredSelections = [];
+await bundle.ensureGmailBrowserPdfBundlesForSelections({
+  attachments: [
+    { attachment_id: "pdf-selected", mime_type: "application/pdf" },
+    { attachment_id: "img-selected", mime_type: "image/png" },
+    { attachment_id: "pdf-unselected", mime_type: "application/pdf" },
+  ],
+  getAttachmentState: (attachmentId) => ({ selected: attachmentId !== "pdf-unselected" }),
+  ensureBrowserPdfBundleForAttachment: async (attachment) => {
+    ensuredSelections.push(attachment.attachment_id);
+  },
+});
+
+console.log(JSON.stringify({
+  exportTypes: {
+    buildRequest: typeof bundle.buildGmailAttachmentPreviewRequestPayload,
+    stateFromPayload: typeof bundle.buildGmailBrowserPdfAttachmentStateFromPreviewPayload,
+    fetchPreview: typeof bundle.fetchGmailAttachmentPreviewPayload,
+    ensureOne: typeof bundle.ensureGmailBrowserPdfBundleForAttachment,
+    ensureSelections: typeof bundle.ensureGmailBrowserPdfBundlesForSelections,
+  },
+  requestPayload,
+  missingRequestHasAttachmentId: Object.prototype.hasOwnProperty.call(missingRequestPayload, "attachment_id"),
+  missingRequestValueType: typeof missingRequestPayload.attachment_id,
+  stateFromNull,
+  fetched,
+  pdfBundle,
+  demandBundle,
+  imageBundle,
+  missingError,
+  ensuredSelections,
+  calls,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_PREVIEW_BUNDLE_MODULE_URL__": "gmail_preview_bundle.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportTypes"] == {
+        "buildRequest": "function",
+        "stateFromPayload": "function",
+        "fetchPreview": "function",
+        "ensureOne": "function",
+        "ensureSelections": "function",
+    }
+    assert results["requestPayload"] == {
+        "attachment_id": "<img src=x onerror=alert(1)><script>bad()</script>".join(["id-", ""])
+    }
+    assert results["missingRequestHasAttachmentId"] is True
+    assert results["missingRequestValueType"] == "undefined"
+    assert results["stateFromNull"] == {
+        "sourcePath": "",
+        "previewHref": "",
+        "pageCount": 0,
+    }
+    assert results["fetched"]["normalized_payload"]["page_count"] == 7
+    assert results["pdfBundle"] == {
+        "pageCount": 9,
+        "sourcePath": "C:/tmp/pdf-1.pdf",
+        "previewHref": "/api/gmail/attachment/pdf-1",
+    }
+    assert results["demandBundle"] == {
+        "pageCount": 9,
+        "sourcePath": "C:/tmp/demand.pdf",
+        "previewHref": "/api/gmail/attachment/pdf-demand",
+    }
+    assert results["imageBundle"] == {
+        "pageCount": 1,
+        "sourcePath": "",
+        "previewHref": "",
+    }
+    assert results["missingError"] == (
+        "Preview download for Missing "
+        "<img src=x onerror=alert(1)><script>bad()</script>.pdf is unavailable."
+    )
+    assert results["ensuredSelections"] == ["pdf-selected"]
+
+    fetch_call = next(call for call in results["calls"] if call["type"] == "fetchJson")
+    assert fetch_call == {
+        "type": "fetchJson",
+        "url": "/api/gmail/preview-attachment",
+        "appState": {"workspace": "gmail-preview-bundle-probe"},
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "body": {"attachment_id": "pdf-1"},
+    }
+    bundle_calls = [call for call in results["calls"] if call["type"] == "bundle"]
+    assert bundle_calls == [
+        {
+            "type": "bundle",
+            "request": {
+                "appState": {"workspace": "gmail-preview-bundle-probe"},
+                "sourcePath": "C:/tmp/pdf-1.pdf",
+                "url": "/api/gmail/attachment/pdf-1",
+                "attachmentId": "pdf-1",
+            },
+        },
+        {
+            "type": "bundle",
+            "request": {
+                "appState": {"workspace": "gmail-preview-bundle-probe"},
+                "sourcePath": "C:/tmp/demand.pdf",
+                "url": "/api/gmail/attachment/pdf-demand",
+                "attachmentId": "pdf-demand",
+            },
+        },
+    ]
+    assert any(
+        call == {"type": "applyPageCount", "attachmentId": "pdf-1", "pageCount": 7}
+        for call in results["calls"]
+    )
+    assert any(
+        call == {"type": "applyPageCount", "attachmentId": "pdf-1", "pageCount": 9}
+        for call in results["calls"]
+    )
+    assert any(
+        call == {"type": "fetchPreviewDependency", "attachmentId": "pdf-demand"}
+        for call in results["calls"]
+    )
+
+
 def test_gmail_preview_presentation_module_derives_preview_panel_state() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -32080,6 +32371,16 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         )
         assert "buildGmailPreviewPanelPresentation" in gmail_preview_presentation_asset.text
         assert "buildGmailPreviewLoadedDiagnosticsPresentation" in gmail_preview_presentation_asset.text
+        gmail_preview_bundle_asset = client.get(
+            f"/static-build/{asset_version}/gmail_preview_bundle.js"
+        )
+        assert gmail_preview_bundle_asset.status_code == 200
+        assert gmail_preview_bundle_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "fetchGmailAttachmentPreviewPayload" in gmail_preview_bundle_asset.text
+        assert "ensureGmailBrowserPdfBundleForAttachment" in gmail_preview_bundle_asset.text
+        assert "ensureGmailBrowserPdfBundlesForSelections" in gmail_preview_bundle_asset.text
         gmail_attachment_ui_asset = client.get(f"/static-build/{asset_version}/gmail_attachment_ui.js")
         assert gmail_attachment_ui_asset.status_code == 200
         assert gmail_attachment_ui_asset.headers["content-type"].startswith("application/javascript")

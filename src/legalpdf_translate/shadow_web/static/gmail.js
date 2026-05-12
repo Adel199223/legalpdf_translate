@@ -97,6 +97,11 @@ import {
   buildGmailPreviewLoadedDiagnosticsPresentation,
   buildGmailPreviewPanelPresentation,
 } from "./gmail_preview_presentation.js";
+import {
+  ensureGmailBrowserPdfBundleForAttachment,
+  ensureGmailBrowserPdfBundlesForSelections,
+  fetchGmailAttachmentPreviewPayload,
+} from "./gmail_preview_bundle.js";
 import { buildGmailRestoreBarPresentation } from "./gmail_restore_presentation.js";
 import { renderGmailRestoreBarInto } from "./gmail_restore_ui.js";
 import {
@@ -1629,71 +1634,41 @@ async function loadDemoReview() {
   syncShellState();
 }
 
-async function fetchAttachmentPreviewPayload(attachmentId) {
-  const payload = await fetchJson("/api/gmail/preview-attachment", appState, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ attachment_id: attachmentId }),
-  });
-  const normalized = payload.normalized_payload || {};
-  setBrowserPdfAttachmentState(attachmentId, {
-    sourcePath: normalized.preview_path || "",
-    previewHref: normalized.preview_href || "",
-    pageCount: normalized.page_count || 0,
-  });
-  if (normalized.page_count) {
-    applyPreviewPageCount(attachmentId, normalized.page_count);
-  }
-  return payload;
-}
-
-async function ensureBrowserPdfBundleForAttachment(attachment, { previewPayload = null } = {}) {
-  if (!attachment || !isPdfAttachment(attachment)) {
-    return {
-      pageCount: 1,
-      sourcePath: "",
-      previewHref: "",
-    };
-  }
-  let payload = previewPayload;
-  let browserState = browserPdfAttachmentState(attachment.attachment_id);
-  if (!payload && (!browserState.sourcePath || !browserState.previewHref)) {
-    payload = await fetchAttachmentPreviewPayload(attachment.attachment_id);
-    browserState = browserPdfAttachmentState(attachment.attachment_id);
-  }
-  const sourcePath = String(browserState.sourcePath || payload?.normalized_payload?.preview_path || "").trim();
-  const previewHref = String(browserState.previewHref || payload?.normalized_payload?.preview_href || "").trim();
-  if (!sourcePath || !previewHref) {
-    throw new Error(`Preview download for ${attachment.filename || "the PDF attachment"} is unavailable.`);
-  }
-  const bundlePayload = await ensureBrowserPdfBundleFromUrl({
-    appState,
-    sourcePath,
-    url: previewHref,
-    attachmentId: attachment.attachment_id,
-  });
-  const pageCount = Math.max(1, Number(bundlePayload.page_count || browserState.pageCount || 0));
-  applyPreviewPageCount(attachment.attachment_id, pageCount);
-  setBrowserPdfAttachmentState(attachment.attachment_id, {
-    sourcePath,
-    previewHref,
-    pageCount,
-  });
+function gmailPreviewBundleOptions() {
   return {
-    pageCount,
-    sourcePath,
-    previewHref,
+    appState,
+    fetchJson,
+    ensureBrowserPdfBundleFromUrl,
+    isPdfAttachment,
+    getBrowserPdfAttachmentState: browserPdfAttachmentState,
+    setBrowserPdfAttachmentState,
+    applyPreviewPageCount,
   };
 }
 
+async function fetchAttachmentPreviewPayload(attachmentId) {
+  return fetchGmailAttachmentPreviewPayload({
+    ...gmailPreviewBundleOptions(),
+    attachmentId,
+  });
+}
+
+async function ensureBrowserPdfBundleForAttachment(attachment, { previewPayload = null } = {}) {
+  return ensureGmailBrowserPdfBundleForAttachment({
+    ...gmailPreviewBundleOptions(),
+    attachment,
+    previewPayload,
+    fetchAttachmentPreviewPayload,
+  });
+}
+
 async function ensureBrowserPdfBundlesForSelections() {
-  const selectedAttachments = gmailAttachments().filter((attachment) => attachmentState(attachment.attachment_id).selected);
-  for (const attachment of selectedAttachments) {
-    if (!isPdfAttachment(attachment)) {
-      continue;
-    }
-    await ensureBrowserPdfBundleForAttachment(attachment);
-  }
+  return ensureGmailBrowserPdfBundlesForSelections({
+    attachments: gmailAttachments(),
+    getAttachmentState: attachmentState,
+    ensureBrowserPdfBundleForAttachment,
+    isPdfAttachment,
+  });
 }
 
 async function renderActivePdfPreviewCanvas(previewAttachment) {
