@@ -9005,6 +9005,318 @@ console.log(JSON.stringify({
     assert results["unsafePresentationDetail"]["innerHTMLWrites"] == 0
 
 
+def test_gmail_batch_finalize_state_module_owns_batch_finalize_state_shaping() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    state_path = static_dir / "gmail_batch_finalize_state.js"
+    assert state_path.exists()
+    state_js = state_path.read_text(encoding="utf-8")
+
+    expected_exports = [
+        "selectGmailDisplayedBatchFinalizeSession",
+        "selectGmailBatchFinalizePreflight",
+        "deriveGmailBatchFinalizeState",
+        "buildGmailBatchFinalizeSurfaceState",
+    ]
+    for export_name in expected_exports:
+        assert f"export function {export_name}" in state_js
+
+    forbidden_markers = [
+        "document.",
+        "innerHTML",
+        "fetchJson",
+        "setPanelStatus",
+        "setDiagnostics",
+        "renderGmail",
+        "appState",
+    ]
+    for marker in forbidden_markers:
+        assert marker not in state_js
+
+    state_import = re.search(
+        r"import \{(?P<body>[^}]*)\} from \"\./gmail_batch_finalize_state\.js\";",
+        gmail_js,
+        re.S,
+    ).group("body")
+    for export_name in [
+        "buildGmailBatchFinalizeSurfaceState",
+        "selectGmailBatchFinalizePreflight",
+        "selectGmailDisplayedBatchFinalizeSession",
+    ]:
+        assert export_name in state_import
+
+    removed_local_functions = [
+        "currentDisplayedBatchFinalizeSession",
+        "currentBatchFinalizePreflight",
+        "currentBatchFinalizeState",
+    ]
+    for function_name in removed_local_functions:
+        assert f"function {function_name}(" not in gmail_js
+
+    report_start = gmail_js.index("function currentGmailFinalizationReportContext")
+    report_end = gmail_js.index("\nfunction clearGmailFailureReportContext", report_start)
+    report_block = gmail_js[report_start:report_end]
+    assert "selectGmailDisplayedBatchFinalizeSession({" in report_block
+    assert "buildGmailFinalizationReportContext({" in report_block
+
+    render_start = gmail_js.index("function renderBatchFinalizeSurface")
+    render_end = gmail_js.index("\nfunction renderTranslationCompletionGmailStepCard", render_start)
+    render_block = gmail_js[render_start:render_end]
+    assert "buildGmailBatchFinalizeSurfaceState({" in render_block
+    assert "buildGmailBatchFinalizeSurfacePresentation({" in render_block
+    assert "renderGmailBatchFinalizeSurfaceInto(nodes, presentation);" in render_block
+    assert "const recoveredOnly = gmailState.batchFinalizeDrawerSource === \"restored\";" not in render_block
+    assert "const finalizationState = currentBatchFinalizeState();" not in render_block
+
+    finalize_start = gmail_js.index("async function finalizeBatch()")
+    finalize_end = gmail_js.index("\nasync function finalizeInterpretation", finalize_start)
+    finalize_block = gmail_js[finalize_start:finalize_end]
+    assert "refreshBatchFinalizePreflight({ forceRefresh: false })" in finalize_block
+    assert "selectGmailBatchFinalizePreflight({" in finalize_block
+    assert '"/api/gmail/batch/finalize"' in finalize_block
+    assert "setPanelStatus(" in finalize_block
+    assert finalize_block.index("if (!preflight?.finalization_ready)") < finalize_block.index(
+        '"/api/gmail/batch/finalize"'
+    )
+
+    script = """
+const state = await import(__GMAIL_BATCH_FINALIZE_STATE_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+function session(overrides = {}) {
+  return {
+    kind: "translation",
+    completed: true,
+    finalization_state: "",
+    finalization_preflight: null,
+    ...overrides,
+  };
+}
+
+const activeSession = session({
+  id: "active",
+  finalization_state: "session_state",
+  finalization_preflight: {
+    finalization_ready: true,
+    message: `session-ready-${malicious}`,
+    nested: { source: "session" },
+  },
+});
+const incompleteSession = session({ id: "incomplete", completed: false });
+const interpretationSession = { kind: "interpretation", completed: true, id: "interpretation" };
+const restoredSession = session({
+  id: "restored",
+  finalization_state: "restored_state",
+  finalization_preflight: {
+    finalization_ready: false,
+    message: "restored-preflight-must-be-suppressed",
+  },
+});
+const explicitPreflight = {
+  finalization_ready: false,
+  message: `explicit-blocked-${malicious}`,
+  nested: { source: "explicit" },
+};
+const payload = {
+  normalized_payload: {
+    finalization_state: "payload_state",
+  },
+};
+const overrideSession = {
+  kind: "translation",
+  completed: false,
+  id: "override-unavailable",
+};
+
+const selectedActive = state.selectGmailDisplayedBatchFinalizeSession({
+  drawerSource: "active",
+  activeSession,
+  restoredCompletedSession: restoredSession,
+});
+const selectedIncomplete = state.selectGmailDisplayedBatchFinalizeSession({
+  drawerSource: "active",
+  activeSession: incompleteSession,
+});
+const selectedInterpretation = state.selectGmailDisplayedBatchFinalizeSession({
+  drawerSource: "active",
+  activeSession: interpretationSession,
+});
+const selectedRestored = state.selectGmailDisplayedBatchFinalizeSession({
+  drawerSource: "restored",
+  activeSession,
+  restoredCompletedSession: restoredSession,
+});
+const selectedInvalidRestored = state.selectGmailDisplayedBatchFinalizeSession({
+  drawerSource: "restored",
+  activeSession,
+  restoredCompletedSession: { ...restoredSession, completed: false },
+});
+
+const explicitPreflightClone = state.selectGmailBatchFinalizePreflight({
+  drawerSource: "active",
+  batchFinalizePreflight: explicitPreflight,
+  displayedSession: activeSession,
+});
+const sessionPreflightClone = state.selectGmailBatchFinalizePreflight({
+  drawerSource: "active",
+  displayedSession: activeSession,
+});
+const restoredPreflight = state.selectGmailBatchFinalizePreflight({
+  drawerSource: "restored",
+  batchFinalizePreflight: explicitPreflight,
+  displayedSession: restoredSession,
+});
+
+const surfaceOverride = state.buildGmailBatchFinalizeSurfaceState({
+  activeSessionOverride: overrideSession,
+  drawerSource: "active",
+  activeSession,
+  restoredCompletedSession: restoredSession,
+  batchFinalizePreflight: explicitPreflight,
+  batchFinalizeResult: payload,
+  batchFinalizePreflightInFlight: 1,
+});
+const surfaceDefault = state.buildGmailBatchFinalizeSurfaceState({
+  drawerSource: "active",
+  activeSession,
+  batchFinalizePreflight: explicitPreflight,
+});
+const surfaceRestored = state.buildGmailBatchFinalizeSurfaceState({
+  drawerSource: "restored",
+  activeSession,
+  restoredCompletedSession: restoredSession,
+  batchFinalizePreflight: explicitPreflight,
+  batchFinalizeResult: null,
+  batchFinalizePreflightInFlight: false,
+});
+const surfaceNullSafe = state.buildGmailBatchFinalizeSurfaceState();
+
+console.log(JSON.stringify({
+  exportTypes: Object.fromEntries(
+    [
+      "selectGmailDisplayedBatchFinalizeSession",
+      "selectGmailBatchFinalizePreflight",
+      "deriveGmailBatchFinalizeState",
+      "buildGmailBatchFinalizeSurfaceState",
+    ].map((name) => [name, typeof state[name]])
+  ),
+  selections: {
+    activeSameReference: selectedActive === activeSession,
+    incomplete: selectedIncomplete,
+    interpretation: selectedInterpretation,
+    restoredSameReference: selectedRestored === restoredSession,
+    invalidRestored: selectedInvalidRestored,
+  },
+  preflights: {
+    explicit: explicitPreflightClone,
+    explicitDifferentReference: explicitPreflightClone !== explicitPreflight,
+    explicitNestedSameReference: explicitPreflightClone.nested === explicitPreflight.nested,
+    session: sessionPreflightClone,
+    sessionDifferentReference: sessionPreflightClone !== activeSession.finalization_preflight,
+    restored: restoredPreflight,
+  },
+  states: {
+    payloadWins: state.deriveGmailBatchFinalizeState({
+      payload,
+      displayedSession: activeSession,
+      preflight: { finalization_ready: true },
+    }),
+    sessionWins: state.deriveGmailBatchFinalizeState({
+      displayedSession: activeSession,
+      preflight: { finalization_ready: true },
+    }),
+    readyPreflight: state.deriveGmailBatchFinalizeState({
+      preflight: { finalization_ready: true },
+    }),
+    blockedPreflight: state.deriveGmailBatchFinalizeState({
+      preflight: { finalization_ready: false, message: malicious },
+    }),
+    missing: state.deriveGmailBatchFinalizeState(),
+  },
+  surfaces: {
+    overrideSessionSameReference: surfaceOverride.session === overrideSession,
+    overridePayloadSameReference: surfaceOverride.payload === payload,
+    overridePreflightDifferentReference: surfaceOverride.preflight !== explicitPreflight,
+    overridePreflightNestedSameReference: surfaceOverride.preflight.nested === explicitPreflight.nested,
+    overrideFinalizationState: surfaceOverride.finalizationState,
+    overridePreflightInFlight: surfaceOverride.preflightInFlight,
+    defaultSessionSameReference: surfaceDefault.session === activeSession,
+    defaultFinalizationState: surfaceDefault.finalizationState,
+    restoredSessionSameReference: surfaceRestored.session === restoredSession,
+    restoredRecoveredOnly: surfaceRestored.recoveredOnly,
+    restoredPreflight: surfaceRestored.preflight,
+    restoredFinalizationState: surfaceRestored.finalizationState,
+    nullSafe: surfaceNullSafe,
+  },
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_BATCH_FINALIZE_STATE_MODULE_URL__": "gmail_batch_finalize_state.js"},
+        timeout_seconds=30,
+    )
+
+    assert set(results["exportTypes"]) == set(expected_exports)
+    assert all(value == "function" for value in results["exportTypes"].values())
+    assert results["selections"] == {
+        "activeSameReference": True,
+        "incomplete": None,
+        "interpretation": None,
+        "restoredSameReference": True,
+        "invalidRestored": None,
+    }
+
+    malicious = "<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["preflights"]["explicit"] == {
+        "finalization_ready": False,
+        "message": f"explicit-blocked-{malicious}",
+        "nested": {"source": "explicit"},
+    }
+    assert results["preflights"]["explicitDifferentReference"] is True
+    assert results["preflights"]["explicitNestedSameReference"] is True
+    assert results["preflights"]["session"] == {
+        "finalization_ready": True,
+        "message": f"session-ready-{malicious}",
+        "nested": {"source": "session"},
+    }
+    assert results["preflights"]["sessionDifferentReference"] is True
+    assert results["preflights"]["restored"] is None
+
+    assert results["states"] == {
+        "payloadWins": "payload_state",
+        "sessionWins": "session_state",
+        "readyPreflight": "ready_to_finalize",
+        "blockedPreflight": "blocked_word_pdf_export",
+        "missing": "",
+    }
+    assert results["surfaces"]["overrideSessionSameReference"] is True
+    assert results["surfaces"]["overridePayloadSameReference"] is True
+    assert results["surfaces"]["overridePreflightDifferentReference"] is True
+    assert results["surfaces"]["overridePreflightNestedSameReference"] is True
+    assert results["surfaces"]["overrideFinalizationState"] == "payload_state"
+    assert results["surfaces"]["overridePreflightInFlight"] is True
+    assert results["surfaces"]["defaultSessionSameReference"] is True
+    assert results["surfaces"]["defaultFinalizationState"] == "session_state"
+    assert results["surfaces"]["restoredSessionSameReference"] is True
+    assert results["surfaces"]["restoredRecoveredOnly"] is True
+    assert results["surfaces"]["restoredPreflight"] is None
+    assert results["surfaces"]["restoredFinalizationState"] == "restored_state"
+    assert results["surfaces"]["nullSafe"] == {
+        "session": None,
+        "recoveredOnly": False,
+        "preflight": None,
+        "payload": None,
+        "finalizationState": "",
+        "preflightInFlight": False,
+    }
+
+
 def test_gmail_finalize_presentation_module_builds_batch_finalize_cards() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -32702,6 +33014,17 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
             "buildGmailInterpretationFinalizeDiagnosticsPresentation"
             in gmail_finalize_presentation_asset.text
         )
+        gmail_batch_finalize_state_asset = client.get(
+            f"/static-build/{asset_version}/gmail_batch_finalize_state.js"
+        )
+        assert gmail_batch_finalize_state_asset.status_code == 200
+        assert gmail_batch_finalize_state_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "selectGmailDisplayedBatchFinalizeSession" in gmail_batch_finalize_state_asset.text
+        assert "selectGmailBatchFinalizePreflight" in gmail_batch_finalize_state_asset.text
+        assert "deriveGmailBatchFinalizeState" in gmail_batch_finalize_state_asset.text
+        assert "buildGmailBatchFinalizeSurfaceState" in gmail_batch_finalize_state_asset.text
         gmail_preview_ui_asset = client.get(f"/static-build/{asset_version}/gmail_preview_ui.js")
         assert gmail_preview_ui_asset.status_code == 200
         assert gmail_preview_ui_asset.headers["content-type"].startswith("application/javascript")
