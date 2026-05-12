@@ -1,4 +1,5 @@
 import { browserPdfDiagnosticsFromError } from "./browser_pdf.js";
+import { gmailAttachmentId } from "./gmail_attachment_metadata.js";
 import { normalizeGmailAttachmentSelectionState } from "./gmail_review_state.js";
 
 function objectOrNull(value) {
@@ -28,10 +29,6 @@ function nonnegativeNumber(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-function attachmentId(attachment) {
-  return attachment?.attachment_id || "";
-}
-
 function previewReportState({ previewOpen = false, previewState = {} } = {}) {
   if (!previewOpen) {
     return {};
@@ -48,7 +45,7 @@ export function buildGmailAttachmentReportSnapshot({
   attachment = null,
   selectionState = new Map(),
 } = {}) {
-  const state = selectionStateFrom(selectionState, attachmentId(attachment));
+  const state = selectionStateFrom(selectionState, gmailAttachmentId(attachment));
   return {
     attachment_id: attachment?.attachment_id,
     filename: attachment?.filename || "",
