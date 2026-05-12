@@ -2753,8 +2753,15 @@ def test_gmail_js_uses_shared_busy_ui_for_button_state() -> None:
     )
     gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
     busy_ui_js = (static_dir / "busy_ui.js").read_text(encoding="utf-8")
+    gmail_action_runner_path = static_dir / "gmail_action_runner.js"
 
-    assert 'import { runWithBusy } from "./busy_ui.js";' in gmail_js
+    assert gmail_action_runner_path.exists()
+    gmail_action_runner_js = gmail_action_runner_path.read_text(encoding="utf-8")
+
+    assert 'import { runGmailBusyAction } from "./gmail_action_runner.js";' in gmail_js
+    assert 'import { runWithBusy } from "./busy_ui.js";' not in gmail_js
+    assert 'import { runWithBusy } from "./busy_ui.js";' in gmail_action_runner_js
+    assert "runWithBusy(" not in gmail_js
     assert "function setBusy(buttonIds, busy, busyLabels = {})" not in gmail_js
     assert "async function runWithBusy(buttonIds, busyLabels, action)" not in gmail_js
     assert "setBusy(" not in gmail_js
@@ -2762,6 +2769,164 @@ def test_gmail_js_uses_shared_busy_ui_for_button_state() -> None:
     assert "export async function runWithBusy(buttonIds, busyLabels, action, options = {})" in busy_ui_js
     assert "const guardIds = options.guardIds || buttonIds;" in busy_ui_js
     assert "innerHTML" not in busy_ui_js
+
+
+def test_gmail_action_runner_module_centralizes_busy_failure_wrapping() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    runner_path = static_dir / "gmail_action_runner.js"
+
+    assert runner_path.exists()
+    runner_js = runner_path.read_text(encoding="utf-8")
+
+    assert 'from "./gmail_action_runner.js"' in gmail_js
+    assert "runGmailAction({" in gmail_js
+    initialize_start = gmail_js.index("export function initializeGmailUi(")
+    initialize_block = gmail_js[initialize_start:]
+    assert "runWithBusy(" not in initialize_block
+    assert "buttonIds:" in initialize_block
+    assert "failureFeedback:" in initialize_block
+    assert "onError:" in initialize_block
+    assert "afterError:" in initialize_block
+
+    assert "export async function runGmailBusyAction" in runner_js
+    assert 'from "./busy_ui.js"' in runner_js
+    assert "runWithBusyImpl = runWithBusy" in runner_js
+    assert "const busyRunner = typeof runWithBusyImpl" in runner_js
+    assert "catch (error)" in runner_js
+    assert "await onError(error);" in runner_js
+    assert "await afterError(error);" in runner_js
+    assert "document." not in runner_js
+    assert "innerHTML" not in runner_js
+    assert "fetchJson" not in runner_js
+    assert '"/api/' not in runner_js
+    assert "renderGmail" not in runner_js
+
+    script = """
+const runner = await import(__GMAIL_ACTION_RUNNER_MODULE_URL__);
+
+function makeRecorder() {
+  const calls = [];
+  return {
+    calls,
+    async runWithBusyImpl(buttonIds, busyLabels, action, options = {}) {
+      calls.push({
+        buttonIds: [...(buttonIds || [])],
+        busyLabels: { ...(busyLabels || {}) },
+        options: { ...(options || {}) },
+      });
+      return await action();
+    },
+  };
+}
+
+const successRecorder = makeRecorder();
+const success = await runner.runGmailBusyAction({
+  buttonIds: ["gmail-ok"],
+  busyLabels: { "gmail-ok": "Working <img src=x>" },
+  action: async () => "done",
+  runWithBusyImpl: successRecorder.runWithBusyImpl,
+});
+
+const order = [];
+let feedbackHint = "";
+const failureRecorder = makeRecorder();
+const failure = await runner.runGmailBusyAction({
+  buttonIds: ["gmail-fail"],
+  busyLabel: "Failing <script>bad()</script>",
+  guardIds: ["gmail-guard"],
+  action: async () => {
+    throw new Error("boom <img src=x>");
+  },
+  onError: async (error) => {
+    order.push(`before:${error.message}`);
+  },
+  failureFeedback: (error) => ({
+    panelSlot: "gmail",
+    diagnosticsSlot: "gmail",
+    fallback: `Fallback ${error.message}`,
+    diagnosticsHint: (message) => `hint:${message}:${error.message}`,
+  }),
+  applyFailureFeedback: (error, feedback) => {
+    order.push(`feedback:${feedback.panelSlot}:${feedback.fallback}`);
+    feedbackHint = feedback.diagnosticsHint("message");
+  },
+  afterError: async (error) => {
+    order.push(`after:${error.message}`);
+  },
+  runWithBusyImpl: failureRecorder.runWithBusyImpl,
+});
+
+const staticFeedbackOrder = [];
+await runner.runGmailBusyAction({
+  buttonIds: "single-id",
+  busyLabel: "Busy",
+  action: async () => {
+    throw new Error("static");
+  },
+  failureFeedback: {
+    panelSlot: "gmail-session",
+    fallback: "Static fallback",
+  },
+  applyFailureFeedback: (error, feedback) => {
+    staticFeedbackOrder.push(`${error.message}:${feedback.panelSlot}:${feedback.fallback}`);
+  },
+  runWithBusyImpl: makeRecorder().runWithBusyImpl,
+});
+
+const nullSafe = await runner.runGmailBusyAction({
+  runWithBusyImpl: makeRecorder().runWithBusyImpl,
+});
+
+console.log(JSON.stringify({
+  exportType: typeof runner.runGmailBusyAction,
+  success,
+  successCalls: successRecorder.calls,
+  failureType: typeof failure,
+  failureCalls: failureRecorder.calls,
+  order,
+  feedbackHint,
+  staticFeedbackOrder,
+  nullSafeType: typeof nullSafe,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_ACTION_RUNNER_MODULE_URL__": "gmail_action_runner.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["success"] == "done"
+    assert results["successCalls"] == [
+        {
+            "buttonIds": ["gmail-ok"],
+            "busyLabels": {"gmail-ok": "Working <img src=x>"},
+            "options": {},
+        }
+    ]
+    assert results["failureType"] == "undefined"
+    assert results["failureCalls"] == [
+        {
+            "buttonIds": ["gmail-fail"],
+            "busyLabels": {"gmail-fail": "Failing <script>bad()</script>"},
+            "options": {"guardIds": ["gmail-guard"]},
+        }
+    ]
+    assert results["order"] == [
+        "before:boom <img src=x>",
+        "feedback:gmail:Fallback boom <img src=x>",
+        "after:boom <img src=x>",
+    ]
+    assert results["feedbackHint"] == "hint:message:boom <img src=x>"
+    assert results["staticFeedbackOrder"] == ["static:gmail-session:Static fallback"]
+    assert results["nullSafeType"] == "undefined"
 
 
 def test_power_tools_js_uses_shared_busy_ui_for_button_state() -> None:
@@ -31788,8 +31953,16 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         gmail_asset = client.get(f"/static-build/{asset_version}/gmail.js")
         assert gmail_asset.status_code == 200
         assert gmail_asset.headers["content-type"].startswith("application/javascript")
-        assert 'from "./busy_ui.js"' in gmail_asset.text
+        assert 'from "./gmail_action_runner.js"' in gmail_asset.text
         assert 'from "./diagnostics_ui.js"' in gmail_asset.text
+        gmail_action_runner_asset = client.get(
+            f"/static-build/{asset_version}/gmail_action_runner.js"
+        )
+        assert gmail_action_runner_asset.status_code == 200
+        assert gmail_action_runner_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "runGmailBusyAction" in gmail_action_runner_asset.text
         shell_ui_asset = client.get(f"/static-build/{asset_version}/shell_ui.js")
         assert shell_ui_asset.status_code == 200
         assert shell_ui_asset.headers["content-type"].startswith("application/javascript")

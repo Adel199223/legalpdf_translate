@@ -5,11 +5,11 @@ import {
   ensureBrowserPdfBundleFromUrl,
   renderBrowserPdfPreviewToCanvas,
 } from "./browser_pdf.js";
-import { runWithBusy } from "./busy_ui.js";
 import {
   setDiagnostics,
   setPanelStatus,
 } from "./diagnostics_ui.js";
+import { runGmailBusyAction } from "./gmail_action_runner.js";
 import { deriveGmailLiveRuntimeGuard } from "./gmail_runtime_guard.js";
 import {
   buildGmailRuntimeGuardBlockedDiagnosticsPresentation,
@@ -217,6 +217,29 @@ function applyActionFailureFeedback(
     { panelSlot, diagnosticsSlot, fallback, diagnosticsHint },
     { setPanelStatus, setDiagnostics },
   );
+}
+
+function runGmailAction({
+  buttonIds = [],
+  busyLabel = "",
+  busyLabels = null,
+  guardIds = null,
+  action = null,
+  failureFeedback = {},
+  onError = null,
+  afterError = null,
+} = {}) {
+  return runGmailBusyAction({
+    buttonIds,
+    busyLabel,
+    busyLabels,
+    guardIds,
+    action,
+    failureFeedback,
+    applyFailureFeedback: applyActionFailureFeedback,
+    onError,
+    afterError,
+  });
 }
 
 function browserBootstrapConfig() {
@@ -2082,30 +2105,28 @@ export function initializeGmailUi(hooks) {
 
   qs("gmail-context-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await runWithBusy(["gmail-load-message"], { "gmail-load-message": "Loading..." }, async () => {
-      try {
-        await loadMessage();
-      } catch (error) {
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail",
-          diagnosticsSlot: "gmail",
-          fallback: "Gmail message load failed.",
-        });
-      }
+    await runGmailAction({
+      buttonIds: ["gmail-load-message"],
+      busyLabel: "Loading...",
+      action: () => loadMessage(),
+      failureFeedback: {
+        panelSlot: "gmail",
+        diagnosticsSlot: "gmail",
+        fallback: "Gmail message load failed.",
+      },
     });
   });
 
   qs("gmail-load-demo-review")?.addEventListener("click", async () => {
-    await runWithBusy(["gmail-load-demo-review"], { "gmail-load-demo-review": "Loading demo..." }, async () => {
-      try {
-        await loadDemoReview();
-      } catch (error) {
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail",
-          diagnosticsSlot: "gmail",
-          fallback: "Demo Gmail review load failed.",
-        });
-      }
+    await runGmailAction({
+      buttonIds: ["gmail-load-demo-review"],
+      busyLabel: "Loading demo...",
+      action: () => loadDemoReview(),
+      failureFeedback: {
+        panelSlot: "gmail",
+        diagnosticsSlot: "gmail",
+        fallback: "Demo Gmail review load failed.",
+      },
     });
   });
 
@@ -2138,14 +2159,15 @@ export function initializeGmailUi(hooks) {
   });
 
   qs("gmail-restart-canonical-runtime")?.addEventListener("click", () => {
-    runWithBusy(["gmail-restart-canonical-runtime"], { "gmail-restart-canonical-runtime": "Restarting..." }, async () => {
-      await restartCanonicalRuntimeGuidance();
-    }).catch((error) => {
-      applyActionFailureFeedback(error, {
+    void runGmailAction({
+      buttonIds: ["gmail-restart-canonical-runtime"],
+      busyLabel: "Restarting...",
+      action: () => restartCanonicalRuntimeGuidance(),
+      failureFeedback: {
         panelSlot: "gmail",
         diagnosticsSlot: "gmail",
         fallback: "Canonical runtime restart failed.",
-      });
+      },
     });
   });
 
@@ -2206,16 +2228,15 @@ export function initializeGmailUi(hooks) {
     if (maybeBlockGmailReviewAction("gmail_preview_attachment")) {
       return;
     }
-    await runWithBusy(["gmail-preview-selected"], { "gmail-preview-selected": "Loading..." }, async () => {
-      try {
-        await previewAttachment(attachmentId);
-      } catch (error) {
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail",
-          diagnosticsSlot: "gmail",
-          fallback: "Attachment preview failed.",
-        });
-      }
+    await runGmailAction({
+      buttonIds: ["gmail-preview-selected"],
+      busyLabel: "Loading...",
+      action: () => previewAttachment(attachmentId),
+      failureFeedback: {
+        panelSlot: "gmail",
+        diagnosticsSlot: "gmail",
+        fallback: "Attachment preview failed.",
+      },
     });
   });
 
@@ -2261,25 +2282,28 @@ export function initializeGmailUi(hooks) {
     if (maybeBlockGmailReviewAction("gmail_preview_attachment")) {
       return;
     }
-    await runWithBusy(["gmail-preview-selected"], { "gmail-preview-selected": "Loading..." }, async () => {
-      try {
-        await previewAttachment(attachment.attachment_id);
-      } catch (error) {
+    await runGmailAction({
+      buttonIds: ["gmail-preview-selected"],
+      busyLabel: "Loading...",
+      action: () => previewAttachment(attachment.attachment_id),
+      onError: (error) => {
         rememberGmailFailureReport(error, {
           operation: "gmail_preview_attachment",
           attachment,
         });
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail",
-          diagnosticsSlot: "gmail",
-          fallback: "Attachment preview failed.",
-          diagnosticsHint: (message) => buildGmailBrowserFailureHintPresentation({
-            error,
-            fallbackMessage: message,
-          }),
-        });
+      },
+      failureFeedback: (error) => ({
+        panelSlot: "gmail",
+        diagnosticsSlot: "gmail",
+        fallback: "Attachment preview failed.",
+        diagnosticsHint: (message) => buildGmailBrowserFailureHintPresentation({
+          error,
+          fallbackMessage: message,
+        }),
+      }),
+      afterError: () => {
         updateGmailFailureReportActionState();
-      }
+      },
     });
   });
 
@@ -2351,53 +2375,54 @@ export function initializeGmailUi(hooks) {
     if (maybeBlockGmailReviewAction("gmail_prepare_session")) {
       return;
     }
-    await runWithBusy(["gmail-prepare-session"], { "gmail-prepare-session": "Preparing..." }, async () => {
-      try {
-        await prepareSession();
-      } catch (error) {
+    await runGmailAction({
+      buttonIds: ["gmail-prepare-session"],
+      busyLabel: "Preparing...",
+      action: () => prepareSession(),
+      onError: (error) => {
         rememberGmailFailureReport(error, {
           operation: "gmail_prepare_session",
           attachment: focusedAttachment(),
         });
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail",
-          diagnosticsSlot: "gmail",
-          fallback: "Gmail session preparation failed.",
-          diagnosticsHint: (message) => buildGmailBrowserFailureHintPresentation({
-            error,
-            fallbackMessage: message,
-          }),
-        });
+      },
+      failureFeedback: (error) => ({
+        panelSlot: "gmail",
+        diagnosticsSlot: "gmail",
+        fallback: "Gmail session preparation failed.",
+        diagnosticsHint: (message) => buildGmailBrowserFailureHintPresentation({
+          error,
+          fallbackMessage: message,
+        }),
+      }),
+      afterError: () => {
         updateGmailFailureReportActionState();
-      }
+      },
     });
   });
 
   qs("gmail-generate-failure-report")?.addEventListener("click", async () => {
-    await runWithBusy(["gmail-generate-failure-report"], { "gmail-generate-failure-report": "Generating..." }, async () => {
-      try {
-        await handleGmailFailureReport();
-      } catch (error) {
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail",
-          diagnosticsSlot: "gmail",
-          fallback: "Gmail browser failure report generation failed.",
-        });
-      }
+    await runGmailAction({
+      buttonIds: ["gmail-generate-failure-report"],
+      busyLabel: "Generating...",
+      action: () => handleGmailFailureReport(),
+      failureFeedback: {
+        panelSlot: "gmail",
+        diagnosticsSlot: "gmail",
+        fallback: "Gmail browser failure report generation failed.",
+      },
     });
   });
 
   qs("gmail-batch-finalize-report")?.addEventListener("click", async () => {
-    await runWithBusy(["gmail-batch-finalize-report"], { "gmail-batch-finalize-report": "Generating..." }, async () => {
-      try {
-        await handleGmailFinalizationReport();
-      } catch (error) {
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail-batch-finalize",
-          diagnosticsSlot: "gmail-batch-finalize",
-          fallback: "Gmail finalization report generation failed.",
-        });
-      }
+    await runGmailAction({
+      buttonIds: ["gmail-batch-finalize-report"],
+      busyLabel: "Generating...",
+      action: () => handleGmailFinalizationReport(),
+      failureFeedback: {
+        panelSlot: "gmail-batch-finalize",
+        diagnosticsSlot: "gmail-batch-finalize",
+        fallback: "Gmail finalization report generation failed.",
+      },
     });
   });
 
@@ -2406,30 +2431,28 @@ export function initializeGmailUi(hooks) {
   });
 
   qs("gmail-redo-current")?.addEventListener("click", async () => {
-    await runWithBusy(["gmail-redo-current"], { "gmail-redo-current": "Preparing..." }, async () => {
-      try {
-        await runRedoCurrentTranslation();
-      } catch (error) {
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail-session",
-          diagnosticsSlot: "gmail-session",
-          fallback: "Redo current attachment failed.",
-        });
-      }
+    await runGmailAction({
+      buttonIds: ["gmail-redo-current"],
+      busyLabel: "Preparing...",
+      action: () => runRedoCurrentTranslation(),
+      failureFeedback: {
+        panelSlot: "gmail-session",
+        diagnosticsSlot: "gmail-session",
+        fallback: "Redo current attachment failed.",
+      },
     });
   });
 
   qs("translation-gmail-confirm-current")?.addEventListener("click", async () => {
-    await runWithBusy(["translation-gmail-confirm-current"], { "translation-gmail-confirm-current": "Confirming..." }, async () => {
-      try {
-        await confirmCurrentTranslation();
-      } catch (error) {
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail-session",
-          diagnosticsSlot: "gmail-session",
-          fallback: "Gmail attachment confirmation failed.",
-        });
-      }
+    await runGmailAction({
+      buttonIds: ["translation-gmail-confirm-current"],
+      busyLabel: "Confirming...",
+      action: () => confirmCurrentTranslation(),
+      failureFeedback: {
+        panelSlot: "gmail-session",
+        diagnosticsSlot: "gmail-session",
+        fallback: "Gmail attachment confirmation failed.",
+      },
     });
   });
 
@@ -2456,79 +2479,78 @@ export function initializeGmailUi(hooks) {
   });
 
   qs("gmail-confirm-translation")?.addEventListener("click", async () => {
-    await runWithBusy(["gmail-confirm-translation"], { "gmail-confirm-translation": "Confirming..." }, async () => {
-      try {
-        await confirmCurrentTranslation();
-      } catch (error) {
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail-session",
-          diagnosticsSlot: "gmail-session",
-          fallback: "Gmail attachment confirmation failed.",
-        });
-      }
+    await runGmailAction({
+      buttonIds: ["gmail-confirm-translation"],
+      busyLabel: "Confirming...",
+      action: () => confirmCurrentTranslation(),
+      failureFeedback: {
+        panelSlot: "gmail-session",
+        diagnosticsSlot: "gmail-session",
+        fallback: "Gmail attachment confirmation failed.",
+      },
     });
   });
 
   qs("gmail-finalize-batch")?.addEventListener("click", async () => {
-    await runWithBusy(["gmail-finalize-batch"], { "gmail-finalize-batch": "Finalizing..." }, async () => {
-      try {
-        await finalizeBatch();
-      } catch (error) {
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail-session",
-          diagnosticsSlot: "gmail-session",
-          fallback: "Gmail batch finalization failed.",
-        });
-      }
+    await runGmailAction({
+      buttonIds: ["gmail-finalize-batch"],
+      busyLabel: "Finalizing...",
+      action: () => finalizeBatch(),
+      failureFeedback: {
+        panelSlot: "gmail-session",
+        diagnosticsSlot: "gmail-session",
+        fallback: "Gmail batch finalization failed.",
+      },
     });
   });
 
   qs("gmail-finalize-interpretation")?.addEventListener("click", async () => {
-    await runWithBusy(["gmail-finalize-interpretation"], { "gmail-finalize-interpretation": "Creating..." }, async () => {
-      try {
-        await finalizeInterpretation();
-      } catch (error) {
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail-session",
-          diagnosticsSlot: "gmail-session",
-          fallback: "Creating the Gmail reply failed.",
-        });
-      }
+    await runGmailAction({
+      buttonIds: ["gmail-finalize-interpretation"],
+      busyLabel: "Creating...",
+      action: () => finalizeInterpretation(),
+      failureFeedback: {
+        panelSlot: "gmail-session",
+        diagnosticsSlot: "gmail-session",
+        fallback: "Creating the Gmail reply failed.",
+      },
     });
   });
 
   qs("interpretation-finalize-gmail")?.addEventListener("click", async () => {
-    await runWithBusy(["interpretation-finalize-gmail"], { "interpretation-finalize-gmail": "Creating..." }, async () => {
-      try {
-        await finalizeInterpretation();
-      } catch (error) {
+    await runGmailAction({
+      buttonIds: ["interpretation-finalize-gmail"],
+      busyLabel: "Creating...",
+      action: () => finalizeInterpretation(),
+      onError: (error) => {
         gmailState.hooks.recoverInterpretationValidationError?.(error);
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail-session",
-          diagnosticsSlot: "gmail-session",
-          fallback: "Creating the Gmail reply failed.",
-        });
-      }
+      },
+      failureFeedback: {
+        panelSlot: "gmail-session",
+        diagnosticsSlot: "gmail-session",
+        fallback: "Creating the Gmail reply failed.",
+      },
     });
   });
 
   qs("gmail-refresh")?.addEventListener("click", async () => {
-    await runWithBusy(["gmail-refresh"], { "gmail-refresh": "Refreshing..." }, async () => {
-      try {
-        await refreshGmailState();
-      } catch (error) {
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail",
-          diagnosticsSlot: "gmail",
-          fallback: "Gmail refresh failed.",
-        });
-      }
+    await runGmailAction({
+      buttonIds: ["gmail-refresh"],
+      busyLabel: "Refreshing...",
+      action: () => refreshGmailState(),
+      failureFeedback: {
+        panelSlot: "gmail",
+        diagnosticsSlot: "gmail",
+        fallback: "Gmail refresh failed.",
+      },
     });
   });
 
   qs("gmail-reset")?.addEventListener("click", async () => {
-    await runWithBusy(["gmail-reset"], { "gmail-reset": "Resetting..." }, async () => {
-      try {
+    await runGmailAction({
+      buttonIds: ["gmail-reset"],
+      busyLabel: "Resetting...",
+      action: async () => {
         const payload = await fetchJson("/api/gmail/reset", appState, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2547,13 +2569,12 @@ export function initializeGmailUi(hooks) {
         setDiagnostics("gmail-session", payload, diagnosticsPresentation);
         setDiagnostics("gmail-batch-finalize", payload, diagnosticsPresentation);
         closeSessionDrawer();
-      } catch (error) {
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail-session",
-          diagnosticsSlot: "gmail-session",
-          fallback: "Gmail review reset failed.",
-        });
-      }
+      },
+      failureFeedback: {
+        panelSlot: "gmail-session",
+        diagnosticsSlot: "gmail-session",
+        fallback: "Gmail review reset failed.",
+      },
     });
   });
 
@@ -2571,16 +2592,15 @@ export function initializeGmailUi(hooks) {
   });
   qs("gmail-batch-finalize-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await runWithBusy(["gmail-batch-finalize-run"], { "gmail-batch-finalize-run": "Finalizing..." }, async () => {
-      try {
-        await finalizeBatch();
-      } catch (error) {
-        applyActionFailureFeedback(error, {
-          panelSlot: "gmail-batch-finalize",
-          diagnosticsSlot: "gmail-batch-finalize",
-          fallback: "Gmail batch finalization failed.",
-        });
-      }
+    await runGmailAction({
+      buttonIds: ["gmail-batch-finalize-run"],
+      busyLabel: "Finalizing...",
+      action: () => finalizeBatch(),
+      failureFeedback: {
+        panelSlot: "gmail-batch-finalize",
+        diagnosticsSlot: "gmail-batch-finalize",
+        fallback: "Gmail batch finalization failed.",
+      },
     });
   });
   qs("gmail-close-batch-finalize-drawer")?.addEventListener("click", closeBatchFinalizeDrawer);
