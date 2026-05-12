@@ -170,7 +170,6 @@ import {
   buildGmailPreviewPanelContext,
   buildGmailReviewLoadResetState,
   buildGmailSelectionStateMap,
-  clearConsumedReviewState,
   deriveGmailOverlayDismissalAction,
   deriveGmailAttachmentStartEditable,
   deriveGmailFocusedAttachmentId,
@@ -183,14 +182,17 @@ import {
   minimizePreviewState,
   normalizeGmailAttachmentSelectionState,
   openPreviewState,
-  readConsumedReviewState,
   restorePreviewState,
   setPreviewStatePage,
   shouldTreatGmailWorkspaceAsStable,
-  shouldAutoOpenReview,
   shouldIgnoreReviewRowFocusTarget,
-  writeConsumedReviewState,
 } from "./gmail_review_state.js";
+import {
+  clearConsumedReviewState,
+  readConsumedReviewState,
+  shouldAutoOpenReview,
+  writeConsumedReviewState,
+} from "./gmail_review_persistence.js";
 export { renderAttachmentListInto, renderReviewDetailInto } from "./gmail_attachment_adapter.js";
 const gmailState = {
   bootstrap: null,

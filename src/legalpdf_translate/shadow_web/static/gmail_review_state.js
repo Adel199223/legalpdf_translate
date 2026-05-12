@@ -9,100 +9,16 @@ import {
 } from "./gmail_attachment_metadata.js";
 
 export { deriveGmailAttachmentKindLabel } from "./gmail_attachment_kind.js";
+export {
+  clearConsumedReviewState,
+  gmailReviewStorageKey,
+  readConsumedReviewState,
+  shouldAutoOpenReview,
+  writeConsumedReviewState,
+} from "./gmail_review_persistence.js";
 
-function normalizeReviewEventId(value) {
-  const parsed = Number.parseInt(String(value ?? "").trim(), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-}
-
-function normalizeSignature(value) {
+function normalizePreviewToken(value) {
   return String(value ?? "").trim();
-}
-
-export function gmailReviewStorageKey({ runtimeMode, workspaceId }) {
-  return `legalpdf:gmail-review:${String(runtimeMode || "live").trim()}:${String(workspaceId || "workspace-1").trim()}`;
-}
-
-export function readConsumedReviewState(storage, context) {
-  if (!storage || typeof storage.getItem !== "function") {
-    return { reviewEventId: 0, messageSignature: "" };
-  }
-  try {
-    const raw = storage.getItem(gmailReviewStorageKey(context));
-    if (!raw) {
-      return { reviewEventId: 0, messageSignature: "" };
-    }
-    const parsed = JSON.parse(raw);
-    return {
-      reviewEventId: normalizeReviewEventId(parsed?.reviewEventId),
-      messageSignature: normalizeSignature(parsed?.messageSignature),
-    };
-  } catch {
-    return { reviewEventId: 0, messageSignature: "" };
-  }
-}
-
-export function writeConsumedReviewState(storage, context, { reviewEventId, messageSignature }) {
-  const payload = {
-    reviewEventId: normalizeReviewEventId(reviewEventId),
-    messageSignature: normalizeSignature(messageSignature),
-  };
-  if (!storage || typeof storage.setItem !== "function" || typeof storage.removeItem !== "function") {
-    return payload;
-  }
-  try {
-    if (payload.reviewEventId <= 0 && !payload.messageSignature) {
-      storage.removeItem(gmailReviewStorageKey(context));
-      return payload;
-    }
-    storage.setItem(gmailReviewStorageKey(context), JSON.stringify(payload));
-  } catch {
-    // Storage failures should not block Gmail review behavior.
-  }
-  return payload;
-}
-
-export function clearConsumedReviewState(storage, context) {
-  if (!storage || typeof storage.removeItem !== "function") {
-    return;
-  }
-  try {
-    storage.removeItem(gmailReviewStorageKey(context));
-  } catch {
-    // Ignore storage clear failures.
-  }
-}
-
-export function shouldAutoOpenReview({
-  reviewEventId,
-  messageSignature,
-  consumedReviewEventId,
-  consumedMessageSignature,
-  loadResult,
-  activeSession,
-}) {
-  const nextEventId = normalizeReviewEventId(reviewEventId);
-  const lastConsumedEventId = normalizeReviewEventId(consumedReviewEventId);
-  const nextSignature = normalizeSignature(messageSignature);
-  const lastConsumedSignature = normalizeSignature(consumedMessageSignature);
-  const hasLoadedMessage = Boolean(loadResult?.ok && loadResult?.message);
-
-  if (!hasLoadedMessage || activeSession) {
-    return false;
-  }
-  if (nextEventId <= 0) {
-    return false;
-  }
-  if (lastConsumedEventId === 0 && !lastConsumedSignature) {
-    return true;
-  }
-  if (nextEventId !== lastConsumedEventId) {
-    return true;
-  }
-  if (nextSignature && nextSignature !== lastConsumedSignature) {
-    return true;
-  }
-  return false;
 }
 
 function normalizeGmailStage(value) {
@@ -614,12 +530,12 @@ export function buildGmailPreviewPanelContext({
   previewState = createClosedPreviewState(),
   workflowKind = "",
 } = {}) {
-  const previewHref = normalizeSignature(previewState?.previewHref);
+  const previewHref = normalizePreviewToken(previewState?.previewHref);
   if (!isPreviewStateOpen(previewState) || !previewHref) {
     return emptyGmailPreviewPanelContext();
   }
 
-  const normalizedAttachmentId = normalizeSignature(previewState?.attachmentId);
+  const normalizedAttachmentId = normalizePreviewToken(previewState?.attachmentId);
   const attachment = normalizeGmailAttachmentList(attachments).find((item) => (
     gmailAttachmentId(item) === normalizedAttachmentId
   )) || null;
@@ -826,15 +742,15 @@ export function openPreviewState({
   currentStartPage,
   editable,
 }) {
-  const normalizedAttachmentId = normalizeSignature(attachmentId);
+  const normalizedAttachmentId = normalizePreviewToken(attachmentId);
   const nextEditable = Boolean(editable);
   const nextPageCount = Math.max(0, Number.parseInt(String(pageCount ?? 0).trim(), 10) || 0);
   return {
     open: Boolean(normalizedAttachmentId),
     minimized: false,
     attachmentId: normalizedAttachmentId,
-    previewHref: normalizeSignature(previewHref),
-    previewMimeType: normalizeSignature(previewMimeType),
+    previewHref: normalizePreviewToken(previewHref),
+    previewMimeType: normalizePreviewToken(previewMimeType),
     page: normalizePreviewPageValue(currentStartPage, {
       editable: nextEditable,
       pageCount: nextPageCount,
@@ -845,7 +761,7 @@ export function openPreviewState({
 }
 
 export function setPreviewStatePage(previewState, value) {
-  if (!previewState?.open || !normalizeSignature(previewState.attachmentId)) {
+  if (!previewState?.open || !normalizePreviewToken(previewState.attachmentId)) {
     return createClosedPreviewState();
   }
   return {
@@ -858,7 +774,7 @@ export function setPreviewStatePage(previewState, value) {
 }
 
 export function applyPreviewStateStartPage(previewState, currentStartPage) {
-  if (!previewState?.open || !normalizeSignature(previewState.attachmentId)) {
+  if (!previewState?.open || !normalizePreviewToken(previewState.attachmentId)) {
     return normalizePreviewPageValue(currentStartPage, { editable: true, pageCount: 0 });
   }
   return normalizePreviewPageValue(previewState.page, {
@@ -868,7 +784,7 @@ export function applyPreviewStateStartPage(previewState, currentStartPage) {
 }
 
 export function isPreviewStateOpen(previewState) {
-  return Boolean(previewState?.open && normalizeSignature(previewState.attachmentId));
+  return Boolean(previewState?.open && normalizePreviewToken(previewState.attachmentId));
 }
 
 export function minimizePreviewState(previewState) {
@@ -911,7 +827,7 @@ export function deriveGmailPreviewRestoreLabel(previewState) {
 }
 
 export function deriveGmailOverlayDismissalAction(trigger) {
-  const normalizedTrigger = normalizeSignature(trigger).toLowerCase();
+  const normalizedTrigger = normalizePreviewToken(trigger).toLowerCase();
   if (normalizedTrigger === "backdrop" || normalizedTrigger === "outside") {
     return "keep-open";
   }
