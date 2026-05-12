@@ -3,6 +3,10 @@ import {
   isGmailImageMime,
   isGmailPdfMime,
 } from "./gmail_attachment_kind.js";
+import {
+  gmailAttachmentId,
+  normalizeGmailAttachmentList,
+} from "./gmail_attachment_metadata.js";
 
 export { deriveGmailAttachmentKindLabel } from "./gmail_attachment_kind.js";
 
@@ -293,10 +297,6 @@ function nonnegativeNumber(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-function attachmentId(attachment) {
-  return attachment?.attachment_id || "";
-}
-
 function selectionStateFrom(source, id) {
   if (!id) {
     return normalizeGmailAttachmentSelectionState();
@@ -318,10 +318,6 @@ function selectionStateEntries(source) {
     return Object.entries(source);
   }
   return [];
-}
-
-function normalizeAttachmentList(value) {
-  return Array.isArray(value) ? value : [];
 }
 
 function normalizedSelectionStateMap(source) {
@@ -386,10 +382,10 @@ export function buildGmailSelectionStateMap({
   workflowKind = "",
 } = {}) {
   const next = new Map();
-  const normalizedAttachments = normalizeAttachmentList(attachments);
+  const normalizedAttachments = normalizeGmailAttachmentList(attachments);
 
   for (const attachment of normalizedAttachments) {
-    const id = attachmentId(attachment);
+    const id = gmailAttachmentId(attachment);
     const existing = selectionStateFrom(existingSelectionState, id);
     const editable = deriveGmailAttachmentStartEditable({ workflowKind, attachment });
     const pageCount = existing.pageCount;
@@ -407,7 +403,7 @@ export function buildGmailSelectionStateMap({
   if (activeSession?.kind === "translation") {
     for (const item of activeSession.attachments || []) {
       const attachment = item?.attachment || {};
-      const id = attachmentId(attachment);
+      const id = gmailAttachmentId(attachment);
       if (!id) {
         continue;
       }
@@ -443,9 +439,9 @@ export function buildGmailPrepareSelectionsPayload({
   selectionState = new Map(),
   workflowKind = "",
 } = {}) {
-  const normalizedAttachments = normalizeAttachmentList(attachments);
+  const normalizedAttachments = normalizeGmailAttachmentList(attachments);
   const attachmentsById = new Map(
-    normalizedAttachments.map((attachment) => [attachmentId(attachment), attachment])
+    normalizedAttachments.map((attachment) => [gmailAttachmentId(attachment), attachment])
   );
   const selections = [];
 
@@ -484,8 +480,8 @@ export function applyGmailWorkflowSelectionDefaults({
   }
 
   let kept = false;
-  for (const attachment of normalizeAttachmentList(attachments)) {
-    const id = attachmentId(attachment);
+  for (const attachment of normalizeGmailAttachmentList(attachments)) {
+    const id = gmailAttachmentId(attachment);
     if (!id) {
       continue;
     }
@@ -529,8 +525,8 @@ export function buildGmailAttachmentSelectionUpdate({
   selected = false,
   workflowKind = "",
 } = {}) {
-  const normalizedAttachments = normalizeAttachmentList(attachments);
-  const attachment = normalizedAttachments.find((item) => attachmentId(item) === selectedAttachmentId);
+  const normalizedAttachments = normalizeGmailAttachmentList(attachments);
+  const attachment = normalizedAttachments.find((item) => gmailAttachmentId(item) === selectedAttachmentId);
   const next = normalizedSelectionStateMap(selectionState);
   if (!attachment) {
     return next;
@@ -539,7 +535,7 @@ export function buildGmailAttachmentSelectionUpdate({
   const normalizedWorkflow = String(workflowKind || "").trim();
   if (normalizedWorkflow === "interpretation" && selected) {
     for (const other of normalizedAttachments) {
-      const otherId = attachmentId(other);
+      const otherId = gmailAttachmentId(other);
       if (!otherId) {
         continue;
       }
@@ -624,7 +620,9 @@ export function buildGmailPreviewPanelContext({
   }
 
   const normalizedAttachmentId = normalizeSignature(previewState?.attachmentId);
-  const attachment = normalizeAttachmentList(attachments).find((item) => attachmentId(item) === normalizedAttachmentId) || null;
+  const attachment = normalizeGmailAttachmentList(attachments).find((item) => (
+    gmailAttachmentId(item) === normalizedAttachmentId
+  )) || null;
   if (!attachment) {
     return emptyGmailPreviewPanelContext();
   }
@@ -656,26 +654,26 @@ export function deriveGmailFocusedAttachmentId({
   currentFocusedAttachmentId = "",
   activeSession = null,
 } = {}) {
-  const normalizedAttachments = normalizeAttachmentList(attachments);
+  const normalizedAttachments = normalizeGmailAttachmentList(attachments);
   if (!normalizedAttachments.length) {
     return "";
   }
-  const attachmentIds = new Set(normalizedAttachments.map((attachment) => attachmentId(attachment)));
+  const attachmentIds = new Set(normalizedAttachments.map((attachment) => gmailAttachmentId(attachment)));
   const currentId = currentFocusedAttachmentId || "";
   if (attachmentIds.has(currentId)) {
     return currentId;
   }
   const selectedAttachment = normalizedAttachments.find((attachment) => (
-    selectionStateFrom(selectionState, attachmentId(attachment)).selected
+    selectionStateFrom(selectionState, gmailAttachmentId(attachment)).selected
   ));
   if (selectedAttachment) {
-    return attachmentId(selectedAttachment);
+    return gmailAttachmentId(selectedAttachment);
   }
   const activeAttachmentId = deriveGmailActiveSessionAttachmentId(activeSession);
   if (attachmentIds.has(activeAttachmentId)) {
     return activeAttachmentId;
   }
-  return attachmentId(normalizedAttachments[0]);
+  return gmailAttachmentId(normalizedAttachments[0]);
 }
 
 export function deriveRecoveredFinalizationAction({ restoredCompletedSession }) {

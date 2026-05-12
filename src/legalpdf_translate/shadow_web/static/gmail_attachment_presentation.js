@@ -1,53 +1,23 @@
 import { deriveGmailAttachmentKindLabelForAttachment } from "./gmail_attachment_kind.js";
 import {
+  formatGmailAttachmentSizeLabel,
+  gmailAttachmentDisplayMime,
+  gmailAttachmentFilename,
+  gmailAttachmentId,
+  normalizeGmailAttachmentList,
+  readGmailAttachmentValueById,
+} from "./gmail_attachment_metadata.js";
+import {
   clampGmailAttachmentStartPage,
   deriveGmailAttachmentStartEditable,
   normalizeGmailAttachmentSelectionState,
 } from "./gmail_review_state.js";
-
-function normalizeAttachments(value) {
-  return Array.isArray(value) ? value : [];
-}
-
-function attachmentId(attachment) {
-  return String(attachment?.attachment_id || "");
-}
-
-function attachmentFilename(attachment) {
-  return String(attachment?.filename || "Attachment");
-}
-
-function displayMimeText(attachment) {
-  return String(attachment?.mime_type || "Unknown");
-}
 
 function normalizedWorkflowKind({ workflowKind = "", interpretationWorkflow = false } = {}) {
   if (String(workflowKind || "").trim() === "interpretation" || interpretationWorkflow === true) {
     return "interpretation";
   }
   return "translation";
-}
-
-function readByAttachmentId(source, id, fallback = undefined) {
-  if (source instanceof Map) {
-    return source.has(id) ? source.get(id) : fallback;
-  }
-  if (source && typeof source === "object" && Object.prototype.hasOwnProperty.call(source, id)) {
-    return source[id];
-  }
-  return fallback;
-}
-
-function formatSizeLabel(value) {
-  const bytes = Number(value || 0);
-  if (!Number.isFinite(bytes) || bytes <= 0) {
-    return "0 B";
-  }
-  const units = ["B", "KB", "MB", "GB"];
-  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
-  const scaled = bytes / (1024 ** index);
-  const precision = scaled >= 10 || index === 0 ? 0 : 1;
-  return `${scaled.toFixed(precision)} ${units[index]}`;
 }
 
 function normalizeStartPage(value) {
@@ -63,7 +33,7 @@ function pageCountText(pageCount) {
 }
 
 function attachmentState(states, id) {
-  const state = readByAttachmentId(states, id, {});
+  const state = readGmailAttachmentValueById(states, id, {});
   return {
     selected: Boolean(state?.selected),
     startPage: normalizeStartPage(state?.startPage),
@@ -75,7 +45,7 @@ function resolveAdapterAttachmentState({ resolveState, selectionState, id }) {
   if (typeof resolveState === "function") {
     return normalizeGmailAttachmentSelectionState(resolveState(id));
   }
-  return normalizeGmailAttachmentSelectionState(readByAttachmentId(selectionState, id, {}));
+  return normalizeGmailAttachmentSelectionState(readGmailAttachmentValueById(selectionState, id, {}));
 }
 
 function resolveAdapterStartEditable({ resolveCanEditStart, workflowKind, attachment }) {
@@ -113,20 +83,24 @@ function buildAttachmentRow({
   startPagesByAttachmentId,
   sizeLabelsByAttachmentId,
 }) {
-  const id = attachmentId(attachment);
+  const id = gmailAttachmentId(attachment);
   const state = attachmentState(attachmentStates, id);
   const selected = state.selected === true;
   const focused = focusedAttachmentId === id;
-  const canEditStart = readByAttachmentId(canEditStartByAttachmentId, id, false) === true;
-  const filename = attachmentFilename(attachment);
-  const mime = displayMimeText(attachment);
-  const kindLabel = String(readByAttachmentId(
+  const canEditStart = readGmailAttachmentValueById(canEditStartByAttachmentId, id, false) === true;
+  const filename = gmailAttachmentFilename(attachment);
+  const mime = gmailAttachmentDisplayMime(attachment);
+  const kindLabel = String(readGmailAttachmentValueById(
     kindLabelsByAttachmentId,
     id,
     deriveGmailAttachmentKindLabelForAttachment(attachment),
   ));
-  const sizeLabel = String(readByAttachmentId(sizeLabelsByAttachmentId, id, formatSizeLabel(attachment?.size_bytes || 0)));
-  const startPage = normalizeStartPage(readByAttachmentId(startPagesByAttachmentId, id, state.startPage));
+  const sizeLabel = String(readGmailAttachmentValueById(
+    sizeLabelsByAttachmentId,
+    id,
+    formatGmailAttachmentSizeLabel(attachment?.size_bytes || 0),
+  ));
+  const startPage = normalizeStartPage(readGmailAttachmentValueById(startPagesByAttachmentId, id, state.startPage));
 
   return {
     attachmentId: id,
@@ -191,7 +165,7 @@ export function buildGmailAttachmentListPresentation({
   startPagesByAttachmentId = {},
   sizeLabelsByAttachmentId = {},
 } = {}) {
-  const normalizedAttachments = normalizeAttachments(attachments);
+  const normalizedAttachments = normalizeGmailAttachmentList(attachments);
   const selectedInputType = interpretationWorkflow ? "radio" : "checkbox";
   return {
     startHeadingLabel: "Start page",
@@ -226,17 +200,19 @@ export function buildGmailAttachmentListAdapterPresentation({
   resolveStartPage = null,
   formatSizeLabel: customFormatSizeLabel = null,
 } = {}) {
-  const normalizedAttachments = normalizeAttachments(attachments);
+  const normalizedAttachments = normalizeGmailAttachmentList(attachments);
   const normalizedWorkflow = normalizedWorkflowKind({ workflowKind, interpretationWorkflow });
   const attachmentStates = new Map();
   const canEditStartByAttachmentId = new Map();
   const kindLabelsByAttachmentId = new Map();
   const startPagesByAttachmentId = new Map();
   const sizeLabelsByAttachmentId = new Map();
-  const sizeFormatter = typeof customFormatSizeLabel === "function" ? customFormatSizeLabel : formatSizeLabel;
+  const sizeFormatter = typeof customFormatSizeLabel === "function"
+    ? customFormatSizeLabel
+    : formatGmailAttachmentSizeLabel;
 
   for (const attachment of normalizedAttachments) {
-    const id = attachmentId(attachment);
+    const id = gmailAttachmentId(attachment);
     const state = resolveAdapterAttachmentState({ resolveState, selectionState, id });
     const editable = resolveAdapterStartEditable({
       resolveCanEditStart,
@@ -342,8 +318,8 @@ export function buildGmailReviewDetailPresentation({
       emptyText: "Choose an attachment row to see the document details, optional preview, and start page.",
     };
   }
-  const id = attachmentId(attachment);
-  const filename = attachmentFilename(attachment);
+  const id = gmailAttachmentId(attachment);
+  const filename = gmailAttachmentFilename(attachment);
   const normalizedState = {
     selected: Boolean(state?.selected),
     pageCount: Math.max(0, Number(state?.pageCount || 0)),

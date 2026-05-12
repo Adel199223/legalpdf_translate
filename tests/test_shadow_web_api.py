@@ -13125,6 +13125,150 @@ console.log(JSON.stringify({
     assert results["maliciousLabel"] == "Unknown"
 
 
+def test_gmail_attachment_metadata_module_centralizes_display_helpers() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    metadata_path = static_dir / "gmail_attachment_metadata.js"
+    attachment_presentation_js = (static_dir / "gmail_attachment_presentation.js").read_text(
+        encoding="utf-8"
+    )
+    preview_presentation_js = (static_dir / "gmail_preview_presentation.js").read_text(
+        encoding="utf-8"
+    )
+    review_state_js = (static_dir / "gmail_review_state.js").read_text(encoding="utf-8")
+    report_context_js = (static_dir / "gmail_report_context.js").read_text(encoding="utf-8")
+
+    assert metadata_path.exists()
+    metadata_js = metadata_path.read_text(encoding="utf-8")
+    expected_exports = [
+        "normalizeGmailAttachmentList",
+        "gmailAttachmentId",
+        "gmailAttachmentFilename",
+        "gmailAttachmentDisplayMime",
+        "readGmailAttachmentValueById",
+        "formatGmailAttachmentSizeLabel",
+    ]
+    for export_name in expected_exports:
+        assert re.search(rf"export function {export_name}\b", metadata_js)
+
+    for forbidden in [
+        "document.",
+        "innerHTML",
+        "fetchJson",
+        "setDiagnostics",
+        "renderGmail",
+        "appState",
+    ]:
+        assert forbidden not in metadata_js
+
+    for module_js in [
+        attachment_presentation_js,
+        preview_presentation_js,
+        review_state_js,
+        report_context_js,
+    ]:
+        assert 'from "./gmail_attachment_metadata.js"' in module_js
+
+    assert "function normalizeAttachments(" not in attachment_presentation_js
+    assert "function attachmentId(" not in attachment_presentation_js
+    assert "function attachmentFilename(" not in attachment_presentation_js
+    assert "function displayMimeText(" not in attachment_presentation_js
+    assert "function readByAttachmentId(" not in attachment_presentation_js
+    assert "function formatSizeLabel(" not in attachment_presentation_js
+    assert "function attachmentFilename(" not in preview_presentation_js
+    assert "function attachmentId(" not in review_state_js
+    assert "function normalizeAttachmentList(" not in review_state_js
+    assert "function attachmentId(" not in report_context_js
+
+    script = """
+const metadata = await import(__GMAIL_ATTACHMENT_METADATA_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const attachment = {
+  attachment_id: `id-${malicious}`,
+  filename: `File ${malicious}.pdf`,
+  mime_type: ` Application/PDF ${malicious} `,
+  size_bytes: 1536,
+};
+const inheritedValues = Object.create({ inherited: "do-not-read" });
+inheritedValues.own = "read-me";
+const mapValues = new Map([["map-id", { value: 7 }]]);
+
+console.log(JSON.stringify({
+  exportTypes: {
+    normalizeList: typeof metadata.normalizeGmailAttachmentList,
+    attachmentId: typeof metadata.gmailAttachmentId,
+    filename: typeof metadata.gmailAttachmentFilename,
+    displayMime: typeof metadata.gmailAttachmentDisplayMime,
+    readById: typeof metadata.readGmailAttachmentValueById,
+    sizeLabel: typeof metadata.formatGmailAttachmentSizeLabel,
+  },
+  normalizedListLength: metadata.normalizeGmailAttachmentList([attachment]).length,
+  nullListLength: metadata.normalizeGmailAttachmentList(null).length,
+  attachmentId: metadata.gmailAttachmentId(attachment),
+  nullAttachmentId: metadata.gmailAttachmentId(null),
+  filename: metadata.gmailAttachmentFilename(attachment),
+  filenameFallback: metadata.gmailAttachmentFilename(null, "fallback.txt"),
+  defaultFilenameFallback: metadata.gmailAttachmentFilename(null),
+  displayMime: metadata.gmailAttachmentDisplayMime(attachment),
+  displayMimeFallback: metadata.gmailAttachmentDisplayMime(null),
+  customDisplayMimeFallback: metadata.gmailAttachmentDisplayMime(null, "No MIME"),
+  mapRead: metadata.readGmailAttachmentValueById(mapValues, "map-id", "fallback"),
+  mapFallback: metadata.readGmailAttachmentValueById(mapValues, "missing", "fallback"),
+  objectRead: metadata.readGmailAttachmentValueById(inheritedValues, "own", "fallback"),
+  inheritedFallback: metadata.readGmailAttachmentValueById(inheritedValues, "inherited", "fallback"),
+  nullSourceFallback: metadata.readGmailAttachmentValueById(null, "own", "fallback"),
+  sizeLabels: {
+    zero: metadata.formatGmailAttachmentSizeLabel(0),
+    bytes: metadata.formatGmailAttachmentSizeLabel(256),
+    kb: metadata.formatGmailAttachmentSizeLabel(1536),
+    mb: metadata.formatGmailAttachmentSizeLabel(1048576),
+    invalid: metadata.formatGmailAttachmentSizeLabel(`bad-${malicious}`),
+  },
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_ATTACHMENT_METADATA_MODULE_URL__": "gmail_attachment_metadata.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportTypes"] == {
+        "normalizeList": "function",
+        "attachmentId": "function",
+        "filename": "function",
+        "displayMime": "function",
+        "readById": "function",
+        "sizeLabel": "function",
+    }
+    assert results["normalizedListLength"] == 1
+    assert results["nullListLength"] == 0
+    assert results["attachmentId"] == "id-<img src=x onerror=alert(1)><script>bad()</script>"
+    assert results["nullAttachmentId"] == ""
+    assert results["filename"] == "File <img src=x onerror=alert(1)><script>bad()</script>.pdf"
+    assert results["filenameFallback"] == "fallback.txt"
+    assert results["defaultFilenameFallback"] == "Attachment"
+    assert results["displayMime"] == " Application/PDF <img src=x onerror=alert(1)><script>bad()</script> "
+    assert results["displayMimeFallback"] == "Unknown"
+    assert results["customDisplayMimeFallback"] == "No MIME"
+    assert results["mapRead"] == {"value": 7}
+    assert results["mapFallback"] == "fallback"
+    assert results["objectRead"] == "read-me"
+    assert results["inheritedFallback"] == "fallback"
+    assert results["nullSourceFallback"] == "fallback"
+    assert results["sizeLabels"] == {
+        "zero": "0 B",
+        "bytes": "256 B",
+        "kb": "1.5 KB",
+        "mb": "1.0 MB",
+        "invalid": "0 B",
+    }
+
+
 def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -33091,6 +33235,18 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "isGmailPdfAttachment" in gmail_attachment_kind_asset.text
         assert "isGmailImageAttachment" in gmail_attachment_kind_asset.text
         assert "deriveGmailAttachmentKindLabelForAttachment" in gmail_attachment_kind_asset.text
+        gmail_attachment_metadata_asset = client.get(
+            f"/static-build/{asset_version}/gmail_attachment_metadata.js"
+        )
+        assert gmail_attachment_metadata_asset.status_code == 200
+        assert gmail_attachment_metadata_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "normalizeGmailAttachmentList" in gmail_attachment_metadata_asset.text
+        assert "gmailAttachmentFilename" in gmail_attachment_metadata_asset.text
+        assert "gmailAttachmentDisplayMime" in gmail_attachment_metadata_asset.text
+        assert "readGmailAttachmentValueById" in gmail_attachment_metadata_asset.text
+        assert "formatGmailAttachmentSizeLabel" in gmail_attachment_metadata_asset.text
         gmail_report_ui_asset = client.get(f"/static-build/{asset_version}/gmail_report_ui.js")
         assert gmail_report_ui_asset.status_code == 200
         assert gmail_report_ui_asset.headers["content-type"].startswith("application/javascript")

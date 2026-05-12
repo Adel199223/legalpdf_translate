@@ -1,3 +1,5 @@
+import { gmailAttachmentFilename } from "./gmail_attachment_metadata.js";
+
 function positiveNumber(value, fallback = 1) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -8,15 +10,11 @@ function nonnegativeNumber(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-function attachmentFilename(attachment, fallback) {
-  return String(attachment?.filename || fallback);
-}
-
 export function buildGmailPreviewLoadedDiagnosticsPresentation({
   payload = null,
   attachment = null,
 } = {}) {
-  const filename = attachmentFilename(
+  const filename = gmailAttachmentFilename(
     payload?.normalized_payload?.attachment || attachment,
     "attachment",
   );
@@ -61,7 +59,7 @@ function emptyPreviewPresentation() {
 function previewSummary({ attachment, page, pageCount, canApply }) {
   return {
     kind: "card",
-    title: attachmentFilename(attachment, "Attachment preview"),
+    title: gmailAttachmentFilename(attachment, "Attachment preview"),
     message: pageCount > 0 ? `${pageCount} page(s) available` : "Preview ready",
     label: canApply ? `Page ${page}` : "Inspect only",
     tone: canApply ? "info" : "ok",
@@ -135,7 +133,7 @@ export function buildGmailPreviewPanelPresentation({
         shellClassName: "gmail-inline-preview-canvas-shell",
         canvasId: "gmail-preview-canvas",
         canvasClassName: "gmail-inline-preview-canvas",
-        canvasAriaLabel: `Preview for ${attachmentFilename(attachment, "attachment")}`,
+        canvasAriaLabel: `Preview for ${gmailAttachmentFilename(attachment, "attachment")}`,
       },
       statusText: pdfStatusText({ page: nextPage, pageCount: nextPageCount, canApply: applyAllowed }),
       shouldRenderPdfCanvas: true,
@@ -153,7 +151,7 @@ export function buildGmailPreviewPanelPresentation({
         shellClassName: "gmail-inline-preview-image-shell",
         imageClassName: "gmail-inline-preview-image",
         src: previewHref,
-        alt: attachmentFilename(attachment, "Attachment preview"),
+        alt: gmailAttachmentFilename(attachment, "Attachment preview"),
       },
       statusText: "Image preview is shown inline. Start page stays fixed at 1 for this attachment.",
       shouldRenderPdfCanvas: false,
@@ -168,7 +166,7 @@ export function buildGmailPreviewPanelPresentation({
       kind: "fallback",
       className: "gmail-inline-preview empty-state",
       leadingText: "Open ",
-      strongText: attachmentFilename(attachment, "the preview"),
+      strongText: gmailAttachmentFilename(attachment, "the preview"),
       trailingText: " in a new tab for a full attachment view.",
     },
     statusText: "This attachment type is available through the new-tab fallback.",
