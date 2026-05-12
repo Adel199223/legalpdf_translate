@@ -1,3 +1,11 @@
+import {
+  gmailAttachmentMime,
+  isGmailImageMime,
+  isGmailPdfMime,
+} from "./gmail_attachment_kind.js";
+
+export { deriveGmailAttachmentKindLabel } from "./gmail_attachment_kind.js";
+
 function normalizeReviewEventId(value) {
   const parsed = Number.parseInt(String(value ?? "").trim(), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -275,17 +283,6 @@ export function deriveGmailWorkflowPresentation({ workflowKind } = {}) {
   };
 }
 
-export function deriveGmailAttachmentKindLabel(mimeType) {
-  const normalized = String(mimeType || "").trim().toLowerCase();
-  if (normalized === "application/pdf") {
-    return "PDF";
-  }
-  if (normalized.startsWith("image/")) {
-    return "Image";
-  }
-  return "Unknown";
-}
-
 function positiveNumber(value, fallback = 1) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -298,10 +295,6 @@ function nonnegativeNumber(value) {
 
 function attachmentId(attachment) {
   return attachment?.attachment_id || "";
-}
-
-function attachmentMime(attachment) {
-  return String(attachment?.mime_type || "").trim().toLowerCase();
 }
 
 function selectionStateFrom(source, id) {
@@ -348,8 +341,7 @@ export function deriveGmailAttachmentStartEditable({
   mimeType = "",
 } = {}) {
   const normalizedWorkflow = String(workflowKind || "").trim();
-  const normalizedMimeType = String(mimeType || attachment?.mime_type || "").trim().toLowerCase();
-  return normalizedWorkflow === "translation" && normalizedMimeType === "application/pdf";
+  return normalizedWorkflow === "translation" && isGmailPdfMime(mimeType || attachment?.mime_type);
 }
 
 export function clampGmailAttachmentStartPage({
@@ -643,9 +635,9 @@ export function buildGmailPreviewPanelContext({
     rawValue: previewState?.page,
     pageCount,
   });
-  const mimeType = attachmentMime(attachment);
-  const isPdf = mimeType === "application/pdf";
-  const isImage = mimeType.startsWith("image/");
+  const mimeType = gmailAttachmentMime(attachment);
+  const isPdf = isGmailPdfMime(mimeType);
+  const isImage = isGmailImageMime(mimeType);
 
   return {
     attachment,

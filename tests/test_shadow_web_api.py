@@ -12992,6 +12992,139 @@ console.log(JSON.stringify({
     assert results["planned"]["nullSafe"] == results["planned"]["intake"]
 
 
+def test_gmail_attachment_kind_module_centralizes_mime_classification() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    kind_path = static_dir / "gmail_attachment_kind.js"
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    bundle_js = (static_dir / "gmail_preview_bundle.js").read_text(encoding="utf-8")
+    review_state_js = (static_dir / "gmail_review_state.js").read_text(encoding="utf-8")
+    attachment_presentation_js = (static_dir / "gmail_attachment_presentation.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert kind_path.exists()
+    kind_js = kind_path.read_text(encoding="utf-8")
+    expected_exports = [
+        "gmailAttachmentMime",
+        "normalizeGmailAttachmentMime",
+        "isGmailPdfMime",
+        "isGmailImageMime",
+        "isGmailPdfAttachment",
+        "isGmailImageAttachment",
+        "deriveGmailAttachmentKindLabel",
+        "deriveGmailAttachmentKindLabelForAttachment",
+    ]
+    for export_name in expected_exports:
+        assert re.search(rf"export function {export_name}\b", kind_js)
+
+    for forbidden in [
+        "document.",
+        "innerHTML",
+        "fetchJson",
+        "setDiagnostics",
+        "renderGmail",
+        "appState",
+    ]:
+        assert forbidden not in kind_js
+
+    for module_js in [gmail_js, bundle_js, review_state_js, attachment_presentation_js]:
+        assert 'from "./gmail_attachment_kind.js"' in module_js
+
+    assert "function attachmentMime(" not in gmail_js
+    assert "function isPdfAttachment(" not in gmail_js
+    assert "function isImageAttachment(" not in gmail_js
+    assert "function attachmentKindLabel(" not in gmail_js
+    assert "function attachmentMime(" not in bundle_js
+    assert "function defaultIsPdfAttachment(" not in bundle_js
+    assert "function attachmentMime(" not in review_state_js
+    assert "export function deriveGmailAttachmentKindLabel(" not in review_state_js
+    assert "function defaultKindLabel(" not in attachment_presentation_js
+
+    script = """
+const kind = await import(__GMAIL_ATTACHMENT_KIND_MODULE_URL__);
+const malicious = " text/html <script>Bad()</script> ";
+const pdfAttachment = { mime_type: " Application/PDF " };
+const imageAttachment = { mime_type: " IMAGE/PNG " };
+const unknownAttachment = { mime_type: malicious };
+const nullAttachment = null;
+
+console.log(JSON.stringify({
+  exportTypes: {
+    attachmentMime: typeof kind.gmailAttachmentMime,
+    normalizeMime: typeof kind.normalizeGmailAttachmentMime,
+    isPdfMime: typeof kind.isGmailPdfMime,
+    isImageMime: typeof kind.isGmailImageMime,
+    isPdfAttachment: typeof kind.isGmailPdfAttachment,
+    isImageAttachment: typeof kind.isGmailImageAttachment,
+    label: typeof kind.deriveGmailAttachmentKindLabel,
+    labelForAttachment: typeof kind.deriveGmailAttachmentKindLabelForAttachment,
+  },
+  normalizedPdf: kind.normalizeGmailAttachmentMime(" Application/PDF "),
+  pdfAttachmentMime: kind.gmailAttachmentMime(pdfAttachment),
+  pdfAttachmentIsPdf: kind.isGmailPdfAttachment(pdfAttachment),
+  pdfAttachmentIsImage: kind.isGmailImageAttachment(pdfAttachment),
+  pdfLabel: kind.deriveGmailAttachmentKindLabel(" Application/PDF "),
+  pdfAttachmentLabel: kind.deriveGmailAttachmentKindLabelForAttachment(pdfAttachment),
+  imageAttachmentMime: kind.gmailAttachmentMime(imageAttachment),
+  imageAttachmentIsPdf: kind.isGmailPdfAttachment(imageAttachment),
+  imageAttachmentIsImage: kind.isGmailImageAttachment(imageAttachment),
+  imageLabel: kind.deriveGmailAttachmentKindLabel(" IMAGE/PNG "),
+  imageAttachmentLabel: kind.deriveGmailAttachmentKindLabelForAttachment(imageAttachment),
+  nullAttachmentMime: kind.gmailAttachmentMime(nullAttachment),
+  nullAttachmentIsPdf: kind.isGmailPdfAttachment(nullAttachment),
+  nullAttachmentIsImage: kind.isGmailImageAttachment(nullAttachment),
+  nullAttachmentLabel: kind.deriveGmailAttachmentKindLabelForAttachment(nullAttachment),
+  unknownLabel: kind.deriveGmailAttachmentKindLabel("application/octet-stream"),
+  maliciousMime: kind.gmailAttachmentMime(unknownAttachment),
+  maliciousIsPdf: kind.isGmailPdfAttachment(unknownAttachment),
+  maliciousIsImage: kind.isGmailImageAttachment(unknownAttachment),
+  maliciousLabel: kind.deriveGmailAttachmentKindLabelForAttachment(unknownAttachment),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_ATTACHMENT_KIND_MODULE_URL__": "gmail_attachment_kind.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportTypes"] == {
+        "attachmentMime": "function",
+        "normalizeMime": "function",
+        "isPdfMime": "function",
+        "isImageMime": "function",
+        "isPdfAttachment": "function",
+        "isImageAttachment": "function",
+        "label": "function",
+        "labelForAttachment": "function",
+    }
+    assert results["normalizedPdf"] == "application/pdf"
+    assert results["pdfAttachmentMime"] == "application/pdf"
+    assert results["pdfAttachmentIsPdf"] is True
+    assert results["pdfAttachmentIsImage"] is False
+    assert results["pdfLabel"] == "PDF"
+    assert results["pdfAttachmentLabel"] == "PDF"
+    assert results["imageAttachmentMime"] == "image/png"
+    assert results["imageAttachmentIsPdf"] is False
+    assert results["imageAttachmentIsImage"] is True
+    assert results["imageLabel"] == "Image"
+    assert results["imageAttachmentLabel"] == "Image"
+    assert results["nullAttachmentMime"] == ""
+    assert results["nullAttachmentIsPdf"] is False
+    assert results["nullAttachmentIsImage"] is False
+    assert results["nullAttachmentLabel"] == "Unknown"
+    assert results["unknownLabel"] == "Unknown"
+    assert results["maliciousMime"] == "text/html <script>bad()</script>"
+    assert results["maliciousIsPdf"] is False
+    assert results["maliciousIsImage"] is False
+    assert results["maliciousLabel"] == "Unknown"
+
+
 def test_gmail_review_state_module_owns_selection_state_shaping() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -32946,6 +33079,18 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "buildGmailPreviewPanelContext" in gmail_review_state_asset.text
         assert "deriveGmailFocusedAttachmentId" in gmail_review_state_asset.text
         assert "buildGmailReviewLoadResetState" in gmail_review_state_asset.text
+        gmail_attachment_kind_asset = client.get(
+            f"/static-build/{asset_version}/gmail_attachment_kind.js"
+        )
+        assert gmail_attachment_kind_asset.status_code == 200
+        assert gmail_attachment_kind_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "gmailAttachmentMime" in gmail_attachment_kind_asset.text
+        assert "normalizeGmailAttachmentMime" in gmail_attachment_kind_asset.text
+        assert "isGmailPdfAttachment" in gmail_attachment_kind_asset.text
+        assert "isGmailImageAttachment" in gmail_attachment_kind_asset.text
+        assert "deriveGmailAttachmentKindLabelForAttachment" in gmail_attachment_kind_asset.text
         gmail_report_ui_asset = client.get(f"/static-build/{asset_version}/gmail_report_ui.js")
         assert gmail_report_ui_asset.status_code == 200
         assert gmail_report_ui_asset.headers["content-type"].startswith("application/javascript")

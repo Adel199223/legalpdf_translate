@@ -1,6 +1,6 @@
+import { deriveGmailAttachmentKindLabelForAttachment } from "./gmail_attachment_kind.js";
 import {
   clampGmailAttachmentStartPage,
-  deriveGmailAttachmentKindLabel,
   deriveGmailAttachmentStartEditable,
   normalizeGmailAttachmentSelectionState,
 } from "./gmail_review_state.js";
@@ -17,7 +17,7 @@ function attachmentFilename(attachment) {
   return String(attachment?.filename || "Attachment");
 }
 
-function attachmentMime(attachment) {
+function displayMimeText(attachment) {
   return String(attachment?.mime_type || "Unknown");
 }
 
@@ -48,17 +48,6 @@ function formatSizeLabel(value) {
   const scaled = bytes / (1024 ** index);
   const precision = scaled >= 10 || index === 0 ? 0 : 1;
   return `${scaled.toFixed(precision)} ${units[index]}`;
-}
-
-function defaultKindLabel(attachment) {
-  const normalized = String(attachment?.mime_type || "").trim().toLowerCase();
-  if (normalized === "application/pdf") {
-    return "PDF";
-  }
-  if (normalized.startsWith("image/")) {
-    return "Image";
-  }
-  return "Unknown";
 }
 
 function normalizeStartPage(value) {
@@ -100,7 +89,7 @@ function resolveAdapterKindLabel({ resolveKindLabel, attachment }) {
   if (typeof resolveKindLabel === "function") {
     return resolveKindLabel(attachment);
   }
-  return deriveGmailAttachmentKindLabel(attachmentMime(attachment));
+  return deriveGmailAttachmentKindLabelForAttachment(attachment);
 }
 
 function resolveAdapterStartPage({ resolveStartPage, attachment, state, editable }) {
@@ -130,8 +119,12 @@ function buildAttachmentRow({
   const focused = focusedAttachmentId === id;
   const canEditStart = readByAttachmentId(canEditStartByAttachmentId, id, false) === true;
   const filename = attachmentFilename(attachment);
-  const mime = attachmentMime(attachment);
-  const kindLabel = String(readByAttachmentId(kindLabelsByAttachmentId, id, defaultKindLabel(attachment)));
+  const mime = displayMimeText(attachment);
+  const kindLabel = String(readByAttachmentId(
+    kindLabelsByAttachmentId,
+    id,
+    deriveGmailAttachmentKindLabelForAttachment(attachment),
+  ));
   const sizeLabel = String(readByAttachmentId(sizeLabelsByAttachmentId, id, formatSizeLabel(attachment?.size_bytes || 0)));
   const startPage = normalizeStartPage(readByAttachmentId(startPagesByAttachmentId, id, state.startPage));
 

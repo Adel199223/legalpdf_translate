@@ -1,12 +1,6 @@
+import { isGmailPdfAttachment } from "./gmail_attachment_kind.js";
+
 function noop() {}
-
-function attachmentMime(attachment) {
-  return String(attachment?.mime_type || "").trim().toLowerCase();
-}
-
-function defaultIsPdfAttachment(attachment) {
-  return attachmentMime(attachment) === "application/pdf";
-}
 
 function safeBrowserPdfState(getBrowserPdfAttachmentState, attachmentId) {
   if (typeof getBrowserPdfAttachmentState !== "function") {
@@ -58,7 +52,7 @@ export async function ensureGmailBrowserPdfBundleForAttachment({
   attachment,
   previewPayload = null,
   appState,
-  isPdfAttachment = defaultIsPdfAttachment,
+  isPdfAttachment = isGmailPdfAttachment,
   getBrowserPdfAttachmentState,
   setBrowserPdfAttachmentState = noop,
   applyPreviewPageCount = noop,
@@ -117,7 +111,7 @@ export async function ensureGmailBrowserPdfBundlesForSelections({
   attachments = [],
   getAttachmentState = () => ({}),
   ensureBrowserPdfBundleForAttachment,
-  isPdfAttachment = defaultIsPdfAttachment,
+  isPdfAttachment = isGmailPdfAttachment,
 } = {}) {
   const selectedAttachments = (attachments || []).filter((attachment) => (
     getAttachmentState(attachment?.attachment_id).selected
