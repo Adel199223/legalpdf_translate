@@ -45,6 +45,10 @@ import {
   renderReviewDetailInto,
 } from "./gmail_attachment_adapter.js";
 import {
+  deriveGmailAttachmentKindLabelForAttachment,
+  isGmailPdfAttachment,
+} from "./gmail_attachment_kind.js";
+import {
   buildGmailBatchFinalizeDiagnosticsPresentation,
   buildGmailBatchFinalizePreflightDiagnosticsPresentation,
   buildGmailBatchFinalizeSurfacePresentation,
@@ -163,7 +167,6 @@ import {
   clearConsumedReviewState,
   deriveGmailOverlayDismissalAction,
   deriveGmailAttachmentStartEditable,
-  deriveGmailAttachmentKindLabel,
   deriveGmailFocusedAttachmentId,
   deriveGmailRedoAction,
   deriveRecoveredFinalizationAction,
@@ -630,22 +633,6 @@ function currentWorkflowPresentation() {
 
 function currentWorkflowLabel() {
   return currentWorkflowPresentation().label;
-}
-
-function attachmentMime(attachment) {
-  return String(attachment?.mime_type || "").trim().toLowerCase();
-}
-
-function isPdfAttachment(attachment) {
-  return attachmentMime(attachment) === "application/pdf";
-}
-
-function isImageAttachment(attachment) {
-  return attachmentMime(attachment).startsWith("image/");
-}
-
-function attachmentKindLabel(attachment) {
-  return deriveGmailAttachmentKindLabel(attachmentMime(attachment));
 }
 
 function currentWorkflowKind() {
@@ -1225,7 +1212,7 @@ function renderReviewDetail() {
       ? (isPreviewStateOpen(gmailState.previewState) && gmailState.previewState.attachmentId === attachment.attachment_id)
       : false,
     runtimeGuard: currentGmailRuntimeGuard(),
-    kindLabel: attachment ? attachmentKindLabel(attachment) : "",
+    kindLabel: attachment ? deriveGmailAttachmentKindLabelForAttachment(attachment) : "",
   });
 }
 
@@ -1616,7 +1603,7 @@ function gmailPreviewBundleOptions() {
     appState,
     fetchJson,
     ensureBrowserPdfBundleFromUrl,
-    isPdfAttachment,
+    isPdfAttachment: isGmailPdfAttachment,
     getBrowserPdfAttachmentState: browserPdfAttachmentState,
     setBrowserPdfAttachmentState,
     applyPreviewPageCount,
@@ -1644,7 +1631,7 @@ async function ensureBrowserPdfBundlesForSelections() {
     attachments: gmailAttachments(),
     getAttachmentState: attachmentState,
     ensureBrowserPdfBundleForAttachment,
-    isPdfAttachment,
+    isPdfAttachment: isGmailPdfAttachment,
   });
 }
 
@@ -1702,7 +1689,7 @@ async function previewAttachment(attachmentId) {
   }
   const currentState = attachmentState(attachmentId);
   const payload = await fetchAttachmentPreviewPayload(attachmentId);
-  if (isPdfAttachment(attachment)) {
+  if (isGmailPdfAttachment(attachment)) {
     await ensureBrowserPdfBundleForAttachment(attachment, { previewPayload: payload });
   }
   gmailState.previewState = openPreviewState({
