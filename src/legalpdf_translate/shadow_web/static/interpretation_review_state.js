@@ -665,6 +665,72 @@ export function buildInterpretationSessionChip({
   return { tone: "info", label: "Ready" };
 }
 
+function normalizedPayloadObject(value) {
+  return value && typeof value === "object" ? value : {};
+}
+
+export function buildInterpretationCompletionCardPresentation({
+  activeSession = null,
+  workspaceMode = "",
+  completionPayload = null,
+  presentation = null,
+} = {}) {
+  const mode = normalizeWorkspaceMode(workspaceMode);
+  const completed = mode === "gmail_completed";
+  const chip = buildInterpretationSessionChip({
+    session: activeSession,
+    workspaceMode: mode,
+    completionPayload,
+    presentation,
+  });
+  if (!completed) {
+    return {
+      completed,
+      title: "",
+      message: "",
+      chip,
+      docxPath: "",
+      pdfPath: "",
+    };
+  }
+
+  const resolvedPresentation = presentation && typeof presentation === "object"
+    ? presentation
+    : deriveInterpretationReviewPresentation({
+      activeSession,
+      workspaceMode: mode,
+      completionPayload,
+    });
+  const gmailResult = resolvedPresentation?.gmailResult
+    || deriveInterpretationReviewPresentation().gmailResult;
+  const payload = normalizedPayloadObject(completionPayload?.normalized_payload);
+  const completionStatus = String(completionPayload?.status || "").trim();
+  const sessionStatus = String(activeSession?.status || "").trim();
+  const sessionFailureReason = String(activeSession?.draft_failure_reason || "").trim();
+  const title = (completionStatus === "ok" || activeSession?.draft_created || sessionStatus === "draft_ready")
+    ? gmailResult.createdTitle
+    : completionStatus === "local_only"
+      ? gmailResult.localOnlyTitle
+      : (completionStatus === "draft_unavailable" || sessionFailureReason || sessionStatus === "draft_failed")
+        ? gmailResult.warningTitle
+        : gmailResult.localOnlyTitle;
+  const message = payload.gmail_draft_result?.message
+    || payload.draft_prereqs?.message
+    || activeSession?.draft_failure_reason
+    || title;
+  const pdfPath = String(payload.pdf_path || payload.pdfPath || activeSession?.pdf_export?.pdf_path || activeSession?.pdf_export?.pdfPath || "").trim();
+  const docxPath = String(payload.docx_path || payload.docxPath || "").trim();
+
+  return {
+    completed,
+    title,
+    message,
+    chip,
+    docxPath,
+    pdfPath,
+  };
+}
+
 export function deriveInterpretationDrawerLayout({
   workspaceMode = "blank",
   activeSession = null,

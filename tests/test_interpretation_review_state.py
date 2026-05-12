@@ -600,6 +600,214 @@ console.log(JSON.stringify({
     }
 
 
+def test_interpretation_review_state_builds_completion_card_presentation() -> None:
+    script = r"""
+const reviewModule = await import(__INTERPRETATION_REVIEW_STATE_MODULE_URL__);
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const maliciousPresentation = {
+  gmailResult: {
+    createdTitle: `Created title ${malicious}`,
+    createdLabel: `Created label ${malicious}`,
+    localOnlyTitle: `Local title ${malicious}`,
+    localOnlyLabel: `Local label ${malicious}`,
+    warningTitle: `Warning title ${malicious}`,
+    warningLabel: `Warning label ${malicious}`,
+  },
+};
+
+const cases = {
+  nullSafe: reviewModule.buildInterpretationCompletionCardPresentation(),
+  hidden: reviewModule.buildInterpretationCompletionCardPresentation({
+    activeSession: { kind: "interpretation", draft_created: true },
+    workspaceMode: "gmail_review",
+    completionPayload: {
+      status: "ok",
+      normalized_payload: {
+        gmail_draft_result: { message: `Hidden draft ${malicious}` },
+        pdf_path: `C:/hidden-${malicious}.pdf`,
+        docx_path: `C:/hidden-${malicious}.docx`,
+      },
+    },
+    presentation: maliciousPresentation,
+  }),
+  okPayload: reviewModule.buildInterpretationCompletionCardPresentation({
+    activeSession: { kind: "interpretation", status: "prepared" },
+    workspaceMode: "gmail_completed",
+    completionPayload: {
+      status: "ok",
+      normalized_payload: {
+        gmail_draft_result: { message: `Draft ${malicious}` },
+        pdf_path: " C:/tmp/final.pdf ",
+        docx_path: " C:/tmp/final.docx ",
+      },
+    },
+    presentation: maliciousPresentation,
+  }),
+  localOnlyPrereq: reviewModule.buildInterpretationCompletionCardPresentation({
+    activeSession: { kind: "interpretation" },
+    workspaceMode: "gmail_completed",
+    completionPayload: {
+      status: "local_only",
+      normalized_payload: {
+        draft_prereqs: { message: `Prereq ${malicious}` },
+        pdfPath: " C:/tmp/local.pdf ",
+        docxPath: " C:/tmp/local.docx ",
+      },
+    },
+    presentation: maliciousPresentation,
+  }),
+  draftUnavailableFallback: reviewModule.buildInterpretationCompletionCardPresentation({
+    activeSession: { kind: "interpretation" },
+    workspaceMode: "gmail_completed",
+    completionPayload: {
+      status: "draft_unavailable",
+      normalized_payload: {},
+    },
+    presentation: maliciousPresentation,
+  }),
+  unknownFailureStatus: reviewModule.buildInterpretationCompletionCardPresentation({
+    activeSession: { kind: "interpretation" },
+    workspaceMode: "gmail_completed",
+    completionPayload: {
+      status: `blocked_${malicious}`,
+      normalized_payload: {},
+    },
+    presentation: maliciousPresentation,
+  }),
+  sessionDraftReady: reviewModule.buildInterpretationCompletionCardPresentation({
+    activeSession: {
+      kind: "interpretation",
+      status: "draft_ready",
+      pdf_export: { pdfPath: " C:/tmp/session.pdf " },
+    },
+    workspaceMode: "gmail_completed",
+    presentation: maliciousPresentation,
+  }),
+  sessionFailureReason: reviewModule.buildInterpretationCompletionCardPresentation({
+    activeSession: {
+      kind: "interpretation",
+      draft_failure_reason: `No draft ${malicious}`,
+      pdf_export: { pdf_path: " C:/tmp/failed.pdf " },
+    },
+    workspaceMode: "gmail_completed",
+    presentation: maliciousPresentation,
+  }),
+  completedFallback: reviewModule.buildInterpretationCompletionCardPresentation({
+    activeSession: { kind: "interpretation" },
+    workspaceMode: "gmail_completed",
+    completionPayload: { normalized_payload: null },
+    presentation: maliciousPresentation,
+  }),
+};
+
+console.log(JSON.stringify({
+  exportType: typeof reviewModule.buildInterpretationCompletionCardPresentation,
+  cases,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__INTERPRETATION_REVIEW_STATE_MODULE_URL__": "interpretation_review_state.js"},
+        timeout_seconds=20,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["cases"]["nullSafe"] == {
+        "completed": False,
+        "title": "",
+        "message": "",
+        "chip": {"tone": "info", "label": "Ready"},
+        "docxPath": "",
+        "pdfPath": "",
+    }
+    assert results["cases"]["hidden"] == {
+        "completed": False,
+        "title": "",
+        "message": "",
+        "chip": {"tone": "info", "label": "Ready"},
+        "docxPath": "",
+        "pdfPath": "",
+    }
+    assert results["cases"]["okPayload"] == {
+        "completed": True,
+        "title": "Created title <img src=x onerror=alert(1)><script>bad()</script>",
+        "message": "Draft <img src=x onerror=alert(1)><script>bad()</script>",
+        "chip": {
+            "tone": "ok",
+            "label": "Created label <img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "docxPath": "C:/tmp/final.docx",
+        "pdfPath": "C:/tmp/final.pdf",
+    }
+    assert results["cases"]["localOnlyPrereq"] == {
+        "completed": True,
+        "title": "Local title <img src=x onerror=alert(1)><script>bad()</script>",
+        "message": "Prereq <img src=x onerror=alert(1)><script>bad()</script>",
+        "chip": {
+            "tone": "warn",
+            "label": "Local label <img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "docxPath": "C:/tmp/local.docx",
+        "pdfPath": "C:/tmp/local.pdf",
+    }
+    assert results["cases"]["draftUnavailableFallback"] == {
+        "completed": True,
+        "title": "Warning title <img src=x onerror=alert(1)><script>bad()</script>",
+        "message": "Warning title <img src=x onerror=alert(1)><script>bad()</script>",
+        "chip": {
+            "tone": "warn",
+            "label": "Warning label <img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "docxPath": "",
+        "pdfPath": "",
+    }
+    assert results["cases"]["unknownFailureStatus"] == {
+        "completed": True,
+        "title": "Local title <img src=x onerror=alert(1)><script>bad()</script>",
+        "message": "Local title <img src=x onerror=alert(1)><script>bad()</script>",
+        "chip": {
+            "tone": "bad",
+            "label": "Warning label <img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "docxPath": "",
+        "pdfPath": "",
+    }
+    assert results["cases"]["sessionDraftReady"] == {
+        "completed": True,
+        "title": "Created title <img src=x onerror=alert(1)><script>bad()</script>",
+        "message": "Created title <img src=x onerror=alert(1)><script>bad()</script>",
+        "chip": {
+            "tone": "ok",
+            "label": "Created label <img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "docxPath": "",
+        "pdfPath": "C:/tmp/session.pdf",
+    }
+    assert results["cases"]["sessionFailureReason"] == {
+        "completed": True,
+        "title": "Warning title <img src=x onerror=alert(1)><script>bad()</script>",
+        "message": "No draft <img src=x onerror=alert(1)><script>bad()</script>",
+        "chip": {
+            "tone": "bad",
+            "label": "Warning label <img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "docxPath": "",
+        "pdfPath": "C:/tmp/failed.pdf",
+    }
+    assert results["cases"]["completedFallback"] == {
+        "completed": True,
+        "title": "Local title <img src=x onerror=alert(1)><script>bad()</script>",
+        "message": "Local title <img src=x onerror=alert(1)><script>bad()</script>",
+        "chip": {
+            "tone": "info",
+            "label": "Local label <img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "docxPath": "",
+        "pdfPath": "",
+    }
+
+
 def test_interpretation_review_state_blocks_unknown_city_and_guides_distance_prompt() -> None:
     results = _run_interpretation_review_state_probe()
 

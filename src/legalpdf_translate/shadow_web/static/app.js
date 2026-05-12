@@ -119,6 +119,7 @@ import {
   syncProfileEditorDrawerStateInto,
 } from "./profile_ui.js";
 import {
+  buildInterpretationCompletionCardPresentation,
   buildInterpretationReference,
   buildInterpretationSessionChip,
   deriveInterpretationDisclosurePresentation,
@@ -943,43 +944,22 @@ function renderInterpretationCompletionCard(snapshot = interpretationSnapshot())
   }
   const activeSession = interpretationActiveSession();
   const workspaceMode = interpretationWorkspaceMode(snapshot, activeSession);
-  const payload = interpretationUiState.completionPayload?.normalized_payload || {};
-  const completionStatus = String(interpretationUiState.completionPayload?.status || "").trim();
   const presentation = currentInterpretationPresentation(snapshot);
-  const completed = workspaceMode === "gmail_completed";
+  const completionCard = buildInterpretationCompletionCardPresentation({
+    activeSession,
+    workspaceMode,
+    completionPayload: interpretationUiState.completionPayload,
+    presentation,
+  });
+  const { completed, title, message, chip, docxPath, pdfPath } = completionCard;
   syncInterpretationCompletionCardVisibilityInto(container, { completed });
   syncInterpretationReviewDetailsShell(completed);
   if (!completed) {
     return;
   }
-  const draftMessage = payload.gmail_draft_result?.message
-    || payload.draft_prereqs?.message
-    || activeSession?.draft_failure_reason
-    || ((completionStatus === "ok" || activeSession?.draft_created || activeSession?.status === "draft_ready")
-      ? presentation.gmailResult.createdTitle
-      : completionStatus === "local_only"
-        ? presentation.gmailResult.localOnlyTitle
-        : (completionStatus === "draft_unavailable" || activeSession?.draft_failure_reason || activeSession?.status === "draft_failed")
-          ? presentation.gmailResult.warningTitle
-          : presentation.gmailResult.localOnlyTitle);
-  const pdfPath = String(payload.pdf_path || payload.pdfPath || activeSession?.pdf_export?.pdf_path || activeSession?.pdf_export?.pdfPath || "").trim();
-  const docxPath = String(payload.docx_path || payload.docxPath || "").trim();
-  const chip = buildInterpretationSessionChip({
-    session: activeSession,
-    workspaceMode,
-    completionPayload: interpretationUiState.completionPayload,
-    presentation,
-  });
-  const title = (completionStatus === "ok" || activeSession?.draft_created || activeSession?.status === "draft_ready")
-    ? presentation.gmailResult.createdTitle
-    : completionStatus === "local_only"
-      ? presentation.gmailResult.localOnlyTitle
-      : (completionStatus === "draft_unavailable" || activeSession?.draft_failure_reason || activeSession?.status === "draft_failed")
-        ? presentation.gmailResult.warningTitle
-        : presentation.gmailResult.localOnlyTitle;
   renderInterpretationCompletionCardInto(container, {
     title,
-    message: draftMessage,
+    message,
     chip,
     docxPath,
     pdfPath,
