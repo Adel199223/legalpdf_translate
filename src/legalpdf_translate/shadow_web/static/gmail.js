@@ -30,6 +30,12 @@ import {
   buildGmailSessionPreparedDiagnosticsPresentation,
 } from "./gmail_lifecycle_diagnostics_presentation.js";
 import {
+  buildGmailPassiveRefreshDecision,
+  buildGmailWarmupPollingDecision,
+  GMAIL_REFRESH_POLICY_DEFAULTS,
+  isGmailWarmupPendingStatus,
+} from "./gmail_refresh_policy.js";
+import {
   renderGmailDemoReviewActionInto,
   renderGmailPrepareActionInto,
   renderGmailReturnToSourceActionInto,
@@ -186,12 +192,6 @@ import {
   writeConsumedReviewState,
 } from "./gmail_review_state.js";
 export { renderAttachmentListInto, renderReviewDetailInto } from "./gmail_attachment_adapter.js";
-const AUTO_REFRESH_DELAY_MS = 220;
-const AUTO_REFRESH_THROTTLE_MS = 1400;
-const PASSIVE_REFRESH_COOLDOWN_MS = 6000;
-const WARMUP_POLL_INTERVAL_MS = 900;
-const WARMUP_POLL_TIMEOUT_MS = 15000;
-
 const gmailState = {
   bootstrap: null,
   loadResult: null,
@@ -680,7 +680,7 @@ function pendingReviewOpen() {
 }
 
 function isWarmupPendingStatus(value) {
-  return value === "warming" || value === "delayed";
+  return isGmailWarmupPendingStatus(value);
 }
 
 function workspaceNeedsWarmupPolling() {
@@ -1992,48 +1992,47 @@ function scheduleAutoRefresh(delayMs, { replace = false } = {}) {
 }
 
 function syncRefreshSchedule() {
-  if (appState.activeView !== "gmail-intake") {
-    stopWarmupPolling();
-    return;
-  }
-  if (!workspaceNeedsWarmupPolling()) {
-    stopWarmupPolling();
-    return;
-  }
   const now = Date.now();
-  if (!gmailState.warmupPollUntil || gmailState.warmupPollUntil < now) {
-    gmailState.warmupPollUntil = now + WARMUP_POLL_TIMEOUT_MS;
-  }
-  if (now >= gmailState.warmupPollUntil) {
+  const decision = buildGmailWarmupPollingDecision({
+    activeView: appState.activeView,
+    needsWarmupPolling: workspaceNeedsWarmupPolling(),
+    warmupPollUntil: gmailState.warmupPollUntil,
+    lastRefreshAt: gmailState.lastRefreshAt,
+    now,
+    timings: GMAIL_REFRESH_POLICY_DEFAULTS,
+  });
+  if (decision.action === "stop") {
     stopWarmupPolling();
     return;
   }
-  const elapsed = now - gmailState.lastRefreshAt;
-  const delay = Math.max(AUTO_REFRESH_DELAY_MS, WARMUP_POLL_INTERVAL_MS - Math.max(0, elapsed));
-  scheduleAutoRefresh(delay);
+  gmailState.warmupPollUntil = decision.warmupPollUntil;
+  scheduleAutoRefresh(decision.delayMs);
 }
 
 function maybeSchedulePassiveRefresh() {
-  if (appState.activeView !== "gmail-intake") {
-    stopWarmupPolling();
-    return;
-  }
-  if (workspaceNeedsWarmupPolling()) {
+  const now = Date.now();
+  const decision = buildGmailPassiveRefreshDecision({
+    activeView: appState.activeView,
+    needsWarmupPolling: workspaceNeedsWarmupPolling(),
+    stableWorkspaceState: hasStableWorkspaceState(),
+    lastPassiveRefreshAt: gmailState.lastPassiveRefreshAt,
+    lastRefreshAt: gmailState.lastRefreshAt,
+    now,
+    timings: GMAIL_REFRESH_POLICY_DEFAULTS,
+  });
+  if (decision.action === "warmup") {
     syncRefreshSchedule();
     return;
   }
-  if (hasStableWorkspaceState()) {
+  if (decision.action === "stop") {
     stopWarmupPolling();
     return;
   }
-  const now = Date.now();
-  if (now - gmailState.lastPassiveRefreshAt < PASSIVE_REFRESH_COOLDOWN_MS) {
+  if (decision.action === "skip") {
     return;
   }
-  gmailState.lastPassiveRefreshAt = now;
-  const elapsed = Date.now() - gmailState.lastRefreshAt;
-  const delay = Math.max(AUTO_REFRESH_DELAY_MS, AUTO_REFRESH_THROTTLE_MS - elapsed);
-  scheduleAutoRefresh(delay, { replace: true });
+  gmailState.lastPassiveRefreshAt = decision.lastPassiveRefreshAt;
+  scheduleAutoRefresh(decision.delayMs, { replace: decision.replace });
 }
 
 export function initializeGmailUi(hooks) {
