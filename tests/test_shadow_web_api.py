@@ -13090,6 +13090,176 @@ console.log(JSON.stringify({
     assert results["sourceUrls"]["missing"] == ""
 
 
+def test_gmail_shell_state_module_owns_shell_sync_payload() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    gmail_js = (static_dir / "gmail.js").read_text(encoding="utf-8")
+    shell_state_path = static_dir / "gmail_shell_state.js"
+    assert shell_state_path.exists()
+    shell_state_js = shell_state_path.read_text(encoding="utf-8")
+
+    assert "export function buildGmailShellSyncState" in shell_state_js
+    assert 'from "./gmail_shell_state.js"' in gmail_js
+    sync_start = gmail_js.index("function syncShellState()")
+    sync_end = gmail_js.index("\nfunction updateSessionButtons", sync_start)
+    sync_block = gmail_js[sync_start:sync_end]
+    assert "buildGmailShellSyncState({" in sync_block
+    assert "appState.bootstrap.normalized_payload.gmail = buildGmailShellSyncState({" in sync_block
+    for removed_inline in [
+        "...(appState.bootstrap.normalized_payload.gmail || {})",
+        "...gmailState.bootstrap",
+        "load_result: gmailState.loadResult",
+        "active_session: gmailState.activeSession",
+        "restored_completed_session: gmailState.restoredCompletedSession",
+        "interpretation_seed: gmailState.interpretationSeed",
+        "suggested_translation_launch: gmailState.suggestedTranslationLaunch",
+        "pending_status: gmailState.bootstrap?.pending_status || \"\"",
+        "pending_intake_context: pendingIntakeContext()",
+        "pending_review_open: pendingReviewOpen()",
+    ]:
+        assert removed_inline not in sync_block
+
+    for forbidden in [
+        "document.",
+        "window.",
+        "sessionStorage",
+        "localStorage",
+        "fetch(",
+        "fetchJson",
+        "appState",
+        "setDiagnostics",
+        "setPanelStatus",
+        "dispatchEvent",
+        "renderGmail",
+        "innerHTML",
+    ]:
+        assert forbidden not in shell_state_js
+
+    script = """
+const shellState = await import(__GMAIL_SHELL_STATE_MODULE_URL__);
+
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+const existingGmail = {
+  preserved_existing: `keep-${malicious}`,
+  overwritten_by_bootstrap: "old-bootstrap",
+  load_result: { ok: false, stale: true },
+  pending_status: "old-status",
+  pending_review_open: true,
+};
+const bootstrap = {
+  overwritten_by_bootstrap: `bootstrap-${malicious}`,
+  bootstrap_only: `bootstrap-only-${malicious}`,
+  load_result: { ok: false, from_bootstrap: true },
+  active_session: { session_id: "bootstrap-session" },
+  restored_completed_session: { session_id: "bootstrap-restored" },
+  interpretation_seed: { source: "bootstrap-seed" },
+  suggested_translation_launch: { attachment_id: "bootstrap-launch" },
+  pending_status: ` RAW-${malicious} `,
+  pending_intake_context: { source_gmail_url: ` https://mail.google.test/pending/${malicious} ` },
+  pending_review_open: true,
+  stage: "bootstrap-stage",
+};
+const loadResult = { ok: true, message: { message_id: `msg-${malicious}` } };
+const activeSession = { session_id: `active-${malicious}` };
+const restoredCompletedSession = { session_id: `restored-${malicious}` };
+const interpretationSeed = { seed_id: `seed-${malicious}` };
+const suggestedTranslationLaunch = { attachment_id: `launch-${malicious}` };
+const pendingIntakeContext = { source_gmail_url: ` https://mail.google.test/current/${malicious} ` };
+
+const full = shellState.buildGmailShellSyncState({
+  existingGmail,
+  bootstrap,
+  loadResult,
+  activeSession,
+  restoredCompletedSession,
+  interpretationSeed,
+  suggestedTranslationLaunch,
+  pendingStatus: ` RAW-${malicious} `,
+  pendingIntakeContext,
+  pendingReviewOpen: false,
+  stage: `review_loaded-${malicious}`,
+});
+const derived = shellState.buildGmailShellSyncState({
+  existingGmail,
+  bootstrap,
+  loadResult: null,
+  activeSession: null,
+  restoredCompletedSession: null,
+  interpretationSeed: null,
+  suggestedTranslationLaunch: null,
+  stage: "",
+});
+const nullSafe = shellState.buildGmailShellSyncState();
+
+console.log(JSON.stringify({
+  exportType: typeof shellState.buildGmailShellSyncState,
+  full,
+  derived,
+  nullSafe,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GMAIL_SHELL_STATE_MODULE_URL__": "gmail_shell_state.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["exportType"] == "function"
+    assert results["full"] == {
+        "preserved_existing": "keep-<img src=x onerror=alert(1)><script>bad()</script>",
+        "overwritten_by_bootstrap": "bootstrap-<img src=x onerror=alert(1)><script>bad()</script>",
+        "bootstrap_only": "bootstrap-only-<img src=x onerror=alert(1)><script>bad()</script>",
+        "load_result": {
+            "ok": True,
+            "message": {
+                "message_id": "msg-<img src=x onerror=alert(1)><script>bad()</script>",
+            },
+        },
+        "active_session": {
+            "session_id": "active-<img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "restored_completed_session": {
+            "session_id": "restored-<img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "interpretation_seed": {
+            "seed_id": "seed-<img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "suggested_translation_launch": {
+            "attachment_id": "launch-<img src=x onerror=alert(1)><script>bad()</script>",
+        },
+        "pending_status": " RAW-<img src=x onerror=alert(1)><script>bad()</script> ",
+        "pending_intake_context": {
+            "source_gmail_url": " https://mail.google.test/current/<img src=x onerror=alert(1)><script>bad()</script> ",
+        },
+        "pending_review_open": False,
+        "stage": "review_loaded-<img src=x onerror=alert(1)><script>bad()</script>",
+    }
+    assert results["derived"]["pending_status"] == " RAW-<img src=x onerror=alert(1)><script>bad()</script> "
+    assert results["derived"]["pending_intake_context"] == {
+        "source_gmail_url": " https://mail.google.test/pending/<img src=x onerror=alert(1)><script>bad()</script> ",
+    }
+    assert results["derived"]["pending_review_open"] is True
+    assert results["derived"]["load_result"] is None
+    assert results["derived"]["active_session"] is None
+    assert results["derived"]["stage"] == ""
+    assert results["nullSafe"] == {
+        "load_result": None,
+        "active_session": None,
+        "restored_completed_session": None,
+        "interpretation_seed": None,
+        "suggested_translation_launch": None,
+        "pending_status": "",
+        "pending_intake_context": {},
+        "pending_review_open": False,
+        "stage": "",
+    }
+
+
 def test_gmail_stage_presentation_module_derives_stage_and_home_cta_state() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -34123,6 +34293,14 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "deriveClientHandoffSessionId" in gmail_handoff_state_asset.text
         assert "deriveGmailPendingStatus" in gmail_handoff_state_asset.text
         assert "deriveGmailSourceUrl" in gmail_handoff_state_asset.text
+        gmail_shell_state_asset = client.get(
+            f"/static-build/{asset_version}/gmail_shell_state.js"
+        )
+        assert gmail_shell_state_asset.status_code == 200
+        assert gmail_shell_state_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "buildGmailShellSyncState" in gmail_shell_state_asset.text
         gmail_attachment_kind_asset = client.get(
             f"/static-build/{asset_version}/gmail_attachment_kind.js"
         )
