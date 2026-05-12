@@ -26405,10 +26405,6 @@ def test_interpretation_review_state_module_owns_session_chip_presentation() -> 
             app_js.index("function renderInterpretationReviewContext"),
             app_js.index("\nfunction syncInterpretationReviewDetailsShell"),
         ),
-        "completion_card": (
-            app_js.index("function renderInterpretationCompletionCard"),
-            app_js.index("\nfunction setInterpretationLocationGuard"),
-        ),
     }
     for start, end in render_blocks.values():
         block = app_js[start:end]
@@ -26417,6 +26413,71 @@ def test_interpretation_review_state_module_owns_session_chip_presentation() -> 
         assert "workspaceMode" in block or "workspaceMode: mode," in block
         assert "completionPayload: interpretationUiState.completionPayload," in block
         assert "presentation," in block
+
+
+def test_interpretation_review_state_module_owns_completion_card_presentation() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    review_state_js = (static_dir / "interpretation_review_state.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "export function buildInterpretationCompletionCardPresentation" in review_state_js
+    assert "buildInterpretationCompletionCardPresentation" in app_js
+
+    builder_start = review_state_js.index(
+        "export function buildInterpretationCompletionCardPresentation"
+    )
+    next_export = review_state_js.find("\nexport function ", builder_start + 1)
+    builder_block = review_state_js[
+        builder_start : next_export if next_export != -1 else len(review_state_js)
+    ]
+    for forbidden in [
+        "document.",
+        "window.",
+        "sessionStorage",
+        "localStorage",
+        "fetch(",
+        "fetchJson",
+        "appState",
+        "setDiagnostics",
+        "setPanelStatus",
+        "renderInterpretation",
+        "renderInterpretationCompletionCardInto",
+        "syncInterpretationCompletionCardVisibilityInto",
+        "innerHTML",
+    ]:
+        assert forbidden not in builder_block
+
+    completion_start = app_js.index("function renderInterpretationCompletionCard")
+    completion_end = app_js.index("\nfunction setInterpretationLocationGuard", completion_start)
+    completion_block = app_js[completion_start:completion_end]
+    assert "buildInterpretationCompletionCardPresentation({" in completion_block
+    assert "activeSession," in completion_block
+    assert "workspaceMode," in completion_block
+    assert "completionPayload: interpretationUiState.completionPayload," in completion_block
+    assert "presentation," in completion_block
+    assert "syncInterpretationCompletionCardVisibilityInto(container, { completed });" in completion_block
+    assert "syncInterpretationReviewDetailsShell(completed);" in completion_block
+    assert "renderInterpretationCompletionCardInto(container, {" in completion_block
+
+    for removed_inline in [
+        "payload.gmail_draft_result?.message",
+        "payload.draft_prereqs?.message",
+        "completionStatus === \"ok\"",
+        "completionStatus === \"local_only\"",
+        "completionStatus === \"draft_unavailable\"",
+        "String(payload.pdf_path",
+        "String(payload.docx_path",
+        "buildInterpretationSessionChip({",
+    ]:
+        assert removed_inline not in completion_block
 
 
 def test_interpretation_review_ui_module_centralizes_safe_session_shell_rendering() -> None:
@@ -34125,6 +34186,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
             "application/javascript"
         )
         assert "buildInterpretationSessionChip" in interpretation_review_state_asset.text
+        assert (
+            "buildInterpretationCompletionCardPresentation"
+            in interpretation_review_state_asset.text
+        )
         gmail_ui_asset = client.get(f"/static-build/{asset_version}/gmail_ui.js")
         assert gmail_ui_asset.status_code == 200
         assert gmail_ui_asset.headers["content-type"].startswith("application/javascript")
