@@ -3665,6 +3665,194 @@ console.log(JSON.stringify({
     assert results["diagnostics"]["safe_failure_category"] == "picker_reconnect_to_partner_app"
 
 
+def test_google_photos_flow_presentation_module_builds_flow_messages() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    module_path = static_dir / "google_photos_flow_presentation.js"
+
+    assert module_path.exists()
+    module_js = module_path.read_text(encoding="utf-8")
+    assert 'from "./google_photos_flow_presentation.js"' in app_js
+    for export_name in [
+        "buildGooglePhotosConnectBusyPresentation",
+        "buildGooglePhotosChooseBusyPresentation",
+        "buildGooglePhotosDisconnectPresentation",
+        "buildGooglePhotosConnectionReadyPresentation",
+        "buildGooglePhotosConnectionSucceededPresentation",
+        "buildGooglePhotosConnectionPendingPresentation",
+        "buildGooglePhotosPickerLaunchPresentation",
+        "buildGooglePhotosPickerWaitingPresentation",
+        "buildGooglePhotosSelectionFoundPresentation",
+        "buildGooglePhotosImportPresentation",
+    ]:
+        assert f"export function {export_name}" in module_js
+
+    for forbidden in [
+        "document",
+        "window",
+        "innerHTML",
+        "fetchJson",
+        "setPanelStatus",
+        "setDiagnostics",
+        "renderGooglePhotosSummary",
+        "renderGooglePhotosStatus",
+        "googlePhotosUiState",
+        '"/api/',
+    ]:
+        assert forbidden not in module_js
+
+    for moved_literal in [
+        "Google Photos local connection was cleared. Connect again before choosing a photo.",
+        "Google Photos connected. Choose a photo to continue.",
+        "Still waiting for Google Photos authorization. Use Open Google sign-in if no Google tab opened.",
+        "Google sign-in is ready. If no Google tab opened, click Open Google sign-in.",
+        "A Google Photos tab should open. Select one photo, then click Done.",
+        "Selected photo found. Recovering Interpretation metadata...",
+        "Google Photos import completed, but no metadata fields were recovered automatically.",
+    ]:
+        assert moved_literal not in app_js
+    assert 'Recovered ${extractedFields.join(", ")} from the Google Photos selection.' not in app_js
+
+    script = r"""
+const flow = await import(__GOOGLE_PHOTOS_FLOW_PRESENTATION_MODULE_URL__);
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+console.log(JSON.stringify({
+  exportedTypes: {
+    connectBusy: typeof flow.buildGooglePhotosConnectBusyPresentation,
+    chooseBusy: typeof flow.buildGooglePhotosChooseBusyPresentation,
+    disconnect: typeof flow.buildGooglePhotosDisconnectPresentation,
+    ready: typeof flow.buildGooglePhotosConnectionReadyPresentation,
+    succeeded: typeof flow.buildGooglePhotosConnectionSucceededPresentation,
+    pending: typeof flow.buildGooglePhotosConnectionPendingPresentation,
+    pickerLaunch: typeof flow.buildGooglePhotosPickerLaunchPresentation,
+    pickerWaiting: typeof flow.buildGooglePhotosPickerWaitingPresentation,
+    selectionFound: typeof flow.buildGooglePhotosSelectionFoundPresentation,
+    imported: typeof flow.buildGooglePhotosImportPresentation,
+  },
+  busyDisconnected: flow.buildGooglePhotosConnectBusyPresentation({ connected: false }),
+  busyConnected: flow.buildGooglePhotosConnectBusyPresentation({ connected: true }),
+  busyNull: flow.buildGooglePhotosConnectBusyPresentation(null),
+  chooseBusy: flow.buildGooglePhotosChooseBusyPresentation(),
+  disconnect: flow.buildGooglePhotosDisconnectPresentation(),
+  ready: flow.buildGooglePhotosConnectionReadyPresentation(),
+  succeeded: flow.buildGooglePhotosConnectionSucceededPresentation(),
+  pending: flow.buildGooglePhotosConnectionPendingPresentation(),
+  pickerLaunch: flow.buildGooglePhotosPickerLaunchPresentation(),
+  pickerWaiting: flow.buildGooglePhotosPickerWaitingPresentation(),
+  selectionDefault: flow.buildGooglePhotosSelectionFoundPresentation(),
+  selectionWarning: flow.buildGooglePhotosSelectionFoundPresentation({
+    selectionWarning: `Only first photo used ${malicious}`,
+  }),
+  importRecovered: flow.buildGooglePhotosImportPresentation({
+    extractedFields: ["case_number", `service_date ${malicious}`],
+  }),
+  importEmpty: flow.buildGooglePhotosImportPresentation({ extractedFields: [] }),
+  importNull: flow.buildGooglePhotosImportPresentation(null),
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__GOOGLE_PHOTOS_FLOW_PRESENTATION_MODULE_URL__": "google_photos_flow_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert set(results["exportedTypes"].values()) == {"function"}
+    assert results["busyDisconnected"] == {"google-photos-connect": "Connecting..."}
+    assert results["busyConnected"] == {"google-photos-connect": "Reconnecting..."}
+    assert results["busyNull"] == {"google-photos-connect": "Connecting..."}
+    assert results["chooseBusy"] == {"google-photos-choose": "Choosing..."}
+    assert results["disconnect"] == {
+        "diagnostics": {
+            "hint": "Google Photos local connection was cleared. Connect again before choosing a photo.",
+            "open": False,
+        },
+        "panel": {
+            "tone": "warn",
+            "message": "Google Photos local connection was cleared. Connect Google Photos again.",
+        },
+        "summary": {
+            "message": "Google Photos local connection was cleared. Connect Google Photos again before choosing a photo.",
+        },
+    }
+    assert results["ready"]["panel"] == {
+        "tone": "info",
+        "message": "Google sign-in is ready. If no Google tab opened, click Open Google sign-in.",
+    }
+    assert results["ready"]["summary"] == {
+        "message": "Google sign-in is ready. If no Google tab opened, click Open Google sign-in."
+    }
+    assert results["succeeded"] == {
+        "panel": {
+            "tone": "ok",
+            "message": "Google Photos connected. Choose a photo to recover Interpretation metadata.",
+        },
+        "summary": {"message": "Google Photos connected. Choose a photo to continue."},
+    }
+    assert results["pending"] == {
+        "panel": {
+            "tone": "warn",
+            "message": "Google Photos authorization is still pending. Use Open Google sign-in if no Google tab opened, or return after completing Google consent.",
+        },
+        "summary": {
+            "message": "Still waiting for Google Photos authorization. Use Open Google sign-in if no Google tab opened."
+        },
+    }
+    picker_message = (
+        "A Google Photos tab should open. Select one photo, then click Done. "
+        "If no tab opened, click Open Google Photos Picker. LegalPDF will continue waiting here until selection is completed."
+    )
+    assert results["pickerLaunch"] == {
+        "panel": {"tone": "info", "message": picker_message},
+        "summary": {"message": picker_message},
+    }
+    assert results["pickerWaiting"] == {
+        "panel": {"tone": "info", "message": "Waiting for Google Photos selection..."},
+        "summary": {"message": picker_message},
+    }
+    assert results["selectionDefault"] == {
+        "summary": {"message": "Selected photo found. Recovering Interpretation metadata..."}
+    }
+    assert results["selectionWarning"] == {
+        "summary": {
+            "message": "Only first photo used <img src=x onerror=alert(1)><script>bad()</script>"
+        }
+    }
+    assert results["importRecovered"] == {
+        "diagnostics": {
+            "hint": "Recovered case_number, service_date <img src=x onerror=alert(1)><script>bad()</script> from the Google Photos selection.",
+            "open": False,
+        },
+        "panel": {
+            "tone": "ok",
+            "message": "Recovered case_number, service_date <img src=x onerror=alert(1)><script>bad()</script> from the Google Photos selection.",
+        },
+        "summary": {
+            "message": "Recovered case_number, service_date <img src=x onerror=alert(1)><script>bad()</script> from the Google Photos selection."
+        },
+    }
+    assert results["importEmpty"] == {
+        "diagnostics": {
+            "hint": "Google Photos import completed, but no metadata fields were recovered automatically.",
+            "open": True,
+        },
+        "panel": {
+            "tone": "warn",
+            "message": "Google Photos import completed, but no metadata fields were recovered automatically.",
+        },
+        "summary": {
+            "message": "Google Photos import completed, but no metadata fields were recovered automatically."
+        },
+    }
+    assert results["importNull"] == results["importEmpty"]
+
+
 def test_google_photos_ui_module_centralizes_safe_summary_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -35386,6 +35574,21 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert google_photos_ui_asset.status_code == 200
         assert google_photos_ui_asset.headers["content-type"].startswith("application/javascript")
         assert "renderGooglePhotosSummaryInto" in google_photos_ui_asset.text
+        google_photos_flow_presentation_asset = client.get(
+            f"/static-build/{asset_version}/google_photos_flow_presentation.js"
+        )
+        assert google_photos_flow_presentation_asset.status_code == 200
+        assert google_photos_flow_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert (
+            "buildGooglePhotosImportPresentation"
+            in google_photos_flow_presentation_asset.text
+        )
+        assert (
+            "buildGooglePhotosPickerLaunchPresentation"
+            in google_photos_flow_presentation_asset.text
+        )
         interpretation_review_state_asset = client.get(
             f"/static-build/{asset_version}/interpretation_review_state.js"
         )

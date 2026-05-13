@@ -177,6 +177,18 @@ import {
   setGooglePhotosPickerFallback,
   updateGooglePhotosPickerDiagnostics,
 } from "./google_photos_ui.js";
+import {
+  buildGooglePhotosChooseBusyPresentation,
+  buildGooglePhotosConnectBusyPresentation,
+  buildGooglePhotosConnectionPendingPresentation,
+  buildGooglePhotosConnectionReadyPresentation,
+  buildGooglePhotosConnectionSucceededPresentation,
+  buildGooglePhotosDisconnectPresentation,
+  buildGooglePhotosImportPresentation,
+  buildGooglePhotosPickerLaunchPresentation,
+  buildGooglePhotosPickerWaitingPresentation,
+  buildGooglePhotosSelectionFoundPresentation,
+} from "./google_photos_flow_presentation.js";
 import { buildExtensionLabCards } from "./extension_lab_presentation.js";
 import {
   renderExtensionPrepareReasonCatalogInto,
@@ -2441,12 +2453,13 @@ async function handleGooglePhotosDisconnectForReconnect() {
   const payload = await fetchJson("/api/interpretation/google-photos/disconnect", appState, { method: "POST" });
   const status = payload.normalized_payload?.google_photos || {};
   renderGooglePhotosStatus(status);
+  const presentation = buildGooglePhotosDisconnectPresentation();
   setDiagnostics("autofill", payload.diagnostics || {}, {
-    hint: "Google Photos local connection was cleared. Connect again before choosing a photo.",
-    open: false,
+    hint: presentation.diagnostics.hint,
+    open: presentation.diagnostics.open,
   });
-  setPanelStatus("autofill", "warn", "Google Photos local connection was cleared. Connect Google Photos again.");
-  renderGooglePhotosSummary({ message: "Google Photos local connection was cleared. Connect Google Photos again before choosing a photo." });
+  setPanelStatus("autofill", presentation.panel.tone, presentation.panel.message);
+  renderGooglePhotosSummary(presentation.summary);
   return payload;
 }
 
@@ -2468,14 +2481,16 @@ async function waitForGooglePhotosConnection() {
     const status = payload.normalized_payload?.google_photos || {};
     if (status.connected) {
       googlePhotosUiState.connectPollTimedOut = false;
-      setPanelStatus("autofill", "ok", "Google Photos connected. Choose a photo to recover Interpretation metadata.");
-      renderGooglePhotosSummary({ message: "Google Photos connected. Choose a photo to continue." });
+      const presentation = buildGooglePhotosConnectionSucceededPresentation();
+      setPanelStatus("autofill", presentation.panel.tone, presentation.panel.message);
+      renderGooglePhotosSummary(presentation.summary);
       return true;
     }
   }
   googlePhotosUiState.connectPollTimedOut = true;
-  setPanelStatus("autofill", "warn", "Google Photos authorization is still pending. Use Open Google sign-in if no Google tab opened, or return after completing Google consent.");
-  renderGooglePhotosSummary({ message: "Still waiting for Google Photos authorization. Use Open Google sign-in if no Google tab opened." });
+  const presentation = buildGooglePhotosConnectionPendingPresentation();
+  setPanelStatus("autofill", presentation.panel.tone, presentation.panel.message);
+  renderGooglePhotosSummary(presentation.summary);
   await refreshGooglePhotosStatus().catch(() => {});
   return false;
 }
@@ -2506,8 +2521,9 @@ async function handleGooglePhotosConnect() {
     client_secret_env_configured: true,
     connected: false,
   });
-  setPanelStatus("autofill", "info", "Google sign-in is ready. If no Google tab opened, click Open Google sign-in.");
-  renderGooglePhotosSummary({ message: "Google sign-in is ready. If no Google tab opened, click Open Google sign-in." });
+  const presentation = buildGooglePhotosConnectionReadyPresentation();
+  setPanelStatus("autofill", presentation.panel.tone, presentation.panel.message);
+  renderGooglePhotosSummary(presentation.summary);
   await waitForGooglePhotosConnection();
 }
 
@@ -2527,10 +2543,9 @@ async function waitForGooglePhotosPickerSelection(sessionId, initialSession = {}
       setGooglePhotosPickerFallback("", { visible: false });
       return session;
     }
-    setPanelStatus("autofill", "info", "Waiting for Google Photos selection...");
-    renderGooglePhotosSummary({
-      message: "A Google Photos tab should open. Select one photo, then click Done. If no tab opened, click Open Google Photos Picker. LegalPDF will continue waiting here until selection is completed.",
-    });
+    const presentation = buildGooglePhotosPickerWaitingPresentation();
+    setPanelStatus("autofill", presentation.panel.tone, presentation.panel.message);
+    renderGooglePhotosSummary(presentation.summary);
     await delay(clampGooglePhotosPollMilliseconds(session.poll_interval_ms, pollIntervalMs, 1000, 10000));
   }
   updateGooglePhotosPickerDiagnostics({
@@ -2575,9 +2590,9 @@ async function handleGooglePhotosChoose() {
     } else {
       window.open(pickerBrowserUrl, "_blank", "noopener");
     }
-    const pickerMessage = "A Google Photos tab should open. Select one photo, then click Done. If no tab opened, click Open Google Photos Picker. LegalPDF will continue waiting here until selection is completed.";
-    renderGooglePhotosSummary({ message: pickerMessage });
-    setPanelStatus("autofill", "info", pickerMessage);
+    const pickerPresentation = buildGooglePhotosPickerLaunchPresentation();
+    renderGooglePhotosSummary(pickerPresentation.summary);
+    setPanelStatus("autofill", pickerPresentation.panel.tone, pickerPresentation.panel.message);
     await waitForGooglePhotosPickerSelection(session.session_id, session);
     updateGooglePhotosPickerDiagnostics({ media_items_list_called: true });
     const mediaPayload = await fetchJson(
@@ -2595,9 +2610,10 @@ async function handleGooglePhotosChoose() {
       throw new Error("No Google Photos media item was selected.");
     }
     const selectionWarning = googlePhotosPayload.multiple_selection_warning || "";
+    const selectionPresentation = buildGooglePhotosSelectionFoundPresentation({ selectionWarning });
     renderGooglePhotosSummary({
       selectedPhoto: mediaItems[0],
-      message: selectionWarning || "Selected photo found. Recovering Interpretation metadata...",
+      message: selectionPresentation.summary.message,
     });
     updateGooglePhotosPickerDiagnostics({ import_route_called: true });
     const importPayload = await fetchJson("/api/interpretation/google-photos/import", appState, {
@@ -2623,15 +2639,16 @@ async function handleGooglePhotosChoose() {
       applyInterpretationSeed(importPayload.normalized_payload, { sourceKind: "google_photos" });
     }
     const extractedFields = importPayload.diagnostics?.metadata_extraction?.extracted_fields || [];
-    const message = extractedFields.length
-      ? `Recovered ${extractedFields.join(", ")} from the Google Photos selection.`
-      : "Google Photos import completed, but no metadata fields were recovered automatically.";
-    setPanelStatus("autofill", extractedFields.length ? "ok" : "warn", message);
-    setDiagnostics("autofill", importPayload.diagnostics, { hint: message, open: !extractedFields.length });
+    const importPresentation = buildGooglePhotosImportPresentation({ extractedFields });
+    setPanelStatus("autofill", importPresentation.panel.tone, importPresentation.panel.message);
+    setDiagnostics("autofill", importPayload.diagnostics, {
+      hint: importPresentation.diagnostics.hint,
+      open: importPresentation.diagnostics.open,
+    });
     renderGooglePhotosSummary({
       selectedPhoto: importPayload.diagnostics?.google_photos?.selected_photo || mediaItems[0],
       diagnostics: importPayload.diagnostics?.google_photos || {},
-      message: importPayload.diagnostics?.google_photos?.multiple_selection_warning || message,
+      message: importPayload.diagnostics?.google_photos?.multiple_selection_warning || importPresentation.summary.message,
     });
     openInterpretationReviewDrawer();
   } catch (error) {
@@ -2952,7 +2969,7 @@ function wireEvents() {
 
   qs("google-photos-connect")?.addEventListener("click", async () => {
     const isReconnect = Boolean(googlePhotosUiState.status?.connected);
-    await runWithBusy(["google-photos-connect", "google-photos-choose"], { "google-photos-connect": isReconnect ? "Reconnecting..." : "Connecting..." }, async () => {
+    await runWithBusy(["google-photos-connect", "google-photos-choose"], buildGooglePhotosConnectBusyPresentation({ connected: isReconnect }), async () => {
       try {
         await handleGooglePhotosConnect();
       } catch (error) {
@@ -2974,7 +2991,7 @@ function wireEvents() {
   });
 
   qs("google-photos-choose")?.addEventListener("click", async () => {
-    await runWithBusy(["google-photos-connect", "google-photos-choose", "photo-submit"], { "google-photos-choose": "Choosing..." }, async () => {
+    await runWithBusy(["google-photos-connect", "google-photos-choose", "photo-submit"], buildGooglePhotosChooseBusyPresentation(), async () => {
       try {
         await handleGooglePhotosChoose();
       } catch (error) {
