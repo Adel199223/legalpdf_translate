@@ -6,6 +6,7 @@ import {
   buildSettingsActionFeedback,
   buildSettingsStatusPresentation,
 } from "./settings_presentation.js";
+import { buildPowerToolsBootstrapPresentation } from "./power_tools_presentation.js";
 import {
   renderBuilderSourceModeInto,
   renderCredentialRecoveryStateInto,
@@ -205,22 +206,6 @@ function renderSettingsAdminPayload(settingsAdmin, { preserveStatus = false } = 
   renderProviderState(settingsAdmin.provider_state || {}, { preserveStatus });
 }
 
-function mergeLatestRunDirs(powerTools) {
-  const diagnostics = powerTools?.diagnostics?.latest_run_dirs || [];
-  const builder = powerTools?.glossary_builder?.latest_run_dirs || [];
-  const seen = new Set();
-  const output = [];
-  for (const item of [...diagnostics, ...builder]) {
-    const runDir = String(item?.run_dir || "").trim();
-    if (!runDir || seen.has(runDir.toLowerCase())) {
-      continue;
-    }
-    seen.add(runDir.toLowerCase());
-    output.push(item);
-  }
-  return output;
-}
-
 function renderLatestRunDirs(items) {
   renderLatestRunDirsInto(qs("power-tools-latest-run-dirs"), items, {
     onUseForReport(item) {
@@ -240,35 +225,14 @@ function renderPowerToolsPayload(powerTools, { preserveStatus = false } = {}) {
   if (!powerTools) {
     return;
   }
-  const glossary = powerTools.glossary || {};
+  const presentation = buildPowerToolsBootstrapPresentation(powerTools);
   renderPowerToolsGlossaryFormInto({
     projectPath: qs("glossary-project-path"),
     personalJson: qs("glossary-personal-json"),
     projectJson: qs("glossary-project-json"),
     enabledTiersJson: qs("glossary-enabled-tiers-json"),
     promptAddendumJson: qs("glossary-prompt-addendum-json"),
-  }, {
-    projectPath: glossary.project_glossary_path || "",
-    personalJson: prettyJson(glossary.personal_glossaries_by_lang || {}),
-    projectJson: prettyJson(glossary.project_glossaries_by_lang || {}),
-    enabledTiersJson: prettyJson(glossary.enabled_tiers_by_target_lang || {}),
-    promptAddendumJson: prettyJson(glossary.prompt_addendum_by_lang || {}),
-  });
-
-  const builder = powerTools.glossary_builder || {};
-  const builderDefaults = builder.defaults || {};
-  const builderPresentation = {
-    sourceMode: builderDefaults.source_mode || "run_folders",
-    targetLang: builderDefaults.target_lang || "EN",
-    mode: builderDefaults.mode || "full_text",
-    lemmaEffort: builderDefaults.lemma_effort || "high",
-    lemmaEnabled: builderDefaults.lemma_enabled,
-    runDirs: (builderDefaults.run_dirs || []).join("\n"),
-    pdfPaths: (builderDefaults.pdf_paths || []).join("\n"),
-  };
-  if (builder.last_result?.suggestions) {
-    builderPresentation.approvedJson = prettyJson(builder.last_result.suggestions);
-  }
+  }, presentation.glossaryForm);
   renderPowerToolsBuilderDefaultsInto({
     sourceMode: qs("builder-source-mode"),
     targetLang: qs("builder-target-lang"),
@@ -278,11 +242,9 @@ function renderPowerToolsPayload(powerTools, { preserveStatus = false } = {}) {
     runDirs: qs("builder-run-dirs"),
     pdfPaths: qs("builder-pdf-paths"),
     approvedJson: qs("builder-approved-json"),
-  }, builderPresentation);
+  }, presentation.builderDefaults);
   syncBuilderSourceMode();
 
-  const calibration = powerTools.calibration || {};
-  const calibrationDefaults = calibration.defaults || {};
   renderPowerToolsCalibrationDefaultsInto({
     pdfPath: qs("calibration-pdf-path"),
     outputDir: qs("calibration-output-dir"),
@@ -291,38 +253,26 @@ function renderPowerToolsPayload(powerTools, { preserveStatus = false } = {}) {
     userSeed: qs("calibration-user-seed"),
     excerptMaxChars: qs("calibration-excerpt-max-chars"),
     includeExcerpts: qs("calibration-include-excerpts"),
-  }, calibrationDefaults);
+  }, presentation.calibrationDefaults);
 
-  const diagnostics = powerTools.diagnostics || {};
   if (!fieldValue("diagnostics-run-dir")) {
     setFieldValue("diagnostics-run-dir", "");
   }
-  renderLatestRunDirs(mergeLatestRunDirs(powerTools));
+  renderLatestRunDirs(presentation.latestRunDirs);
   if (!preserveStatus) {
-    const latestCount = mergeLatestRunDirs(powerTools).length;
     setPanelStatus(
       "power-tools",
-      "ok",
-      latestCount > 0
-        ? `Advanced glossary, quality-check, and troubleshooting tools are ready. ${latestCount} recent run folder(s) are available.`
-        : "Advanced glossary, quality-check, and troubleshooting tools are ready.",
+      presentation.status.tone,
+      presentation.status.message,
     );
   }
   if (!preserveStatus) {
-    const latestWindowTrace = diagnostics.latest_window_trace || {};
     setDiagnostics(
       "power-tools-diagnostics",
+      presentation.diagnostics.value,
       {
-        outputs_root: diagnostics.outputs_root || "",
-        runtime_metadata_path: diagnostics.runtime_metadata_path || "",
-        latest_run_dirs: mergeLatestRunDirs(powerTools),
-        latest_window_trace: latestWindowTrace,
-      },
-      {
-        hint: latestWindowTrace.launch_session_id
-          ? `Latest startup trace session: ${latestWindowTrace.launch_session_id}`
-          : "Troubleshooting bundle, run report, and startup trace defaults appear here.",
-        open: false,
+        hint: presentation.diagnostics.hint,
+        open: presentation.diagnostics.open,
       },
     );
   }

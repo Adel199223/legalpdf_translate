@@ -30057,6 +30057,57 @@ console.log(JSON.stringify({
     assert results["nullResultTypes"] == ["undefined", "undefined", "undefined"]
 
 
+def test_power_tools_presentation_module_owns_bootstrap_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    power_tools_presentation_module = static_dir / "power_tools_presentation.js"
+
+    assert power_tools_presentation_module.exists()
+    power_tools_presentation_source = power_tools_presentation_module.read_text(encoding="utf-8")
+    assert "export function buildPowerToolsBootstrapPresentation" in power_tools_presentation_source
+
+    forbidden_tokens = [
+        "document",
+        "fetchJson",
+        "appState",
+        "setDiagnostics",
+        "setPanelStatus",
+        "renderPowerTools",
+        "innerHTML",
+        "addEventListener",
+    ]
+    for token in forbidden_tokens:
+        assert token not in power_tools_presentation_source
+    assert "window." not in power_tools_presentation_source
+    assert "window[" not in power_tools_presentation_source
+
+    assert 'from "./power_tools_presentation.js"' in power_tools_js
+    assert "buildPowerToolsBootstrapPresentation(powerTools)" in power_tools_js
+    assert "function mergeLatestRunDirs" not in power_tools_js
+
+    render_start = power_tools_js.index("function renderPowerToolsPayload")
+    render_end = power_tools_js.index("\nexport function renderPowerToolsBootstrap", render_start)
+    render_block = power_tools_js[render_start:render_end]
+
+    assert "presentation.glossaryForm" in render_block
+    assert "presentation.builderDefaults" in render_block
+    assert "presentation.calibrationDefaults" in render_block
+    assert "presentation.latestRunDirs" in render_block
+    assert "presentation.status" in render_block
+    assert "presentation.diagnostics" in render_block
+    assert "const glossary = powerTools.glossary || {};" not in render_block
+    assert "const builderPresentation =" not in render_block
+    assert "mergeLatestRunDirs(powerTools)" not in render_block
+    assert "latestCount > 0" not in render_block
+    assert "Latest startup trace session:" not in render_block
+
+
 def test_power_tools_ui_module_centralizes_safe_run_directory_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -35253,6 +35304,10 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert action_feedback_presentation_asset.headers["content-type"].startswith("application/javascript")
         assert "buildActionFailureFeedback" in action_feedback_presentation_asset.text
         assert "applyActionFailureFeedbackToUi" in action_feedback_presentation_asset.text
+        power_tools_presentation_asset = client.get(f"/static-build/{asset_version}/power_tools_presentation.js")
+        assert power_tools_presentation_asset.status_code == 200
+        assert power_tools_presentation_asset.headers["content-type"].startswith("application/javascript")
+        assert "buildPowerToolsBootstrapPresentation" in power_tools_presentation_asset.text
         power_tools_ui_asset = client.get(f"/static-build/{asset_version}/power_tools_ui.js")
         assert power_tools_ui_asset.status_code == 200
         assert power_tools_ui_asset.headers["content-type"].startswith("application/javascript")
