@@ -20849,6 +20849,205 @@ def test_translation_result_presentation_module_owns_result_card_state() -> None
         assert moved_phrase not in result_block
 
 
+def test_translation_numeric_warning_presentation_module_derives_warning_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "translation_numeric_warning_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./translation_numeric_warning_presentation.js"' in translation_js
+    assert "export function deriveNumericMismatchWarning" in translation_js
+    assert "deriveTranslationNumericMismatchWarning({" in translation_js
+    assert "export function deriveTranslationNumericMismatchWarning" in presentation_js
+    assert "export function blankTranslationNumericMismatchWarning" in presentation_js
+    assert "const NUMERIC_MISMATCH_WARNING_MESSAGE" not in translation_js
+
+    wrapper_start = translation_js.index("export function deriveNumericMismatchWarning")
+    wrapper_end = translation_js.index("\nexport function renderNumericMismatchWarningInto", wrapper_start)
+    wrapper_block = translation_js[wrapper_start:wrapper_end]
+    assert "translationState.numericMismatchWarningsByJobId" in wrapper_block
+    assert "deriveTranslationNumericMismatchWarning({" in wrapper_block
+    for moved_phrase in [
+        "Numeric Mismatch Samples",
+        "1 number needs review",
+        "numbers need review",
+        "numeric_missing_sample",
+        "save_seed",
+        "logs",
+    ]:
+        assert moved_phrase not in wrapper_block
+
+    builder_start = presentation_js.index("export function deriveTranslationNumericMismatchWarning")
+    builder_block = presentation_js[builder_start:]
+    for forbidden in ["document.", "innerHTML", "renderTranslation", "setDiagnostics(", "fetchJson(", "translationState"]:
+        assert forbidden not in builder_block
+
+    script = r"""
+const numeric = await import(__NUMERIC_WARNING_MODULE_URL__);
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const structured = numeric.deriveTranslationNumericMismatchWarning({
+  job: {
+    result: {
+      save_seed: {
+        numeric_mismatches_count: 99,
+        numeric_missing_sample: ["should-skip-save-seed"],
+      },
+      logs: [{
+        numeric_mismatches_count: 99,
+        numeric_missing_sample: ["should-skip-logs"],
+      }],
+      report_path: {
+        numeric_mismatches_count: 99,
+        numeric_missing_sample: ["should-skip-path"],
+      },
+      nested: {
+        validation_pages: [
+          {
+            page: 3,
+            numeric_mismatches_count: 1,
+            numeric_missing_sample: ["10.15"],
+          },
+          {
+            page_number: 7,
+            numeric_mismatches_count: 3,
+            numeric_missing_sample: ["495,00", "5,50", "5,50"],
+          },
+          {
+            page_index: 8,
+            missing: `["${malicious}", "42"]`,
+          },
+          {
+            page: 9,
+            count: 1,
+          },
+        ],
+      },
+    },
+  },
+});
+
+const preview = numeric.deriveTranslationNumericMismatchWarning({
+  extra: {
+    preview: [
+      "## Numeric Mismatch Samples",
+      "- Page 3: missing ['10.15']",
+      "- Page 7: missing ['495,00', '5,50', '5,50']",
+      "## Other Section",
+      "- Page 9: missing ['must-not-leak']",
+    ].join("\n"),
+  },
+});
+
+const normalizedPayloadPreview = numeric.deriveTranslationNumericMismatchWarning({
+  extra: {
+    normalized_payload: {
+      preview: "## Numeric Mismatch Samples\n- Page 11: missing [123, 456]",
+    },
+  },
+});
+
+const jobPreview = numeric.deriveTranslationNumericMismatchWarning({
+  job: {
+    result: {
+      run_report_preview: "## Numeric Mismatch Samples\n- Page 12: missing 789",
+    },
+  },
+});
+
+const cachedFallback = numeric.deriveTranslationNumericMismatchWarning({
+  cachedWarning: {
+    visible: true,
+    checked: true,
+    message: "cached warning",
+    lines: ["Cached line"],
+    pages: [{ page: 4, count: 1, samples: ["cached"] }],
+  },
+});
+
+let deep = { numeric_mismatches_count: 1, numeric_missing_sample: ["too-deep"] };
+for (let index = 0; index < 9; index += 1) {
+  deep = { nested: deep };
+}
+
+const nullSafe = numeric.deriveTranslationNumericMismatchWarning();
+const blankChecked = numeric.blankTranslationNumericMismatchWarning({ checked: true });
+const depthGuard = numeric.deriveTranslationNumericMismatchWarning({ extra: deep });
+
+console.log(JSON.stringify({
+  structured,
+  preview,
+  normalizedPayloadPreview,
+  jobPreview,
+  cachedFallback,
+  nullSafe,
+  blankChecked,
+  depthGuard,
+  exportTypes: {
+    message: typeof numeric.NUMERIC_MISMATCH_WARNING_MESSAGE,
+    derive: typeof numeric.deriveTranslationNumericMismatchWarning,
+    blank: typeof numeric.blankTranslationNumericMismatchWarning,
+  },
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__NUMERIC_WARNING_MODULE_URL__": "translation_numeric_warning_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    expected_message = "Review recommended: some numbers from the source may not appear exactly in the translation."
+    assert results["structured"]["visible"] is True
+    assert results["structured"]["checked"] is True
+    assert results["structured"]["message"] == expected_message
+    assert results["structured"]["lines"] == [
+        "Page 3: 10.15",
+        "Page 7: 495,00; 5,50; 5,50",
+        "Page 8: <img src=x onerror=alert(1)><script>bad()</script>; 42",
+        "Page 9: 1 number needs review",
+    ]
+    assert all("should-skip" not in line for line in results["structured"]["lines"])
+    assert results["structured"]["pages"][0] == {"page": 3, "count": 1, "samples": ["10.15"]}
+    assert results["structured"]["pages"][2] == {
+        "page": 8,
+        "count": 2,
+        "samples": ["<img src=x onerror=alert(1)><script>bad()</script>", "42"],
+    }
+    assert results["preview"]["lines"] == ["Page 3: 10.15", "Page 7: 495,00; 5,50; 5,50"]
+    assert results["normalizedPayloadPreview"]["lines"] == ["Page 11: 123; 456"]
+    assert results["jobPreview"]["lines"] == ["Page 12: 789"]
+    assert results["cachedFallback"] == {
+        "visible": True,
+        "checked": True,
+        "message": "cached warning",
+        "lines": ["Cached line"],
+        "pages": [{"page": 4, "count": 1, "samples": ["cached"]}],
+    }
+    assert results["nullSafe"] == {
+        "visible": False,
+        "checked": False,
+        "message": expected_message,
+        "lines": [],
+        "pages": [],
+    }
+    assert results["blankChecked"] == {
+        "visible": False,
+        "checked": True,
+        "message": expected_message,
+        "lines": [],
+        "pages": [],
+    }
+    assert results["depthGuard"]["visible"] is False
+    assert results["exportTypes"] == {"message": "string", "derive": "function", "blank": "function"}
+
+
 def test_result_card_ui_module_centralizes_arabic_review_card_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -35137,6 +35336,21 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
             "application/javascript"
         )
         assert "deriveTranslationRunStatusView" in translation_run_status_presentation_asset.text
+        translation_numeric_warning_presentation_asset = client.get(
+            f"/static-build/{asset_version}/translation_numeric_warning_presentation.js"
+        )
+        assert translation_numeric_warning_presentation_asset.status_code == 200
+        assert translation_numeric_warning_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert (
+            "deriveTranslationNumericMismatchWarning"
+            in translation_numeric_warning_presentation_asset.text
+        )
+        assert (
+            "blankTranslationNumericMismatchWarning"
+            in translation_numeric_warning_presentation_asset.text
+        )
         translation_action_presentation_asset = client.get(
             f"/static-build/{asset_version}/translation_action_presentation.js"
         )
