@@ -20,8 +20,8 @@ import {
   deriveClientLaunchSessionId,
   deriveClientLaunchSessionSchemaVersion,
 } from "./gmail_handoff_state.js";
+import { deriveRecentWorkPresentation } from "./recent_work_presentation.js";
 import {
-  deriveRecentWorkPresentation,
   deriveTranslationCompletionPresentation,
   initializeTranslationUi,
   loadTranslationHistoryItem,

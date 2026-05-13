@@ -7,6 +7,7 @@ def _run_translation_browser_state_probe() -> dict[str, object]:
     script = r"""
 const stateModuleUrl = __STATE_MODULE_URL__;
 const translationModuleUrl = __TRANSLATION_MODULE_URL__;
+const recentWorkPresentationModuleUrl = __RECENT_WORK_PRESENTATION_MODULE_URL__;
 const dashboardModuleUrl = __DASHBOARD_MODULE_URL__;
 
 function tagNameForId(id) {
@@ -1020,17 +1021,18 @@ const results = {};
 
 {
   const scenario = await setupScenario("recent-work-presentation", "http://127.0.0.1:8877/?mode=live&workspace=workspace-1#recent-jobs");
+  const recentWorkPresentation = await import(recentWorkPresentationModuleUrl);
   results.recentWorkPresentation = {
-    empty: scenario.translationModule.deriveRecentWorkPresentation(),
-    loaded: scenario.translationModule.deriveRecentWorkPresentation({
+    empty: recentWorkPresentation.deriveRecentWorkPresentation(),
+    loaded: recentWorkPresentation.deriveRecentWorkPresentation({
       recentItemCount: 3,
       recordAvailable: false,
       jobType: "Interpretation",
     }),
-    translationHistory: scenario.translationModule.deriveRecentWorkPresentation({
+    translationHistory: recentWorkPresentation.deriveRecentWorkPresentation({
       jobType: "Translation",
     }),
-    translationRun: scenario.translationModule.deriveRecentWorkPresentation({
+    translationRun: recentWorkPresentation.deriveRecentWorkPresentation({
       translationRunCount: 2,
       job: {
         job_id: "tx-run-7",
@@ -1042,6 +1044,7 @@ const results = {};
         },
       },
     }),
+    compatibilityEmpty: scenario.translationModule.deriveRecentWorkPresentation(),
   };
 }
 
@@ -1146,6 +1149,7 @@ console.log(JSON.stringify(results));
         {
             "__STATE_MODULE_URL__": "state.js",
             "__TRANSLATION_MODULE_URL__": "translation.js",
+            "__RECENT_WORK_PRESENTATION_MODULE_URL__": "recent_work_presentation.js",
             "__DASHBOARD_MODULE_URL__": "dashboard_presentation.js",
         },
         timeout_seconds=30,
@@ -1414,6 +1418,7 @@ def test_recent_work_presentation_helper_uses_beginner_saved_work_copy() -> None
     assert empty["translationRunsEmpty"] == "No translation runs have started yet."
     assert empty["recentOpenLabel"] == "Open"
     assert empty["recentDeleteLabel"] == "Delete record"
+    assert presentation["compatibilityEmpty"] == empty
 
     loaded = presentation["loaded"]
     assert loaded["typeLabel"] == "Interpretation"

@@ -1,4 +1,4 @@
-import { deriveRecentWorkPresentation } from "./translation.js";
+import { deriveRecentWorkPresentation } from "./recent_work_presentation.js";
 import { clearNode, createEmptyState, createTextElement, setText } from "./safe_rendering.js";
 
 function appendHistoryMetaBits(container, bits) {

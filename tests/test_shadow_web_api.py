@@ -32169,10 +32169,13 @@ def test_shadow_web_tiny_presentation_cleanup_copy_is_distinct() -> None:
     app_js = (static_dir / "app.js").read_text(encoding="utf-8")
     profile_ui_js = (static_dir / "profile_ui.js").read_text(encoding="utf-8")
     recent_work_ui_js = (static_dir / "recent_work_ui.js").read_text(encoding="utf-8")
+    recent_work_presentation_js = (static_dir / "recent_work_presentation.js").read_text(encoding="utf-8")
     translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
 
-    assert '"No saved work yet. Completed translations and interpretation requests will appear here."' in translation_js
-    assert '"No saved cases yet."' in translation_js
+    assert '"No saved work yet. Completed translations and interpretation requests will appear here."' in recent_work_presentation_js
+    assert '"No saved cases yet."' in recent_work_presentation_js
+    assert '"No saved work yet. Completed translations and interpretation requests will appear here."' not in translation_js
+    assert '"No saved cases yet."' not in translation_js
     assert "deriveRecentWorkPresentation().recentCasesEmpty" in recent_work_ui_js
     assert "presentation.recentWorkEmpty" in app_js
 
@@ -32181,6 +32184,56 @@ def test_shadow_web_tiny_presentation_cleanup_copy_is_distinct() -> None:
     assert "Edit saved contact, payment, and travel details here." in template
     assert "Profile record" in profile_ui_js
     assert "Edit this profile's contact, payment, and travel details." in profile_ui_js
+
+
+def test_recent_work_presentation_module_owns_saved_work_copy() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    recent_work_ui_js = (static_dir / "recent_work_ui.js").read_text(encoding="utf-8")
+    recent_work_presentation_js = (static_dir / "recent_work_presentation.js").read_text(encoding="utf-8")
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+
+    assert "export function deriveRecentWorkPresentation" in recent_work_presentation_js
+    assert "export function formatRecentRunTitle" in recent_work_presentation_js
+    assert 'from "./recent_work_presentation.js"' in app_js
+    assert 'from "./recent_work_presentation.js"' in recent_work_ui_js
+
+    assert "export function deriveRecentWorkPresentation" not in translation_js
+    assert "export function formatRecentRunTitle" not in translation_js
+    assert "function titleCaseWords" not in translation_js
+    assert "function recentWorkTypeLabel" not in translation_js
+    assert "function recentRunKindLabel" not in translation_js
+    assert "function recentRunStatusLabel" not in translation_js
+    assert '"No saved work yet. Completed translations and interpretation requests will appear here."' not in translation_js
+    assert '"No saved cases yet."' not in translation_js
+    assert (
+        'export { deriveRecentWorkPresentation, formatRecentRunTitle } '
+        'from "./recent_work_presentation.js";'
+    ) in translation_js
+
+    for forbidden in [
+        "document.",
+        "window.",
+        "sessionStorage",
+        "localStorage",
+        "fetch(",
+        "fetchJson",
+        "appState",
+        "setDiagnostics",
+        "setPanelStatus",
+        "renderRecent",
+        "innerHTML",
+    ]:
+        assert forbidden not in recent_work_presentation_js
+
+    assert "deriveRecentWorkPresentation().recentCasesEmpty" in recent_work_ui_js
+    assert "deriveRecentWorkPresentation({ translationRunCount: jobs.length, job })" in translation_js
 
 
 def test_shadow_web_client_prefers_url_launch_session_state_over_stale_bootstrap() -> None:
@@ -34353,6 +34406,11 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert "renderRecentJobsInto" in recent_work_ui_asset.text
         assert "renderInterpretationHistoryHeadingInto" in recent_work_ui_asset.text
         assert "renderInterpretationHistoryInto" in recent_work_ui_asset.text
+        recent_work_presentation_asset = client.get(f"/static-build/{asset_version}/recent_work_presentation.js")
+        assert recent_work_presentation_asset.status_code == 200
+        assert recent_work_presentation_asset.headers["content-type"].startswith("application/javascript")
+        assert "deriveRecentWorkPresentation" in recent_work_presentation_asset.text
+        assert "formatRecentRunTitle" in recent_work_presentation_asset.text
         result_card_ui_asset = client.get(f"/static-build/{asset_version}/result_card_ui.js")
         assert result_card_ui_asset.status_code == 200
         assert result_card_ui_asset.headers["content-type"].startswith("application/javascript")
