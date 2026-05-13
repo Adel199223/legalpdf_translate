@@ -6,7 +6,17 @@ import {
   buildSettingsActionFeedback,
   buildSettingsStatusPresentation,
 } from "./settings_presentation.js";
-import { buildPowerToolsBootstrapPresentation } from "./power_tools_presentation.js";
+import {
+  buildPowerToolsArmWindowTracePresentation,
+  buildPowerToolsBootstrapPresentation,
+  buildPowerToolsBuilderApplyPresentation,
+  buildPowerToolsBuilderRunPresentation,
+  buildPowerToolsCalibrationRunPresentation,
+  buildPowerToolsDebugBundlePresentation,
+  buildPowerToolsGlossaryExportPresentation,
+  buildPowerToolsGlossarySavePresentation,
+  buildPowerToolsRunReportPresentation,
+} from "./power_tools_presentation.js";
 import {
   renderBuilderSourceModeInto,
   renderCredentialRecoveryStateInto,
@@ -412,6 +422,23 @@ function applyActionFailureFeedback(
   );
 }
 
+function applyPowerToolsActionPresentation(presentation = {}) {
+  if (Object.keys(presentation.resultFields || {}).length) {
+    renderPowerToolsResultFieldsInto({
+      approvedJson: qs("builder-approved-json"),
+      diagnosticsRunDir: qs("diagnostics-run-dir"),
+    }, presentation.resultFields);
+  }
+  const status = presentation.status || {};
+  setPanelStatus(status.slot || "power-tools", status.tone || "", status.message || "");
+  const diagnostics = presentation.diagnostics || {};
+  setDiagnostics(diagnostics.slot || "power-tools-diagnostics", diagnostics.value || {}, {
+    hint: diagnostics.hint || "",
+    open: diagnostics.open === true,
+  });
+  return presentation;
+}
+
 async function handleTranslationKeySave() {
   const payload = await fetchJsonAllowFailed("/api/settings/translation-key/save", {
     method: "POST",
@@ -549,11 +576,7 @@ async function handleGlossarySave() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  setPanelStatus("power-tools", "ok", "Glossary setup saved.");
-  setDiagnostics("power-tools-glossary", payload, {
-    hint: "Advanced glossary data was saved to browser settings and project glossary storage.",
-    open: false,
-  });
+  applyPowerToolsActionPresentation(buildPowerToolsGlossarySavePresentation(payload));
   await refreshPowerTools({ preserveStatus: true });
 }
 
@@ -567,11 +590,7 @@ async function handleGlossaryExport() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  setPanelStatus("power-tools", "ok", "Glossary markdown exported.");
-  setDiagnostics("power-tools-glossary", payload, {
-    hint: payload.normalized_payload?.markdown_path || "Glossary markdown export completed.",
-    open: false,
-  });
+  applyPowerToolsActionPresentation(buildPowerToolsGlossaryExportPresentation(payload));
 }
 
 async function handleBuilderRun() {
@@ -580,22 +599,7 @@ async function handleBuilderRun() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(collectBuilderPayload()),
   });
-  if (payload.normalized_payload?.suggestions) {
-    renderPowerToolsResultFieldsInto({
-      approvedJson: qs("builder-approved-json"),
-    }, {
-      approvedJson: prettyJson(payload.normalized_payload.suggestions),
-    });
-  }
-  setPanelStatus(
-    "power-tools",
-    "ok",
-    `Built glossary suggestions from ${payload.normalized_payload?.pages_scanned ?? 0} page(s) across ${payload.normalized_payload?.sources_processed ?? 0} source(s).`,
-  );
-  setDiagnostics("power-tools-builder", payload, {
-    hint: payload.normalized_payload?.artifact_dir || "Glossary builder run completed.",
-    open: false,
-  });
+  applyPowerToolsActionPresentation(buildPowerToolsBuilderRunPresentation(payload));
 }
 
 async function handleBuilderApply() {
@@ -607,11 +611,7 @@ async function handleBuilderApply() {
       project_glossary_path: fieldValue("glossary-project-path"),
     }),
   });
-  setPanelStatus("power-tools", "ok", "Glossary suggestions applied.");
-  setDiagnostics("power-tools-builder", payload, {
-    hint: "Selected glossary suggestions were merged into personal and project glossaries.",
-    open: false,
-  });
+  applyPowerToolsActionPresentation(buildPowerToolsBuilderApplyPresentation(payload));
 }
 
 async function handleCalibrationRun() {
@@ -620,19 +620,7 @@ async function handleCalibrationRun() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(collectCalibrationPayload()),
   });
-  setPanelStatus("power-tools", "ok", "Quality check completed.");
-  setDiagnostics("power-tools-calibration", payload, {
-    hint: payload.normalized_payload?.report_md_path || "Quality-check files were generated.",
-    open: false,
-  });
-  const reportPath = String(payload.normalized_payload?.report_json_path || "").trim();
-  if (reportPath) {
-    renderPowerToolsResultFieldsInto({
-      diagnosticsRunDir: qs("diagnostics-run-dir"),
-    }, {
-      diagnosticsRunDir: reportPath.replace(/[\\/][^\\/]+$/, ""),
-    });
-  }
+  applyPowerToolsActionPresentation(buildPowerToolsCalibrationRunPresentation(payload));
 }
 
 async function handleDebugBundle() {
@@ -641,11 +629,7 @@ async function handleDebugBundle() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ run_dir: fieldValue("diagnostics-run-dir") }),
   });
-  setPanelStatus("power-tools", "ok", "Troubleshooting bundle created.");
-  setDiagnostics("power-tools-diagnostics", payload, {
-    hint: payload.normalized_payload?.bundle_path || "Troubleshooting bundle created.",
-    open: false,
-  });
+  applyPowerToolsActionPresentation(buildPowerToolsDebugBundlePresentation(payload));
 }
 
 async function handleRunReport() {
@@ -654,11 +638,7 @@ async function handleRunReport() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ run_dir: fieldValue("diagnostics-run-dir") }),
   });
-  setPanelStatus("power-tools", "ok", "Run report generated.");
-  setDiagnostics("power-tools-diagnostics", payload, {
-    hint: payload.normalized_payload?.report_path || "Run report generated.",
-    open: false,
-  });
+  applyPowerToolsActionPresentation(buildPowerToolsRunReportPresentation(payload));
 }
 
 async function handleArmWindowTrace() {
@@ -667,11 +647,7 @@ async function handleArmWindowTrace() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
-  setPanelStatus("power-tools", "ok", "The next Gmail startup click will capture a troubleshooting window trace.");
-  setDiagnostics("power-tools-diagnostics", payload, {
-    hint: payload.normalized_payload?.arm_path || "The next Gmail startup click will capture a troubleshooting window trace.",
-    open: false,
-  });
+  applyPowerToolsActionPresentation(buildPowerToolsArmWindowTracePresentation(payload));
 }
 
 export function initializePowerToolsUi() {

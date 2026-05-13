@@ -101,3 +101,121 @@ export function buildPowerToolsBootstrapPresentation(powerTools = {}) {
     diagnostics: buildDiagnostics(source, latestRunDirs),
   };
 }
+
+function normalizedPayload(payload = {}) {
+  return payload?.normalized_payload || {};
+}
+
+function buildActionPresentation({
+  payload = {},
+  diagnosticsSlot = "power-tools-diagnostics",
+  message = "",
+  hint = "",
+  resultFields = {},
+} = {}) {
+  const diagnosticsValue = payload || { normalized_payload: {} };
+  return {
+    status: {
+      slot: "power-tools",
+      tone: "ok",
+      message,
+    },
+    diagnostics: {
+      slot: diagnosticsSlot,
+      value: diagnosticsValue,
+      hint,
+      open: false,
+    },
+    resultFields: resultFields || {},
+  };
+}
+
+function resultDirectoryFromPath(value) {
+  const path = String(value || "").trim();
+  if (!path) {
+    return "";
+  }
+  return path.replace(/[\\/][^\\/]+$/, "");
+}
+
+export function buildPowerToolsGlossarySavePresentation(payload = {}) {
+  return buildActionPresentation({
+    payload,
+    diagnosticsSlot: "power-tools-glossary",
+    message: "Glossary setup saved.",
+    hint: "Advanced glossary data was saved to browser settings and project glossary storage.",
+  });
+}
+
+export function buildPowerToolsGlossaryExportPresentation(payload = {}) {
+  const normalized = normalizedPayload(payload);
+  return buildActionPresentation({
+    payload,
+    diagnosticsSlot: "power-tools-glossary",
+    message: "Glossary markdown exported.",
+    hint: normalized.markdown_path || "Glossary markdown export completed.",
+  });
+}
+
+export function buildPowerToolsBuilderRunPresentation(payload = {}) {
+  const normalized = normalizedPayload(payload);
+  const resultFields = {};
+  if (normalized.suggestions) {
+    resultFields.approvedJson = prettyJson(normalized.suggestions);
+  }
+  return buildActionPresentation({
+    payload,
+    diagnosticsSlot: "power-tools-builder",
+    message: `Built glossary suggestions from ${normalized.pages_scanned ?? 0} page(s) across ${normalized.sources_processed ?? 0} source(s).`,
+    hint: normalized.artifact_dir || "Glossary builder run completed.",
+    resultFields,
+  });
+}
+
+export function buildPowerToolsBuilderApplyPresentation(payload = {}) {
+  return buildActionPresentation({
+    payload,
+    diagnosticsSlot: "power-tools-builder",
+    message: "Glossary suggestions applied.",
+    hint: "Selected glossary suggestions were merged into personal and project glossaries.",
+  });
+}
+
+export function buildPowerToolsCalibrationRunPresentation(payload = {}) {
+  const normalized = normalizedPayload(payload);
+  const diagnosticsRunDir = resultDirectoryFromPath(normalized.report_json_path);
+  return buildActionPresentation({
+    payload,
+    diagnosticsSlot: "power-tools-calibration",
+    message: "Quality check completed.",
+    hint: normalized.report_md_path || "Quality-check files were generated.",
+    resultFields: diagnosticsRunDir ? { diagnosticsRunDir } : {},
+  });
+}
+
+export function buildPowerToolsDebugBundlePresentation(payload = {}) {
+  const normalized = normalizedPayload(payload);
+  return buildActionPresentation({
+    payload,
+    message: "Troubleshooting bundle created.",
+    hint: normalized.bundle_path || "Troubleshooting bundle created.",
+  });
+}
+
+export function buildPowerToolsRunReportPresentation(payload = {}) {
+  const normalized = normalizedPayload(payload);
+  return buildActionPresentation({
+    payload,
+    message: "Run report generated.",
+    hint: normalized.report_path || "Run report generated.",
+  });
+}
+
+export function buildPowerToolsArmWindowTracePresentation(payload = {}) {
+  const normalized = normalizedPayload(payload);
+  return buildActionPresentation({
+    payload,
+    message: "The next Gmail startup click will capture a troubleshooting window trace.",
+    hint: normalized.arm_path || "The next Gmail startup click will capture a troubleshooting window trace.",
+  });
+}
