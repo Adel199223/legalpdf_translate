@@ -137,6 +137,72 @@ export function buildSettingsActionFeedback(payload = {}, fallback = "") {
   };
 }
 
+function settingsActionPayload(payload = {}) {
+  return payload || { normalized_payload: {} };
+}
+
+function buildSettingsActionPresentation({
+  payload = {},
+  diagnosticsSlot = "settings-test",
+  tone = "",
+  message = "",
+  hint = "",
+  open = false,
+  providerState = {},
+} = {}) {
+  return {
+    providerState: providerState || {},
+    status: {
+      slot: "settings",
+      tone,
+      message,
+    },
+    diagnostics: {
+      slot: diagnosticsSlot,
+      value: settingsActionPayload(payload),
+      hint,
+      open,
+    },
+  };
+}
+
+export function buildSettingsSaveActionPresentation(payload = {}) {
+  return buildSettingsActionPresentation({
+    payload,
+    diagnosticsSlot: "settings-admin",
+    tone: "ok",
+    message: "Settings saved for the active runtime mode.",
+    hint: "Saved settings and refreshed provider state.",
+    open: false,
+  });
+}
+
+export function buildSettingsPreflightActionPresentation(payload = {}) {
+  const providerState = settingsActionPayload(payload).normalized_payload || {};
+  const readiness = buildSettingsStatusPresentation(providerState);
+  return buildSettingsActionPresentation({
+    payload,
+    providerState,
+    tone: readiness.tone,
+    message: `Provider and host preflight refreshed. ${readiness.message}`,
+    hint: readiness.hint,
+    open: false,
+  });
+}
+
+export function buildSettingsGmailPrereqsActionPresentation(payload = {}) {
+  const normalized = settingsActionPayload(payload).normalized_payload || {};
+  const ready = normalized.ready === true;
+  const message = normalized.message || "Gmail prereq check completed.";
+  return buildSettingsActionPresentation({
+    payload,
+    tone: ready ? "ok" : "warn",
+    message,
+    hint: normalized.message || "Gmail draft prerequisite check completed.",
+    open: !ready,
+  });
+}
+
 export function buildSettingsCapabilityCards(payload = {}) {
   const providerState = payload?.normalized_payload?.settings_admin?.provider_state || {};
   const translationReady = translationConfigured(providerState);

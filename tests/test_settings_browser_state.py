@@ -217,6 +217,164 @@ def test_settings_presentation_centralizes_action_feedback() -> None:
     }
 
 
+def test_settings_presentation_builds_settings_action_outcomes() -> None:
+    script = """
+const settingsModule = await import(__SETTINGS_MODULE_URL__);
+const malicious = "<img src=x onerror=alert(1)><script>bad()</script>";
+
+const readyProviderState = {
+  translation: { credentials_configured: true },
+  ocr: { api_configured: true, local_available: false },
+  gmail_draft: { ready: true },
+  word_pdf_export: { finalization_ready: true },
+  native_host: { ready: true },
+};
+
+const degradedProviderState = {
+  translation: { credentials_configured: false },
+  ocr: { api_configured: false, local_available: false },
+  gmail_draft: { ready: false },
+  word_pdf_export: { finalization_ready: false },
+  native_host: { ready: false },
+  note: malicious,
+};
+
+const savePayload = {
+  status: "ok",
+  normalized_payload: {
+    form_values: {
+      default_outdir: `C:/unsafe/${malicious}`,
+    },
+  },
+};
+const preflightReadyPayload = {
+  status: "ok",
+  normalized_payload: readyProviderState,
+};
+const preflightDegradedPayload = {
+  status: "ok",
+  normalized_payload: degradedProviderState,
+};
+const gmailReadyPayload = {
+  status: "ok",
+  normalized_payload: {
+    ready: true,
+    message: `Gmail ready ${malicious}`,
+  },
+};
+const gmailBlockedPayload = {
+  status: "ok",
+  normalized_payload: {
+    ready: false,
+    message: `Gmail blocked ${malicious}`,
+  },
+};
+
+const cases = {
+  save: settingsModule.buildSettingsSaveActionPresentation(savePayload),
+  saveNullSafe: settingsModule.buildSettingsSaveActionPresentation(null),
+  preflightReady: settingsModule.buildSettingsPreflightActionPresentation(preflightReadyPayload),
+  preflightDegraded: settingsModule.buildSettingsPreflightActionPresentation(preflightDegradedPayload),
+  preflightNullSafe: settingsModule.buildSettingsPreflightActionPresentation(null),
+  gmailReady: settingsModule.buildSettingsGmailPrereqsActionPresentation(gmailReadyPayload),
+  gmailBlocked: settingsModule.buildSettingsGmailPrereqsActionPresentation(gmailBlockedPayload),
+  gmailFallback: settingsModule.buildSettingsGmailPrereqsActionPresentation({ normalized_payload: {} }),
+  gmailNullSafe: settingsModule.buildSettingsGmailPrereqsActionPresentation(null),
+};
+
+console.log(JSON.stringify({
+  exportTypes: {
+    save: typeof settingsModule.buildSettingsSaveActionPresentation,
+    preflight: typeof settingsModule.buildSettingsPreflightActionPresentation,
+    gmailPrereqs: typeof settingsModule.buildSettingsGmailPrereqsActionPresentation,
+  },
+  cases,
+}));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__SETTINGS_MODULE_URL__": "settings_presentation.js"},
+        timeout_seconds=20,
+    )
+
+    assert results["exportTypes"] == {
+        "save": "function",
+        "preflight": "function",
+        "gmailPrereqs": "function",
+    }
+
+    malicious = "<img src=x onerror=alert(1)><script>bad()</script>"
+
+    save = results["cases"]["save"]
+    assert save["status"] == {
+        "slot": "settings",
+        "tone": "ok",
+        "message": "Settings saved for the active runtime mode.",
+    }
+    assert save["diagnostics"]["slot"] == "settings-admin"
+    assert save["diagnostics"]["hint"] == "Saved settings and refreshed provider state."
+    assert save["diagnostics"]["open"] is False
+    assert save["diagnostics"]["value"]["normalized_payload"]["form_values"]["default_outdir"] == (
+        f"C:/unsafe/{malicious}"
+    )
+    assert results["cases"]["saveNullSafe"]["diagnostics"]["value"] == {"normalized_payload": {}}
+
+    preflight_ready = results["cases"]["preflightReady"]
+    assert preflight_ready["providerState"]["translation"]["credentials_configured"] is True
+    assert preflight_ready["status"] == {
+        "slot": "settings",
+        "tone": "ok",
+        "message": (
+            "Provider and host preflight refreshed. Settings loaded. Translation provider is configured, "
+            "OCR is ready, Gmail replies are ready, and Word/PDF output is ready."
+        ),
+    }
+    assert preflight_ready["diagnostics"] == {
+        "slot": "settings-test",
+        "value": {
+            "status": "ok",
+            "normalized_payload": preflight_ready["providerState"],
+        },
+        "hint": "Provider tests, browser-helper checks, and detailed readiness payloads appear here.",
+        "open": False,
+    }
+
+    preflight_degraded = results["cases"]["preflightDegraded"]
+    assert preflight_degraded["providerState"]["note"] == malicious
+    assert preflight_degraded["status"]["tone"] == "warn"
+    assert preflight_degraded["status"]["message"] == (
+        "Provider and host preflight refreshed. Settings loaded. Translation provider is not configured, "
+        "OCR is not ready, Gmail replies are not ready, and Word/PDF output is degraded."
+    )
+    assert preflight_degraded["diagnostics"]["open"] is False
+    assert results["cases"]["preflightNullSafe"]["providerState"] == {}
+
+    gmail_ready = results["cases"]["gmailReady"]
+    assert gmail_ready["status"] == {
+        "slot": "settings",
+        "tone": "ok",
+        "message": f"Gmail ready {malicious}",
+    }
+    assert gmail_ready["diagnostics"]["slot"] == "settings-test"
+    assert gmail_ready["diagnostics"]["hint"] == f"Gmail ready {malicious}"
+    assert gmail_ready["diagnostics"]["open"] is False
+
+    gmail_blocked = results["cases"]["gmailBlocked"]
+    assert gmail_blocked["status"] == {
+        "slot": "settings",
+        "tone": "warn",
+        "message": f"Gmail blocked {malicious}",
+    }
+    assert gmail_blocked["diagnostics"]["hint"] == f"Gmail blocked {malicious}"
+    assert gmail_blocked["diagnostics"]["open"] is True
+
+    gmail_fallback = results["cases"]["gmailFallback"]
+    assert gmail_fallback["status"]["message"] == "Gmail prereq check completed."
+    assert gmail_fallback["diagnostics"]["hint"] == "Gmail draft prerequisite check completed."
+    assert gmail_fallback["diagnostics"]["open"] is True
+    assert results["cases"]["gmailNullSafe"]["diagnostics"]["value"] == {"normalized_payload": {}}
+
+
 def test_power_tools_delegates_settings_action_feedback() -> None:
     from pathlib import Path
 
