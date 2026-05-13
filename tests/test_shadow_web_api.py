@@ -32495,6 +32495,80 @@ def test_shadow_web_app_drops_unused_capability_card_builder() -> None:
     assert "export function buildExtensionLabCards" in extension_lab_presentation_js
 
 
+def test_settings_presentation_module_owns_settings_action_outcomes() -> None:
+    root = Path(__file__).resolve().parents[1]
+    static_dir = root / "src" / "legalpdf_translate" / "shadow_web" / "static"
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    settings_presentation_js = (static_dir / "settings_presentation.js").read_text(encoding="utf-8")
+
+    expected_exports = [
+        "buildSettingsSaveActionPresentation",
+        "buildSettingsPreflightActionPresentation",
+        "buildSettingsGmailPrereqsActionPresentation",
+    ]
+    for export_name in expected_exports:
+        assert f"export function {export_name}" in settings_presentation_js
+        assert export_name in power_tools_js
+
+    for token in [
+        "fetchJson",
+        "appState",
+        "setDiagnostics",
+        "setPanelStatus",
+        "renderProviderState",
+        "innerHTML",
+        "addEventListener",
+    ]:
+        assert token not in settings_presentation_js
+    assert "document." not in settings_presentation_js
+    assert "document[" not in settings_presentation_js
+    assert "createElement" not in settings_presentation_js
+    assert "window." not in settings_presentation_js
+    assert "window[" not in settings_presentation_js
+
+    assert "function applySettingsActionPresentation" in power_tools_js
+
+    def _function_block(source: str, signature: str) -> str:
+        start = source.index(signature)
+        brace_start = source.index("{", start)
+        depth = 0
+        for index in range(brace_start, len(source)):
+            char = source[index]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return source[start : index + 1]
+        raise AssertionError(f"Could not find end of {signature}")
+
+    handler_expectations = {
+        "handleSettingsSave": "buildSettingsSaveActionPresentation",
+        "handleSettingsPreflight": "buildSettingsPreflightActionPresentation",
+        "handleGmailPrereqs": "buildSettingsGmailPrereqsActionPresentation",
+    }
+    for handler_name, builder_name in handler_expectations.items():
+        handler_block = _function_block(power_tools_js, f"async function {handler_name}")
+        assert f"applySettingsActionPresentation({builder_name}(payload)" in handler_block
+        assert "setPanelStatus(" not in handler_block
+        assert "setDiagnostics(" not in handler_block
+
+    moved_inline_fragments = [
+        "Settings saved for the active runtime mode.",
+        "Saved settings and refreshed provider state.",
+        "Provider and host preflight refreshed.",
+        "Gmail prereq check completed.",
+        "Gmail draft prerequisite check completed.",
+        'payload.normalized_payload?.ready ? "ok" : "warn"',
+        "open: !payload.normalized_payload?.ready",
+    ]
+    first_handler_start = power_tools_js.index("async function handleSettingsSave")
+    final_handler_end = power_tools_js.index("\nasync function handleGlossarySave", first_handler_start)
+    settings_handler_block = power_tools_js[first_handler_start:final_handler_end]
+    for fragment in moved_inline_fragments:
+        assert fragment not in settings_handler_block
+
+
 def test_interpretation_review_drawer_uses_city_scoped_email_and_service_entity_selectors() -> None:
     root = Path(__file__).resolve().parents[1]
     static_dir = root / "src" / "legalpdf_translate" / "shadow_web" / "static"
@@ -35389,6 +35463,9 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert settings_presentation_asset.headers["content-type"].startswith("application/javascript")
         assert "buildSettingsStatusPresentation" in settings_presentation_asset.text
         assert "buildSettingsActionFeedback" in settings_presentation_asset.text
+        assert "buildSettingsSaveActionPresentation" in settings_presentation_asset.text
+        assert "buildSettingsPreflightActionPresentation" in settings_presentation_asset.text
+        assert "buildSettingsGmailPrereqsActionPresentation" in settings_presentation_asset.text
         action_feedback_presentation_asset = client.get(f"/static-build/{asset_version}/action_feedback_presentation.js")
         assert action_feedback_presentation_asset.status_code == 200
         assert action_feedback_presentation_asset.headers["content-type"].startswith("application/javascript")

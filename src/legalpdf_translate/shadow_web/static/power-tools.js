@@ -4,6 +4,9 @@ import { applyActionFailureFeedbackToUi } from "./action_feedback_presentation.j
 import { runWithBusy } from "./busy_ui.js";
 import {
   buildSettingsActionFeedback,
+  buildSettingsGmailPrereqsActionPresentation,
+  buildSettingsPreflightActionPresentation,
+  buildSettingsSaveActionPresentation,
   buildSettingsStatusPresentation,
 } from "./settings_presentation.js";
 import {
@@ -377,11 +380,7 @@ async function handleSettingsSave() {
     },
     { preserveStatus: true },
   );
-  setPanelStatus("settings", "ok", "Settings saved for the active runtime mode.");
-  setDiagnostics("settings-admin", payload, {
-    hint: "Saved settings and refreshed provider state.",
-    open: false,
-  });
+  applySettingsActionPresentation(buildSettingsSaveActionPresentation(payload));
 }
 
 function applySettingsActionFeedback(
@@ -409,6 +408,20 @@ function applySettingsActionFeedback(
     window.dispatchEvent(new CustomEvent("legalpdf:bootstrap-invalidated"));
   }
   return feedback;
+}
+
+function applySettingsActionPresentation(presentation = {}) {
+  if (Object.keys(presentation.providerState || {}).length) {
+    renderProviderState(presentation.providerState, { preserveStatus: true });
+  }
+  const status = presentation.status || {};
+  setPanelStatus(status.slot || "settings", status.tone || "", status.message || "");
+  const diagnostics = presentation.diagnostics || {};
+  setDiagnostics(diagnostics.slot || "settings-test", diagnostics.value || {}, {
+    hint: diagnostics.hint || "",
+    open: diagnostics.open === true,
+  });
+  return presentation;
 }
 
 function applyActionFailureFeedback(
@@ -497,14 +510,7 @@ async function handleSettingsPreflight() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
-  const providerState = payload.normalized_payload || {};
-  renderProviderState(providerState, { preserveStatus: true });
-  const readiness = buildSettingsReadinessSummary(providerState);
-  setPanelStatus("settings", readiness.tone, `Provider and host preflight refreshed. ${readiness.message}`);
-  setDiagnostics("settings-test", payload, {
-    hint: readiness.hint,
-    open: false,
-  });
+  applySettingsActionPresentation(buildSettingsPreflightActionPresentation(payload));
 }
 
 async function handleOcrTest() {
@@ -561,12 +567,7 @@ async function handleGmailPrereqs() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
-  const tone = payload.normalized_payload?.ready ? "ok" : "warn";
-  setPanelStatus("settings", tone, payload.normalized_payload?.message || "Gmail prereq check completed.");
-  setDiagnostics("settings-test", payload, {
-    hint: payload.normalized_payload?.message || "Gmail draft prerequisite check completed.",
-    open: !payload.normalized_payload?.ready,
-  });
+  applySettingsActionPresentation(buildSettingsGmailPrereqsActionPresentation(payload));
 }
 
 async function handleGlossarySave() {
