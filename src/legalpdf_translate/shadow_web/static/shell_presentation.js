@@ -180,3 +180,109 @@ export function beginnerSurfaceTargetLabel(activeView = "") {
 export function runtimeModeDisplayLabel(runtime = {}) {
   return runtime?.live_data ? "Live mode" : "Test mode";
 }
+
+export function buildShellBootstrapSnapshotPresentation({
+  shellPayload = {},
+  runtimeMode = "shadow",
+  workspaceId = "workspace-1",
+  activeView = "",
+  beginnerPrimarySurface = false,
+} = {}) {
+  const safeShellPayload = shellPayload || {};
+  const effectiveRuntimeMode = String(
+    safeShellPayload.runtime_mode || runtimeMode || "shadow",
+  ).trim();
+  const effectiveWorkspaceId = String(
+    safeShellPayload.workspace_id || workspaceId || "workspace-1",
+  ).trim();
+  const shellReady = safeShellPayload.ready === true;
+  const tone = shellReady ? "info" : "warn";
+
+  const runtimeLabels = {
+    workspaceLabel: effectiveWorkspaceId || "workspace-1",
+    runtimeModeLabel: effectiveRuntimeMode === "live" ? "Live mode" : "Test mode",
+  };
+
+  if (effectiveWorkspaceId === "gmail-intake") {
+    return {
+      runtimeLabels,
+      topbarStatus: {
+        message: shellReady
+          ? "Browser shell is ready. Finishing Gmail workspace hydration..."
+          : "Warming the browser shell and Gmail workspace...",
+        tone,
+      },
+      panelStatus: {
+        slot: "runtime",
+        tone,
+        message: shellReady
+          ? "Browser shell is responding. Loading the Gmail workspace UI..."
+          : "Browser shell is still warming for the Gmail workspace.",
+      },
+    };
+  }
+
+  if (beginnerPrimarySurface) {
+    const target = beginnerSurfaceTargetLabel(activeView);
+    return {
+      runtimeLabels,
+      topbarStatus: {
+        message: shellReady
+          ? `Opening the ${target}...`
+          : `Preparing the ${target}...`,
+        tone,
+      },
+      panelStatus: {
+        slot: "runtime",
+        tone,
+        message: shellReady
+          ? `Browser shell is responding. Loading the ${target}...`
+          : "Browser shell is still warming.",
+      },
+    };
+  }
+
+  return {
+    runtimeLabels,
+    topbarStatus: {
+      message: shellReady
+        ? "Browser shell is ready. Finishing browser workspace hydration..."
+        : "Warming the browser shell and app capabilities...",
+      tone,
+    },
+    panelStatus: {
+      slot: "runtime",
+      tone,
+      message: shellReady
+        ? "Browser shell is responding. Loading the full workspace UI..."
+        : "Browser shell is still warming.",
+    },
+  };
+}
+
+export function buildStagedBootstrapRetryPresentation({
+  attempt,
+  maxAttempts,
+  error,
+  workspaceId = "",
+  activeView = "",
+  beginnerPrimarySurface = false,
+} = {}) {
+  const target = workspaceId === "gmail-intake" || activeView === "gmail-intake"
+    ? "Gmail workspace"
+    : beginnerPrimarySurface
+      ? beginnerSurfaceTargetLabel(activeView)
+      : "browser workspace";
+  const detail = error?.message ? ` ${error.message}` : "";
+  return {
+    topbarStatus: {
+      message: `Finishing ${target} hydration (attempt ${attempt} of ${maxAttempts})...`,
+      tone: "warn",
+    },
+    panelStatus: {
+      slot: "runtime",
+      tone: "warn",
+      message: `The ${target} is still warming after the shell became ready.${detail}`,
+    },
+  };
+}

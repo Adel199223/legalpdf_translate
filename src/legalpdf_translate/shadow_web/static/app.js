@@ -142,6 +142,8 @@ import {
 } from "./interpretation_review_state.js";
 import {
   beginnerSurfaceTargetLabel as deriveBeginnerSurfaceTargetLabel,
+  buildShellBootstrapSnapshotPresentation,
+  buildStagedBootstrapRetryPresentation,
   deriveBeginnerPrimarySurface,
   deriveRouteAwareTopbarStatus,
   isLiveRuntimeMode as deriveLiveRuntimeMode,
@@ -2288,80 +2290,45 @@ function renderBootstrap(payload) {
 }
 
 function applyShellBootstrapSnapshot(payload) {
-  const shellPayload = payload?.normalized_payload?.shell || {};
-  const runtimeMode = String(shellPayload.runtime_mode || appState.runtimeMode || "shadow").trim();
-  const workspaceId = String(shellPayload.workspace_id || appState.workspaceId || "workspace-1").trim();
-  const shellReady = shellPayload.ready === true;
+  const presentation = buildShellBootstrapSnapshotPresentation({
+    shellPayload: payload?.normalized_payload?.shell,
+    runtimeMode: appState.runtimeMode,
+    workspaceId: appState.workspaceId,
+    activeView: appState.activeView,
+    beginnerPrimarySurface: isBeginnerPrimarySurface(),
+  });
   renderShellRuntimeLabelsInto({
     workspaceLabel: qs("workspace-id-label"),
     runtimeModeLabel: qs("runtime-mode-label"),
-  }, {
-    workspaceLabel: workspaceId || "workspace-1",
-    runtimeModeLabel: runtimeMode === "live" ? "Live mode" : "Test mode",
-  });
-  if (workspaceId === "gmail-intake") {
-    setTopbarStatus(
-      shellReady
-        ? "Browser shell is ready. Finishing Gmail workspace hydration..."
-        : "Warming the browser shell and Gmail workspace...",
-      shellReady ? "info" : "warn",
-    );
-    setPanelStatus(
-      "runtime",
-      shellReady ? "info" : "warn",
-      shellReady
-        ? "Browser shell is responding. Loading the Gmail workspace UI..."
-        : "Browser shell is still warming for the Gmail workspace.",
-    );
-    return;
-  }
-  if (isBeginnerPrimarySurface()) {
-    const target = beginnerSurfaceTargetLabel();
-    setTopbarStatus(
-      shellReady
-        ? `Opening the ${target}...`
-        : `Preparing the ${target}...`,
-      shellReady ? "info" : "warn",
-    );
-    setPanelStatus(
-      "runtime",
-      shellReady ? "info" : "warn",
-      shellReady
-        ? `Browser shell is responding. Loading the ${target}...`
-        : "Browser shell is still warming.",
-    );
-    return;
-  }
+  }, presentation.runtimeLabels);
   setTopbarStatus(
-    shellReady
-      ? "Browser shell is ready. Finishing browser workspace hydration..."
-      : "Warming the browser shell and app capabilities...",
-    shellReady ? "info" : "warn",
+    presentation.topbarStatus.message,
+    presentation.topbarStatus.tone,
   );
   setPanelStatus(
-    "runtime",
-    shellReady ? "info" : "warn",
-    shellReady
-      ? "Browser shell is responding. Loading the full workspace UI..."
-      : "Browser shell is still warming.",
+    presentation.panelStatus.slot,
+    presentation.panelStatus.tone,
+    presentation.panelStatus.message,
   );
 }
 
 function applyStagedBootstrapRetryStatus({ attempt, maxAttempts, error }) {
-  const target = appState.workspaceId === "gmail-intake" || appState.activeView === "gmail-intake"
-    ? "Gmail workspace"
-    : isBeginnerPrimarySurface()
-      ? beginnerSurfaceTargetLabel()
-      : "browser workspace";
-  const detail = error?.message ? ` ${error.message}` : "";
+  const presentation = buildStagedBootstrapRetryPresentation({
+    attempt,
+    maxAttempts,
+    error,
+    workspaceId: appState.workspaceId,
+    activeView: appState.activeView,
+    beginnerPrimarySurface: isBeginnerPrimarySurface(),
+  });
   setTopbarStatus(
-    `Finishing ${target} hydration (attempt ${attempt} of ${maxAttempts})...`,
-    "warn",
+    presentation.topbarStatus.message,
+    presentation.topbarStatus.tone,
   );
   setPanelStatus(
-    "runtime",
-    "warn",
-    `The ${target} is still warming after the shell became ready.${detail}`,
+    presentation.panelStatus.slot,
+    presentation.panelStatus.tone,
+    presentation.panelStatus.message,
   );
 }
 

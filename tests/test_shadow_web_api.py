@@ -809,6 +809,254 @@ console.log(JSON.stringify(payload));
     assert results["beginnerLabel"] == "profile setup screen"
 
 
+def test_shadow_web_shell_presentation_module_builds_bootstrap_status_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    shell_source = (static_dir / "shell_presentation.js").read_text(encoding="utf-8")
+
+    assert "export function buildShellBootstrapSnapshotPresentation" in shell_source
+    assert "export function buildStagedBootstrapRetryPresentation" in shell_source
+    bootstrap_builder_source = shell_source[
+        shell_source.index("export function buildShellBootstrapSnapshotPresentation") :
+    ]
+    for forbidden in [
+        "document",
+        "innerHTML",
+        "renderShellRuntimeLabelsInto",
+        "setTopbarStatus",
+        "setPanelStatus",
+        "fetchJson",
+    ]:
+        assert forbidden not in bootstrap_builder_source
+
+    import_block = app_js[: app_js.index('from "./shell_ui.js";')]
+    assert "buildShellBootstrapSnapshotPresentation" in import_block
+    assert "buildStagedBootstrapRetryPresentation" in import_block
+
+    snapshot_start = app_js.index("function applyShellBootstrapSnapshot")
+    snapshot_end = app_js.index("\nfunction applyStagedBootstrapRetryStatus", snapshot_start)
+    snapshot_block = app_js[snapshot_start:snapshot_end]
+    assert "buildShellBootstrapSnapshotPresentation({" in snapshot_block
+    assert "renderShellRuntimeLabelsInto(" in snapshot_block
+    assert "setTopbarStatus(" in snapshot_block
+    assert "setPanelStatus(" in snapshot_block
+    assert "Browser shell is ready. Finishing Gmail workspace hydration..." not in snapshot_block
+    assert "Warming the browser shell and Gmail workspace..." not in snapshot_block
+    assert "Browser shell is still warming for the Gmail workspace." not in snapshot_block
+    assert "Opening the ${target}..." not in snapshot_block
+    assert "Preparing the ${target}..." not in snapshot_block
+    assert "Browser shell is still warming." not in snapshot_block
+
+    retry_start = app_js.index("function applyStagedBootstrapRetryStatus")
+    retry_end = app_js.index("\nasync function loadBootstrap", retry_start)
+    retry_block = app_js[retry_start:retry_end]
+    assert "buildStagedBootstrapRetryPresentation({" in retry_block
+    assert "setTopbarStatus(" in retry_block
+    assert "setPanelStatus(" in retry_block
+    assert "Gmail workspace" not in retry_block
+    assert "browser workspace" not in retry_block
+    assert "Finishing ${target} hydration" not in retry_block
+    assert "is still warming after the shell became ready" not in retry_block
+
+    script = """
+const shell = await import(__SHELL_MODULE_URL__);
+const malicious = `<img src=x onerror=alert(1)><script>bad()</script>`;
+
+const payload = {
+  gmailWarm: shell.buildShellBootstrapSnapshotPresentation({
+    shellPayload: { workspace_id: "gmail-intake", runtime_mode: "live", ready: false },
+    runtimeMode: "shadow",
+    workspaceId: "profile",
+    activeView: "profile",
+    beginnerPrimarySurface: true,
+  }),
+  gmailReady: shell.buildShellBootstrapSnapshotPresentation({
+    shellPayload: { workspace_id: "gmail-intake", runtime_mode: "live", ready: true },
+  }),
+  beginnerReady: shell.buildShellBootstrapSnapshotPresentation({
+    shellPayload: { workspace_id: "profile", runtime_mode: "shadow", ready: true },
+    activeView: "profile",
+    beginnerPrimarySurface: true,
+  }),
+  beginnerWarm: shell.buildShellBootstrapSnapshotPresentation({
+    shellPayload: { workspace_id: "dashboard", runtime_mode: "shadow", ready: false },
+    activeView: "dashboard",
+    beginnerPrimarySurface: true,
+  }),
+  genericReady: shell.buildShellBootstrapSnapshotPresentation({
+    shellPayload: { workspace_id: "extension-lab", runtime_mode: "live", ready: true },
+    activeView: "extension-lab",
+    beginnerPrimarySurface: false,
+  }),
+  genericWarm: shell.buildShellBootstrapSnapshotPresentation({
+    shellPayload: { workspace_id: "extension-lab", runtime_mode: "shadow", ready: false },
+  }),
+  maliciousWorkspace: shell.buildShellBootstrapSnapshotPresentation({
+    shellPayload: { workspace_id: malicious, runtime_mode: "live", ready: true },
+  }),
+  nullSnapshot: shell.buildShellBootstrapSnapshotPresentation(),
+  retryGmail: shell.buildStagedBootstrapRetryPresentation({
+    attempt: 2,
+    maxAttempts: 4,
+    workspaceId: "gmail-intake",
+    activeView: "dashboard",
+    beginnerPrimarySurface: true,
+  }),
+  retryBeginner: shell.buildStagedBootstrapRetryPresentation({
+    attempt: 3,
+    maxAttempts: 5,
+    error: { message: malicious },
+    workspaceId: "profile",
+    activeView: "settings",
+    beginnerPrimarySurface: true,
+  }),
+  retryGeneric: shell.buildStagedBootstrapRetryPresentation({
+    attempt: 1,
+    maxAttempts: 3,
+    error: {},
+    workspaceId: "extension-lab",
+    activeView: "extension-lab",
+    beginnerPrimarySurface: false,
+  }),
+  nullRetry: shell.buildStagedBootstrapRetryPresentation(),
+  exportTypes: {
+    snapshot: typeof shell.buildShellBootstrapSnapshotPresentation,
+    retry: typeof shell.buildStagedBootstrapRetryPresentation,
+  },
+};
+
+console.log(JSON.stringify(payload));
+"""
+    results = run_browser_esm_json_probe(
+        script,
+        {"__SHELL_MODULE_URL__": "shell_presentation.js"},
+        timeout_seconds=30,
+    )
+
+    assert results["gmailWarm"] == {
+        "runtimeLabels": {"workspaceLabel": "gmail-intake", "runtimeModeLabel": "Live mode"},
+        "topbarStatus": {
+            "message": "Warming the browser shell and Gmail workspace...",
+            "tone": "warn",
+        },
+        "panelStatus": {
+            "slot": "runtime",
+            "tone": "warn",
+            "message": "Browser shell is still warming for the Gmail workspace.",
+        },
+    }
+    assert results["gmailReady"]["topbarStatus"] == {
+        "message": "Browser shell is ready. Finishing Gmail workspace hydration...",
+        "tone": "info",
+    }
+    assert results["gmailReady"]["panelStatus"] == {
+        "slot": "runtime",
+        "tone": "info",
+        "message": "Browser shell is responding. Loading the Gmail workspace UI...",
+    }
+    assert results["beginnerReady"]["topbarStatus"] == {
+        "message": "Opening the profile setup screen...",
+        "tone": "info",
+    }
+    assert results["beginnerReady"]["panelStatus"] == {
+        "slot": "runtime",
+        "tone": "info",
+        "message": "Browser shell is responding. Loading the profile setup screen...",
+    }
+    assert results["beginnerWarm"]["topbarStatus"] == {
+        "message": "Preparing the overview screen...",
+        "tone": "warn",
+    }
+    assert results["beginnerWarm"]["panelStatus"]["message"] == "Browser shell is still warming."
+    assert results["genericReady"]["topbarStatus"] == {
+        "message": "Browser shell is ready. Finishing browser workspace hydration...",
+        "tone": "info",
+    }
+    assert results["genericReady"]["panelStatus"] == {
+        "slot": "runtime",
+        "tone": "info",
+        "message": "Browser shell is responding. Loading the full workspace UI...",
+    }
+    assert results["genericWarm"]["topbarStatus"] == {
+        "message": "Warming the browser shell and app capabilities...",
+        "tone": "warn",
+    }
+    assert results["genericWarm"]["panelStatus"]["message"] == "Browser shell is still warming."
+    assert results["maliciousWorkspace"]["runtimeLabels"] == {
+        "workspaceLabel": "<img src=x onerror=alert(1)><script>bad()</script>",
+        "runtimeModeLabel": "Live mode",
+    }
+    assert results["maliciousWorkspace"]["topbarStatus"]["message"] == (
+        "Browser shell is ready. Finishing browser workspace hydration..."
+    )
+    assert results["nullSnapshot"] == {
+        "runtimeLabels": {"workspaceLabel": "workspace-1", "runtimeModeLabel": "Test mode"},
+        "topbarStatus": {
+            "message": "Warming the browser shell and app capabilities...",
+            "tone": "warn",
+        },
+        "panelStatus": {
+            "slot": "runtime",
+            "tone": "warn",
+            "message": "Browser shell is still warming.",
+        },
+    }
+    assert results["retryGmail"] == {
+        "topbarStatus": {
+            "message": "Finishing Gmail workspace hydration (attempt 2 of 4)...",
+            "tone": "warn",
+        },
+        "panelStatus": {
+            "slot": "runtime",
+            "tone": "warn",
+            "message": "The Gmail workspace is still warming after the shell became ready.",
+        },
+    }
+    assert results["retryBeginner"] == {
+        "topbarStatus": {
+            "message": "Finishing settings screen hydration (attempt 3 of 5)...",
+            "tone": "warn",
+        },
+        "panelStatus": {
+            "slot": "runtime",
+            "tone": "warn",
+            "message": (
+                "The settings screen is still warming after the shell became ready. "
+                "<img src=x onerror=alert(1)><script>bad()</script>"
+            ),
+        },
+    }
+    assert results["retryGeneric"] == {
+        "topbarStatus": {
+            "message": "Finishing browser workspace hydration (attempt 1 of 3)...",
+            "tone": "warn",
+        },
+        "panelStatus": {
+            "slot": "runtime",
+            "tone": "warn",
+            "message": "The browser workspace is still warming after the shell became ready.",
+        },
+    }
+    assert results["nullRetry"] == {
+        "topbarStatus": {
+            "message": "Finishing browser workspace hydration (attempt undefined of undefined)...",
+            "tone": "warn",
+        },
+        "panelStatus": {
+            "slot": "runtime",
+            "tone": "warn",
+            "message": "The browser workspace is still warming after the shell became ready.",
+        },
+    }
+    assert results["exportTypes"] == {"snapshot": "function", "retry": "function"}
+
+
 def test_shadow_web_shell_ui_module_centralizes_safe_bootstrap_label_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -32427,8 +32675,9 @@ def test_shadow_web_live_mode_and_gmail_runtime_copy_stay_beginner_safe() -> Non
     assert "DAILY_RUNTIME_MODE_BANNER_ROUTES" in shell_js
     assert 'runtimeMode === "live"' in shell_js
     assert "appState.runtimeMode" in app_js
-    assert '"Warming the browser shell and Gmail workspace..."' in app_js
+    assert '"Warming the browser shell and Gmail workspace..."' in shell_js
     assert '"Warming the browser shell, Gmail bridge, and workspace..."' not in app_js
+    assert '"Warming the browser shell, Gmail bridge, and workspace..."' not in shell_js
     assert '"Live mode"' in shell_js
     assert '"Test mode"' in shell_js
 
@@ -35428,6 +35677,11 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
             "application/javascript"
         )
         assert "runGmailBusyAction" in gmail_action_runner_asset.text
+        shell_presentation_asset = client.get(f"/static-build/{asset_version}/shell_presentation.js")
+        assert shell_presentation_asset.status_code == 200
+        assert shell_presentation_asset.headers["content-type"].startswith("application/javascript")
+        assert "buildShellBootstrapSnapshotPresentation" in shell_presentation_asset.text
+        assert "buildStagedBootstrapRetryPresentation" in shell_presentation_asset.text
         shell_ui_asset = client.get(f"/static-build/{asset_version}/shell_ui.js")
         assert shell_ui_asset.status_code == 200
         assert shell_ui_asset.headers["content-type"].startswith("application/javascript")
