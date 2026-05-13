@@ -21666,6 +21666,77 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_translation_action_presentation_module_owns_primary_action_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "translation_action_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./translation_action_presentation.js"' in translation_js
+    assert "deriveTranslationActionStatePresentation" in translation_js
+    assert "export function deriveTranslationActionState" in presentation_js
+    assert "export function renderTranslationPrimaryActionsInto" in translation_ui_js
+
+    for expected_copy in [
+        "Choose a PDF or image to enable Start Translate.",
+        "Checking the replacement document...",
+        "Checking the document before translation starts...",
+        "A translation run is already in progress. Cancel it or wait for it to finish before starting another one.",
+        "Gmail attachment is prepared. Review settings, then start translation.",
+        "The prepared document is ready. Confirm the language and output folder, then start translation.",
+        "The document is ready. Confirm the language and output folder, then start translation.",
+        "The document could not be staged. Choose another file to continue.",
+    ]:
+        assert expected_copy in presentation_js
+
+    for forbidden in [
+        "document.create",
+        "document.querySelector",
+        "globalThis.document",
+        "window.",
+        "sessionStorage",
+        "localStorage",
+        "fetch(",
+        "fetchJson",
+        "appState",
+        "setDiagnostics",
+        "setPanelStatus",
+        "renderTranslation",
+        "renderTranslationPrimaryActionsInto",
+        "innerHTML",
+        "translationState",
+        "deriveTranslationSourceState",
+        "currentPreparedTranslationLaunch",
+    ]:
+        assert forbidden not in presentation_js
+
+    derive_start = translation_js.index("export function deriveTranslationActionState")
+    derive_end = translation_js.index("\n\nfunction renderTranslationSourceCard", derive_start)
+    derive_block = translation_js[derive_start:derive_end]
+    assert "deriveTranslationSourceState({ job })" in derive_block
+    assert "translationState.currentJobId" in derive_block
+    assert "deriveTranslationActionStatePresentation(" in derive_block
+    assert "let helperText" not in derive_block
+    assert "Checking the replacement document..." not in derive_block
+    assert "sourceState.fromGmail" not in derive_block
+    assert "startEnabled: canStart" not in derive_block
+
+    sync_start = translation_js.index("function syncTranslationPrimaryActionState")
+    sync_end = translation_js.index("\n\nexport function deriveTranslationRunStatusView", sync_start)
+    sync_block = translation_js[sync_start:sync_end]
+    assert "deriveTranslationActionState()" in sync_block
+    assert "renderTranslationPrimaryActionsInto(" in sync_block
+    assert ".innerHTML" not in sync_block
+
+
 def test_translation_ui_module_centralizes_prepared_controls_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -34602,6 +34673,14 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
             "application/javascript"
         )
         assert "deriveTranslationRunStatusView" in translation_run_status_presentation_asset.text
+        translation_action_presentation_asset = client.get(
+            f"/static-build/{asset_version}/translation_action_presentation.js"
+        )
+        assert translation_action_presentation_asset.status_code == 200
+        assert translation_action_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "deriveTranslationActionState" in translation_action_presentation_asset.text
         translation_result_presentation_asset = client.get(
             f"/static-build/{asset_version}/translation_result_presentation.js"
         )
