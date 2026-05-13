@@ -21401,6 +21401,90 @@ console.log(JSON.stringify({
     assert results["nullReturnType"] == "undefined"
 
 
+def test_translation_run_status_presentation_module_owns_run_status_view() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    translation_ui_js = (static_dir / "translation_ui.js").read_text(encoding="utf-8")
+    presentation_path = static_dir / "translation_run_status_presentation.js"
+    assert presentation_path.exists()
+    presentation_js = presentation_path.read_text(encoding="utf-8")
+
+    assert 'from "./translation_run_status_presentation.js"' in translation_js
+    assert "deriveTranslationRunStatusViewPresentation" in translation_js
+    assert "export function deriveTranslationRunStatusView" in presentation_js
+    assert "export function renderTranslationRunStatusInto" in translation_ui_js
+    assert "renderTranslationRunStatusInto" in translation_js
+
+    for removed_helper in [
+        "PAGE_FLAG_LOG_RE",
+        "PAGE_STATUS_LOG_RE",
+        "function summarizeTranslationLogFlags",
+        "function friendlyTranslationTaskText",
+    ]:
+        assert removed_helper not in translation_js
+        assert removed_helper in presentation_js
+
+    for expected_copy in [
+        "Choose a source file to begin.",
+        "Checking the replacement document...",
+        "Prepared Gmail attachment is ready to start.",
+        "Current translation job is using this source.",
+        "Source file is ready. Confirm the language and folder, then start translation.",
+        "No image or retry markers yet.",
+        "No flagged pages or errors.",
+        "Latest technical state is available in details.",
+    ]:
+        assert expected_copy in presentation_js
+
+    for forbidden in [
+        "document.create",
+        "document.querySelector",
+        "globalThis.document",
+        "window.",
+        "sessionStorage",
+        "localStorage",
+        "fetch(",
+        "fetchJson",
+        "appState",
+        "setDiagnostics",
+        "setPanelStatus",
+        "renderTranslation",
+        "renderTranslationRunStatusInto",
+        "innerHTML",
+        "translationState",
+        "currentPreparedTranslationLaunch",
+        "deriveTranslationSourceState",
+    ]:
+        assert forbidden not in presentation_js
+
+    derive_start = translation_js.index("export function deriveTranslationRunStatusView")
+    derive_end = translation_js.index("\n\nfunction renderTranslationRunStatus", derive_start)
+    derive_block = translation_js[derive_start:derive_end]
+    assert "currentPreparedTranslationLaunch()" in derive_block
+    assert "deriveTranslationSourceState({ job, preparedLaunch })" in derive_block
+    assert "currentSourcePageCount()" in derive_block
+    assert "deriveTranslationRunStatusViewPresentation(" in derive_block
+    assert "summarizeTranslationLogFlags" not in derive_block
+    assert "friendlyTranslationTaskText" not in derive_block
+    assert "let tone" not in derive_block
+    assert "let chipText" not in derive_block
+    assert "imageRetryParts" not in derive_block
+    assert "alertParts" not in derive_block
+
+    render_start = translation_js.index("function renderTranslationRunStatus")
+    render_end = translation_js.index("\n\nfunction translationDownloadLinkNodes", render_start)
+    render_block = translation_js[render_start:render_end]
+    assert "deriveTranslationRunStatusView(job)" in render_block
+    assert "renderTranslationRunStatusInto(nodes, view)" in render_block
+    assert ".innerHTML" not in render_block
+
+
 def test_translation_ui_module_centralizes_primary_action_renderer() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -34510,6 +34594,14 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert translation_source_presentation_asset.status_code == 200
         assert translation_source_presentation_asset.headers["content-type"].startswith("application/javascript")
         assert "buildTranslationSourceCardPresentation" in translation_source_presentation_asset.text
+        translation_run_status_presentation_asset = client.get(
+            f"/static-build/{asset_version}/translation_run_status_presentation.js"
+        )
+        assert translation_run_status_presentation_asset.status_code == 200
+        assert translation_run_status_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "deriveTranslationRunStatusView" in translation_run_status_presentation_asset.text
         translation_result_presentation_asset = client.get(
             f"/static-build/{asset_version}/translation_result_presentation.js"
         )
