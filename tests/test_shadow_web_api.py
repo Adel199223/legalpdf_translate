@@ -30108,6 +30108,96 @@ def test_power_tools_presentation_module_owns_bootstrap_state() -> None:
     assert "Latest startup trace session:" not in render_block
 
 
+def test_power_tools_presentation_module_owns_action_result_state() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    power_tools_js = (static_dir / "power-tools.js").read_text(encoding="utf-8")
+    power_tools_presentation_module = static_dir / "power_tools_presentation.js"
+
+    assert power_tools_presentation_module.exists()
+    power_tools_presentation_source = power_tools_presentation_module.read_text(encoding="utf-8")
+
+    expected_exports = [
+        "buildPowerToolsGlossarySavePresentation",
+        "buildPowerToolsGlossaryExportPresentation",
+        "buildPowerToolsBuilderRunPresentation",
+        "buildPowerToolsBuilderApplyPresentation",
+        "buildPowerToolsCalibrationRunPresentation",
+        "buildPowerToolsDebugBundlePresentation",
+        "buildPowerToolsRunReportPresentation",
+        "buildPowerToolsArmWindowTracePresentation",
+    ]
+    for export_name in expected_exports:
+        assert f"export function {export_name}" in power_tools_presentation_source
+        assert export_name in power_tools_js
+
+    for token in [
+        "document",
+        "fetchJson",
+        "appState",
+        "setDiagnostics",
+        "setPanelStatus",
+        "renderPowerTools",
+        "innerHTML",
+        "addEventListener",
+    ]:
+        assert token not in power_tools_presentation_source
+    assert "window." not in power_tools_presentation_source
+    assert "window[" not in power_tools_presentation_source
+
+    assert "function applyPowerToolsActionPresentation" in power_tools_js
+    assert "renderPowerToolsResultFieldsInto({" in power_tools_js
+
+    handler_names = [
+        "handleGlossarySave",
+        "handleGlossaryExport",
+        "handleBuilderRun",
+        "handleBuilderApply",
+        "handleCalibrationRun",
+        "handleDebugBundle",
+        "handleRunReport",
+        "handleArmWindowTrace",
+    ]
+    handlers_block_start = power_tools_js.index("async function handleGlossarySave")
+    handlers_block_end = power_tools_js.index("\nexport function initializePowerToolsUi", handlers_block_start)
+    handlers_block = power_tools_js[handlers_block_start:handlers_block_end]
+    for handler_name in handler_names:
+        handler_start = power_tools_js.index(f"async function {handler_name}")
+        next_handler = power_tools_js.find("\nasync function ", handler_start + 1)
+        if next_handler == -1:
+            next_handler = handlers_block_end
+        handler_block = power_tools_js[handler_start:next_handler]
+        assert "applyPowerToolsActionPresentation(" in handler_block
+        assert "setPanelStatus(" not in handler_block
+        assert "setDiagnostics(" not in handler_block
+
+    moved_inline_fragments = [
+        "Glossary setup saved.",
+        "Advanced glossary data was saved to browser settings and project glossary storage.",
+        "Glossary markdown exported.",
+        "payload.normalized_payload?.markdown_path ||",
+        "Built glossary suggestions from ${payload.normalized_payload?.pages_scanned",
+        "payload.normalized_payload?.artifact_dir ||",
+        "Glossary suggestions applied.",
+        "Selected glossary suggestions were merged into personal and project glossaries.",
+        "Quality check completed.",
+        "payload.normalized_payload?.report_md_path ||",
+        "payload.normalized_payload?.report_json_path ||",
+        "Troubleshooting bundle created.",
+        "payload.normalized_payload?.bundle_path ||",
+        "Run report generated.",
+        "payload.normalized_payload?.report_path ||",
+        "payload.normalized_payload?.arm_path ||",
+    ]
+    for fragment in moved_inline_fragments:
+        assert fragment not in handlers_block
+
+
 def test_power_tools_ui_module_centralizes_safe_run_directory_rendering() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -35308,6 +35398,9 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         assert power_tools_presentation_asset.status_code == 200
         assert power_tools_presentation_asset.headers["content-type"].startswith("application/javascript")
         assert "buildPowerToolsBootstrapPresentation" in power_tools_presentation_asset.text
+        assert "buildPowerToolsBuilderRunPresentation" in power_tools_presentation_asset.text
+        assert "buildPowerToolsCalibrationRunPresentation" in power_tools_presentation_asset.text
+        assert "buildPowerToolsRunReportPresentation" in power_tools_presentation_asset.text
         power_tools_ui_asset = client.get(f"/static-build/{asset_version}/power_tools_ui.js")
         assert power_tools_ui_asset.status_code == 200
         assert power_tools_ui_asset.headers["content-type"].startswith("application/javascript")
