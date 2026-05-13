@@ -7,6 +7,7 @@ def _run_translation_browser_state_probe() -> dict[str, object]:
     script = r"""
 const stateModuleUrl = __STATE_MODULE_URL__;
 const translationModuleUrl = __TRANSLATION_MODULE_URL__;
+const translationCompletionPresentationModuleUrl = __TRANSLATION_COMPLETION_PRESENTATION_MODULE_URL__;
 const recentWorkPresentationModuleUrl = __RECENT_WORK_PRESENTATION_MODULE_URL__;
 const dashboardModuleUrl = __DASHBOARD_MODULE_URL__;
 
@@ -922,9 +923,10 @@ const results = {};
 
 {
   const scenario = await setupScenario("completion-presentation");
+  const completionPresentation = await import(translationCompletionPresentationModuleUrl);
   results.completionPresentation = {
-    idle: scenario.translationModule.deriveTranslationCompletionPresentation(),
-    analyzeCompleted: scenario.translationModule.deriveTranslationCompletionPresentation({
+    idle: completionPresentation.deriveTranslationCompletionPresentation(),
+    analyzeCompleted: completionPresentation.deriveTranslationCompletionPresentation({
       job: {
         job_id: "analyze-1",
         job_kind: "analyze",
@@ -937,7 +939,7 @@ const results = {};
         },
       },
     }),
-    translationCompleted: scenario.translationModule.deriveTranslationCompletionPresentation({
+    translationCompleted: completionPresentation.deriveTranslationCompletionPresentation({
       job: {
         job_id: "translate-1",
         job_kind: "translate",
@@ -952,7 +954,7 @@ const results = {};
         output_docx: "C:/tmp/translated.docx",
       },
     }),
-    loadedRow: scenario.translationModule.deriveTranslationCompletionPresentation({
+    loadedRow: completionPresentation.deriveTranslationCompletionPresentation({
       currentRowId: 17,
       saveSeed: {
         case_number: "CASE-17",
@@ -961,7 +963,7 @@ const results = {};
         translation_date: "2026-04-20",
       },
     }),
-    arabicRequired: scenario.translationModule.deriveTranslationCompletionPresentation({
+    arabicRequired: completionPresentation.deriveTranslationCompletionPresentation({
       job: {
         job_id: "translate-ar",
         job_kind: "translate",
@@ -980,7 +982,7 @@ const results = {};
         docx_path: "C:/tmp/arabic.docx",
       },
     }),
-    arabicResolved: scenario.translationModule.deriveTranslationCompletionPresentation({
+    arabicResolved: completionPresentation.deriveTranslationCompletionPresentation({
       job: {
         job_id: "translate-ar-done",
         job_kind: "translate",
@@ -999,7 +1001,7 @@ const results = {};
         docx_path: "C:/tmp/arabic-done.docx",
       },
     }),
-    gmailAttachmentReady: scenario.translationModule.deriveTranslationCompletionPresentation({
+    gmailAttachmentReady: completionPresentation.deriveTranslationCompletionPresentation({
       arabicReview: {
         required: false,
         resolved: true,
@@ -1012,10 +1014,11 @@ const results = {};
         hasMoreItems: true,
       },
     }),
-    gmailFinalizationReady: scenario.translationModule.deriveTranslationCompletionPresentation({
+    gmailFinalizationReady: completionPresentation.deriveTranslationCompletionPresentation({
       gmailBatchContext: preparedLaunch().gmail_batch_context,
       gmailFinalizeReady: true,
     }),
+    compatibilityIdle: scenario.translationModule.deriveTranslationCompletionPresentation(),
   };
 }
 
@@ -1149,6 +1152,7 @@ console.log(JSON.stringify(results));
         {
             "__STATE_MODULE_URL__": "state.js",
             "__TRANSLATION_MODULE_URL__": "translation.js",
+            "__TRANSLATION_COMPLETION_PRESENTATION_MODULE_URL__": "translation_completion_presentation.js",
             "__RECENT_WORK_PRESENTATION_MODULE_URL__": "recent_work_presentation.js",
             "__DASHBOARD_MODULE_URL__": "dashboard_presentation.js",
         },
@@ -1368,6 +1372,7 @@ def test_translation_completion_presentation_helper_uses_beginner_finish_copy() 
     assert idle["available"] is False
     assert idle["drawerStatus"] == "When a translation finishes, you can review the result, download files, and save the case record here."
     assert idle["saveTitle"] == "Save Case Record"
+    assert presentation["compatibilityIdle"] == idle
 
     analyze = presentation["analyzeCompleted"]
     assert analyze["completionButtonLabel"] == "Review analysis"
