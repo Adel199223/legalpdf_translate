@@ -22814,6 +22814,69 @@ console.log(JSON.stringify({
     assert results["partialReturnedText"] == "<img src=x onerror=alert(1)><script>bad()</script>"
 
 
+def test_translation_completion_presentation_module_owns_finish_drawer_copy() -> None:
+    static_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "legalpdf_translate"
+        / "shadow_web"
+        / "static"
+    )
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    translation_js = (static_dir / "translation.js").read_text(encoding="utf-8")
+    presentation_js = (static_dir / "translation_completion_presentation.js").read_text(encoding="utf-8")
+
+    assert "export function blankArabicReviewState" in presentation_js
+    assert "export function deriveTranslationCompletionPresentation" in presentation_js
+    assert "export function normalizeArabicReviewState" in presentation_js
+    assert "export function hasTranslationSaveSeedData" in presentation_js
+    assert 'from "./translation_completion_presentation.js"' in app_js
+    assert 'from "./translation_completion_presentation.js"' in translation_js
+
+    assert "export function deriveTranslationCompletionPresentation" not in translation_js
+    assert "function hasTranslationSaveSeedData" not in translation_js
+    assert "function normalizeArabicReviewState" not in translation_js
+    assert (
+        'export { deriveTranslationCompletionPresentation } '
+        'from "./translation_completion_presentation.js";'
+    ) in translation_js
+
+    former_completion_zone = translation_js[
+        translation_js.index("function currentArabicReviewState") : translation_js.index("function translationUiSnapshotKey")
+    ]
+    for expected_copy in [
+        "When a translation finishes, you can review the result, download files, and save the case record here.",
+        "Analysis complete. Review the report, then start a full translation when you are ready.",
+        "Translation complete. Review the translated document, then save the case record if everything looks right.",
+        "Review Arabic document in Word",
+        "Save this Gmail attachment",
+        "Every selected Gmail attachment is saved. You can create the Gmail reply when you are ready.",
+    ]:
+        assert expected_copy in presentation_js
+        assert expected_copy not in former_completion_zone
+
+    for forbidden in [
+        "document.",
+        "window.",
+        "sessionStorage",
+        "localStorage",
+        "fetch(",
+        "fetchJson",
+        "appState",
+        "setDiagnostics",
+        "setPanelStatus",
+        "renderTranslation",
+        "innerHTML",
+    ]:
+        assert forbidden not in presentation_js
+
+    surface_start = translation_js.index("function syncTranslationCompletionSurface")
+    surface_end = translation_js.index("\n\nfunction maybeAutoOpenTranslationCompletion", surface_start)
+    surface_block = translation_js[surface_start:surface_end]
+    assert "deriveTranslationCompletionPresentation({" in surface_block
+    assert "renderTranslationCompletionSurfaceInto({" in surface_block
+
+
 def test_translation_source_presentation_module_builds_source_card_state() -> None:
     static_dir = (
         Path(__file__).resolve().parents[1]
@@ -34456,6 +34519,16 @@ def test_shadow_web_versioned_static_route_serves_current_browser_asset_graph(tm
         )
         assert "buildTranslationResultCardPresentation" in translation_result_presentation_asset.text
         assert "deriveTranslationRecoveryState" in translation_result_presentation_asset.text
+        translation_completion_presentation_asset = client.get(
+            f"/static-build/{asset_version}/translation_completion_presentation.js"
+        )
+        assert translation_completion_presentation_asset.status_code == 200
+        assert translation_completion_presentation_asset.headers["content-type"].startswith(
+            "application/javascript"
+        )
+        assert "deriveTranslationCompletionPresentation" in translation_completion_presentation_asset.text
+        assert "blankArabicReviewState" in translation_completion_presentation_asset.text
+        assert "normalizeArabicReviewState" in translation_completion_presentation_asset.text
         recovery_ui_asset = client.get(f"/static-build/{asset_version}/recovery_result_ui.js")
         assert recovery_ui_asset.status_code == 200
         assert recovery_ui_asset.headers["content-type"].startswith("application/javascript")

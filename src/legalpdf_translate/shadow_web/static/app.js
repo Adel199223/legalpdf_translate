@@ -21,8 +21,8 @@ import {
   deriveClientLaunchSessionSchemaVersion,
 } from "./gmail_handoff_state.js";
 import { deriveRecentWorkPresentation } from "./recent_work_presentation.js";
+import { deriveTranslationCompletionPresentation } from "./translation_completion_presentation.js";
 import {
-  deriveTranslationCompletionPresentation,
   initializeTranslationUi,
   loadTranslationHistoryItem,
   openTranslationCompletionDrawer,
