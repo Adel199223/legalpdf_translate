@@ -14,9 +14,27 @@ Rich source-aware formatting requires complete matching structured pairs. Curren
 
 Rebuild private accepted examples into new outputs; compare every DOCX package entry against the accepted Word-rendered version. Exact package equality permits reuse of its bound render evidence. Any layout/content difference requires fresh rendering and every-page inspection. Keep private PDFs/DOCXs/PNGs outside Git; use synthetic accented names in published fixtures. Translation deliverables remain DOCX.
 
-The existing native Windows `0x8001010d` diagnostic can occur at the honorarios small-screen dialog's `app.processEvents()` even when assertions pass. Record native and isolated rerun outcomes; offscreen success is not native export acceptance. This formatting release does not repair or alter unattended honorarios export.
+The existing native Windows `0x8001010d` diagnostic can occur at the honorarios small-screen dialog's `app.processEvents()` even when assertions pass. Record native and isolated rerun outcomes; do not suppress the diagnostic. This layout-only test does not invoke Word export, and offscreen success is not native export acceptance. The honorarios export repair below does not claim to fix this separate Qt event-processing diagnostic.
 
 Qt render-review subprocess tests must read the renderer's JSON artifact rather than assume stdout contains only JSON: dependency diagnostics can also appear there. Keep strict artifact parsing, successful process exit and geometry assertions; exercise noisy stdout without suppressing warnings or weakening layout checks.
+
+## Honorarios Word-to-PDF export
+
+Translation deliverables remain editable DOCX. Validate PDF generation only for the separate honorarios document; retain its DOCX and do not change legal wording, fees or layout to obtain a passing export.
+
+Focused offline regressions:
+
+```powershell
+.\.venv311\Scripts\python.exe -m pytest -q tests/test_word_automation.py tests/test_word_pdf_control.py tests/test_word_pdf_artifacts.py tests/test_word_pdf_runtime.py tests/test_word_pdf_script.py tests/test_honorarios_docx.py
+```
+
+These tests must not launch Word implicitly. Keep the native-launch guards in `tests/conftest.py`; parser, compiler and fake-COM checks do not establish native export readiness. Cover process identity and reuse, existing documents, content-free durable phases, early setup/pipe failures, bounded helper cleanup, cross-process exclusion, uncertain-cleanup quarantine, stale output, atomic publication, origin/security rejection, original-file hashes and accurate cleanup metadata. Browser/Qt callers perform one export with a 45-second allowance and bounded cleanup, not an automatic timeout re-probe/re-export.
+
+Run opt-in native acceptance on the same Windows host/interpreter as the app, only after the ownership and journal safeguards are active. Keep one original state directory across failure/recovery; changing APPDATA or deleting the journal must not bypass quarantine. Use synthetic data, an isolated shadow workspace and ignored/private artifacts. Never terminate unknown Word sessions or change Office security settings to make a test pass.
+
+Require a real expected-text canary, translation-kind and interpretation-kind honorarios through shared caller paths, the browser export route and asynchronous Qt worker, coexistence with an unsaved synthetic Word document, and an already-open source DOCX. Check unchanged source hashes and pre-existing window/content state, fresh readable PDF pages, confirmed owned-process exit and a healthy export after a bounded startup timeout. A startup-only probe, a PDF header, or an older PDF is insufficient. Render and inspect every page of retained Word-produced PDFs; neither XML checks nor another renderer substitute for Word-native acceptance. Observe cold conditions only when safely available, without closing unknown user work.
+
+Accepted 2026-09-07 evidence: eight successful native exports, including the two canaries, shared/browser/Qt paths and both coexistence cases; all six retained honorarios PDFs were one page and passed complete-page Poppler PNG inspection. Full pytest passed **2,176 tests** and `validate_dev.ps1 -Full` passed with the documented Dart fallback. The separate native small-screen Qt test passed its assertions but repeated `0x8001010d` on serial rerun; preserve that limitation. Browser acceptance exercised the real route with isolated data, not a claimed browser-button click. No live Gmail operation, Office repair or host-security change was part of this acceptance. See the [completed repair ExecPlan](exec_plans/completed/2026-09-07_honorarios_pdf_export_reliability.md) for exact evidence and scope.
 
 ## Common Targeted Browser And Gmail Tests
 ```powershell

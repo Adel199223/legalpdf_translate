@@ -17,7 +17,7 @@ The formatting-only release preserves compact editable Word output, coherent Ara
 
 Current production requests still return TXT, so new runs gain typography/RTL/page-number defaults, not fabricated source-aware associations. Exact regions and section furniture require retained validated source/target sidecars; missing evidence remains a manual-layout-review item. Saved text, historical usage and semantic findings survive local rebuilds. No provider call is required for formatting-only rebuilds.
 
-Translation prompts/models/efforts, OCR routing, browser/Gmail contracts and honorarios export behavior are unchanged. Terra/Sol policy promotion, complete structured production extraction/translation and unattended honorarios PDF reliability remain separate unfinished work, not accepted by this layout rollout. Translations remain DOCX.
+Translation prompts/models/efforts, OCR routing, browser/Gmail contracts and honorarios export behavior were unchanged by the formatting release. Terra/Sol policy promotion and complete structured production extraction/translation remain separate unfinished work, not accepted by this layout rollout. Honorarios PDF reliability was subsequently repaired and accepted separately, as recorded below. Translations remain DOCX.
 
 See `docs/assistant/exec_plans/completed/2026-09-07_approved_formatting_integration.md` for validation and rollout conditions; verify the merged PR and actual canonical head rather than assuming the old modernization baseline is current.
 
@@ -29,6 +29,15 @@ Recent validation baseline after PR #226:
 - broad shadow-web, route-state, and translation-browser regression group
 - `scripts\validate_dev.ps1 -Full`, with the known Dart wrapper AOT issue accepted only because the direct Dart fallback passed
 - light shadow-mode browser smoke on `main@c3ec60e` for Dashboard, New Job, Extension Lab, and Gmail intake, without opening live Gmail/OAuth/native-host flows
+
+## Accepted Honorarios PDF Repair — Integration Pending
+
+- The repair is accepted in `C:/Users/FA507/.codex/legalpdf_translate_honorarios_pdf`, branch `feat/honorarios-pdf-export`, from `main@9afe1d05577f271a8618969e8f0be31eb8641a3e`. Documentation sync and the normal integration/publication lifecycle are approved; no future merge SHA or PR result is assumed here. Verify actual canonical HEAD and GitHub checks before treating this branch as integrated.
+- Eight real same-host Word exports completed in approximately 6-8 seconds each: canaries, both honorarios kinds, the real isolated interpretation browser route, asynchronous Qt, open/unsaved Word coexistence, and post-timeout recovery. All six retained honorarios PDFs were one page with complete substantive text and every page visually reviewed; original DOCX hashes and tested open Word content/windows were preserved. Browser evidence is a real TestClient route/service/export with a transparent observer, not a UI click.
+- Initial export is one bounded 45-second call. Shared ownership checks, serialization, staged output and fresh-PDF verification protect existing files and Word sessions; uncertain cleanup remains quarantined. No automatic timeout retry; explicit Qt manual retry, select-existing-PDF/local-only recovery and Gmail fail-closed contracts remain intact.
+- Full pytest passed 2,176 tests and `validate_dev.ps1 -Full` passed with the documented direct-Dart fallback. The pre-existing `0x8001010d` native Qt small-screen layout-test diagnostic remains separately recorded; the real asynchronous export passed.
+- No live Gmail, paid API call, production model promotion, honorarios legal-text/rate change or ordinary translation-PDF output was included. Private synthetic artifacts stay outside Git. Preserve the unrelated quality checkpoint and the prior formatting worktree.
+- Evidence and implementation history: [completed honorarios repair ExecPlan](exec_plans/completed/2026-09-07_honorarios_pdf_export_reliability.md).
 
 ## What The App Does
 LegalPDF Translate is a Windows-first legal PDF translation and Gmail intake app. It translates PDFs page by page into DOCX, preserves run artifacts, supports browser and Qt workflows, records translation and interpretation work in the Job Log, and can continue from a real Gmail message through a browser extension/native-host bridge.
@@ -47,7 +56,9 @@ Important invariant: do not convert the translation workflow into one whole-docu
 - Roadmap resume anchor: `docs/assistant/SESSION_RESUME.md`.
 
 ## Current Next Step
-Start from clean canonical `main`. For translation-quality continuation, first inspect the preserved quality checkpoint and its ExecPlan, then isolate the next approved scope; do not reintroduce mixed research changes by merging that branch. The next consequential gap is source-associated structure in new production runs, followed by evidence-gated model evaluation/promotion and the separately deferred honorarios PDF issue. Preserve the original lifetime benchmark allowance; formatting integration adds no paid calls. Unrelated modernization remains normal small-PR work.
+Complete the approved honorarios repair integration/publication lifecycle first: verify exact-head checks, merge, synchronize canonical `main`, and run focused post-integration validation. If already completed, confirm the actual merge and current clean repository state rather than repeating publication from this pre-merge handoff. Do not begin unrelated work while this accepted repair remains only on its side branch.
+
+For translation-quality continuation afterward, first inspect the preserved quality checkpoint and its ExecPlan, then isolate the next approved scope; do not reintroduce mixed research changes by merging that branch. The remaining consequential gap is source-associated structure in new production runs, followed by evidence-gated model evaluation/promotion. Preserve the original lifetime benchmark allowance; neither the formatting release nor honorarios repair adds paid calls. Unrelated modernization remains normal small-PR work.
 
 For live Gmail checks, use canonical `main` only:
 1. Keep the primary worktree on `main`.

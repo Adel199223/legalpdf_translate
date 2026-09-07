@@ -21,5 +21,16 @@ Purpose: record official primary sources used for material external behavior/cap
 | https://learn.microsoft.com/en-us/windows/wsl/tutorials/wsl-vscode | `workspace_provenance_lock_policy`, `BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md` | VS Code + WSL uses a split client/server model and supports opening WSL projects via `code .`, relevant to host/provenance controls. | 2026-03-05 |
 | https://platform.openai.com/docs/guides/images-vision | `ocr_api_fallback_cost_policy`, `OPENAI_DOCS_CITATION_WORKFLOW.md` | Vision requests expose image-detail tradeoffs relevant to OCR fallback cost/latency planning for required-only paid fallback paths. | 2026-03-05 |
 
+## Honorarios Native Export
+
+Honorarios native-export sources checked during the 2026-09-07 repair:
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://learn.microsoft.com/en-us/office/vba/api/word.documents.open | `HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md` | VBA documents read-only, no-MRU and hidden-open arguments; its optional tail differs from the PIA signature. | 2026-09-07 |
+| https://learn.microsoft.com/en-us/dotnet/api/microsoft.office.interop.word.documents.open?view=word-pia | `HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md` | PIA Open has XMLTransform at position 16; use the common first twelve arguments for this PowerShell COM path. | 2026-09-07 |
+| https://learn.microsoft.com/en-us/dotnet/api/microsoft.office.interop.word._document.exportasfixedformat?view=word-pia | `HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md` | FixedFormatExtClassPtr is optional and selects an alternate renderer; native export omits it while keeping explicit protection/export settings. | 2026-09-07 |
+
 ## Freshness Rule
+
 - If a decision depends on unstable facts (pricing, limits, schedules, product behavior), re-check sources and update `verification_date` before implementation or release decisions.

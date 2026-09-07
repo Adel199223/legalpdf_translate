@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_updated": "2026-04-29T15:35:07Z",
+  "last_updated": "2026-09-07T17:10:25Z",
   "issues": [
     {
       "id": "google-photos-oauth-picker-validation-hygiene",
@@ -974,15 +974,16 @@
       "id": "desktop-qt-honorarios-export-reliability",
       "title": "Host-bound honorários PDF export and Gmail finalization readiness felt unstable because launch-only Word checks were too shallow",
       "first_seen_timestamp": "2026-03-12T00:00:00Z",
-      "last_seen_timestamp": "2026-03-30T18:21:00Z",
-      "repeat_count": 3,
+      "last_seen_timestamp": "2026-09-07T17:10:25Z",
+      "repeat_count": 4,
       "status": "mitigated",
       "trigger_source": "both",
       "symptoms": [
         "The visible LegalPDF window could show No responde while Word PDF export tried to launch or timed out.",
         "PDF failure warnings dumped raw PowerShell or COM text inline and could cascade into an extra Gmail missing-PDF warning.",
         "Focus-sensitive Qt tests around Return or Delete shortcuts could fail intermittently because leaked dialogs or stale focus changed the active target.",
-        "The browser finalization drawer could show Word as apparently ready from a shallow probe even though the real DOCX-to-PDF export path still timed out and ended in local_only."
+        "The browser finalization drawer could show Word as apparently ready from a shallow probe even though the real DOCX-to-PDF export path still timed out and ended in local_only.",
+        "September unattended export still stalled; active-Word attachment, unsafe cleanup assumptions and optional COM argument marshaling prevented reliable real-path acceptance."
       ],
       "likely_root_cause": "Host-bound Word PDF export originally ran on the GUI thread and failure handling spanned too many modal layers, the Qt harness did not yet enforce deterministic popup cleanup, activation, and shortcut targeting for focus-sensitive dialog tests, and launch-only Word readiness was too weak for the Gmail finalization path.",
       "attempted_fix_history": [
@@ -995,14 +996,19 @@
           "timestamp": "2026-03-30T00:00:00Z",
           "summary": "Browser/operator surfaces still treated launch-only Word readiness as sufficient proof for Gmail finalization.",
           "outcome": "insufficient"
+        },
+        {
+          "timestamp": "2026-09-07T17:10:25Z",
+          "summary": "Repeated native acceptance exposed last-blank-document COM disconnection and incompatible optional Open/export arguments; process-first ownership, anchored Quit, conservative quarantine and staged PDF verification passed eight real exports.",
+          "outcome": "accepted_same_host_mitigation"
         }
       ],
       "accepted_fix": {
-        "timestamp": "2026-03-30T00:00:00Z",
-        "summary": "Word export reliability now uses phase-aware diagnostics, bounded cleanup for app-owned stuck helpers, a real DOCX-to-PDF export canary, browser finalization_ready gating before Gmail reply finalization, and direct retry/report flows when export still fails after a passing canary.",
-        "expected_result": "Honorários export should stay responsive during host-bound PDF work, Gmail finalization should fail early when export is not truly ready, and last-mile export failures should stay recoverable and reportable."
+        "timestamp": "2026-09-07T17:10:25Z",
+        "summary": "Dedicated process/window ownership, unchanged blank anchor through Quit, common twelve-argument Open and fourteen-argument native PDF export, durable lock/quarantine, fresh staged-output verification and one bounded dispatch. Eight same-host canary/browser/Qt/coexistence/recovery exports passed; the separate existing native Qt layout diagnostic remains recorded.",
+        "expected_result": "Honorarios PDF export preserves original DOCX/prior good PDF and unrelated open Word documents, reports uncertain cleanup honestly and requires manual recovery instead of blind retries. No live Gmail acceptance is implied."
       },
-      "regressed_after_accepted_fix": false,
+      "regressed_after_accepted_fix": true,
       "affected_workflows": [
         "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md",
         "docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md",
@@ -1034,6 +1040,10 @@
         {
           "type": "execplan",
           "ref": "docs/assistant/exec_plans/completed/2026-03-30_gmail_finalization_word_pdf_reliability.md"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/completed/2026-09-07_honorarios_pdf_export_reliability.md"
         },
         {
           "type": "file",
