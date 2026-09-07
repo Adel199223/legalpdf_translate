@@ -43,13 +43,12 @@ from .user_settings import (
     save_joblog_settings_to_path,
     save_profile_settings_to_path,
 )
-from .word_automation import WordAutomationResult, export_docx_to_pdf_in_word, probe_word_pdf_export_support
+from .word_automation import WordAutomationResult, export_docx_to_pdf_in_word
 
 if TYPE_CHECKING:
     from .metadata_autofill import MetadataAutofillConfig, MetadataExtractionDiagnostics
 
 INITIAL_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS = 45.0
-RETRY_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS = 90.0
 COURT_EMAIL_DOMAIN = "tribunais.org.pt"
 COURT_EMAIL_CITY_ALIASES = {
     "reguengosdemonsaraz": "rmonsaraz",
@@ -997,28 +996,14 @@ def _build_pdf_export_response(
 
 
 def _run_pdf_export_with_retry(*, docx_path: Path, pdf_path: Path) -> dict[str, Any]:
-    preflight = probe_word_pdf_export_support(timeout_seconds=max(8.0, INITIAL_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS))
-    if not preflight.ok:
-        return _build_pdf_export_response(docx_path=docx_path, pdf_path=pdf_path, automation=preflight)
+    # Keep this helper name for existing callers. The shared exporter owns
+    # readiness, serialization and fresh-output verification; a timeout must
+    # return to manual recovery, not start another ambiguous Word operation.
     result = export_docx_to_pdf_in_word(
         docx_path,
         pdf_path,
         timeout_seconds=INITIAL_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS,
     )
-    if result.ok:
-        return _build_pdf_export_response(docx_path=docx_path, pdf_path=pdf_path, automation=result)
-    if str(result.failure_code or "").strip() == "timeout":
-        retry_preflight = probe_word_pdf_export_support(
-            timeout_seconds=max(8.0, RETRY_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS)
-        )
-        if not retry_preflight.ok:
-            return _build_pdf_export_response(docx_path=docx_path, pdf_path=pdf_path, automation=retry_preflight)
-        retry_result = export_docx_to_pdf_in_word(
-            docx_path,
-            pdf_path,
-            timeout_seconds=RETRY_HONORARIOS_PDF_EXPORT_TIMEOUT_SECONDS,
-        )
-        return _build_pdf_export_response(docx_path=docx_path, pdf_path=pdf_path, automation=retry_result)
     return _build_pdf_export_response(docx_path=docx_path, pdf_path=pdf_path, automation=result)
 
 

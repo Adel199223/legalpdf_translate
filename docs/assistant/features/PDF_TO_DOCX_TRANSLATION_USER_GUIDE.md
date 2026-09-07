@@ -40,7 +40,7 @@ The current live translation pipeline produces page text without these block ass
 
 Use `... > Rebuild DOCX` with retained page outputs to change formatting locally without buying another translation. Keep intermediates when you want later rebuilding; old text-only runs remain supported. Check the final Word file before delivery and resolve any existing review findings. Rebuilding does not erase earlier translation warnings or change recorded API costs.
 
-Automatic Word-to-PDF export is not needed for translation DOCX creation. Honorarios still need PDF; their unattended export reliability remains a separate deferred task. PDFs/PNGs generated for development layout checks are internal evidence only.
+Automatic Word-to-PDF export is not needed for translation DOCX creation. Translations stay in Word. The separate honorarios export retains its editable DOCX and now creates a verified fresh PDF through an isolated Word operation. PDFs/PNGs generated for development layout checks remain internal evidence only.
 
 ## If Warnings Appear Before The Run Starts
 Two warnings matter for OCR-heavy work.
@@ -239,11 +239,21 @@ Use this flow when you need a `Requerimento de Honorários` for interpreting wor
 3. Use the profile selector if needed.
 4. The interpretation export dialog keeps the main case/profile controls visible first and groups secondary detail into `SERVICE`, `TEXT`, and `RECIPIENT` sections. `RECIPIENT` usually stays collapsed until you need to override the case-derived addressee.
 5. On smaller screens, scroll inside the honorários dialog. The action buttons stay anchored at the bottom.
-6. The export saves the honorários DOCX first and then attempts a sibling PDF with the same basename.
+6. The export saves and retains the honorários DOCX first, then makes one attempt to generate and verify a sibling PDF with the same basename. Its Word export allowance is 45 seconds, with brief bounded cleanup; there is no automatic timeout retry.
 7. `Include transport/distance sentence in honorários text` starts enabled. Leave it on in the normal case, and turn it off only when the court is handling transport separately and that sentence should be omitted.
 8. The addressee auto-completes the case city for generic court entities. The body keeps the saved `service_date`, but the footer date before the signature always uses the day you generate the document.
-9. If automatic PDF export fails, the dialog keeps the saved DOCX usable locally and offers one recovery flow: retry PDF export, choose an existing PDF, open the DOCX/folder, or continue local-only.
+9. If automatic PDF export fails, the dialog keeps the saved DOCX usable locally and leaves any previous good PDF unchanged. Use the manual recovery steps below; an older PDF is never reported as a newly successful export.
 10. Manual/local interpretation exports can offer a fresh Gmail draft when the saved row has `Court Email`, Gmail draft prerequisites are ready, and the honorários PDF was generated successfully.
+
+### If honorários PDF export is blocked
+
+The app uses a checked, separate Word instance and a temporary source copy; it does not take over or force-close your existing Word documents. An uncertain earlier operation blocks another attempt until safe recovery is confirmed.
+
+1. Do not rerun a successful translation. Keep the saved honorários DOCX.
+2. For a busy export, wait for that operation to finish.
+3. For an uncertain-cleanup warning, save all your open Word work before closing Word normally, then retry from the app. Never discard unsaved work just to clear a warning.
+4. If the warning persists, open the honorários DOCX in Word, export it to PDF manually and review every page. Choose `Select existing PDF...` where offered, or continue local-only with the saved files.
+5. Review the final PDF before email use. Do not change Trust Center/security settings or assume Office needs reinstalling; retain the diagnostic details if support is needed.
 
 ## Honorarios + Gmail Drafts
 If you generate a `Requerimento de Honorários`, the app can also prepare a Gmail draft to the row's `Court Email`.
@@ -294,7 +304,7 @@ Use this when the source files already arrived in Gmail and you want one reply d
 15. If you want to rerun the same current unconfirmed Gmail attachment without a cold start, use `Redo Current Attachment`. It resets only the translation side for that attachment, keeps the Gmail batch session intact, reapplies the same launch context, and waits for a manual `Start Translate`. If the old job is still running or cancelling, cancel it first. If you click the extension again for a new message, a fresh handoff should replace any recovered completed batch automatically. Use `Open Last Finalization Result` only when you want the previous finalized batch details.
 16. Translation mode then opens `Save to Job Log` and requires a confirmed save before continuing to the next item.
 17. When all selected translation files are confirmed, the app can generate one honorários export using the combined translated word count for the batch.
-18. The honorários export saves the DOCX first and then attempts a sibling PDF with the same basename.
+18. The honorários export retains the DOCX and makes one bounded attempt to generate and verify a sibling PDF with the same basename; it does not automatically retry a timeout.
 19. If the translation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with all translated DOCXs plus that single honorários PDF.
 20. If the interpretation honorários step succeeds and the PDF exists, the app creates one Gmail reply draft in the original thread with the generated honorários PDF only.
 21. If preview or `Prepare selected` fails before a translation run exists, the Gmail diagnostics area now preserves the current selection/start-page state and offers `Generate Failure Report`.

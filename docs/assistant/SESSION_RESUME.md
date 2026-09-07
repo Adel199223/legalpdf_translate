@@ -57,7 +57,15 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - Formatting integration is scoped from `main@022b5af`; see the completed `2026-09-07_approved_formatting_integration.md` ExecPlan and actual merged PR for the tested tree. Verify current `main` rather than using the historical modernization SHA below.
 - The accepted AR/French Word presentation is retained through local, hash-bound structure/layout evidence. New TXT-only production runs receive safe compact typography/RTL/page fields and a manual layout-review notice; they do not gain guessed block associations.
 - No translation/model/OCR/prompt or honorarios export policy is promoted in this formatting-only release. The unfinished quality worktree remains recoverable at local checkpoint `66a7374a2b874f59994215177af4ff48d1d5f100`; it must not be merged or pushed wholesale.
-- Translation documents stay editable DOCX. Unattended honorarios PDF export reliability remains deferred. Private references and the original capped benchmark ledger remain outside Git.
+- Translation documents stay editable DOCX. Honorarios PDF export reliability was subsequently repaired and accepted in its own scope below; it is not a translation/model-policy promotion. Private references and the original capped benchmark ledger remain outside Git.
+
+## Accepted Honorarios Repair Continuity
+
+- Accepted repair worktree: `C:/Users/FA507/.codex/legalpdf_translate_honorarios_pdf`, branch `feat/honorarios-pdf-export`, based on `main@9afe1d05577f271a8618969e8f0be31eb8641a3e`. User-approved documentation sync is complete and integration/publication is pending at this handoff; canonical `main` remains the daily-use authority. Verify the actual merge/HEAD before deciding whether publication work remains.
+- See [the completed repair ExecPlan](exec_plans/completed/2026-09-07_honorarios_pdf_export_reliability.md). Eight real Word exports took approximately 6-8 seconds each; both honorarios kinds, the isolated real browser route, Qt worker, open/unsaved Word coexistence and post-timeout recovery passed. All six retained honorarios PDFs passed every-page visual review, with source DOCX and tested existing Word state preserved.
+- One initial 45-second export replaces automatic preflight/retry cycles. Shared exact ownership, staged-file verification and serialization protect the operation; ambiguous cleanup remains quarantined. Explicit manual Qt retry and local/select-existing-PDF recovery remain available, with Gmail fail-closed behavior unchanged.
+- Full pytest passed 2,176 tests and full validation passed; the known native Qt small-screen layout-test `0x8001010d` diagnostic remains separate. No live Gmail or paid API operation was performed, no production model was promoted, and translations remain DOCX only.
+- Preserve the local-only quality checkpoint `66a7374a2b874f59994215177af4ff48d1d5f100` and prior formatting worktree; publish only this scoped repair and approved documentation, never the combined research branch.
 
 ## Current Modernization Baseline
 - Product-modernization baseline at closeout is `c3ec60e57852af4ff69ba96cd0410c489a25ba69` after PR #226, `[codex] Extract Gmail prepare action presentation`.
@@ -102,7 +110,8 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 ## Next Concrete Action
 - No active roadmap needs resume handling.
 - For new work, use normal ExecPlan flow unless the user explicitly opens a new roadmap.
-- For continued legal-translation improvements, close the formatting rollout first, then inspect the preserved research ExecPlan and isolate source-associated production structure/model-dependent acceptance work. Layout approval is not approval of new models or legal fidelity; do not reset or duplicate the lifetime benchmark allowance.
+- Finish the approved honorarios repair lifecycle first: verify the exact PR head checks, merge, synchronize canonical main and run focused post-integration validation. If the actual merge already exists, verify it and the current clean state instead of repeating publication. Do not leave this accepted repair on a side branch while starting unrelated work.
+- For continued legal-translation improvements afterward, inspect the preserved research ExecPlan and isolate source-associated production structure/model-dependent acceptance work. Layout and honorarios-export approval are not approval of new models or legal fidelity; do not reset or duplicate the lifetime benchmark allowance.
 - If continuing modernization, choose one narrow browser/Gmail presentation or coordinator-pressure slice, create an isolated worktree from clean `main`, use focused tests first, publish through a GitHub PR, wait for Actions, smoke in shadow mode when relevant, and clean up the merged branch/worktree.
 - Publish/merge requests should follow the standard commit/publish workflow and should not start a new Gmail/runtime thread while accepted live fixes remain only in local commits.
 

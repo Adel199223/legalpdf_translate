@@ -672,8 +672,8 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 ### desktop-qt-honorarios-export-reliability
 - Title: Host-bound honorários PDF export and Gmail finalization readiness felt unstable because launch-only Word checks were too shallow
 - First seen timestamp: `2026-03-12T00:00:00Z`
-- Last seen timestamp: `2026-03-30T18:21:00Z`
-- Repeat count: `3`
+- Last seen timestamp: `2026-09-07T17:10:25Z`
+- Repeat count: `4`
 - Status: `mitigated`
 - Trigger source: `both`
 - Symptoms:
@@ -681,6 +681,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - PDF failure warnings dumped raw PowerShell/COM text inline and could cascade into an extra Gmail missing-PDF warning
   - focus-sensitive Qt tests around Return/Delete shortcuts could fail intermittently because leaked dialogs or stale focus changed the active target
   - the browser finalization drawer could show Word as apparently ready from a shallow probe even though the real DOCX-to-PDF export path still timed out and ended in `local_only`
+  - September unattended export still stalled; active-Word attachment, unsafe cleanup assumptions and incompatible optional COM arguments prevented reliable real-path acceptance
 - Likely root cause:
   - host-bound Word PDF export originally ran on the GUI thread and failure handling spanned too many modal layers
   - the Qt harness did not yet enforce deterministic popup cleanup, activation, and shortcut targeting for focus-sensitive dialog tests
@@ -689,8 +690,9 @@ Do not promote one-off local/project-specific issues into the global Codex boots
   - `2026-03-12T00:00:00Z` — added synchronous honorários DOCX-to-PDF export through Word automation; outcome: insufficient because the UI could freeze and the failure diagnostics were too noisy
   - `2026-03-30T00:00:00Z` — browser/operator surfaces still treated launch-only Word readiness as sufficient proof for Gmail finalization; outcome: insufficient because the final reply path could still time out during export
 - Accepted fix:
-  - `2026-03-30T00:00:00Z` — Word export reliability now uses phase-aware diagnostics, bounded cleanup for app-owned stuck helpers, a real DOCX-to-PDF export canary, browser `finalization_ready` gating before Gmail reply finalization, and direct retry/report flows when export still fails after a passing canary
-- Regressed after accepted fix: `no`
+  - `2026-09-07T17:10:25Z` — dedicated process/window ownership, unchanged blank anchor through Quit, common twelve-argument Open and fourteen-argument native export, durable lock/quarantine and fresh staged-PDF verification passed eight real canary/browser/Qt/coexistence/recovery exports. One bounded dispatch preserves original DOCX, prior good PDF and unrelated Word documents; uncertain cleanup requires manual recovery. No live Gmail acceptance is implied.
+- Latest attempted-fix evidence: native tests reproduced last-document COM disconnection and both optional-argument incompatibilities before the corrected path passed. The independent known native Qt layout diagnostic remains recorded; retain `mitigated`, not a claim of universal resolution.
+- Regressed after accepted fix: `yes`
 - Affected workflows/docs:
   - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
   - `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`
@@ -711,6 +713,7 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 - Evidence refs:
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-12_desktop_stability_honorarios_qt.md`
   - ExecPlan: `docs/assistant/exec_plans/completed/2026-03-30_gmail_finalization_word_pdf_reliability.md`
+  - ExecPlan: `docs/assistant/exec_plans/completed/2026-09-07_honorarios_pdf_export_reliability.md`
   - File: `src/legalpdf_translate/qt_gui/dialogs.py`
   - File: `src/legalpdf_translate/qt_gui/worker.py`
   - File: `src/legalpdf_translate/word_automation.py`

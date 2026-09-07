@@ -817,6 +817,95 @@ def test_honorarios_dialog_keeps_docx_when_pdf_export_fails(tmp_path: Path, monk
             app.quit()
 
 
+@pytest.mark.parametrize("current_thread_finished", [False, True])
+def test_honorarios_dialog_thread_cleanup_preserves_newer_retry_worker(current_thread_finished: bool) -> None:
+    previous_thread = object()
+    current_thread = object()
+    current_worker = object()
+    dialog_state = SimpleNamespace(
+        _pdf_export_thread=current_thread,
+        _pdf_export_worker=current_worker,
+        sender=lambda: current_thread if current_thread_finished else previous_thread,
+    )
+
+    QtHonorariosExportDialog._clear_pdf_export_worker_refs(dialog_state)
+
+    assert dialog_state._pdf_export_thread is (None if current_thread_finished else current_thread)
+    assert dialog_state._pdf_export_worker is (None if current_thread_finished else current_worker)
+
+
+def test_honorarios_dialog_timeout_waits_for_manual_recovery(tmp_path: Path, monkeypatch) -> None:
+    _patch_settings_file(monkeypatch, tmp_path)
+    app = QApplication.instance()
+    owns_app = app is None
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    docx_path = tmp_path / "honorários.docx"
+    docx_path.write_bytes(b"preserved DOCX")
+    prior_pdf_path = docx_path.with_suffix(".pdf")
+    prior_pdf_path.write_bytes(b"previous PDF")
+    queued_callbacks: list[object] = []
+    recovery_calls: list[str] = []
+    monkeypatch.setattr(
+        "legalpdf_translate.qt_gui.dialogs.QTimer.singleShot",
+        lambda _ms, callback: queued_callbacks.append(callback),
+    )
+    monkeypatch.setattr(
+        QtHonorariosExportDialog,
+        "_run_export_result_flow",
+        lambda self: recovery_calls.append(self.pdf_failure_code),
+    )
+    dialog = QtHonorariosExportDialog(
+        parent=None,
+        draft=HonorariosDraft(
+            case_number="109/26.0PBBJA",
+            word_count=1666,
+            case_entity="Juízo Local Criminal de Beja",
+            case_city="Beja",
+            date_pt="06 de março de 2026",
+            profile=_profile(),
+        ),
+        default_directory=tmp_path,
+    )
+    try:
+        queued_callbacks.clear()
+        dialog._set_pdf_export_busy(True)
+        dialog._on_pdf_export_finished(
+            SimpleNamespace(
+                docx_path=docx_path,
+                pdf_path=prior_pdf_path,
+                automation=worker_module.WordAutomationResult(
+                    ok=False,
+                    action="export_pdf",
+                    message="Word PDF export timed out.",
+                    failure_code="timeout",
+                    details="Phase: export_pdf. Word cleanup could not be confirmed.",
+                    elapsed_ms=45000,
+                ),
+            )
+        )
+
+        assert recovery_calls == ["timeout"]
+        assert queued_callbacks == []
+        assert dialog.docx_saved_path == docx_path
+        assert dialog.saved_path == docx_path
+        assert dialog.saved_pdf_path is None
+        assert dialog.pdf_saved_path is None
+        assert dialog.pdf_failure_message == "Word PDF export timed out."
+        assert dialog.pdf_failure_details == "Phase: export_pdf. Word cleanup could not be confirmed."
+        assert dialog.pdf_export_elapsed_ms == 45000
+        assert dialog._pdf_export_in_flight is False
+        assert docx_path.read_bytes() == b"preserved DOCX"
+        assert prior_pdf_path.read_bytes() == b"previous PDF"
+    finally:
+        dialog._set_pdf_export_busy(False)
+        dialog.close()
+        dialog.deleteLater()
+        if owns_app:
+            app.quit()
+
+
 def test_honorarios_dialog_partial_success_can_retry_pdf_export(tmp_path: Path, monkeypatch) -> None:
     _patch_settings_file(monkeypatch, tmp_path)
     app = QApplication.instance()
@@ -826,12 +915,17 @@ def test_honorarios_dialog_partial_success_can_retry_pdf_export(tmp_path: Path, 
 
     requested = str(tmp_path / "honorarios.docx")
     begin_calls: list[tuple[Path, Path, float]] = []
+    failure_actions: list[str] = []
 
     monkeypatch.setattr(
         "legalpdf_translate.qt_gui.dialogs.QFileDialog.getSaveFileName",
         lambda *args, **kwargs: (requested, "Word Document (*.docx)"),
     )
-    monkeypatch.setattr(QtHonorariosExportDialog, "_show_pdf_export_failure_box", lambda self: "retry_pdf")
+    monkeypatch.setattr(
+        QtHonorariosExportDialog,
+        "_show_pdf_export_failure_box",
+        lambda self: failure_actions.append(self.pdf_failure_code) or "retry_pdf",
+    )
     monkeypatch.setattr("legalpdf_translate.qt_gui.dialogs.QTimer.singleShot", lambda _ms, callback: callback())
 
     def _begin_export(self, *, docx_path: Path, pdf_path: Path, timeout_seconds: float) -> None:
@@ -877,7 +971,8 @@ def test_honorarios_dialog_partial_success_can_retry_pdf_export(tmp_path: Path, 
         ]
         assert dialog._pdf_export_in_flight is True
         assert dialog.saved_pdf_path is None
-        assert dialog.export_status_label.text().startswith("Word PDF export timed out once.")
+        assert failure_actions == ["timeout"]
+        assert dialog.export_status_label.text().startswith("DOCX saved. Retrying the sibling PDF")
     finally:
         dialog._set_pdf_export_busy(False)
         dialog.close()
@@ -886,34 +981,45 @@ def test_honorarios_dialog_partial_success_can_retry_pdf_export(tmp_path: Path, 
             app.quit()
 
 
-def test_honorarios_pdf_export_worker_uses_export_timeout_for_preflight(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("ok", [True, False])
+def test_honorarios_pdf_export_worker_dispatches_once_without_preflight(tmp_path: Path, monkeypatch, ok: bool) -> None:
     docx_path = tmp_path / "honorarios.docx"
     docx_path.write_bytes(b"docx")
     pdf_path = tmp_path / "honorarios.pdf"
     preflight_calls: list[float] = []
     export_calls: list[float] = []
     results: list[object] = []
+    automation = worker_module.WordAutomationResult(
+        ok=ok,
+        action="export_pdf",
+        message="Word export finished." if ok else "Word export timed out.",
+        failure_code="" if ok else "timeout",
+        details="Original export diagnostics.",
+    )
 
     monkeypatch.setattr(
         worker_module,
         "probe_word_pdf_export_support",
         lambda *, timeout_seconds=8.0: preflight_calls.append(float(timeout_seconds)) or SimpleNamespace(ok=True),
+        raising=False,
     )
     monkeypatch.setattr(
         worker_module,
         "export_docx_to_pdf_in_word",
         lambda _docx_path, _pdf_path, *, timeout_seconds=45.0: export_calls.append(float(timeout_seconds))
-        or SimpleNamespace(ok=True),
+        or automation,
     )
 
     worker = HonorariosPdfExportWorker(docx_path=docx_path, pdf_path=pdf_path, timeout_seconds=90.0)
     worker.finished.connect(results.append)
     worker.run()
 
-    assert preflight_calls == [90.0]
+    assert preflight_calls == []
     assert export_calls == [90.0]
     assert len(results) == 1
-    assert results[0].pdf_path == pdf_path.resolve()
+    assert results[0].docx_path == docx_path.resolve()
+    assert results[0].pdf_path == (pdf_path.resolve() if ok else None)
+    assert results[0].automation is automation
 
 
 def test_honorarios_dialog_partial_success_can_accept_existing_pdf(tmp_path: Path, monkeypatch) -> None:

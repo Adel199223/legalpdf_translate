@@ -111,6 +111,7 @@ LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX 
 - `src/legalpdf_translate/openai_client.py`: OpenAI transport and retry handling.
 - `src/legalpdf_translate/ocr_engine.py`: OCR routing and policy.
 - `src/legalpdf_translate/docx_writer.py`: DOCX output construction.
+- `src/legalpdf_translate/word_automation.py`: shared Word readiness/export entrypoints; `word_pdf_script.py` owns the isolated native helper, `word_pdf_control.py` owns serialization/recovery, and `word_pdf_artifacts.py` owns staged-source and fresh-PDF verification.
 - `src/legalpdf_translate/joblog_db.py`: SQLite schema and migrations for job logging.
 - `src/legalpdf_translate/user_settings.py`: settings schema and persistence.
 
@@ -142,7 +143,7 @@ Source-aware formatting is evidence-gated: complete matching source/target struc
 
 Current production translation still returns page TXT, not source-associated translated blocks. New TXT runs receive conservative readable typography/RTL/PAGE defaults, but the writer never invents source/target alignment from matching paragraph counts or numbers. Full source-aware layout is available for retained, validated structured runs through local rebuilds. The structured translation/model-quality project remains separate and unpromoted. Rebuilds reuse saved translations, preserve historical usage/review evidence, and do not construct API/OCR clients. Source-map rendered page counts remain unknown until measured in Word.
 
-Translations stay DOCX. Internal PDF/PNG layout checks are not a required translation export. Honorarios PDF automation remains a separate deferred repair; this release preserves its existing behavior and Gmail gates.
+Translations stay DOCX. Internal PDF/PNG layout checks are not a required translation export. The formatting-only release did not change honorarios export; the separate, now-accepted honorarios PDF repair is described below and preserves the existing Gmail gates.
 Run artifacts live under:
 - manual/local runs: `<outdir>/<pdf_stem>_<LANG>_run/`
 - Gmail-started translation runs: `<outdir>/<pdf_stem>_gmail_<session_token>_p<start_page>_<attachment_token>_run/`
@@ -293,6 +294,14 @@ Queue manifests create sidecar artifacts beside the manifest file:
   - Word PDF export runs off the GUI thread, so long-running Word startup or timeout paths do not freeze the visible Qt shell
   - PDF failures show a concise warning with expandable technical details instead of a raw inline PowerShell/COM dump
   - partial-success exports keep one calm recovery flow instead of stacking duplicate Gmail missing-PDF warnings
+  - browser and Qt callers make one initial bounded 45-second export call, without a redundant launch preflight or automatic timeout retry; the existing explicit Qt manual retry retains its 90-second allowance and result/signal contract
+  - the shared exporter starts a dedicated Word process with `/w`, verifies exact process/window/document ownership, and exports from a private staged DOCX copy; it does not attach to the user's active Word instance
+  - a shared lock and content-free phase journal prevent competing export/readiness operations; uncertain cleanup blocks further native work until safe recovery is established, without terminating unknown Word processes or bypassing quarantine
+  - success requires a fresh readable staged PDF and confirmed cleanup before promotion; failures preserve the original DOCX and any previous good PDF, while manual retry, select-existing-PDF and local-only recovery remain available
+
+The separate honorarios repair passed eight actual same-host Word exports in approximately 6-8 seconds each, including canaries, translation-kind and interpretation-kind honorarios, the real isolated browser route, the asynchronous Qt worker, coexistence with an unsaved Word document, an already-open source, and a healthy export after bounded startup-timeout recovery. The six retained honorarios PDFs were one page each, with all twelve substantive paragraphs and every rendered page visually inspected. Source DOCX hashes and tested open Word content/window state were preserved. The browser acceptance used the real route/service/exporter with isolated synthetic paths and a transparent call observer, not a browser-button click or mocked export.
+
+Acceptance and scoped Docs Sync are complete on `feat/honorarios-pdf-export`, based on `main@9afe1d05577f271a8618969e8f0be31eb8641a3e`; integration/publication is approved but pending at this handoff. See [the completed repair ExecPlan](docs/assistant/exec_plans/completed/2026-09-07_honorarios_pdf_export_reliability.md) for exact evidence and verify actual canonical HEAD/PR status before assuming it is deployed. Full pytest passed 2,176 tests and `validate_dev.ps1 -Full` passed. The pre-existing native small-screen Qt layout-test `0x8001010d` diagnostic remains a separate known limitation; it was not an export failure or silently fixed. No live Gmail action, paid API call, model promotion, legal-text/rate change or translation-PDF workflow was part of this repair.
 
 ## Queue Behavior Notes
 - Queue execution is sequential and checkpoint-aware.

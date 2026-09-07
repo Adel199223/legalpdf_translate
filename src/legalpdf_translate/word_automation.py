@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import json
+import math
+import re
 from datetime import UTC, datetime
 import os
 from pathlib import Path
@@ -210,187 +213,22 @@ def _build_powershell_command(docx_path: Path, *, align_right_and_save: bool) ->
     )
 
 
-def _build_pdf_export_powershell_script(docx_path: Path, pdf_path: Path) -> str:
-    resolved_docx = str(docx_path.expanduser().resolve())
-    resolved_pdf = str(pdf_path.expanduser().resolve())
-    quoted_docx = _quote_powershell_single(resolved_docx)
-    quoted_pdf = _quote_powershell_single(resolved_pdf)
-    winword_path = _resolve_winword_path()
-    quoted_winword = _quote_powershell_single(winword_path) if winword_path else ""
-    return "\n".join(
-        [
-            "$ErrorActionPreference = 'Stop'",
-            *_word_helper_header(),
-            "function Invoke-WithRetry {",
-            "    param(",
-            "        [scriptblock]$Action,",
-            "        [int]$Attempts = 5,",
-            "        [int]$DelayMs = 300",
-            "    )",
-            "    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {",
-            "        try {",
-            "            return & $Action",
-            "        } catch {",
-            "            if ($attempt -ge $Attempts) {",
-            "                throw",
-            "            }",
-            "            Start-Sleep -Milliseconds $DelayMs",
-            "        }",
-            "    }",
-            "}",
-            f"$wordAutomationPath = '{quoted_winword}'",
-            "$bootstrapProcess = $null",
-            f"$target = [System.IO.Path]::GetFullPath('{quoted_docx}')",
-            f"$pdfPath = [System.IO.Path]::GetFullPath('{quoted_pdf}')",
-            "$word = $null",
-            "$doc = $null",
-            "$openedDoc = $false",
-            "$ownsWordInstance = $false",
-            "try {",
-            f"    {_word_phase_marker('get_active_word')}",
-            "    try {",
-            "        $word = [Runtime.InteropServices.Marshal]::GetActiveObject('Word.Application')",
-            "    } catch {",
-            "    }",
-            "    if ($null -eq $word) {",
-            "        if (-not [string]::IsNullOrWhiteSpace($wordAutomationPath)) {",
-            f"            {_word_phase_marker('bootstrap_automation')}",
-            "            $bootstrapProcess = Start-Process -FilePath $wordAutomationPath -ArgumentList '/automation' -PassThru",
-            "            Start-Sleep -Milliseconds 1500",
-            "        }",
-            f"        {_word_phase_marker('launch_word')}",
-            "        $word = Invoke-WithRetry { New-Object -ComObject Word.Application }",
-            "        $ownsWordInstance = $true",
-            "    }",
-            "    $word.Visible = $false",
-            _word_phase_marker("documents_count"),
-            "    Invoke-WithRetry { $null = $word.Documents.Count }",
-            _word_phase_marker("open_document"),
-            "    $doc = Invoke-WithRetry { $word.Documents.Open($target, $false, $true) }",
-            "    $openedDoc = $true",
-            _word_phase_marker("activate_document"),
-            "    $doc.Activate()",
-            "    $wdExportFormatPDF = 17",
-            _word_phase_marker("export_pdf"),
-            "    Invoke-WithRetry { $doc.ExportAsFixedFormat($pdfPath, $wdExportFormatPDF) }",
-            _word_phase_marker("export_complete"),
-            "    Write-Output 'OK'",
-            "} finally {",
-            "    if ($null -ne $doc -and $openedDoc) {",
-                "        try {",
-            f"            {_word_phase_marker('close_document')}",
-            "            Invoke-WithRetry { $doc.Close([ref]$false) }",
-            "        } catch {",
-            "        }",
-            "    }",
-            "    if ($null -ne $word -and $ownsWordInstance) {",
-            "        try {",
-            f"            {_word_phase_marker('quit_word')}",
-            "            Invoke-WithRetry { $word.Quit() }",
-            "        } catch {",
-            "        }",
-            "    }",
-            "    if ($null -ne $bootstrapProcess) {",
-            "        try {",
-            "            $bootstrapProcess.Refresh()",
-            "            if (-not $bootstrapProcess.HasExited) {",
-            f"                {_word_phase_marker('stop_bootstrap_process')}",
-            "                Stop-Process -Id $bootstrapProcess.Id -Force",
-            "            }",
-            "        } catch {",
-            "        }",
-            "    }",
-            "}",
-        ]
-    )
+def _build_pdf_export_powershell_script(docx_path: Path, pdf_path: Path, *, state_path: Path | None = None) -> str:
+    from .word_pdf_script import build_pdf_script
+    from .word_pdf_control import runtime_root
+
+    executable = _resolve_winword_path()
+    return build_pdf_script(docx_path, pdf_path, state_path=state_path or runtime_root() / "active.json",
+                            word_executable=Path(executable) if executable else None)
 
 
-def _build_pdf_export_powershell_command(docx_path: Path, pdf_path: Path) -> tuple[str, ...] | None:
-    powershell = _resolve_powershell_path()
-    if powershell is None:
-        return None
-    script = _build_pdf_export_powershell_script(docx_path, pdf_path)
-    return (
-        powershell,
-        "-Sta",
-        "-NoLogo",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        script,
-    )
+def _build_pdf_preflight_powershell_script(*, state_path: Path | None = None) -> str:
+    from .word_pdf_script import build_pdf_script
+    from .word_pdf_control import runtime_root
 
-
-def _build_pdf_preflight_powershell_script() -> str:
-    winword_path = _resolve_winword_path()
-    quoted_winword = _quote_powershell_single(winword_path) if winword_path else ""
-    return "\n".join(
-        [
-            "$ErrorActionPreference = 'Stop'",
-            *_word_helper_header(),
-            f"$wordAutomationPath = '{quoted_winword}'",
-            "$bootstrapProcess = $null",
-            "$word = $null",
-            "$ownsWordInstance = $false",
-            "try {",
-            f"    {_word_phase_marker('get_active_word')}",
-            "    try {",
-            "        $word = [Runtime.InteropServices.Marshal]::GetActiveObject('Word.Application')",
-            "    } catch {",
-            "    }",
-            "    if ($null -eq $word) {",
-            "        if (-not [string]::IsNullOrWhiteSpace($wordAutomationPath)) {",
-            f"            {_word_phase_marker('bootstrap_automation')}",
-            "            $bootstrapProcess = Start-Process -FilePath $wordAutomationPath -ArgumentList '/automation' -PassThru",
-            "            Start-Sleep -Milliseconds 1500",
-            "        }",
-            f"        {_word_phase_marker('launch_word')}",
-            "        $word = New-Object -ComObject Word.Application",
-            "        $ownsWordInstance = $true",
-            "    }",
-            "    $word.Visible = $false",
-            _word_phase_marker("documents_count"),
-            "    $null = $word.Documents.Count",
-            _word_phase_marker("complete"),
-            "    Write-Output 'OK'",
-            "} finally {",
-            "    if ($null -ne $word -and $ownsWordInstance) {",
-            "        try {",
-            f"            {_word_phase_marker('quit_word')}",
-            "            $word.Quit()",
-            "        } catch {",
-            "        }",
-            "    }",
-            "    if ($null -ne $bootstrapProcess) {",
-            "        try {",
-            "            $bootstrapProcess.Refresh()",
-            "            if (-not $bootstrapProcess.HasExited) {",
-            f"                {_word_phase_marker('stop_bootstrap_process')}",
-            "                Stop-Process -Id $bootstrapProcess.Id -Force",
-            "            }",
-            "        } catch {",
-            "        }",
-            "    }",
-            "}",
-        ]
-    )
-
-
-def _build_pdf_preflight_powershell_command() -> tuple[str, ...] | None:
-    powershell = _resolve_powershell_path()
-    if powershell is None:
-        return None
-    return (
-        powershell,
-        "-Sta",
-        "-NoLogo",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        _build_pdf_preflight_powershell_script(),
-    )
+    executable = _resolve_winword_path()
+    return build_pdf_script(None, None, state_path=state_path or runtime_root() / "active.json",
+                            word_executable=Path(executable) if executable else None)
 
 
 def _classify_pdf_failure(raw_message: str, *, action: str) -> str:
@@ -430,6 +268,14 @@ def _pdf_failure_message(failure_code: str) -> str:
         "timeout": "Word PDF export timed out.",
         "export_failed": "Microsoft Word could not export the PDF.",
         "verification_failed": "Word PDF export verification failed.",
+        "export_busy": "Another Word PDF operation is running. Try again when it finishes.",
+        "cleanup_unconfirmed": "Word export cleanup could not be confirmed. Save your Word work before closing Word; see details for recovery.",
+        "ownership_rejected": "A separate Word export instance could not be verified.",
+        "ownership_unproven": "A separate Word export instance could not be verified.",
+        "word_window_unavailable": "Word started, but its export window could not be connected safely.",
+        "bootstrap_changed": "Word's temporary export document was not blank or changed. It was not closed automatically.",
+        "cleanup_ambiguous": "Word export cleanup is uncertain. Save your Word work before closing Word and retrying.",
+        "host_policy_blocked": "Windows policy blocked the Word export helper. Export the saved DOCX manually; no security settings were changed.",
         "unknown": "Word PDF export failed.",
     }.get(failure_code, "Word PDF export failed.")
 
@@ -457,7 +303,7 @@ def _build_pdf_failure_details(
     if helper_pid > 0:
         lines.append(f"Helper PID: {helper_pid}")
     if cleanup_attempted:
-        lines.append(f"Cleanup attempted: {'yes' if cleanup_succeeded else 'no'}")
+        lines.append(f"Cleanup attempted: yes; succeeded: {'yes' if cleanup_succeeded else 'no'}")
     if cleanup_details:
         lines.extend(["", "Cleanup:", cleanup_details])
     if command:
@@ -634,6 +480,7 @@ def _run_command(
             stderr_raw = "\n".join(filter(None, [stderr_raw, _normalize_process_text(extra_stderr)])).strip()
         except Exception:  # noqa: BLE001
             pass
+        failure_phase = _extract_last_word_phase(stdout_raw, stderr_raw) or failure_phase
         stdout = _strip_word_helper_markers(stdout_raw)
         stderr = _strip_word_helper_markers(stderr_raw)
         raw_message = stderr or stdout or str(exc)
@@ -765,77 +612,203 @@ def align_right_and_save_docx_in_word(docx_path: Path) -> WordAutomationResult:
     return _run_word_action(docx_path, align_right_and_save=True)
 
 
-def export_docx_to_pdf_in_word(
-    docx_path: Path,
-    pdf_path: Path,
-    *,
-    timeout_seconds: float = 45.0,
+def _safe_word_token(value: object) -> str:
+    text = str(value or "")
+    return text if re.fullmatch(r"[a-z_]{1,64}", text) else ""
+
+
+def _run_pdf_command(
+    *, action: str, command: tuple[str, ...], state_path: Path, timeout_seconds: float,
 ) -> WordAutomationResult:
-    action = "export_pdf"
-    resolved_docx = docx_path.expanduser().resolve()
-    resolved_pdf = pdf_path.expanduser().resolve()
-    if not _is_windows_host():
+    """Run only the owned helper; never kill a Word server or its process tree.
+
+    PowerShell persists bounded, content-free state before COM calls, so Windows
+    pipe buffering and cleanup failures cannot erase the primary failure.
+    """
+    from .word_pdf_control import read_state
+
+    started = time.perf_counter()
+    timed_out = False
+    helper_io_failed = False
+    process = None
+    helper_stopped = False
+    stderr = b""
+    try:
+        process = subprocess.Popen(
+            list(command), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        try:
+            _, stderr = process.communicate(timeout=timeout_seconds)
+        except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
+            timed_out = isinstance(exc, subprocess.TimeoutExpired)
+            helper_io_failed = not timed_out
+            # Popen.kill on Windows uses our retained process handle, not a
+            # textual PID possibly recycled into another user process.
+            try:
+                if process.poll() is None:
+                    process.kill()
+                _, stderr = process.communicate(timeout=2)
+                helper_stopped = True
+            except (subprocess.TimeoutExpired, OSError, ValueError):
+                pass
+    except (OSError, ValueError):
+        if process is None:
+            state_path.write_text(json.dumps({
+                "status": "failed", "cleanup_status": "confirmed",
+                "phase": "start_helper", "failure_code": "com_launch_failed",
+                "launch_attempted": False,
+            }), encoding="utf-8")
+        else:
+            timed_out = True
+    state = read_state(state_path)
+    if helper_stopped and state.get("status") != "invalid":
+        # Recovery can prove our helper is gone even if it timed out before
+        # recording its PID. This does NOT claim the Word server has exited.
+        state["parent_helper_stopped"] = True
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+    if not timed_out and not helper_io_failed and process is not None and state.get("status") == "starting":
+        # The script must persist a phase successfully BEFORE every COM call.
+        # A terminal helper that never wrote its initial state never reached
+        # activation. Do not quarantine a PowerShell setup/parse failure as a
+        # potentially live Word operation. Raw stderr is never user-visible.
+        diagnostic = _normalize_process_text(stderr)
+        code = _classify_pdf_failure(diagnostic, action=action)
+        if any(token in diagnostic.casefold() for token in ("constrainedlanguage", "constrained language", "application control")):
+            code = "host_policy_blocked"
+        state = {"status":"failed", "cleanup_status":"confirmed", "launch_attempted":False,
+                 "phase":"helper_setup", "failure_code":code}
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+    elapsed = int((time.perf_counter() - started) * 1000)
+    phase = _safe_word_token(state.get("primary_failure_phase")) or _safe_word_token(state.get("phase"))
+    cleanup = _safe_word_token(state.get("cleanup_status"))
+    status = _safe_word_token(state.get("status"))
+    code = _safe_word_token(state.get("failure_code"))
+    confirmed = cleanup == "confirmed"
+    cleanup_summary = ("No Word activation occurred." if state.get("launch_attempted") is False
+                       else "Owned Word instance exit confirmed.") if confirmed else (
+                           "Word cleanup is unconfirmed; existing user sessions were not terminated.")
+    ok = bool(process is not None and not timed_out and not helper_io_failed and process.returncode == 0
+              and status == "succeeded" and confirmed)
+    details = [
+        f"Phase: {phase or 'unknown'}",
+        f"Word ownership: {_safe_word_token(state.get('ownership')) or 'unknown'}",
+        f"Word cleanup: {cleanup or 'unconfirmed'}",
+    ]
+    if process is not None and not timed_out and not helper_io_failed:
+        details.append(f"Helper exit code: {process.returncode}")
+    hresult = str(state.get("primary_hresult") or "")
+    if re.fullmatch(r"0x[0-9A-Fa-f]{8}", hresult):
+        details.append(f"HRESULT: {hresult}")
+    if timed_out or helper_io_failed:
+        details.append(f"Owned helper stopped: {'yes' if helper_stopped else 'unconfirmed'}")
+        details.append("No Word process was force-terminated; retry requires confirmed cleanup.")
+    if ok:
         return WordAutomationResult(
-            ok=False,
-            action=action,
-            message="Word automation is available only on Windows.",
+            ok=True, action=action,
+            message="Word PDF export preflight passed." if action == "pdf_preflight" else "Word document exported to PDF.",
+            command=command[:1], details="\n".join(details), elapsed_ms=elapsed,
+            helper_pid=int(process.pid), cleanup_attempted=True, cleanup_succeeded=True,
+            cleanup_details=cleanup_summary,
         )
-    if not resolved_docx.exists():
-        return WordAutomationResult(
-            ok=False,
-            action=action,
-            message=f"DOCX not found: {resolved_docx}",
-        )
-    resolved_pdf.parent.mkdir(parents=True, exist_ok=True)
-    command = _build_pdf_export_powershell_command(resolved_docx, resolved_pdf)
-    if command is None:
-        return _build_pdf_failure_result(
-            action=action,
-            raw_message="PowerShell is unavailable for Word automation.",
-            failure_code="powershell_missing",
-        )
-    result = _run_command(
-        action=action,
-        command=command,
-        success_message="Word document exported to PDF.",
-        timeout_seconds=float(timeout_seconds),
+    if timed_out:
+        code = "timeout"
+    elif helper_io_failed:
+        code = "export_failed"
+    elif not code:
+        code = "cleanup_unconfirmed" if not confirmed else "export_failed"
+    result = _build_pdf_failure_result(
+        action=action, raw_message="\n".join(details), command=command[:1],
+        elapsed_ms=elapsed, failure_code=code, failure_phase=phase,
+        helper_pid=int(process.pid) if process is not None else 0,
+        cleanup_attempted=cleanup not in {"", "not_started"} or timed_out or helper_io_failed,
+        cleanup_succeeded=confirmed and not timed_out and not helper_io_failed,
+        cleanup_details=cleanup_summary,
     )
-    if result.ok and not resolved_pdf.exists():
-        return _build_pdf_failure_result(
-            action=action,
-            raw_message="Word returned success, but no PDF file was created.",
-            stdout=result.stdout,
-            stderr=result.stderr,
-            command=result.command,
-            elapsed_ms=result.elapsed_ms,
-            failure_code="export_failed",
-        )
     return result
 
 
-def probe_word_pdf_export_support(*, timeout_seconds: float = 12.0) -> WordAutomationResult:
-    action = "pdf_preflight"
+class _WordExportAborted(Exception):
+    def __init__(self, result: WordAutomationResult):
+        self.result = result
+
+
+def _run_pdf_operation(
+    *, action: str, docx_path: Path | None = None, pdf_path: Path | None = None,
+    timeout_seconds: float,
+) -> WordAutomationResult:
+    from .word_pdf_control import WordPdfBusy, WordPdfRecoveryRequired, word_pdf_slot
+    from .word_pdf_artifacts import staged_pdf_export
+
     if not _is_windows_host():
-        return WordAutomationResult(
-            ok=False,
-            action=action,
-            message="Word automation is available only on Windows.",
-            failure_code="unknown",
-            details="Word automation is available only on Windows.",
+        return WordAutomationResult(ok=False, action=action, message="Word automation is available only on Windows.")
+    powershell = _resolve_powershell_path()
+    if powershell is None:
+        return _build_pdf_failure_result(action=action, raw_message="PowerShell is unavailable.", failure_code="powershell_missing")
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        return _build_pdf_failure_result(action=action, raw_message="A positive finite export deadline is required.", failure_code="export_failed")
+    started = time.perf_counter()
+    result = None
+    artifact_published = False
+    try:
+        with word_pdf_slot() as state_path:
+            def dispatch(source=None, target=None):
+                remaining = timeout_seconds - (time.perf_counter() - started)
+                if remaining <= 0:
+                    return _build_pdf_failure_result(action=action, raw_message="Deadline expired before Word startup.", failure_code="timeout", failure_phase="prepare_files")
+                script = (_build_pdf_preflight_powershell_script(state_path=state_path) if source is None
+                          else _build_pdf_export_powershell_script(source, target, state_path=state_path))
+                script_path = state_path.with_suffix(".ps1")
+                # UTF-8 BOM is required by Windows PowerShell 5.1 for accents;
+                # -File also avoids the Windows command-length ceiling.
+                script_path.write_text(script, encoding="utf-8-sig")
+                state_path.write_text(json.dumps({"status":"starting", "launch_attempted":True}), encoding="utf-8")
+                command = (powershell, "-Sta", "-NonInteractive", "-NoLogo", "-NoProfile",
+                           "-ExecutionPolicy", "Bypass", "-File", str(script_path))
+                return _run_pdf_command(action=action, command=command, state_path=state_path, timeout_seconds=remaining)
+
+            if docx_path is None:
+                result = dispatch()
+            else:
+                pdf_path.parent.mkdir(parents=True, exist_ok=True)
+                with staged_pdf_export(docx_path, pdf_path) as (source, target):
+                    result = dispatch(source, target)
+                    if not result.ok:
+                        raise _WordExportAborted(result)
+                artifact_published = True
+                result = replace(result, elapsed_ms=int((time.perf_counter() - started) * 1000))
+    except _WordExportAborted as exc:
+        result = exc.result
+    except WordPdfBusy as exc:
+        result = _build_pdf_failure_result(action=action, raw_message=str(exc), failure_code="export_busy", failure_phase="acquire_export_lock")
+    except WordPdfRecoveryRequired as exc:
+        result = _build_pdf_failure_result(action=action, raw_message=str(exc), failure_code="cleanup_unconfirmed", failure_phase="recover_previous_export")
+    except (OSError, ValueError):
+        if artifact_published and result is not None and result.ok:
+            # Promotion already completed and Word exited safely. A later lock
+            # release error cannot truthfully turn this into an artifact failure
+            # or claim the previous PDF was retained. The next operation still
+            # has to acquire the OS lock before doing anything.
+            return replace(result, details=result.details + "\nThe PDF was verified and saved; releasing the export lock reported an error.")
+        failure = _build_pdf_failure_result(
+            action=action, raw_message="Could not safely prepare or verify a fresh PDF. The original DOCX and any previous PDF were preserved.",
+            failure_code="verification_failed", failure_phase="verify_artifacts",
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
         )
-    command = _build_pdf_preflight_powershell_command()
-    if command is None:
-        return _build_pdf_failure_result(
-            action=action,
-            raw_message="PowerShell is unavailable for Word automation.",
-            failure_code="powershell_missing",
-        )
-    return _run_command(
-        action=action,
-        command=command,
-        success_message="Word PDF export preflight passed.",
-        timeout_seconds=timeout_seconds,
-    )
+        result = replace(failure, helper_pid=result.helper_pid, cleanup_attempted=result.cleanup_attempted,
+                         cleanup_succeeded=result.cleanup_succeeded, cleanup_details=result.cleanup_details) if result else failure
+    if not result.ok:
+        clear_word_pdf_export_readiness_cache()
+    return result
+
+
+def export_docx_to_pdf_in_word(docx_path: Path, pdf_path: Path, *, timeout_seconds: float = 45.0) -> WordAutomationResult:
+    return _run_pdf_operation(action="export_pdf", docx_path=docx_path.expanduser().absolute(),
+                              pdf_path=pdf_path.expanduser().absolute(), timeout_seconds=float(timeout_seconds))
+
+
+def probe_word_pdf_export_support(*, timeout_seconds: float = 12.0) -> WordAutomationResult:
+    return _run_pdf_operation(action="pdf_preflight", timeout_seconds=float(timeout_seconds))
 
 
 def _write_word_export_canary_docx(docx_path: Path) -> None:
@@ -872,15 +845,17 @@ def run_word_pdf_export_canary(*, timeout_seconds: float = 45.0, temp_root: Path
                 cleanup_succeeded=export_result.cleanup_succeeded,
                 cleanup_details=export_result.cleanup_details,
             )
-        header = pdf_path.read_bytes()[:5] if pdf_path.exists() else b""
-        if header != b"%PDF-":
+        from .word_pdf_artifacts import validate_pdf
+        try:
+            validate_pdf(pdf_path, expected_text="Word PDF export canary")
+        except (OSError, ValueError):
             return _build_pdf_failure_result(
                 action=action,
-                raw_message=f"Expected PDF header %PDF- but found {header!r}.",
+                raw_message="The export canary did not produce a readable PDF containing its expected text.",
                 command=export_result.command,
                 elapsed_ms=export_result.elapsed_ms,
                 failure_code="verification_failed",
-                failure_phase="verify_pdf_header",
+                failure_phase="verify_pdf_content",
                 helper_pid=export_result.helper_pid,
             )
         return WordAutomationResult(
@@ -890,9 +865,15 @@ def run_word_pdf_export_canary(*, timeout_seconds: float = 45.0, temp_root: Path
             stdout=export_result.stdout,
             stderr=export_result.stderr,
             command=export_result.command,
-            details="PDF header verified as %PDF-.",
+            details="\n".join(filter(None, (
+                export_result.details,
+                "PDF pages and expected canary text verified.",
+            ))),
             elapsed_ms=export_result.elapsed_ms,
             helper_pid=export_result.helper_pid,
+            cleanup_attempted=export_result.cleanup_attempted,
+            cleanup_succeeded=export_result.cleanup_succeeded,
+            cleanup_details=export_result.cleanup_details,
         )
     finally:
         _cleanup_working_tree_best_effort(working_dir)

@@ -44,7 +44,7 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 - The Qt desktop shell still exists as a supported fallback, but it is no longer the normal day-to-day interface.
 
 ## Terms in Plain English
-- PDF: The document you want translated.
+- PDF: The original document you want translated, or the ready-to-share honorários copy.
 - DOCX: The Word file created by the app.
 - Run folder: A folder containing translation progress and diagnostics files.
 - Resume: Continue from where a previous run stopped.
@@ -90,6 +90,22 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 13. Fixed-choice fields such as `Job type`, `Lang`, and saved entity/city lists are chosen from dropdowns instead of typed manually. Use the small `+` button when you need a new saved entity or city.
 14. Date fields can still be typed as `YYYY-MM-DD`, but you can now also pick them from a calendar popup. The calendar starts on Monday.
 
+## Word and PDF copies of honorários
+
+Your translation stays in an editable Word document; you do not need a PDF translation. The separate `Requerimento de Honorários` keeps an editable DOCX and uses Microsoft Word to create a PDF with the same basename. The app checks the newly generated PDF before reporting success. An older PDF is not counted as a successful new export.
+
+The exporter uses its own checked Word instance and a temporary copy, so it does not take over or force-close your existing Word documents. It makes one attempt with a 45-second export allowance; a brief bounded cleanup can follow. It does not automatically retry a timeout. The saved honorários DOCX remains available if PDF generation fails, and a failed export does not replace a previous good PDF.
+
+If PDF generation is unavailable:
+
+1. Keep the saved DOCX; do not repeat the translation.
+2. If another export is busy, let it finish before retrying.
+3. If the app cannot confirm that an earlier Word operation ended safely, save your open Word work before closing Word normally, then use the available retry action. Do not discard unsaved documents or keep clicking retry.
+4. If the warning remains, open the saved honorários DOCX, export it to PDF manually in Word and review every page. Use `Select existing PDF...` where offered, or continue local-only and keep both files.
+5. Review the honorários PDF and any translated DOCX before creating an email draft. The honorários DOCX alone does not satisfy the PDF requirement for that draft.
+
+This recovery does not require weakening Word security settings or repairing/reinstalling Office. If a security warning or persistent block remains, retain the app's diagnostic details for support rather than bypassing it.
+
 ## Interpretation Honorarios
 1. Use `Tools > New Interpretation Honorários...` for the direct save-first path, or open `Tools > View Job Log`.
 2. In `Job Log`, use `Add...` and choose the interpretation path you need:
@@ -104,10 +120,10 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 7. If you enter a new one-way distance for a service city and save the row, the app remembers it for future interpretation rows under the current profile.
 8. If you used `Tools > New Interpretation Honorários...`, the export dialog opens right after save. Otherwise, use `Gerar Requerimento de Honorários...` from that row when you are ready.
 9. The export dialog keeps the main case/profile fields visible first and tucks extra detail into `SERVICE`, `TEXT`, and `RECIPIENT` sections. `RECIPIENT` usually stays collapsed until you need to override the case-derived addressee.
-10. The export saves the DOCX first and then attempts a sibling PDF with the same basename.
+10. The export keeps the DOCX first and then makes one bounded attempt to generate and verify a sibling PDF with the same basename.
 11. Leave `Include transport/distance sentence in honorários text` on in the normal case. Turn it off only when transport is being handled separately and you want that sentence omitted from the document.
 12. The body still uses the service day, but the footer date before your signature always uses the day you generate the document.
-13. If automatic PDF generation fails, the dialog keeps the DOCX, stays responsive, and lets you retry, choose an existing PDF, or continue local-only.
+13. If automatic PDF generation fails, the dialog keeps the DOCX, stays responsive, and offers manual recovery. Follow the Word/PDF recovery steps above before retrying an uncertain timeout.
 14. Manual/local interpretation exports can create a fresh Gmail draft when `Court Email`, Gmail draft prerequisites, and the honorários PDF are all available. Those drafts attach the honorários PDF only.
 
 ### Google Photos Interpretation Import

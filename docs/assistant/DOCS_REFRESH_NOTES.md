@@ -16,6 +16,12 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+## 2026-09-07 — feat/honorarios-pdf-export (approved docs sync)
+- Synchronized the honorarios-only Word PDF repair, recovery guidance, validation and current-status handoff; translation deliverables remain DOCX and translation/model research stays unpromoted.
+- Updated the existing `desktop-qt-honorarios-export-reliability` issue-memory entry because the earlier accepted mitigation did not prevent the September failure. Durable ownership/quarantine, native-call signature and full-export acceptance guidance now lives in the host integration workflow.
+- Eight real synthetic exports, every-page inspection of retained PDFs, 2,176 passing tests and full validation support the repair. The separate known native Qt layout-test diagnostic is explicitly not claimed fixed.
+- Closed implementation ExecPlan: `docs/assistant/exec_plans/completed/2026-09-07_honorarios_pdf_export_reliability.md`. Publication evidence belongs to the reviewed PR; do not assume a merge SHA before it exists.
+
 ## 2026-05-09 — chore/fresh-thread-handoff-wording
 - Files changed:
   - docs/assistant/DOCS_REFRESH_NOTES.md

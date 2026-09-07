@@ -31,6 +31,7 @@ Instead use:
 - Do not treat installation-only as sufficient readiness.
 - Do not treat any process already listening on the expected port as proof the real integration is healthy.
 - Do not treat shell-only startup or launch-only Word readiness as sufficient when the user-visible path later loads browser module workers, opens documents, or exports PDFs.
+- Do not run a legacy Word probe that can attach to, hide or close an existing user session. Read-only installation/process evidence comes first; ownership, bounded execution and durable diagnostics must be in place before native experiments.
 
 ## Primary Files
 - `docs/assistant/LOCAL_ENV_PROFILE.local.md`
@@ -88,6 +89,22 @@ For this repo's Gmail finalization path:
 - a shallow Word launch probe is not sufficient
 - `finalization_ready` must come from a real DOCX-to-PDF export canary that uses the same export path as the final reply step
 
+## Word PDF Export Safety and Diagnostic Contract
+
+The shared implementation is `word_automation.py` with `word_pdf_control.py`, `word_pdf_artifacts.py` and `word_pdf_script.py`. It exports the app-generated honorarios document, not the translation. Preserve the editable original and any previous good PDF while producing a unique staged output; parse every PDF page and promote only verified fresh output. A canary must also contain its expected text.
+
+Before a native call, acquire the cross-process export slot and persist a content-free phase journal. Keep helper/Word PID plus creation-time evidence, primary phase/HRESULT and cleanup evidence distinct. Do not dump scripts, document text or raw PowerShell errors. A timeout may stop only the retained app-owned helper handle, not a process-name tree or an unknown Word process. Unconfirmed cleanup quarantines further attempts; preserve the original state directory/journal during recovery. Save user work before asking the user to close Word normally; manual DOCX-to-PDF export and reviewed existing-PDF selection remain fallbacks. Do not delete quarantine state, change APPDATA or weaken security to obtain another attempt.
+
+Retain these same-host compatibility decisions established by the 2026-09-07 repair:
+
+- Launch the resolved Word executable with the single `/w` switch and retain its exact process identity. Bind that process's document window and verify ownership before changing visibility/security or opening the staged document. Do not attach through `GetActiveObject` or equate COM construction with ownership.
+- Keep `Documents.Open` to the common first **12 positional arguments**, ending in `Visible=false`, including `ReadOnly=true` and `AddToRecentFiles=false`. VBA and Interop document different optional tails; adding unused tail placeholders produced a real `0x80070057` failure on this host.
+- Keep `ExportAsFixedFormat` to **14 explicit arguments**, including print quality, all pages, `IncludeDocProps=true` and `KeepIRM=true`. Omit the unnecessary optional `FixedFormatExtClassPtr`; passing a missing-value sentinel there also failed natively.
+- Close only the exact staged document, then require exactly the original, unchanged, identity-verified blank bootstrap and no Protected View windows before `Quit(0)`. Keep that blank document/window as the live automation anchor through Quit. Closing the final blank first disconnected Word's native collection surface; do not weaken the document guard to accept an arbitrary remaining document.
+- Release owned COM references and confirm the recorded process exited. The normal browser/Qt callers make one attempt with a 45-second export allowance and bounded cleanup, without automatic re-probe/re-export after timeout. Passing helper startup is not passing export.
+
+Require opt-in native canary and real shared/browser-route/Qt-worker exports with synthetic data, complete-page Word-PDF visual inspection, unchanged original hashes, unsaved-document coexistence and healthy bounded-timeout recovery. Keep private evidence outside Git. The eight accepted native exports and exact failure/repair evidence are recorded in the [completed repair ExecPlan](../exec_plans/completed/2026-09-07_honorarios_pdf_export_reliability.md). That acceptance included no live Gmail test, Office repair or security-setting change; it does not establish arbitrary-host readiness. The pre-existing Qt small-screen `0x8001010d` event-loop diagnostic remains separate from Word export and must not be suppressed or described as fixed.
+
 ## Failure Modes and Fallback Steps
 - `unavailable`
   - install missing
@@ -99,9 +116,9 @@ For this repo's Gmail finalization path:
   - preflight passed, but the feature behavior itself failed
 
 Fallback order:
-1. fix installation/auth/host mismatch
-2. rerun the smoke check
-3. only then proceed with implementation or feature debugging
+1. Establish whether the evidence shows installation/auth/host mismatch, a helper defect, or an uncertain in-progress operation. Do not infer Office corruption from a COM/argument error.
+2. Correct only the demonstrated issue within the approved scope. Preserve user work, quarantine and security settings; installation/auth changes require their own authorization.
+3. Rerun the same-host smoke check through the safe shared path after recovery, then proceed with implementation or feature debugging. A Word export canary does not authorize Gmail draft creation or sending.
 
 ## Handoff Checklist
 1. State which host is authoritative for the integration.
