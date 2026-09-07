@@ -30,6 +30,18 @@ This user guide is not canonical architecture truth. Defer to `APP_KNOWLEDGE.md`
 5. Click `Start Translate`.
 6. Open output DOCX when run completes.
 
+## Readable Word output and local rebuilds
+
+Translations remain editable Word files. The compact writer uses readable Arial 11 pt for Arabic and Times New Roman 10.5 pt for English/French, deliberate margins, intact accented Latin names and Word page numbers. Turn source-page breaks off for compact reflow; leave them on when you need a separate Word start for every source page. Fonts are not reduced and legal text is not shortened to force a page count.
+
+For saved runs with complete matching source/translation structure, the writer can preserve notice columns, tables, source-based paragraph gaps and real section headers/footers. Each joined document can have different headers, different footers or neither. Uncertain material stays in the text for review. Repeated translated labels use one recorded wording, with original variants retained separately for review.
+
+The current live translation pipeline produces page text without these block associations. Such runs still get the safer typography, mixed-script handling and page numbering, but not guessed source-exact columns or headers. The app reports missing or uncertain layout evidence; a successful rebuild is not certification of legal accuracy. The separate structured-translation/model upgrade is not activated by this formatting release.
+
+Use `... > Rebuild DOCX` with retained page outputs to change formatting locally without buying another translation. Keep intermediates when you want later rebuilding; old text-only runs remain supported. Check the final Word file before delivery and resolve any existing review findings. Rebuilding does not erase earlier translation warnings or change recorded API costs.
+
+Automatic Word-to-PDF export is not needed for translation DOCX creation. Honorarios still need PDF; their unattended export reliability remains a separate deferred task. PDFs/PNGs generated for development layout checks are internal evidence only.
+
 ## If Warnings Appear Before The Run Starts
 Two warnings matter for OCR-heavy work.
 
