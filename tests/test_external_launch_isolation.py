@@ -3,6 +3,7 @@ import os
 import subprocess
 
 import pytest
+from docx import Document
 
 import legalpdf_translate.word_automation as word_automation
 
@@ -28,8 +29,10 @@ def test_unmocked_native_word_and_cleanup_are_blocked(action, tmp_path, monkeypa
     monkeypatch.setattr(word_automation, "_resolve_powershell_path", lambda: "powershell.exe")
     monkeypatch.setattr(word_automation, "_resolve_winword_path", lambda: None)
     monkeypatch.setattr(word_automation, "_resolve_taskkill_path", lambda: "taskkill.exe")
-    docx = tmp_path / "synthetic-invalid.docx"
-    docx.write_bytes(b"not a real document")
+    docx = tmp_path / "synthetic-honorarios.docx"
+    document = Document()
+    document.add_paragraph("Synthetic honorários guard test; never launch Word.")
+    document.save(docx)
 
     with pytest.raises(pytest.fail.Exception, match="Native Word execution blocked"):
         try:

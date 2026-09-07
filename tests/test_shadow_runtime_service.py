@@ -1303,6 +1303,56 @@ def test_save_translation_row_accepts_partial_browser_seed_payload(tmp_path: Pat
     assert response["normalized_payload"]["case_number"] == "456/26.0T8LSB"
 
 
+@pytest.mark.parametrize("failure_code", ["", "timeout", "export_failed", "ownership_unverified"])
+def test_honorarios_pdf_export_dispatches_once_without_a_launch_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_code: str,
+) -> None:
+    docx_path = tmp_path / "honorários.docx"
+    pdf_path = docx_path.with_suffix(".pdf")
+    docx_path.write_bytes(b"preserved editable DOCX")
+    pdf_path.write_bytes(b"previous PDF, not this export")
+    export_calls: list[tuple[Path, Path, float]] = []
+    probe_calls: list[float] = []
+    automation = interpretation_service.WordAutomationResult(
+        ok=not failure_code,
+        action="export_pdf",
+        message="Export result from the shared Word worker.",
+        failure_code=failure_code,
+        details="Primary phase: export_pdf; Word cleanup not confirmed.",
+        elapsed_ms=45000 if failure_code == "timeout" else 1200,
+    )
+
+    def _export(docx: Path, pdf: Path, *, timeout_seconds: float):
+        export_calls.append((docx, pdf, timeout_seconds))
+        return automation
+
+    monkeypatch.setattr(interpretation_service, "export_docx_to_pdf_in_word", _export)
+    monkeypatch.setattr(
+        interpretation_service,
+        "probe_word_pdf_export_support",
+        lambda *, timeout_seconds: probe_calls.append(timeout_seconds) or SimpleNamespace(ok=True),
+        raising=False,
+    )
+
+    response = interpretation_service._run_pdf_export_with_retry(docx_path=docx_path, pdf_path=pdf_path)
+
+    assert export_calls == [(docx_path, pdf_path, 45.0)]
+    assert probe_calls == []
+    assert response == {
+        "docx_path": str(docx_path),
+        "pdf_path": str(pdf_path) if automation.ok else None,
+        "ok": automation.ok,
+        "failure_code": failure_code,
+        "failure_message": automation.message,
+        "failure_details": automation.details,
+        "elapsed_ms": automation.elapsed_ms,
+    }
+    assert docx_path.read_bytes() == b"preserved editable DOCX"
+    assert pdf_path.read_bytes() == b"previous PDF, not this export"
+
+
 def test_export_interpretation_honorarios_reports_local_only_when_pdf_fails(
     tmp_path: Path,
     monkeypatch,

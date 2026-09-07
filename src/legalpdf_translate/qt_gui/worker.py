@@ -40,7 +40,6 @@ from legalpdf_translate.types import RunConfig
 from legalpdf_translate.word_automation import (
     WordAutomationResult,
     export_docx_to_pdf_in_word,
-    probe_word_pdf_export_support,
 )
 from legalpdf_translate.workflow import TranslationWorkflow
 
@@ -71,16 +70,7 @@ class HonorariosPdfExportWorker(QObject):
 
     @Slot()
     def run(self) -> None:
-        preflight = probe_word_pdf_export_support(timeout_seconds=max(8.0, self._timeout_seconds))
-        if not preflight.ok:
-            self.finished.emit(
-                HonorariosPdfExportResult(
-                    docx_path=self._docx_path,
-                    pdf_path=None,
-                    automation=preflight,
-                )
-            )
-            return
+        # Readiness and serialization belong to this single export operation.
         result = export_docx_to_pdf_in_word(
             self._docx_path,
             self._pdf_path,

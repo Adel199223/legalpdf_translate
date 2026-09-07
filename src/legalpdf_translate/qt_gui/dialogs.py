@@ -1466,7 +1466,6 @@ class QtHonorariosExportDialog(QDialog):
         self.pdf_export_elapsed_ms = 0
         self.pdf_unavailable_explained = False
         self.auto_renamed = False
-        self._pdf_export_retry_count = 0
 
     def _set_pdf_export_busy(self, busy: bool, *, status_text: str = "") -> None:
         self._pdf_export_in_flight = busy
@@ -1478,6 +1477,10 @@ class QtHonorariosExportDialog(QDialog):
         self.export_progress.setVisible(busy)
 
     def _clear_pdf_export_worker_refs(self) -> None:
+        # Manual recovery may start a new worker before the previous thread's
+        # queued finished signal is delivered. Only retire the matching worker.
+        if self.sender() is not self._pdf_export_thread:
+            return
         self._pdf_export_worker = None
         self._pdf_export_thread = None
 
@@ -1600,7 +1603,7 @@ class QtHonorariosExportDialog(QDialog):
         self.pdf_export_error = ""
         return True
 
-    def _retry_pdf_export(self, *, automatic: bool = False) -> bool:
+    def _retry_pdf_export(self) -> bool:
         if self.docx_saved_path is None:
             QMessageBox.critical(
                 self,
@@ -1617,11 +1620,7 @@ class QtHonorariosExportDialog(QDialog):
         self.pdf_export_error = ""
         self._set_pdf_export_busy(
             True,
-            status_text=(
-                "Word PDF export timed out once. Retrying once with a longer timeout..."
-                if automatic
-                else "DOCX saved. Retrying the sibling PDF export in the background..."
-            ),
+            status_text="DOCX saved. Retrying the sibling PDF export in the background...",
         )
         self._begin_pdf_export(
             docx_path=self.docx_saved_path,
@@ -1703,15 +1702,6 @@ class QtHonorariosExportDialog(QDialog):
         self.pdf_failure_details = ""
         self.pdf_export_error = ""
         self.pdf_export_elapsed_ms = int(result.automation.elapsed_ms)
-        if (
-            not result.automation.ok
-            and str(result.automation.failure_code or "").strip() == "timeout"
-            and int(getattr(self, "_pdf_export_retry_count", 0)) < 1
-        ):
-            self._pdf_export_retry_count = int(getattr(self, "_pdf_export_retry_count", 0)) + 1
-            self._set_pdf_export_busy(False)
-            QTimer.singleShot(0, lambda: self._retry_pdf_export(automatic=True))
-            return
         if not result.automation.ok:
             self.saved_pdf_path = None
             self.pdf_saved_path = None
