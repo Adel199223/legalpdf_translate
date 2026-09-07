@@ -5,12 +5,21 @@
 - Repository: `Adel199223/legalpdf_translate`.
 - Canonical branch: `main`.
 - Current product-modernization baseline: `c3ec60e57852af4ff69ba96cd0410c489a25ba69` after PR #226, `[codex] Extract Gmail prepare action presentation`.
-- This file may live on a later docs-only closeout merge; use `git rev-parse HEAD` in the canonical repo for the exact current repository head.
-- Latest `main` GitHub Actions CI: green for `test (3.11)` and `docs_tooling_contracts`.
+- This historical modernization baseline is not the current head; use `git rev-parse HEAD` in the canonical repo and inspect the latest merged PR checks for current repository state.
 - Primary UI: local browser app on `127.0.0.1`, normally live on port `8877`.
 - Secondary UI: Qt/PySide6 shell.
 - Development UI review mode: browser `shadow` mode with isolated app data.
-- Closeout hygiene state: no open PRs, only the canonical worktree, and no required feature branches or worktrees were present before this docs closeout branch.
+- Formatting integration starts from `main@022b5afb54b9be0b2eba1f2c19d617ed46a10891`. Keep unfinished research in the clean local-only quality worktree at checkpoint `66a7374a2b874f59994215177af4ff48d1d5f100`; do not delete, merge or publish that combined research branch wholesale. Unrelated dependency-update PRs are outside this rollout.
+
+## Approved Formatting Integration
+
+The formatting-only release preserves compact editable Word output, coherent Arabic/Latin runs, real page fields, and section-specific headers/footers and source gaps when complete matching block evidence exists. Private Arabic/French rebuilds match every uncompressed DOCX package entry in the user-approved five-page/one-page Word proofs; evidence and private documents remain outside Git.
+
+Current production requests still return TXT, so new runs gain typography/RTL/page-number defaults, not fabricated source-aware associations. Exact regions and section furniture require retained validated source/target sidecars; missing evidence remains a manual-layout-review item. Saved text, historical usage and semantic findings survive local rebuilds. No provider call is required for formatting-only rebuilds.
+
+Translation prompts/models/efforts, OCR routing, browser/Gmail contracts and honorarios export behavior are unchanged. Terra/Sol policy promotion, complete structured production extraction/translation and unattended honorarios PDF reliability remain separate unfinished work, not accepted by this layout rollout. Translations remain DOCX.
+
+See `docs/assistant/exec_plans/completed/2026-09-07_approved_formatting_integration.md` for validation and rollout conditions; verify the merged PR and actual canonical head rather than assuming the old modernization baseline is current.
 
 The recent browser modernization line has been merged through PR #226. The static browser frontend is now split across focused UI/presentation modules while `app.js`, `gmail.js`, `translation.js`, and `power-tools.js` remain coordinator modules for state, API calls, routing, and side effects. This preserved the existing FastAPI/static app, route IDs, payload shapes, selectors, Gmail/native-host contracts, CLI, and PySide6 entry points.
 
@@ -38,7 +47,7 @@ Important invariant: do not convert the translation workflow into one whole-docu
 - Roadmap resume anchor: `docs/assistant/SESSION_RESUME.md`.
 
 ## Current Next Step
-For the next fresh chat, start from clean canonical `main` and choose one normal small PR. The highest-value modernization path is still narrow browser/Gmail presentation or coordinator-pressure cleanup: keep state derivation and side effects in coordinator modules, move only safe DOM rendering or pure presentation shaping into focused modules, and validate in shadow mode before any live-host work.
+Start from clean canonical `main`. For translation-quality continuation, first inspect the preserved quality checkpoint and its ExecPlan, then isolate the next approved scope; do not reintroduce mixed research changes by merging that branch. The next consequential gap is source-associated structure in new production runs, followed by evidence-gated model evaluation/promotion and the separately deferred honorarios PDF issue. Preserve the original lifetime benchmark allowance; formatting integration adds no paid calls. Unrelated modernization remains normal small-PR work.
 
 For live Gmail checks, use canonical `main` only:
 1. Keep the primary worktree on `main`.

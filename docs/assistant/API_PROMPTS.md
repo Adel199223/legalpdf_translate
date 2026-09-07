@@ -43,6 +43,9 @@ System instructions safe summary:
 - Very short excerpt (`resources/system_instructions_ar.txt`): `Return ONLY the Arabic translation inside ONE plain-text code block.`
 
 ## B. Primary request template (per language: EN, FR, AR)
+
+The approved formatting integration does not change these requests, system instructions, provider models/efforts, retries, glossary additions or OCR behavior. `formatting_support.py` contains only local hash/JSON/formatting and source-continuation support, not the experimental structured translation protocol. Current production still saves translated TXT. Complete existing source/target sidecars may drive the compact writer and local rebuild; equal paragraph counts or matching identifiers are not sufficient evidence to create such associations. Formatting-only layout/rebuild work never invokes translation or paid review/correction.
+
 Source of truth: `src/legalpdf_translate/prompt_builder.py::build_page_prompt`.
 
 Template behavior:

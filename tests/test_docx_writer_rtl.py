@@ -3,6 +3,8 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
+import pytest
+
 from legalpdf_translate.docx_writer import assemble_docx
 from legalpdf_translate.types import TargetLang
 
@@ -72,7 +74,9 @@ def test_arabic_docx_sets_rtl_paragraph_and_stable_mixed_runs(tmp_path: Path) ->
     assert p_pr.find("w:bidi", _NS) is not None
     jc = p_pr.find("w:jc", _NS)
     assert jc is not None
-    assert jc.attrib.get(_W_VAL) == "right"
+    assert jc.attrib.get(_W_VAL) == "start"
+    assert p_pr.find("w:rtl", _NS) is None
+    assert list(p_pr).index(p_pr.find("w:bidi", _NS)) < list(p_pr).index(jc)
 
     runs = _paragraph_runs(paragraph)
     assert len(runs) >= 2
@@ -100,6 +104,35 @@ def test_non_rtl_languages_do_not_get_rtl_paragraph_flags(tmp_path: Path) -> Non
     if p_pr is not None:
         assert p_pr.find("w:bidi", _NS) is None
         assert p_pr.find("w:rtl", _NS) is None
+
+
+@pytest.mark.parametrize("line", [
+    "اتصل بالرقم 123456789 في أيام العمل من 09h00 إلى 12h30.",
+    "موقع بتاريخ 13-07-2026 من طرف Daniela Garrido، قاضية",
+    "قاعدة بيانات IMT الخاصة بالسائقين.",
+    "الشاهد João Exemplo بالحضور في الموعد المحدد.",
+    "الشاهد [[João Exemplo]] بالحضور في الموعد المحدد.",
+    "نص  [[João Exemplo]]\t آخر",
+    "الرقم2026والاسمJoãoبدون فصل",
+])
+def test_mixed_script_boundary_spaces_keep_rtl_direction_without_text_changes(tmp_path: Path, line: str) -> None:
+    pages_dir = tmp_path / "pages"
+    _write_page(pages_dir / "page_0001.txt", line)
+    out = assemble_docx(pages_dir, tmp_path / "boundaries.docx", lang=TargetLang.AR, page_breaks=False)
+    paragraph = _first_paragraph_root(_read_document_xml(out))
+    runs = _paragraph_runs(paragraph)
+    # XML text helpers exclude tab elements; reconstruct them for exact evidence.
+    def visible(run):
+        return "".join("\t" if child.tag == f"{{{_W_NS}}}tab" else (child.text or "")
+                       for child in run if child.tag in {f"{{{_W_NS}}}t", f"{{{_W_NS}}}tab"})
+    emitted = "".join(visible(run) for run in paragraph.findall("w:r", _NS))
+    assert _clean_run_text(emitted) == line.replace("[[", "").replace("]]", "")
+    for entry in runs:
+        text = _clean_run_text(entry["text"])
+        if entry["rtl"] == "0":
+            assert text == text.strip(), "Arabic/Latin separators must not be owned by an LTR run"
+    if "João Exemplo" in line:
+        assert any("João Exemplo" in (entry["text"] or "") and entry["rtl"] == "0" for entry in runs)
 
 
 def test_arabic_docx_month_date_mixed_direction_order_is_stable(tmp_path: Path) -> None:

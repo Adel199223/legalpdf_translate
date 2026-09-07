@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 if os.name != "nt" and "DISPLAY" not in os.environ:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -102,11 +104,14 @@ def test_render_profiles_writes_png_and_metadata(tmp_path: Path) -> None:
     assert result["sidebar_active_rgb"][2] > result["sidebar_inactive_rgb"][2]
 
 
-def test_render_profiles_ignore_live_screen_geometry(tmp_path: Path) -> None:
+@pytest.mark.parametrize("dependency_stdout", ["", "warning: synthetic dependency output before metadata"])
+def test_render_profiles_ignore_live_screen_geometry(tmp_path: Path, dependency_stdout: str) -> None:
     script = f"""
 import json
 import sys
 from pathlib import Path
+if {dependency_stdout!r}:
+    print({dependency_stdout!r})
 from PySide6.QtCore import QRect
 
 repo_root = Path({str(Path(__file__).resolve().parents[1])!r})
@@ -136,7 +141,11 @@ print(json.dumps(result))
         text=True,
         env=env,
     )
-    metadata = json.loads(result.stdout.strip())
+    if dependency_stdout:
+        assert dependency_stdout in result.stdout
+    # Dependency diagnostics remain visible on stdout; the renderer's JSON
+    # artifact is the metadata contract, not a mixed subprocess output stream.
+    metadata = json.loads((tmp_path / "wide.json").read_text(encoding="utf-8"))
 
     assert metadata["profile"] == "wide"
     assert metadata["layout_mode"] == "desktop_exact"

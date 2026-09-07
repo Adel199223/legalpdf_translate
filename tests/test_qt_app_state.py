@@ -3947,6 +3947,8 @@ def test_arabic_docx_review_dialog_keeps_manual_fallback_when_open_fails(monkeyp
 
     docx_path = tmp_path / "arabic.docx"
     docx_path.write_bytes(b"docx")
+    opened_paths: list[str] = []
+    monkeypatch.setattr(dialogs_module.os, "startfile", lambda path: opened_paths.append(str(path)), raising=False)
     monkeypatch.setattr(
         dialogs_module,
         "open_docx_in_word",
@@ -3970,6 +3972,10 @@ def test_arabic_docx_review_dialog_keeps_manual_fallback_when_open_fails(monkeyp
         assert dialog.continue_now_btn.isEnabled() is True
         assert dialog.continue_without_changes_btn.isEnabled() is True
         assert warnings["text"].startswith("boom")
+        if dialogs_module.os.name == "nt":
+            assert opened_paths == [str(docx_path.resolve())]
+        else:
+            assert opened_paths == []
     finally:
         dialog.close()
         dialog.deleteLater()

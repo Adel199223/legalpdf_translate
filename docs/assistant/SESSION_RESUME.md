@@ -52,10 +52,17 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - Branch: `main`
 - Canonical status: stable merged baseline and the default authority for fresh sessions
 
+## Approved Formatting Continuity
+
+- Formatting integration is scoped from `main@022b5af`; see the completed `2026-09-07_approved_formatting_integration.md` ExecPlan and actual merged PR for the tested tree. Verify current `main` rather than using the historical modernization SHA below.
+- The accepted AR/French Word presentation is retained through local, hash-bound structure/layout evidence. New TXT-only production runs receive safe compact typography/RTL/page fields and a manual layout-review notice; they do not gain guessed block associations.
+- No translation/model/OCR/prompt or honorarios export policy is promoted in this formatting-only release. The unfinished quality worktree remains recoverable at local checkpoint `66a7374a2b874f59994215177af4ff48d1d5f100`; it must not be merged or pushed wholesale.
+- Translation documents stay editable DOCX. Unattended honorarios PDF export reliability remains deferred. Private references and the original capped benchmark ledger remain outside Git.
+
 ## Current Modernization Baseline
 - Product-modernization baseline at closeout is `c3ec60e57852af4ff69ba96cd0410c489a25ba69` after PR #226, `[codex] Extract Gmail prepare action presentation`.
-- The repository may be on a later docs-only closeout merge; use `git rev-parse HEAD` in `C:\Users\FA507\.codex\legalpdf_translate` for the exact current `main` commit.
-- Latest `main` GitHub Actions CI was green at closeout, and the expected local state was clean/aligned with only the canonical worktree remaining.
+- This is historical context, not the current head; use `git rev-parse HEAD` in `C:\Users\FA507\.codex\legalpdf_translate` for the exact current `main` commit.
+- CI and worktree counts above the historical baseline must be rechecked. The separate unmerged quality checkpoint is intentionally retained during formatting rollout.
 - Recent browser modernization split the static frontend into focused modules: `*_ui.js` modules own safe DOM writes, `*_presentation.js` modules own pure labels/status/card shaping, and `app.js`, `gmail.js`, `translation.js`, and `power-tools.js` remain coordinators for state, API calls, routing, and side effects.
 - The next normal modernization slice should be a small TDD PR from clean `main`, preferably another narrow Gmail/browser presentation or coordinator-pressure cleanup. Use `mode=shadow` for browser smoke unless the user explicitly asks for live Gmail, OAuth, or native-host testing.
 
@@ -95,6 +102,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 ## Next Concrete Action
 - No active roadmap needs resume handling.
 - For new work, use normal ExecPlan flow unless the user explicitly opens a new roadmap.
+- For continued legal-translation improvements, close the formatting rollout first, then inspect the preserved research ExecPlan and isolate source-associated production structure/model-dependent acceptance work. Layout approval is not approval of new models or legal fidelity; do not reset or duplicate the lifetime benchmark allowance.
 - If continuing modernization, choose one narrow browser/Gmail presentation or coordinator-pressure slice, create an isolated worktree from clean `main`, use focused tests first, publish through a GitHub PR, wait for Actions, smoke in shadow mode when relevant, and clean up the merged branch/worktree.
 - Publish/merge requests should follow the standard commit/publish workflow and should not start a new Gmail/runtime thread while accepted live fixes remain only in local commits.
 

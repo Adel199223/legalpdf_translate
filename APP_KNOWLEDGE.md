@@ -135,6 +135,14 @@ Recurring Portuguese court/prosecution headers now use a shared phrase-level ins
 Arabic legal-term hardening now adds a second narrow prompt-first layer on top of that shared institutional seeding: `O Juiz de Direito` is injected as a priority legal title, Portuguese legal citation abbreviations such as `n.º`, `alínea`, and `p. e p. pelos arts.` are canonicalized before glossary matching and diagnostics, `registo criminal` terminology is harmonized on the `السجل العدلي` family, and Arabic quality-risk scoring now consumes persisted numeric/citation/bidi validation counters instead of staying artificially low on citation-heavy runs.
 
 ## Output and Run Artifacts
+
+The approved compact Word writer is a formatting-only release. It uses Arial 11 pt for Arabic and Times New Roman 10.5 pt for English/French, approximately 1.7 cm side margins and 1.5 cm starting vertical margins, coherent mixed-script runs, and real Word PAGE fields. Explicit source-page breaks remain supported. No model IDs, efforts, translation prompts, OCR routing, paid review/correction, glossary/calibration behavior or API accounting changed with this release.
+
+Source-aware formatting is evidence-gated: complete matching source/target structure sidecars enable editable notice regions, tables, bounded source paragraph gaps and independent Word sections for repeated court headers/contact footers. Different, absent, uncertain and separate-document furniture does not inherit an earlier section's identity. Canonical repeated wording retains every original source ID and translation variant in the source map; unresolved variants and layout limitations enter the existing review workflow. Arabic structured body/list paragraphs use modest automatic 1.10 leading where exact source line metrics are unavailable. One-off and substantive material stays in the body.
+
+Current production translation still returns page TXT, not source-associated translated blocks. New TXT runs receive conservative readable typography/RTL/PAGE defaults, but the writer never invents source/target alignment from matching paragraph counts or numbers. Full source-aware layout is available for retained, validated structured runs through local rebuilds. The structured translation/model-quality project remains separate and unpromoted. Rebuilds reuse saved translations, preserve historical usage/review evidence, and do not construct API/OCR clients. Source-map rendered page counts remain unknown until measured in Word.
+
+Translations stay DOCX. Internal PDF/PNG layout checks are not a required translation export. Honorarios PDF automation remains a separate deferred repair; this release preserves its existing behavior and Gmail gates.
 Run artifacts live under:
 - manual/local runs: `<outdir>/<pdf_stem>_<LANG>_run/`
 - Gmail-started translation runs: `<outdir>/<pdf_stem>_gmail_<session_token>_p<start_page>_<attachment_token>_run/`

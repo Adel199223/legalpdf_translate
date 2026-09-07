@@ -6,6 +6,18 @@
 - Run targeted tests first, then broader validation when the touched scope warrants it.
 - Stop before merge if local validation, GitHub checks, branch identity, or worktree cleanliness is not clean.
 
+## Approved formatting integration
+
+Validate compact writer, structure/regions, source-spacing and section-furniture suites, including different/headerless/footerless sections, source/target hash binding, ambiguous evidence, all source-map aliases, readable Arabic/Latin runs, PAGE continuity, tables, legacy TXT and explicit page matching. Run local rebuild integration and production-policy isolation regressions: saved translation bytes, prior usage/costs and existing review findings must remain intact, and no new API/OCR client may be constructed by rebuilding. Keep prompt/effort/image/source-extraction regressions in the compatibility set.
+
+Rich source-aware formatting requires complete matching structured pairs. Current production TXT output cannot be made source-associated merely by matching paragraph counts or numeric anchors. Tests must exercise this fallback rather than use the experimental translation workflow to manufacture a passing release.
+
+Rebuild private accepted examples into new outputs; compare every DOCX package entry against the accepted Word-rendered version. Exact package equality permits reuse of its bound render evidence. Any layout/content difference requires fresh rendering and every-page inspection. Keep private PDFs/DOCXs/PNGs outside Git; use synthetic accented names in published fixtures. Translation deliverables remain DOCX.
+
+The existing native Windows `0x8001010d` diagnostic can occur at the honorarios small-screen dialog's `app.processEvents()` even when assertions pass. Record native and isolated rerun outcomes; offscreen success is not native export acceptance. This formatting release does not repair or alter unattended honorarios export.
+
+Qt render-review subprocess tests must read the renderer's JSON artifact rather than assume stdout contains only JSON: dependency diagnostics can also appear there. Keep strict artifact parsing, successful process exit and geometry assertions; exercise noisy stdout without suppressing warnings or weakening layout checks.
+
 ## Common Targeted Browser And Gmail Tests
 ```powershell
 .\.venv311\Scripts\python.exe -m pytest -q tests/test_shadow_web_api.py tests/test_shadow_web_route_state.py tests/test_browser_safe_rendering.py tests/test_translation_browser_state.py tests/test_gmail_review_state.py tests/test_profile_browser_state.py

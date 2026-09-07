@@ -1314,6 +1314,8 @@ class TranslationWorkflow:
             try:
                 docx_started = time.perf_counter()
                 _docx_stats: dict[str, int] = {}
+                _layout_preparation = self._prepare_docx_layout(config, paths.pages_dir, paths.frozen_outdir,
+                                                               cancelled=self._cancel_event.is_set)
                 output_docx = assemble_docx(
                     paths.pages_dir,
                     paths.final_docx_path,
@@ -1322,6 +1324,7 @@ class TranslationWorkflow:
                     strip_bidi_controls=config.strip_bidi_controls,
                     stats=_docx_stats,
                 )
+                self._record_docx_layout_review(output_docx, paths.pages_dir, run_state, _layout_preparation)
                 self._run_stage_timings_ms["docx_rebuild"] = round((time.perf_counter() - docx_started) * 1000.0, 3)
                 if self._diagnostics_admin_mode:
                     from .translation_diagnostics import emit_docx_write_event
@@ -1635,6 +1638,7 @@ class TranslationWorkflow:
         if not page_files:
             raise ValueError(f"No completed page files found for rebuild: {pages_dir}")
 
+        layout_preparation = self._prepare_docx_layout(config, pages_dir, effective_outdir)
         output_docx = assemble_docx(
             pages_dir,
             final_paths.final_docx_path,
@@ -1642,6 +1646,7 @@ class TranslationWorkflow:
             page_breaks=config.page_breaks,
             strip_bidi_controls=config.strip_bidi_controls,
         )
+        layout_records = self._record_docx_layout_review(output_docx, pages_dir, run_state, layout_preparation)
 
         if run_state is not None:
             run_state.frozen_outdir_abs = str(effective_outdir)
@@ -1651,6 +1656,8 @@ class TranslationWorkflow:
             run_state.run_status = "completed"
             run_state.finished_at = self._utc_now()
             save_run_state_atomic(run_state_path, run_state)
+
+        self._refresh_formatting_summary(run_dir / "run_summary.json", layout_records)
 
         self._last_config = config
         self._last_paths = final_paths
@@ -1663,13 +1670,82 @@ class TranslationWorkflow:
         completed = list_completed_pages(self._last_state)
         if not completed:
             return None
-        return assemble_docx(
+        layout_preparation = self._prepare_docx_layout(
+            self._last_config, self._last_paths.pages_dir, self._last_paths.frozen_outdir,
+            cancelled=self._cancel_event.is_set,
+        )
+        output_docx = assemble_docx(
             self._last_paths.pages_dir,
             self._last_paths.partial_docx_path,
             lang=self._last_config.target_lang,
             page_breaks=self._last_config.page_breaks,
             strip_bidi_controls=self._last_config.strip_bidi_controls,
         )
+        layout_records = self._record_docx_layout_review(
+            output_docx, self._last_paths.pages_dir, self._last_state, layout_preparation,
+        )
+        self._refresh_formatting_summary(self._last_paths.run_dir / "run_summary.json", layout_records)
+        return output_docx
+
+    def _prepare_docx_layout(
+        self, config: RunConfig, pages_dir: Path, output_dir: Path,
+        *, cancelled: Callable[[], bool] | None = None,
+    ) -> dict:
+        # Formatting consumes retained evidence only. In particular this never
+        # extracts, OCRs, retranslates or assigns source IDs to plain output lines.
+        from .layout_integration import prepare_layout_rebuild
+
+        try:
+            return prepare_layout_rebuild(
+                pages_dir, config.pdf_path,
+                cache_dir=output_dir / ".legalpdf_layout_cache" if config.keep_intermediates else None,
+                cancelled=cancelled,
+            )
+        except (OSError, ValueError, TypeError):
+            self._log("Local layout preparation was unavailable; saved text will remain available for manual review.")
+            return {"review_required_pages": [int(path.stem.split("_")[1])
+                    for path in pages_dir.glob("page_*.txt") if re.fullmatch(r"page_[0-9]{4,}\.txt", path.name)]}
+
+    def _record_docx_layout_review(
+        self, output_docx: Path, pages_dir: Path, run_state: RunState | None, preparation: dict,
+    ) -> dict:
+        from .layout_integration import collect_docx_layout_review
+
+        notices = collect_docx_layout_review(output_docx, pages_dir, preparation)
+        records = run_state.pages if run_state is not None else {}
+        for number, codes in notices.items():
+            page = records.setdefault(str(number), {})
+            if not isinstance(page, dict):
+                continue
+            previous = page.get("layout_review_reasons")
+            previous = [item for item in previous if isinstance(item, str)] if isinstance(previous, list) else []
+            page["layout_review_required"] = True
+            page["layout_review_reasons"] = sorted(set(previous + codes))
+        if notices:
+            self._log(f"DOCX layout requires manual review on {len(notices)} source page(s); "
+                      "exact source layout requires matching retained block evidence.")
+        return records
+
+    def _refresh_formatting_summary(self, summary_path: Path, page_records: dict) -> None:
+        from .layout_integration import merge_layout_review_queue
+        from .formatting_support import write_json_atomic
+
+        if not any(isinstance(page, dict) and page.get("layout_review_required") for page in page_records.values()):
+            return
+        try:
+            payload = {}
+            if summary_path.exists():
+                if summary_path.stat().st_size > 8 * 1024 * 1024:
+                    raise ValueError("Historical summary exceeds the local bound.")
+                payload = json.loads(summary_path.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError("Historical summary is not an object.")
+            # Do not rebuild historical token/cost/model summaries from a new
+            # workflow instance. Only the existing manual-review queue changes.
+            merge_layout_review_queue(payload, page_records)
+            write_json_atomic(summary_path, payload)
+        except (OSError, ValueError, TypeError):
+            self._log("Historical summary was preserved; consult the DOCX source map for layout review.")
 
     def _resolve_ocr_engine_for_reason(
         self,
@@ -2868,6 +2944,8 @@ class TranslationWorkflow:
     ) -> Path:
         summary_path = paths.run_dir / "run_summary.json"
         payload = self._build_run_summary_payload(config=config, paths=paths, run_state=run_state)
+        from .layout_integration import merge_layout_review_queue
+        merge_layout_review_queue(payload, run_state.pages)
         tmp_path = summary_path.with_suffix(".tmp")
         tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp_path.replace(summary_path)
