@@ -12,6 +12,7 @@ from PIL import Image
 from .browser_esm_probe import run_browser_esm_json_probe
 import legalpdf_translate.browser_arabic_review as browser_arabic_review
 import legalpdf_translate.browser_app_service as browser_app_service
+import legalpdf_translate.power_tools_service as power_tools_service
 from legalpdf_translate.browser_gmail_bridge import BrowserLiveBridgeSyncResult
 from legalpdf_translate.power_tools_service import generate_browser_run_report
 import legalpdf_translate.shadow_web.app as shadow_app_module
@@ -22,6 +23,7 @@ from legalpdf_translate.word_automation import WordAutomationResult
 
 
 _ORIGINAL_BUILD_BROWSER_PROVIDER_STATE = shadow_app_module.build_browser_provider_state
+_ORIGINAL_WORD_READINESS = power_tools_service.assess_word_pdf_export_readiness
 _GOOGLE_PHOTOS_CALLBACK_PATH = "/api/interpretation/google-photos/oauth/callback"
 
 
@@ -120,6 +122,22 @@ def _native_host_state(*, ready: bool = True, repairable: bool = True) -> dict[s
 
 
 def _build_app(tmp_path: Path, monkeypatch, *, build_identity: RuntimeBuildIdentity | None = None) -> TestClient:
+    # Bootstrap/settings collect provider state inside power_tools_service too;
+    # mocking only the app-module provider alias does not cover that lookup.
+    # Install the native dependency stub before creating any lifespan/tasks.
+    if power_tools_service.assess_word_pdf_export_readiness is _ORIGINAL_WORD_READINESS:
+        monkeypatch.setattr(
+            power_tools_service,
+            "assess_word_pdf_export_readiness",
+            lambda **kwargs: {
+                "ok": False,
+                "finalization_ready": False,
+                "message": "Native Word readiness is not evaluated in API tests.",
+                "preflight": {"ok": False},
+                "launch_preflight": {"ok": False},
+                "export_canary": {"ok": False},
+            },
+        )
     identity = build_identity or _identity()
     monkeypatch.setattr(shadow_app_module, "detect_runtime_build_identity", lambda **kwargs: identity)
     monkeypatch.setattr(
@@ -198,6 +216,29 @@ def test_compute_browser_asset_version_changes_for_dirty_static_edits(tmp_path: 
     target.write_text("console.log('two');\n", encoding="utf-8")
     version_two = shadow_app_module.compute_browser_asset_version(static_dir)
     assert version_one != version_two
+
+
+def test_build_app_preserves_explicit_provider_and_word_readiness_mocks(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+
+    def custom_readiness(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True, "finalization_ready": True, "message": "Explicit test readiness"}
+
+    def custom_provider(**kwargs):
+        return {"word_pdf_export": custom_readiness(**kwargs), "native_host": _native_host_state()}
+
+    monkeypatch.setattr(power_tools_service, "assess_word_pdf_export_readiness", custom_readiness)
+    monkeypatch.setattr(shadow_app_module, "build_browser_provider_state", custom_provider)
+    client = _build_app(tmp_path, monkeypatch)
+    try:
+        assert power_tools_service.assess_word_pdf_export_readiness is custom_readiness
+        assert shadow_app_module.build_browser_provider_state is custom_provider
+        state = shadow_app_module.build_browser_provider_state(settings_path=tmp_path / "settings.json")
+        assert state["word_pdf_export"]["finalization_ready"] is True
+        assert calls == [{"settings_path": tmp_path / "settings.json"}]
+    finally:
+        client.close()
 
 
 def test_shadow_web_bootstrap_and_save_row_flow(tmp_path: Path, monkeypatch) -> None:

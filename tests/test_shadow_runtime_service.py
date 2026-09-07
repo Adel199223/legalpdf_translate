@@ -119,6 +119,17 @@ def _word_pdf_state(*, ready: bool = True) -> dict[str, object]:
     }
 
 
+@pytest.fixture(autouse=True)
+def _stub_word_readiness_before_settings_setup(monkeypatch):
+    # Settings saves/bootstrap also collect provider diagnostics. Install the
+    # default before any test setup, not only before its final preflight call.
+    monkeypatch.setattr(
+        power_tools_service,
+        "assess_word_pdf_export_readiness",
+        lambda **_kwargs: _word_pdf_state(),
+    )
+
+
 def test_shadow_build_key_is_isolated_but_stable_across_head_updates(tmp_path: Path) -> None:
     first = shadow_runtime.shadow_build_key(_identity(head_sha="abc1234"))
     second = shadow_runtime.shadow_build_key(_identity(head_sha="def5678"))
