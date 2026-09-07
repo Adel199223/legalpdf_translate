@@ -16,6 +16,8 @@ Rebuild private accepted examples into new outputs; compare every DOCX package e
 
 The existing native Windows `0x8001010d` diagnostic can occur at the honorarios small-screen dialog's `app.processEvents()` even when assertions pass. Record native and isolated rerun outcomes; offscreen success is not native export acceptance. This formatting release does not repair or alter unattended honorarios export.
 
+Qt render-review subprocess tests must read the renderer's JSON artifact rather than assume stdout contains only JSON: dependency diagnostics can also appear there. Keep strict artifact parsing, successful process exit and geometry assertions; exercise noisy stdout without suppressing warnings or weakening layout checks.
+
 ## Common Targeted Browser And Gmail Tests
 ```powershell
 .\.venv311\Scripts\python.exe -m pytest -q tests/test_shadow_web_api.py tests/test_shadow_web_route_state.py tests/test_browser_safe_rendering.py tests/test_translation_browser_state.py tests/test_gmail_review_state.py tests/test_profile_browser_state.py
