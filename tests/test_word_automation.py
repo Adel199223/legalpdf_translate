@@ -181,7 +181,8 @@ def test_build_pdf_export_powershell_script_uses_docx_and_pdf_paths(tmp_path: Pa
     assert "$word.Hwnd" not in script
     assert "$bootstrapWindow.Hwnd" in script
     assert "AccessibleObjectFromWindow" in script
-    assert "$startInfo.Arguments = '/w'" in script
+    assert '[LegalPdfWord.DirectProcess]::StartHidden($wordExecutable)' in script
+    assert 'new StringBuilder("\\\"" + executable + "\\\" /w")' in script
     assert r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE" in script
     assert "Assert-StartedProcess 'cleanup_quit_identity'" in script
     assert "Invoke-Com 'close_bootstrap_document'" not in script
@@ -208,10 +209,11 @@ def test_build_pdf_preflight_powershell_script_requires_owned_instance(monkeypat
     script = word_automation._build_pdf_preflight_powershell_script()
     assert "$mode = 'preflight'" in script
     assert "New-Object -ComObject" not in script
-    assert "[Diagnostics.Process]::Start($startInfo)" in script
-    assert "$startInfo.Arguments = '/w'" in script
-    assert "$startInfo.UseShellExecute = $true" in script
-    assert "[Diagnostics.ProcessWindowStyle]::Hidden" in script
+    assert "[LegalPdfWord.DirectProcess]::StartHidden($wordExecutable)" in script
+    assert "CreateProcessW(executable, command" in script
+    assert "startup.dwFlags = 0x00000001" in script
+    assert "startup.wShowWindow = 0" in script
+    assert "UseShellExecute" not in script
     assert r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE" in script
     assert "AccessibleObjectFromWindow" in script
     assert "$bootstrapWindow.Hwnd" in script

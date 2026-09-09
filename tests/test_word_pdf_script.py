@@ -37,10 +37,11 @@ def test_pdf_script_quotes_literal_paths_without_interpolation(tmp_path: Path) -
 
 def test_pdf_script_never_attaches_activates_bootstraps_or_force_kills(tmp_path: Path) -> None:
     script = _script(tmp_path)
-    assert "[Diagnostics.Process]::Start($startInfo)" in script
-    assert "$startInfo.Arguments = '/w'" in script
-    assert "$startInfo.UseShellExecute = $true" in script
-    assert "$startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden" in script
+    assert "[LegalPdfWord.DirectProcess]::StartHidden($wordExecutable)" in script
+    assert 'new StringBuilder("\\\"" + executable + "\\\" /w")' in script
+    assert "startup.dwFlags = 0x00000001" in script
+    assert "startup.wShowWindow = 0" in script
+    assert "UseShellExecute" not in script
     for forbidden in (
         "GetActiveObject", "-ComObject", "Start-Process", "Stop-Process", "taskkill", ".Kill(",
         ".Activate(", "DisplayAlerts", "SaveNormalPrompt", "Save()", "/automation",
@@ -51,10 +52,10 @@ def test_pdf_script_never_attaches_activates_bootstraps_or_force_kills(tmp_path:
 def test_pdf_script_proves_com_bound_process_before_changing_word(tmp_path: Path) -> None:
     script = _script(tmp_path)
     assert "GetWindowThreadProcessId" in script
-    assert "$preExistingWordPids -contains $wordProcess.Id" in script
+    assert "$preExistingWordPids -notcontains $observed" in script
     assert "$wordProcess.SessionId -ne $helperSessionId" in script
     assert "$wordProcess.ProcessName -ine 'WINWORD'" in script
-    assert "$wordProcess.StartTime.ToUniversalTime().Ticks -lt $launchStartedTicks" in script
+    assert "$observed.ToUniversalTime().Ticks -ge $launchStartedTicks" in script
     proven = script.index("$state.ownership = 'proven'")
     assert script.index("$initialDocumentCount -ne 1") < proven
     assert "AccessibleObjectFromWindow" in script
@@ -127,7 +128,7 @@ def test_pdf_script_limits_retries_to_known_rejected_calls(tmp_path: Path) -> No
     assert "@('0x80010001', '0x8001010A') -notcontains $hresult" in script
     assert "Set-Phase $Phase" in script
     assert "Start-Sleep -Milliseconds 150" in script
-    assert "$wordProcess = [Diagnostics.Process]::Start($startInfo)" in script
+    assert "$wordProcess = [LegalPdfWord.DirectProcess]::StartHidden($wordExecutable)" in script
     assert "Invoke-Com 'launch_word'" not in script
     assert "-not $RetryRead" in script
     for mutation in ("open_document", "export_pdf", "close_document", "quit_word"):
@@ -230,34 +231,38 @@ namespace WordPdfTest {
     }
     public class FakeProcess : IDisposable {
         public int Id { get; set; }
-        public int SessionId { get { return 12; } }
-        public string ProcessName { get { return Id == 789 ? "WINWORD" : "powershell"; } }
+        public int SessionId { get { return Id == 789 && Runtime.Scenario == "wrong_session" ? 13 : 12; } }
+        public string ProcessName { get { return Id == 789 ? (Runtime.Scenario == "wrong_name" ? "OTHER" : "WINWORD") : "powershell"; } }
         public FakeModule MainModule { get { return new FakeModule(); } }
         public bool HasExited { get { return Runtime.WordExited; } }
         public DateTime StartTime {
             get {
                 if (Id != 789) return DateTime.UtcNow.AddMinutes(-5);
+                if (Runtime.Scenario == "old_start") return Runtime.WordStart.AddHours(-1);
                 return Runtime.Reused ? Runtime.WordStart.AddMinutes(1) : Runtime.WordStart;
             }
         }
         public static FakeProcess GetCurrentProcess() { return new FakeProcess { Id = 456 }; }
         public static FakeProcess GetProcessById(int pid) { return new FakeProcess { Id = pid }; }
-        public static FakeProcess Start(System.Diagnostics.ProcessStartInfo info) {
+        public static FakeProcess StartHidden(string executable) {
             Runtime.Record("launch", "launch_word");
             Runtime.Fail("launch");
-            if (info.Arguments != "/w" || !info.UseShellExecute || info.WindowStyle != System.Diagnostics.ProcessWindowStyle.Hidden)
-                throw new Exception("Incorrect process-first launch");
-            if (File.Exists(info.FileName)) throw new Exception("Fake executable must not exist");
-            Runtime.Executable = info.FileName;
+            if (File.Exists(executable)) throw new Exception("Fake executable must not exist");
+            Runtime.Executable = executable;
             Runtime.WordStart = Runtime.Scenario == "preexisting" ? DateTime.UtcNow.AddHours(-1) : DateTime.UtcNow;
             Runtime.Word = new FakeWord();
+            if (Runtime.Scenario == "exited_launcher") Runtime.WordExited = true;
+            if (Runtime.Scenario == "missing_launcher") return null;
             return new FakeProcess { Id = 789 };
         }
         public void Refresh() { }
         public bool WaitForExit(int timeout) { Runtime.Record("wait_exit", "confirm_word_exit"); return Runtime.WordExited; }
         public void Dispose() { }
     }
-    public class FakeModule { public string FileName { get { return Runtime.Executable; } } }
+    public class FakeModule { public string FileName { get {
+        if (Runtime.Scenario == "identity_read_failure") throw new Exception("PRIVATE_DOCUMENT_TEXT C:/private/case.docx");
+        return Runtime.Scenario == "wrong_executable" ? "C:/unrelated/WINWORD.EXE" : Runtime.Executable;
+    } } }
     public static class FakeMarshal {
         public static bool IsComObject(object obj) { return true; }
         public static int FinalReleaseComObject(object obj) { Runtime.Record("release", null); return 0; }
@@ -398,6 +403,7 @@ def _run_fake_helper(tmp_path: Path, scenario: str, *, export: bool = True):
     native_definition = re.search(r"    Add-Type[^\n]* -TypeDefinition @'.*?\n'@", helper, re.DOTALL)
     assert native_definition is not None
     helper = helper.replace(native_definition.group(0), "    # Native identity API replaced by the fake runtime.")
+    helper = helper.replace("[LegalPdfWord.DirectProcess]", "[WordPdfTest.FakeProcess]")
     helper = helper.replace("[Diagnostics.Process]", "[WordPdfTest.FakeProcess]")
     helper = helper.replace("[Runtime.InteropServices.Marshal]", "[WordPdfTest.FakeMarshal]")
     # A managed getter throwing COMException is specially wrapped by PowerShell's
@@ -410,7 +416,7 @@ def _run_fake_helper(tmp_path: Path, scenario: str, *, export: bool = True):
         "@(789)" if scenario == "preexisting" else "@()",
     )
     # Hard guards make an incomplete substitution fail before executing anything.
-    for forbidden in ("-ComObject", "DllImport", "[Diagnostics.Process]", "Get-Process", "GetActiveObject"):
+    for forbidden in ("-ComObject", "DllImport", "[Diagnostics.Process]", "Get-Process", "GetActiveObject", "[LegalPdfWord.DirectProcess]"):
         assert forbidden not in helper
     quoted_state = str(state_path.resolve()).replace("'", "''")
     wrapped = (
@@ -466,6 +472,59 @@ def test_fake_word_rejects_reused_instance_without_mutation(tmp_path: Path, scen
     assert state["ownership"] == "rejected"
     assert state["cleanup_status"] == "ambiguous"
     assert not {"visible", "security", "open", "export", "close", "quit"}.intersection(events)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="PowerShell fake-runtime harness is Windows-only")
+@pytest.mark.parametrize(('scenario', 'reason'), [
+    ('missing_launcher', 'failed_process_returned'),
+    ('exited_launcher', 'failed_running'),
+    ('preexisting', 'failed_new_pid'),
+    ('wrong_session', 'failed_session_matches'),
+    ('wrong_name', 'failed_name_matches'),
+    ('old_start', 'failed_start_not_before_launch'),
+    ('wrong_executable', 'failed_executable_matches'),
+    ('identity_read_failure', 'identity_read_failed'),
+])
+def test_launch_diagnostics_are_precise_without_adoption_or_mutation(tmp_path, scenario, reason):
+    result, state, events = _run_fake_helper(tmp_path, scenario)
+    assert result.returncode == 1, state
+    assert state['failure_code'] == 'ownership_unproven'
+    assert state['primary_failure_phase'] == 'launch_word'
+    assert state['startup_diagnostics_version'] == 2
+    assert state['startup_identity_reason'] == reason
+    assert state['process_identity_verified'] is False
+    assert state['word_identity_verified'] is False
+    assert state['cleanup_status'] == 'ambiguous'
+    assert all(value is None or type(value) is bool for value in state['startup_identity_checks'].values())
+    assert not {'visible', 'security', 'open', 'export', 'close', 'quit'}.intersection(events)
+    assert events.count('launch') == 1
+
+
+def test_launch_diagnostics_do_not_add_child_adoption(tmp_path):
+    script = _script(tmp_path)
+    assert 'Test-LaunchIdentity' in script
+    assert 'startup_identity_checks' in script
+    assert 'ParentProcessId' not in script and 'Win32_Process' not in script
+    assert script.count('[LegalPdfWord.DirectProcess]::StartHidden($wordExecutable)') == 1
+    assert "startup_launch_method = 'create_process_hidden_v1'" in script
+
+
+def test_native_helper_preparation_imports_only_current_checkout_modules() -> None:
+    """Validate the exact import list before any separately gated native runner.
+
+    Importing builders does not invoke Word. The old private runner's invented
+    word_pdf_runtime import is not part of this list; similarly named test files
+    are not evidence that an application module exists.
+    """
+    import importlib
+
+    source_root = Path(__file__).resolve().parents[1] / "src"
+    for name in (
+        "word_automation", "word_pdf_control", "word_pdf_script",
+        "word_process_start", "word_pdf_artifacts",
+    ):
+        module = importlib.import_module(f"legalpdf_translate.{name}")
+        assert Path(module.__file__).resolve() == source_root / "legalpdf_translate" / f"{name}.py"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="PowerShell fake-runtime harness is Windows-only")

@@ -35,6 +35,31 @@ def test_pdf_journal_controls_success_not_stdout(tmp_path, monkeypatch):
     assert result.stdout == result.stderr == ''
 
 
+@pytest.mark.parametrize('reason,visible', [
+    ('failed_running', True), ('identity_read_failed', True),
+    ('C:/private/case.docx', False), ('invented_safe_looking_token', False), (None, False),
+    (['private'], False), ({'private': 'value'}, False),
+])
+def test_pdf_startup_reason_is_a_closed_content_free_diagnostic(tmp_path, monkeypatch, reason, visible):
+    state = tmp_path / 'state.json'
+    state.write_text(json.dumps({'status': 'failed', 'cleanup_status': 'ambiguous',
+        'phase': 'confirm_word_exit', 'primary_failure_phase': 'launch_word',
+        'failure_code': 'ownership_unproven', 'startup_identity_reason': reason,
+        'startup_diagnostics_version': 2, 'startup_process_name': 'SensitiveLauncher',
+        'startup_process_name_status': 'captured',
+        'startup_expected_process_name': 'PRIVATE_EXPECTED_NAME',
+        'startup_executable_status': 'PRIVATE_STATUS'}))
+    monkeypatch.setattr(word.subprocess, 'Popen', lambda *args, **kwargs: SimpleNamespace(
+        pid=4242, returncode=1, communicate=lambda **kw: (None, b''), poll=lambda: 1))
+    result = word._run_pdf_command(action='export_pdf', command=('fake',), state_path=state, timeout_seconds=1)
+    assert result.failure_code == 'ownership_unproven'
+    assert ('Startup identity:' in result.details) is visible
+    assert 'private' not in result.details and 'invented' not in result.details
+    public_result = '\n'.join((result.message, result.details, result.stdout,
+                               result.stderr, result.cleanup_details))
+    assert 'SensitiveLauncher' not in public_result and 'PRIVATE_' not in public_result
+
+
 def test_pdf_timeout_preserves_primary_phase_and_no_word_tree_kill(tmp_path, monkeypatch):
     state = tmp_path / 'state.json'
     state.write_text(json.dumps({'primary_failure_phase':'open_document','primary_hresult':'0x80010001',
