@@ -11,6 +11,14 @@
 - Development UI review mode: browser `shadow` mode with isolated app data.
 - Formatting integration starts from `main@022b5afb54b9be0b2eba1f2c19d617ed46a10891`. Keep unfinished research in the clean local-only quality worktree at checkpoint `66a7374a2b874f59994215177af4ff48d1d5f100`; do not delete, merge or publish that combined research branch wholesale. Unrelated dependency-update PRs are outside this rollout.
 
+## Accepted Footer/Native-Safeguard Release
+
+- The user accepted the v18 one-page Word-rendered Arabic footer pilot, supplied `NEXT_STAGE_4`, and subsequently explicitly approved publication, merge after successful checks and app verification. The integration was prepared in `C:/Users/FA507/.codex/legalpdf_translate_footer_integration`, branch `codex/footer-spacing-integration`, from canonical `main@ec406dac02ec7898dd339c37320f52f7881a043b`.
+- The [completed integration ExecPlan](exec_plans/completed/2026-09-09_footer_spacing_integration.md) records the accepted implementation/docs. Only six formatter modules, four native-export modules, relevant synthetic tests and scoped docs are included. Local validation passed: 615 focused tests, 2,492 full-suite tests and serial `validate_dev.ps1 -Full`, with successful direct-Dart fallback and no COM diagnostic in these runs. Verify actual GitHub checks, merge and canonical post-integration results; this branch closeout does not claim those outcomes.
+- The footer/spacing changes require compact reflow (`page_breaks=False`) and complete matching source/target sidecars. A proven isolated contact footer may move to a real footer; isolated headers, partial previews and uncertain/substantive material do not gain that exception. Joined sections retain their own headers/footers and source gaps.
+- Fresh production TXT translation, OCR, models/prompts and the structured-translation pipeline remain unchanged and unpromoted. Translation deliverables stay DOCX; internal Word PDF/PNG proof is layout evidence only. No new native call, recovery replay, host-setting change or paid operation belongs to this integration validation.
+- Direct hidden Word launch retains its process handle and all seven identity guards, followed by document ownership, bounded cleanup and quarantine. Preserve the research tree and private evidence; never transplant their history or tools wholesale.
+
 ## Approved Formatting Integration
 
 The formatting-only release preserves compact editable Word output, coherent Arabic/Latin runs, real page fields, and section-specific headers/footers and source gaps when complete matching block evidence exists. Private Arabic/French rebuilds match every uncompressed DOCX package entry in the user-approved five-page/one-page Word proofs; evidence and private documents remain outside Git.
@@ -30,9 +38,9 @@ Recent validation baseline after PR #226:
 - `scripts\validate_dev.ps1 -Full`, with the known Dart wrapper AOT issue accepted only because the direct Dart fallback passed
 - light shadow-mode browser smoke on `main@c3ec60e` for Dashboard, New Job, Extension Lab, and Gmail intake, without opening live Gmail/OAuth/native-host flows
 
-## Accepted Honorarios PDF Repair — Integration Pending
+## Accepted Honorarios PDF Repair — Historical Evidence
 
-- The repair is accepted in `C:/Users/FA507/.codex/legalpdf_translate_honorarios_pdf`, branch `feat/honorarios-pdf-export`, from `main@9afe1d05577f271a8618969e8f0be31eb8641a3e`. Documentation sync and the normal integration/publication lifecycle are approved; no future merge SHA or PR result is assumed here. Verify actual canonical HEAD and GitHub checks before treating this branch as integrated.
+- The original repair was accepted in `C:/Users/FA507/.codex/legalpdf_translate_honorarios_pdf`, branch `feat/honorarios-pdf-export`, from `main@9afe1d05577f271a8618969e8f0be31eb8641a3e`. This section records that repair's evidence, not current rollout status; verify actual canonical HEAD and GitHub checks. The accepted footer release above is the current lifecycle reference.
 - Eight real same-host Word exports completed in approximately 6-8 seconds each: canaries, both honorarios kinds, the real isolated interpretation browser route, asynchronous Qt, open/unsaved Word coexistence, and post-timeout recovery. All six retained honorarios PDFs were one page with complete substantive text and every page visually reviewed; original DOCX hashes and tested open Word content/windows were preserved. Browser evidence is a real TestClient route/service/export with a transparent observer, not a UI click.
 - Initial export is one bounded 45-second call. Shared ownership checks, serialization, staged output and fresh-PDF verification protect existing files and Word sessions; uncertain cleanup remains quarantined. No automatic timeout retry; explicit Qt manual retry, select-existing-PDF/local-only recovery and Gmail fail-closed contracts remain intact.
 - Full pytest passed 2,176 tests and `validate_dev.ps1 -Full` passed with the documented direct-Dart fallback. The pre-existing `0x8001010d` native Qt small-screen layout-test diagnostic remains separately recorded; the real asynchronous export passed.
@@ -56,7 +64,7 @@ Important invariant: do not convert the translation workflow into one whole-docu
 - Roadmap resume anchor: `docs/assistant/SESSION_RESUME.md`.
 
 ## Current Next Step
-Complete the approved honorarios repair integration/publication lifecycle first: verify exact-head checks, merge, synchronize canonical `main`, and run focused post-integration validation. If already completed, confirm the actual merge and current clean repository state rather than repeating publication from this pre-merge handoff. Do not begin unrelated work while this accepted repair remains only on its side branch.
+Finish or verify the explicitly approved footer/native-safeguard publication lifecycle: the new subset and exact diff passed local validation and independent review. Check actual PR/head state, require green checks before merge, then verify the canonical app and safe cleanup. Use the completed integration ExecPlan to distinguish local evidence from observed GitHub/post-merge results; do not repeat completed publication steps, the consumed native pilot or research-tree tests as a substitute for integration proof. Do not begin unrelated work while this accepted change remains only on its side branch.
 
 For translation-quality continuation afterward, first inspect the preserved quality checkpoint and its ExecPlan, then isolate the next approved scope; do not reintroduce mixed research changes by merging that branch. The remaining consequential gap is source-associated structure in new production runs, followed by evidence-gated model evaluation/promotion. Preserve the original lifetime benchmark allowance; neither the formatting release nor honorarios repair adds paid calls. Unrelated modernization remains normal small-PR work.
 

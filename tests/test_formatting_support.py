@@ -28,6 +28,18 @@ def test_format_identity_uses_only_format_controls_and_does_not_mutate_config():
     assert formatting_fingerprint(config) != original
 
 
+def test_isolated_footer_profile_invalidates_format_only(monkeypatch):
+    import legalpdf_translate.formatting_support as support
+    config = SimpleNamespace(target_lang=TargetLang.AR, page_breaks=False, strip_bidi_controls=True,
+                             model="retained-model", effort="high")
+    assert support.LAYOUT_PROFILE_VERSION == "compact_legal_v10_isolated_contact_footer"
+    fresh = support.formatting_fingerprint(config)
+    before = vars(config).copy()
+    monkeypatch.setattr(support, "LAYOUT_PROFILE_VERSION", "compact_legal_v9_source_folio_spacing")
+    assert support.formatting_fingerprint(config) != fresh
+    assert vars(config) == before
+
+
 @pytest.mark.parametrize("module", ["formatting_support", "docx_writer", "document_structure", "document_layout",
                                    "document_spacing", "section_furniture", "docx_furniture_reflow"])
 def test_formatting_modules_have_no_model_prompt_or_provider_dependencies(module):

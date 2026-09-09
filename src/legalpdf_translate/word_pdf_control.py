@@ -6,11 +6,16 @@ from contextlib import contextmanager
 import ctypes
 from ctypes import wintypes
 import json
+from math import isfinite
 import os
 from pathlib import Path
 import threading
+from time import monotonic as _recovery_monotonic, sleep as _recovery_sleep
 
 _THREAD_SLOT = threading.Lock()
+_WORD_FREE_STABILITY_SECONDS = 5.0
+_WORD_FREE_PROBE_SECONDS = 0.25
+_WORD_FREE_MAX_PROBES = 22
 
 
 class WordPdfBusy(RuntimeError):
@@ -112,6 +117,35 @@ def _no_word_processes() -> bool:
         kernel.CloseHandle(handle)
 
 
+def _stable_word_free() -> bool:
+    """Reject a transient empty snapshot after an unproven Word launcher exits.
+
+    This is a bounded observation, not proof that an arbitrarily delayed child
+    can never appear. No journal is altered, no process is adopted or stopped,
+    and the caller must repeat the fresh check when it next acquires the slot.
+    """
+    try:
+        started = _recovery_monotonic()
+        if not isfinite(started):
+            return False
+        deadline = started + _WORD_FREE_STABILITY_SECONDS
+        for _ in range(_WORD_FREE_MAX_PROBES):
+            # Unknown/failed inventory must not become evidence of a Word-free host.
+            if _no_word_processes() is not True:
+                return False
+            now = _recovery_monotonic()
+            if not isfinite(now) or now < started:
+                return False
+            if now >= deadline:
+                return True
+            _recovery_sleep(min(_WORD_FREE_PROBE_SECONDS, deadline - now))
+    except Exception:
+        # Failed read/wait evidence is not a recovery confirmation. Interrupts
+        # still propagate; this never catches KeyboardInterrupt or SystemExit.
+        return False
+    return False
+
+
 def _previous_operation_finished(state: dict) -> bool:
     if not state:
         return True
@@ -125,7 +159,7 @@ def _previous_operation_finished(state: dict) -> bool:
         return _identity_gone(state.get('word_pid'), state.get('word_start_ticks'))
     # Unknown activation can have created a COM server: only a Word-free host
     # AND a demonstrably exited helper permit re-entry. Never guess a PID to kill.
-    return _no_word_processes()
+    return _stable_word_free()
 
 
 @contextmanager

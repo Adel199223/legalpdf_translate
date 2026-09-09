@@ -12,7 +12,7 @@ from .document_structure import PageStructure, validate_page_structure
 from .layout_cache import LayoutCache
 from .formatting_support import digest_text, fingerprint, write_json_atomic
 
-LAYOUT_DERIVATION_VERSION = "source_regions_v2"
+LAYOUT_DERIVATION_VERSION = "source_regions_v3"
 LAYOUT_RENDER_DPI = 120
 _PAGE_FILE = re.compile(r"page_[0-9]{4,}\.txt\Z")
 _MAX_SIDECAR_BYTES = 8 * 1024 * 1024

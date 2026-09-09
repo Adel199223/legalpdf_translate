@@ -14,7 +14,7 @@ import re
 from statistics import median
 from typing import Any
 
-from .document_structure import PageStructure, validate_page_structure
+from .document_structure import PageStructure, text_sha256, validate_page_structure
 
 LAYOUT_VERSION = 1
 MAX_BANDS = 32
@@ -23,6 +23,52 @@ MAX_PANELS = 64
 MAX_COLUMNS = 3
 MAX_GEOMETRY_UNITS = 200
 _HASH = re.compile(r"[a-f0-9]{64}\Z")
+_SOURCE_FOLIO = re.compile(
+    r"(?:(?P<label>p[aá]g(?:ina)?\.?|page)\s*:?\s*)?"
+    r"(?P<page>[1-9][0-9]{0,3})(?:\s*(?:/|of|de|sur)\s*(?P<total>[1-9][0-9]{0,3}))?",
+    re.IGNORECASE,
+)
+
+
+def source_folio_ids(structure: PageStructure | dict[str, Any]) -> frozenset[str]:
+    """Identify one positively evidenced source folio, never remove its block.
+
+    This is a narrow geometry/contact-grouping exemption, not authority to
+    relabel source text or discard a footer. Bare numbers, body copies, table
+    cells, references and uncertain/oversized boxes do not establish a folio.
+    Printed numbering need not equal the PDF page: joined documents can restart
+    it. Full source text binding prevents translated wording supplying proof.
+    """
+    source = validate_page_structure(structure)
+    if (source.translation_sha256 is not None or not source.source_file_sha256
+            or source.source_text_sha256 != source.source_sha256
+            or text_sha256(source.text) != source.source_sha256
+            or source.uncertain or any(b.uncertain for b in source.blocks)
+            or source.metadata.get("document_boundary_review_required")
+            or any(b.document_start for b in source.blocks[1:])):
+        return frozenset()
+    candidates = []
+    for block in source.blocks:
+        text = block.text.strip()
+        match = _SOURCE_FOLIO.fullmatch(text) if len(text.splitlines()) == 1 else None
+        if (match and (match["label"] or match["total"])
+                and (match["total"] is None or int(match["page"]) <= int(match["total"]))):
+            candidates.append(block)
+    # Conflicting or repeated page labels are not enough to choose an owner.
+    if len(candidates) != 1:
+        return frozenset()
+    block = candidates[0]
+    if (block.role != "footer" or block.table_id or block.continuation_of
+            or block.document_start or block.bbox is None):
+        return frozenset()
+    try:
+        box = _box(list(block.bbox), source.width_pt, source.height_pt)
+    except ValueError:
+        return frozenset()
+    if (box[1] < source.height_pt * .80 or box[2] - box[0] > source.width_pt * .25
+            or box[3] - box[1] > min(24.0, source.height_pt * .05)):
+        return frozenset()
+    return frozenset({block.id})
 
 
 def _digest(value):
@@ -404,8 +450,13 @@ def derive_page_layout(structure: PageStructure | dict[str, Any], image_bytes: b
             return _base(source, "needs_review", ["layout_geometry_limit"])
         columns = _columns(units, source.width_pt)
         if columns is None:
+            # A compact, source-owned folio beside contact lines is not body
+            # column evidence. Keep all units in the source/region contract;
+            # only the unsupported side-by-side witness excludes this folio.
+            folios = source_folio_ids(source)
+            body_units = [unit for unit in units if not set(unit["ids"]) <= folios]
             side_by_side = any(_overlap(a["bbox"], b["bbox"]) and (a["bbox"][2] + 6 < b["bbox"][0] or b["bbox"][2] + 6 < a["bbox"][0])
-                               for index, a in enumerate(units) for b in units[index + 1:])
+                               for index, a in enumerate(body_units) for b in body_units[index + 1:])
             return _base(source, "needs_review", ["ambiguous_side_by_side_geometry"]) if side_by_side else _base(source)
         # This bounded detector derives two columns only. Positive nested
         # columns must not silently become one flattened physical region.

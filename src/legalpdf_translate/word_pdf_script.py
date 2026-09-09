@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .word_process_start import DIRECT_PROCESS_CS
+
 
 def _literal(path: Path) -> str:
     return "'" + str(path.expanduser().resolve()).replace("'", "''") + "'"
@@ -24,6 +26,7 @@ def build_pdf_script(
     """Return a PowerShell helper; ``None`` paths mean launch-only preflight.
 
     No paths, document text, or raw exception messages enter the JSON journal.
+    Startup diagnostics retain only a bounded safe executable basename.
     The parent must bound the helper's lifetime and quarantine uncertain cleanup;
     this script never terminates a Word process or retries a mutating COM call.
     """
@@ -37,7 +40,7 @@ def build_pdf_script(
         f"$target = {_literal(docx_path) if docx_path is not None else '$null'}\n"
         f"$pdfPath = {_literal(pdf_path) if pdf_path is not None else '$null'}\n"
         f"$wordExecutable = {_literal(word_executable) if word_executable is not None else chr(39) + chr(39)}\n"
-        + _SCRIPT
+        + _SCRIPT.replace("    // DIRECT_PROCESS_FRAGMENT", DIRECT_PROCESS_CS)
     )
 
 
@@ -61,6 +64,23 @@ $state = [ordered]@{
     word_identity_verified = $false
     process_identity_verified = $false
     ownership = 'unknown'
+    startup_diagnostics_version = 2
+    startup_launch_method = 'create_process_hidden_v1'
+    startup_identity_reason = ''
+    startup_expected_process_name = 'WINWORD'
+    startup_process_name_source = 'retained_launch_handle'
+    startup_process_name_status = 'not_observed'
+    startup_process_name = $null
+    startup_executable_status = 'not_observed'
+    startup_identity_checks = [ordered]@{
+        process_returned = $null
+        running = $null
+        new_pid = $null
+        session_matches = $null
+        name_matches = $null
+        start_not_before_launch = $null
+        executable_matches = $null
+    }
     document_owned = $false
     bootstrap_owned = $false
     cleanup_status = 'not_started'
@@ -218,6 +238,82 @@ function Assert-StartedProcess {
     }
 }
 
+function Test-LaunchIdentity {
+    # Reuse each predicate's existing read; never query an unproven child or
+    # add reads after a failed predicate. Names are bounded basenames only;
+    # paths and exception text are never recorded. Diagnostics grant no trust.
+    # A launcher that exited remains rejected: a child PID or parent relation
+    # alone cannot establish ownership or authorize COM attachment/cleanup.
+    $checks = [ordered]@{
+        process_returned = { $null -ne $wordProcess }
+        running = {
+            $observed = $wordProcess.HasExited
+            if ($observed -isnot [bool]) { throw [InvalidOperationException]::new('unknown_startup_observation') }
+            -not $observed
+        }
+        new_pid = {
+            $observed = $wordProcess.Id
+            if ($observed -isnot [int] -or $observed -le 0) { throw [InvalidOperationException]::new('unknown_startup_observation') }
+            $preExistingWordPids -notcontains $observed
+        }
+        session_matches = {
+            $observed = $wordProcess.SessionId
+            if ($observed -isnot [int] -or $observed -lt 0) { throw [InvalidOperationException]::new('unknown_startup_observation') }
+            $observed -eq $helperSessionId
+        }
+        name_matches = {
+            $state.startup_process_name_status = 'read_failed'
+            $observed = $wordProcess.ProcessName
+            if ($observed -isnot [string] -or [string]::IsNullOrWhiteSpace($observed)) {
+                $state.startup_process_name_status = 'invalid'
+                throw [InvalidOperationException]::new('unknown_startup_observation')
+            }
+            $state.startup_process_name_status = 'redacted'
+            if ($observed.Length -le 64 -and
+                [regex]::IsMatch($observed, '\A[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\z')) {
+                $state.startup_process_name = $observed
+                $state.startup_process_name_status = 'captured'
+            }
+            $observed -ieq 'WINWORD'
+        }
+        start_not_before_launch = {
+            $observed = $wordProcess.StartTime
+            if ($observed -isnot [DateTime]) { throw [InvalidOperationException]::new('unknown_startup_observation') }
+            $observed.ToUniversalTime().Ticks -ge $launchStartedTicks
+        }
+        executable_matches = {
+            $state.startup_executable_status = 'read_failed'
+            $observed = $wordProcess.MainModule.FileName
+            if ($observed -isnot [string] -or [string]::IsNullOrWhiteSpace($observed)) {
+                $state.startup_executable_status = 'invalid'
+                throw [InvalidOperationException]::new('unknown_startup_observation')
+            }
+            $state.startup_executable_status = 'compared'
+            [string]::Equals($observed, $wordExecutable, [StringComparison]::OrdinalIgnoreCase)
+        }
+    }
+    foreach ($name in $checks.Keys) {
+        try {
+            $value = & ($checks[$name])
+            if ($value -isnot [bool]) { throw [InvalidOperationException]::new('unknown_startup_observation') }
+            $state.startup_identity_checks[$name] = $value
+            Save-State
+        } catch {
+            $state.startup_identity_reason = 'identity_read_failed'
+            Save-State
+            return $false
+        }
+        if (-not $value) {
+            $state.startup_identity_reason = 'failed_' + $name
+            Save-State
+            return $false
+        }
+    }
+    $state.startup_identity_reason = 'verified'
+    Save-State
+    return $true
+}
+
 function Assert-OwnedProcess {
     param([string]$Phase)
     if ($state.ownership -ne 'proven' -or -not $state.word_identity_verified) {
@@ -349,6 +445,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Xml;
 namespace LegalPdfWord {
+    // DIRECT_PROCESS_FRAGMENT
     public static class NativeWindow {
         [DllImport("user32.dll", SetLastError = true)]
         public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
@@ -456,27 +553,28 @@ namespace LegalPdfWord {
     Set-Phase 'inventory_word_processes'
     $preExistingWordPids = @(Get-Process -Name WINWORD -ErrorAction SilentlyContinue |
         ForEach-Object { $_.Id })
-    $startInfo = [Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = $wordExecutable
-    $startInfo.Arguments = '/w'
-    # Framework PowerShell only honors WindowStyle when UseShellExecute=true.
-    # /w is the single documented switch for a new Word instance + blank document.
-    $startInfo.UseShellExecute = $true
-    $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+    # Direct CreateProcessW + STARTF_USESHOWWINDOW/SW_HIDE avoids shell
+    # mediation without relying on .NET Framework's shell-only WindowStyle.
+    # This requests a hidden new /w instance; it does not prove ownership.
+    # Any forwarding, exited or non-Word process still fails the guards below.
     $launchStartedTicks = [DateTime]::UtcNow.Ticks
     $state.launch_attempted = $true
     Set-Phase 'launch_word'
-    $wordProcess = [Diagnostics.Process]::Start($startInfo)
-    if ($null -eq $wordProcess) { Fail-Safe 'ownership_unproven' }
-    $state.word_pid = $wordProcess.Id
-    $state.word_start_ticks = $wordProcess.StartTime.ToUniversalTime().Ticks.ToString()
-    Save-State
-    $wordProcess.Refresh()
-    if ($wordProcess.HasExited -or $preExistingWordPids -contains $wordProcess.Id -or
-        $wordProcess.SessionId -ne $helperSessionId -or
-        $wordProcess.ProcessName -ine 'WINWORD' -or
-        $wordProcess.StartTime.ToUniversalTime().Ticks -lt $launchStartedTicks -or
-        -not [string]::Equals($wordProcess.MainModule.FileName, $wordExecutable, [StringComparison]::OrdinalIgnoreCase)) {
+    $wordProcess = [LegalPdfWord.DirectProcess]::StartHidden($wordExecutable)
+    if ($null -ne $wordProcess) {
+        try {
+            $state.word_pid = $wordProcess.Id
+            $state.word_start_ticks = $wordProcess.StartTime.ToUniversalTime().Ticks.ToString()
+            Save-State
+            $wordProcess.Refresh()
+        } catch {
+            $state.startup_identity_reason = 'identity_read_failed'
+            $state.ownership = 'rejected'
+            Save-State
+            Fail-Safe 'ownership_unproven'
+        }
+    }
+    if (-not (Test-LaunchIdentity)) {
         $state.ownership = 'rejected'
         Fail-Safe 'ownership_unproven'
     }

@@ -695,6 +695,13 @@ def _run_pdf_command(
         f"Word ownership: {_safe_word_token(state.get('ownership')) or 'unknown'}",
         f"Word cleanup: {cleanup or 'unconfirmed'}",
     ]
+    startup_reason = state.get("startup_identity_reason")
+    if isinstance(startup_reason, str) and startup_reason in {
+        "verified", "identity_read_failed", "failed_process_returned", "failed_running",
+        "failed_new_pid", "failed_session_matches", "failed_name_matches",
+        "failed_start_not_before_launch", "failed_executable_matches",
+    }:
+        details.append(f"Startup identity: {startup_reason}")
     if process is not None and not timed_out and not helper_io_failed:
         details.append(f"Helper exit code: {process.returncode}")
     hresult = str(state.get("primary_hresult") or "")
