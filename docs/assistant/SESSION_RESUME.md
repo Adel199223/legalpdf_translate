@@ -47,13 +47,19 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - Report-restored completed Gmail translation batches are now secondary recovered history only; a fresh extension handoff or loaded Gmail message should supersede them automatically.
 - Browser-app live vs isolated-test mode remains a deliberate reusable system that should be preserved in later template-sync work.
 
+## Current Bounded Task
+
+- Current Stage 4: publication and canonical verification are explicitly authorized. Bounded Stage 3 native/human layout acceptance is complete: the one-time corrected Arabic Word check passed in 6.183 seconds, two complete-page reviews and physical glyph coordinates confirmed `09:30`, names and header/footer placement, and the user approved the preview with `looks right`. English/French reuse exact package-matched native evidence. The prior 46-file digest and 910 targeted/3,322 full tests are historical evidence. Final `structured_arabic_literals_v5_exact_source_graphemes` hardening is a two-file source/test delta; 318 focused tests passed in 7.39s, final full pytest passed 3,391 tests in 428.49s, and independent review is clear. Serial release validation passed with exit code 0; the known Dart AOT wrapper issue used a successful direct-Dart fallback. Follow the [implementation/publication closeout](exec_plans/completed/2026-09-09_structured_new_translations.md); require actual exact-head GitHub checks before merge and canonical verification afterward. No merge/CI/post-merge result is claimed here. Native authority is consumed; preserve the advanced journal, originals, historical failures and unchanged ledger. No additional native or paid scope is implied.
+- The base is `main@8470645cd96bf93848d6a6735673a17e8399bbc6`, the merged PR #294 footer/native release. Its publication lifecycle is complete; do not replay historical pending instructions or consumed native helpers below.
+- This scope retains digital/same-pass local OCR evidence, exact translated block IDs and safe page publication/resume. API/plain-text OCR without reliable geometry remains layout-review-required. Ordinary launches still use `legacy_text_v1`; a session-only `legal_blocks_v2` verification flag is not durable activation. Model/OCR routing and the original USD10 allowance are unchanged.
+
 ## Authoritative Worktree
 
-- Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
 - Branch: `main`
-- Canonical status: daily-use and fresh-session authority; verify actual HEAD and merged release state before app handoff.
-- The user accepted the v18 native/visual one-page footer pilot, supplied `NEXT_STAGE_4`, and then explicitly approved publication, merge after successful checks and app verification. The [completed footer-spacing integration ExecPlan](exec_plans/completed/2026-09-09_footer_spacing_integration.md) records the accepted subset from `main@ec406dac02ec7898dd339c37320f52f7881a043b`, with 615 focused tests, 2,492 full-suite tests and serial full validation passed. Its integration branch is `codex/footer-spacing-integration`; local validation and successful direct-Dart fallback do not prove remote checks, merge or canonical post-merge success. Verify actual status and complete only remaining lifecycle steps.
-- Integrate only the six formatter/four native-export modules and directly relevant tests/docs. Compact-reflow changes require `page_breaks=False` and complete source/target sidecars; fresh TXT production, OCR/model policy and structured-translation activation remain unchanged. No additional native call or paid evaluation is part of this stage.
+- Routine app authority: `C:\Users\FA507\.codex\legalpdf_translate`, branch `main`; inspect its actual current HEAD before handoff.
+- Publication candidate: `C:\Users\FA507\.codex\legalpdf_translate_new_runs`, branch `codex/structured-new-translations`, based on `8470645cd96bf93848d6a6735673a17e8399bbc6`. This isolated task branch does not replace canonical daily-use authority before a verified merge.
+- The candidate's bounded synthetic shadow/native acceptance is complete; the live app and Gmail were not operated for that acceptance. Any post-merge smoke must remain read-only at the UI level with isolated metadata/DB initialization, disabled live Gmail bridge and a process-only protocol flag. It is not a new translation/model/native test.
+- The earlier footer/native release is historical and already merged as PR #294. Its [completed footer-spacing integration ExecPlan](exec_plans/completed/2026-09-09_footer_spacing_integration.md) and old counts do not validate this new candidate. Do not repeat its publication or consumed native operations.
 
 ## Approved Formatting Continuity
 
@@ -111,9 +117,11 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 - Historical browser-to-Qt roadmap history remains available under `docs/assistant/exec_plans/completed/`.
 
 ## Next Concrete Action
+
+- Current task: complete the explicitly authorized Stage 4 publication lifecycle for the exact candidate; serial release validation has passed. The two-file v5 source-grapheme delta has clear independent review, 318 passing focused checks and 3,391 passing final full pytest tests in 428.49s. Record actual GitHub/merge/canonical results only after they occur. Preserve completed native/human layout acceptance without replay, and keep ordinary-launch policy legacy by default.
 - No active roadmap needs resume handling.
 - For new work, use normal ExecPlan flow unless the user explicitly opens a new roadmap.
-- Finish or verify the explicitly approved footer/native-safeguard publication lifecycle first: local focused/full/wrapper validation and independent diff review passed on the new subset. Check actual exact-head GitHub results before merge, canonical app verification and safe cleanup; do not replay already-completed lifecycle steps. No further native attempt is authorized by that publication approval.
+- Finish only the remaining source-associated candidate publication steps before unrelated work: check exact-head local/GitHub results, merge when green, verify canonical app identity and perform safe scoped cleanup. Historical footer release instructions are not another work item, and publication approval grants no further native attempt.
 - For continued legal-translation improvements afterward, inspect the preserved research ExecPlan and isolate source-associated production structure/model-dependent acceptance work. Layout and honorarios-export approval are not approval of new models or legal fidelity; do not reset or duplicate the lifetime benchmark allowance.
 - If continuing modernization, choose one narrow browser/Gmail presentation or coordinator-pressure slice, create an isolated worktree from clean `main`, use focused tests first, publish through a GitHub PR, wait for Actions, smoke in shadow mode when relevant, and clean up the merged branch/worktree.
 - Publish/merge requests should follow the standard commit/publish workflow and should not start a new Gmail/runtime thread while accepted live fixes remain only in local commits.

@@ -12,7 +12,7 @@ from .document_structure import PageStructure, validate_page_structure
 from .layout_cache import LayoutCache
 from .formatting_support import digest_text, fingerprint, write_json_atomic
 
-LAYOUT_DERIVATION_VERSION = "source_regions_v3"
+LAYOUT_DERIVATION_VERSION = "source_regions_v4"
 LAYOUT_RENDER_DPI = 120
 _PAGE_FILE = re.compile(r"page_[0-9]{4,}\.txt\Z")
 _MAX_SIDECAR_BYTES = 8 * 1024 * 1024
@@ -92,6 +92,7 @@ def derive_source_layout(
     cache_dir: Path | None = None,
     source_fingerprint: str | None = None,
     cancelled: Callable[[], bool] | None = None,
+    layout_eligibility: dict | None = None,
 ) -> dict:
     """Determine layout locally; source-only cache is reusable across languages.
 
@@ -105,13 +106,22 @@ def derive_source_layout(
     source = validate_page_structure(structure)
     if cancelled and cancelled():
         return _review_layout(source, "layout_derivation_cancelled")
-    preliminary = derive_page_layout(source)
+    preliminary = derive_page_layout(source, layout_eligibility=layout_eligibility)
     if not source.blocks or not any(block.bbox for block in source.blocks):
         return preliminary
     try:
         actual = source_fingerprint or _file_hash(source_path)
         if not source.source_file_sha256 or actual != source.source_file_sha256:
             return _review_layout(source, "layout_source_file_mismatch")
+        # A separately checked OCR record admits only simple flow; it cannot
+        # authorize the digital/region detector or acquire panel/table authority.
+        if source.uncertain and layout_eligibility is not None:
+            from .source_layout_eligibility import valid_layout_eligibility
+            from .source_document import source_page_identity
+            if source_page_identity(source_path, source.page_number) != source.metadata.get("source_page_identity"):
+                return _review_layout(source, "layout_source_raster_mismatch")
+            if valid_layout_eligibility(source, layout_eligibility):
+                return preliminary
         image_path = browser_pdf_bundle_page_image_path(source_path, source.page_number) if is_pdf_source(source_path) else None
         image_identity = _file_hash(image_path) if image_path else actual
         key = fingerprint({"version": LAYOUT_DERIVATION_VERSION, "dpi": LAYOUT_RENDER_DPI,
@@ -137,6 +147,57 @@ def derive_source_layout(
         return layout
     except (OSError, ValueError, TypeError, RuntimeError, ImportError):
         return _review_layout(source, "layout_source_render_unavailable")
+
+
+def _derive_rebuild_eligibility(source: PageStructure, source_path: Path) -> dict | None:
+    """Reinspect the exact retained raster, never recognize/extract text again.
+
+    Original browser raster bytes and RGB/PNG OCR input bytes have separate
+    hashes. Reuse the original image-rendering function to validate that link.
+    Non-bundle PDFs keep their existing native geometry/review path.
+    """
+    from .browser_pdf_bundle import browser_pdf_bundle_page_image_path
+    from .source_document import source_page_identity, is_pdf_source, is_image_source
+    from .source_layout_eligibility import derive_layout_eligibility
+    from .ocr_helpers import render_image_png
+    from PIL import Image
+
+    if source.provenance != "local_ocr_tsv" or not source.uncertain:
+        return None
+    identity = source_page_identity(source_path, source.page_number)
+    if identity != source.metadata.get("source_page_identity"):
+        raise ValueError("Retained OCR source/raster identity changed.")
+    path = (browser_pdf_bundle_page_image_path(source_path, source.page_number)
+            if is_pdf_source(source_path) else source_path if is_image_source(source_path) else None)
+    if path is None:
+        return None
+    try:
+        opened = Image.open(path)
+    except Image.DecompressionBombError as exc:
+        raise ValueError("Eligibility raster exceeds the local bound.") from exc
+    with opened as image:
+        if image.width * image.height > 40_000_000:
+            raise ValueError("Eligibility raster exceeds the local bound.")
+    pixels = render_image_png(path)
+    if source_page_identity(source_path, source.page_number) != identity:
+        raise ValueError("Source/raster changed during layout derivation.")
+    return derive_layout_eligibility(source, image_bytes=pixels, source_identity=identity)
+
+
+def load_layout_eligibility(page_path: Path, source: PageStructure | dict, target: dict) -> dict | None:
+    """Load only a source-bound derivative for this exact saved translation."""
+    from .source_layout_eligibility import valid_layout_eligibility
+
+    try:
+        record = _read_json(page_path.with_suffix(".layout_eligibility.json"))
+        if (set(record) != {"version", "translation_sha256", "eligibility"}
+                or type(record["version"]) is not int or record["version"] != 1
+                or record["translation_sha256"] != target.get("translation_sha256")
+                or not valid_layout_eligibility(source, record["eligibility"])):
+            return None
+        return record["eligibility"]
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
 
 
 def load_rebuild_layout(page_path: Path, structure: dict) -> dict | None:
@@ -190,6 +251,7 @@ def prepare_layout_rebuild(
         except (OSError, ValueError, TypeError, KeyError):
             result["legacy_pages"].append(number)
             continue
+        eligibility = None
         try:
             source_sidecar = page_path.with_suffix(".source_structure.json")
             if not source_sidecar.exists():
@@ -211,13 +273,22 @@ def prepare_layout_rebuild(
                 for a, b in zip(source_rows, target_rows)
             ):
                 raise ValueError("Source and target geometry/identities differ.")
+            eligibility = _derive_rebuild_eligibility(source, source_path)
             layout = derive_source_layout(source, source_path, cache_dir=cache_dir,
-                                          source_fingerprint=source_file_hash, cancelled=cancelled)
+                                          source_fingerprint=source_file_hash, cancelled=cancelled,
+                                          layout_eligibility=eligibility)
         except (OSError, ValueError, TypeError, KeyError):
             layout = _review_layout(target, "layout_source_evidence_unavailable")
         if cancelled and cancelled():
             result["cancelled"] = True
             break
+        # Also supersede stale prior proof on a failed/missing-source rebuild.
+        # This is a format derivative, never part of the committed text bundle.
+        if eligibility is not None or page_path.with_suffix(".layout_eligibility.json").exists():
+            write_json_atomic(page_path.with_suffix(".layout_eligibility.json"), {
+                "version": 1, "translation_sha256": target.translation_sha256,
+                "eligibility": eligibility,
+            })
         write_json_atomic(page_path.with_suffix(".layout.json"), {
             "version": 1, "derivation_version": LAYOUT_DERIVATION_VERSION,
             "translation_sha256": target.translation_sha256,

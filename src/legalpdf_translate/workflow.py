@@ -31,8 +31,10 @@ from .checkpoint import (
     load_run_state,
     mark_page_done,
     mark_page_failed,
+    mark_structured_evidence_purged,
     new_run_state,
     record_final_docx_path,
+    recover_structured_commits,
     resume_incompatibility_reason,
     save_run_state_atomic,
     sha256_of_bytes,
@@ -626,7 +628,16 @@ class TranslationWorkflow:
         client: OpenAIResponsesClient | None = None,
         log_callback: Callable[[str], None] | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
+        translation_protocol: str | None = None,
     ) -> None:
+        # One internal opt-in reaches browser/CLI/queue/Qt without new payloads.
+        requested = translation_protocol or os.environ.get("LEGALPDF_TRANSLATION_PROTOCOL", "legacy_text_v1")
+        if requested not in {"legacy_text_v1", "legal_blocks_v2"}:
+            raise ValueError("Unsupported internal translation protocol.")
+        self._explicit_translation_protocol = translation_protocol
+        self._configured_translation_protocol = requested
+        self._translation_protocol = requested
+        self._structured_run = None
         self._provided_client = client
         self._log_callback = log_callback
         self._progress_callback = progress_callback
@@ -673,6 +684,8 @@ class TranslationWorkflow:
 
     def run(self, config: RunConfig) -> RunSummary:
         run_started_perf = time.perf_counter()
+        self._translation_protocol = self._configured_translation_protocol
+        self._structured_run = None
         self._cancel_event.clear()
         self._last_config = None
         self._last_paths = None
@@ -773,6 +786,26 @@ class TranslationWorkflow:
 
         pdf_fingerprint = sha256_of_file(config.pdf_path)
         paths, existing_state = self._resolve_paths_for_run(config)
+        if self._translation_protocol == "legal_blocks_v2":
+            from .new_translation_blocks import NewTranslationBlocks
+            self._structured_run = NewTranslationBlocks(self, config, selected_pages,
+                source_hash=pdf_fingerprint, context_hash=context_hash)
+            # Reject mismatched/edited/incomplete evidence before artifact writes,
+            # authentication or any extraction/OCR/translation request.
+            if existing_state is not None:
+                reason = resume_incompatibility_reason(existing_state, config=config, paths=paths,
+                    pdf_fingerprint=pdf_fingerprint, context_hash=context_hash,
+                    selection_start_page=selection_start_page, selection_end_page=selection_end_page,
+                    selection_page_count=selection_page_count, max_pages_effective=max_pages_effective,
+                    protocol_identity=self._structured_run.identity)
+                if reason:
+                    raise ValueError(f"Structured checkpoint is incompatible: {reason}")
+                recovered = recover_structured_commits(existing_state, paths, protocol_identity=self._structured_run.identity)
+                self._require_writable_run_output_dir(config.output_dir)
+                if recovered:
+                    save_run_state_atomic(paths.run_state_path, existing_state)
+        if self._structured_run is None or existing_state is None:
+            self._require_writable_run_output_dir(config.output_dir)
         ensure_run_dirs(paths)
         self._last_paths = paths
         self._event_collector = RunEventCollector(run_dir=paths.run_dir, enabled=self._diagnostics_admin_mode)
@@ -834,7 +867,8 @@ class TranslationWorkflow:
                 self._prompt_glossaries_by_lang.get(config.target_lang.value, [])
             )
 
-        instructions = load_system_instructions(config.target_lang)
+        instructions = (self._structured_run.instructions if self._structured_run is not None
+                        else load_system_instructions(config.target_lang))
         self._system_instructions_text = instructions
 
         if self._diagnostics_admin_mode:
@@ -1000,6 +1034,8 @@ class TranslationWorkflow:
                 run_summary_path=run_summary_path,
             )
 
+        if pending_pages and self._structured_run is not None:
+            self._structured_run.prepare_native_evidence()
         if pending_pages and not self._cancel_event.is_set():
             auth_result: TranslationAuthTestResult | None = None
             if isinstance(provided_client, OpenAIResponsesClient):
@@ -1171,6 +1207,7 @@ class TranslationWorkflow:
                                     retry_used=outcome.retry_used,
                                     usage=outcome.usage,
                                     metadata=outcome.page_metadata,
+                                    structured_commit=outcome.structured_commit,
                                 )
                                 save_run_state_atomic(paths.run_state_path, run_state)
                                 done_count = run_state.done_count
@@ -1323,6 +1360,7 @@ class TranslationWorkflow:
                     page_breaks=config.page_breaks,
                     strip_bidi_controls=config.strip_bidi_controls,
                     stats=_docx_stats,
+                    **self._structured_assembly_options(run_state, paths.pages_dir),
                 )
                 self._record_docx_layout_review(output_docx, paths.pages_dir, run_state, _layout_preparation)
                 self._run_stage_timings_ms["docx_rebuild"] = round((time.perf_counter() - docx_started) * 1000.0, 3)
@@ -1390,6 +1428,11 @@ class TranslationWorkflow:
                 },
             )
             if not config.keep_intermediates:
+                if run_state.protocol_identity:
+                    # Persist the explicit retention choice before deletion. A
+                    # crash here must not make missing evidence look reusable.
+                    mark_structured_evidence_purged(run_state, list_completed_pages(run_state))
+                    save_run_state_atomic(paths.run_state_path, run_state)
                 self._cleanup_intermediates(paths)
             return RunSummary(
                 success=True,
@@ -1406,7 +1449,14 @@ class TranslationWorkflow:
 
         partial_docx = None
         if completed_pages > 0:
-            partial_docx = self.export_partial_docx()
+            try:
+                partial_docx = self.export_partial_docx()
+            except (ValueError, OSError, RuntimeError):
+                if self._structured_run is None:
+                    raise
+                # Preserve the failure report and all evidence even if a corrupt
+                # completed page prevents safe partial assembly.
+                self._log("Partial document unavailable: saved structured evidence needs review.")
 
         if self._cancel_event.is_set():
             self._run_stage_timings_ms["run_total"] = round((time.perf_counter() - run_started_perf) * 1000.0, 3)
@@ -1609,6 +1659,7 @@ class TranslationWorkflow:
             gmail_batch_context=config.gmail_batch_context,
         )
         run_state = load_run_state(base_paths.run_state_path)
+        self._require_rebuild_checkpoint(base_paths.pages_dir, run_state)
 
         effective_outdir = base_paths.frozen_outdir
         run_started_at = base_paths.run_started_at
@@ -1618,13 +1669,17 @@ class TranslationWorkflow:
 
         if run_state is not None:
             if run_state.frozen_outdir_abs:
-                effective_outdir = require_writable_output_dir(Path(run_state.frozen_outdir_abs))
+                effective_outdir = Path(run_state.frozen_outdir_abs).expanduser().resolve()
+                if not effective_outdir.is_dir():
+                    raise ValueError("Saved output folder is unavailable.")
             if run_state.run_started_at:
                 run_started_at = run_state.run_started_at
             if run_state.run_dir_abs:
                 run_dir = Path(run_state.run_dir_abs).expanduser().resolve()
                 pages_dir = run_dir / "pages"
                 run_state_path = run_dir / "run_state.json"
+
+        self._require_rebuild_checkpoint(pages_dir, run_state)
 
         final_paths = build_run_paths(
             output_dir=effective_outdir,
@@ -1638,6 +1693,25 @@ class TranslationWorkflow:
         if not page_files:
             raise ValueError(f"No completed page files found for rebuild: {pages_dir}")
 
+        assembly_options = {}
+        if run_state is not None and run_state.protocol_identity:
+            from .structured_artifacts import validate_structured_rebuild_page
+            completed = list_completed_pages(run_state)
+            if any(run_state.pages[str(number)].get("structured_evidence_state") == "purged"
+                   for number in completed):
+                raise ValueError("Structured evidence was removed by the retention setting; rebuild is unavailable.")
+            for number in completed:
+                _, edited = validate_structured_rebuild_page(pages_dir, number,
+                    expected_commit=run_state.pages[str(number)].get("structured_commit"),
+                    protocol_identity=run_state.protocol_identity)
+                if edited:
+                    run_state.pages[str(number)].update(manual_text_edit=True,
+                        layout_review_required=True, fidelity_review_required=True,
+                        fidelity_review_status="not_evaluated")
+            assembly_options = {"page_numbers": completed,
+                                "partial_output": len(completed) < run_state.selection_page_count,
+                                "derive_source_continuations": True}
+        self._require_writable_run_output_dir(effective_outdir)
         layout_preparation = self._prepare_docx_layout(config, pages_dir, effective_outdir)
         output_docx = assemble_docx(
             pages_dir,
@@ -1645,6 +1719,7 @@ class TranslationWorkflow:
             lang=config.target_lang,
             page_breaks=config.page_breaks,
             strip_bidi_controls=config.strip_bidi_controls,
+            **assembly_options,
         )
         layout_records = self._record_docx_layout_review(output_docx, pages_dir, run_state, layout_preparation)
 
@@ -1653,7 +1728,8 @@ class TranslationWorkflow:
             run_state.run_dir_abs = str(run_dir)
             run_state.run_started_at = run_started_at
             record_final_docx_path(run_state, output_docx)
-            run_state.run_status = "completed"
+            if not run_state.protocol_identity or run_state.done_count == run_state.selection_page_count:
+                run_state.run_status = "completed"
             run_state.finished_at = self._utc_now()
             save_run_state_atomic(run_state_path, run_state)
 
@@ -1663,6 +1739,16 @@ class TranslationWorkflow:
         self._last_paths = final_paths
         self._last_state = run_state
         return output_docx
+
+    @staticmethod
+    def _require_rebuild_checkpoint(pages_dir: Path, state: RunState | None) -> None:
+        has_commits = any(pages_dir.glob("page_*.commit.json"))
+        has_sidecars = (any(pages_dir.glob("page_*.source_structure.json"))
+                        or any(pages_dir.glob("page_*.structure.json")))
+        if state is None and (has_commits or has_sidecars):
+            raise ValueError("Structured artifacts lack a readable checkpoint; explicit recovery is required.")
+        if has_commits and state is not None and not state.protocol_identity:
+            raise ValueError("Cannot mix a legacy checkpoint with structured commit evidence.")
 
     def export_partial_docx(self) -> Path | None:
         if self._last_config is None or self._last_paths is None or self._last_state is None:
@@ -1680,12 +1766,23 @@ class TranslationWorkflow:
             lang=self._last_config.target_lang,
             page_breaks=self._last_config.page_breaks,
             strip_bidi_controls=self._last_config.strip_bidi_controls,
+            **self._structured_assembly_options(self._last_state, self._last_paths.pages_dir, partial=True),
         )
         layout_records = self._record_docx_layout_review(
             output_docx, self._last_paths.pages_dir, self._last_state, layout_preparation,
         )
         self._refresh_formatting_summary(self._last_paths.run_dir / "run_summary.json", layout_records)
         return output_docx
+
+    def _structured_assembly_options(self, state: RunState, pages_dir: Path, *, partial: bool = False) -> dict:
+        if not state.protocol_identity:
+            return {}
+        from .structured_artifacts import validate_structured_page
+        completed = list_completed_pages(state)
+        for number in completed:
+            validate_structured_page(pages_dir, number, protocol_identity=state.protocol_identity,
+                                     expected_commit=state.pages[str(number)].get("structured_commit"))
+        return {"page_numbers": completed, "partial_output": partial, "derive_source_continuations": True}
 
     def _prepare_docx_layout(
         self, config: RunConfig, pages_dir: Path, output_dir: Path,
@@ -1886,7 +1983,8 @@ class TranslationWorkflow:
         started_monotonic = time.perf_counter()
         started_at_iso = self._utc_now()
         extract_started = time.perf_counter()
-        ordered = extract_ordered_page_text(config.pdf_path, page_number - 1)
+        ordered = (self._structured_run.ordered_pages[page_number] if self._structured_run is not None
+                   else extract_ordered_page_text(config.pdf_path, page_number - 1))
         extract_seconds = time.perf_counter() - extract_started
         extracted_text = ordered.text
         extraction_quality = classify_extracted_text_quality(extracted_text)
@@ -2068,6 +2166,7 @@ class TranslationWorkflow:
                     engine=ocr_engine,
                     prefer_header=False,
                     lang_hint=ocr_source_profile,
+                    **({"preserve_structure": True} if self._structured_run is not None else {}),
                 )
             page_metadata["ocr_seconds"] = round(time.perf_counter() - ocr_started, 3)
         elif integrity_assessment.suspect:
@@ -2157,7 +2256,7 @@ class TranslationWorkflow:
                 doc_id=str(config.pdf_path.stem),
             )
         expected_ar_tokens: list[str] | None = None
-        if config.target_lang == TargetLang.AR:
+        if config.target_lang == TargetLang.AR and self._structured_run is None:
             source_text = pretokenize_arabic_source(source_text)
             all_tokens = extract_locked_tokens(source_text)
             expected_ar_tokens = [token for token in all_tokens if not is_portuguese_month_date_token(token)]
@@ -2245,6 +2344,18 @@ class TranslationWorkflow:
             ordered_text_chars=len(source_text.strip()),
         )
         page_metadata["attempt1_effort"] = attempt1_effort.value
+
+        if self._structured_run is not None:
+            source = self._structured_run.make_source(number=page_number, ordered=ordered, text=source_text,
+                ocr_result=ocr_result, ocr_used=ocr_used_for_source, merged=merged_visual_source_text is not None,
+                suspect=integrity_assessment.suspect)
+            return self._structured_run.translate(client=client, source=source, paths=paths,
+                page_number=page_number, total_pages=total_pages, context_text=context_text,
+                image_data_url=image_data_url, image_detail=image_detail, effort=attempt1_effort.value,
+                metadata=page_metadata, started=started_monotonic,
+                source_unusable=(not self._is_usable_source_text(source_text)
+                    or (force_visual_grounding and merged_visual_source_text is None)
+                    or (ocr_required and not ocr_used_for_source)))
 
         ocr_reason = ocr_result.failed_reason or "none"
         self._log(
@@ -3150,6 +3261,19 @@ class TranslationWorkflow:
         )
         post_status = str(self._budget_post_run_packet.get("estimation_status", "unavailable") or "unavailable")
         cost_estimation_status = str(self._cost_estimation_status or "").strip() or post_status
+        if run_state.protocol_identity:
+            # Existing aggregate pricing cannot certify all-call cost for this
+            # candidate: OCR/auth/cache/uncertain failures are not all metered.
+            # Retain provider token evidence, but do not claim measured savings.
+            total_cost_estimate = None
+            cost_estimation_status = "not_evaluated_all_calls"
+            self._budget_post_run_packet.update(
+                estimation_status=cost_estimation_status,
+                estimation_reason="Structured candidate has translation usage only; all-call cost is not evaluated.",
+                estimated_cost_usd=None, cap_exceeded=None,
+                total_tokens=total_input_tokens + total_output_tokens,
+                reasoning_tokens_included_in_output=True,
+            )
         failure_context: dict[str, Any] = {}
         if run_state.failure_context:
             failure_context = dict(run_state.failure_context)
@@ -3734,6 +3858,30 @@ class TranslationWorkflow:
             gmail_batch_context=config.gmail_batch_context,
         )
         existing = load_run_state(paths.run_state_path)
+        if config.resume and existing is not None and self._explicit_translation_protocol is None:
+            # An environment opt-in affects fresh runs, not saved protocol identity.
+            self._translation_protocol = existing.protocol_identity.get("protocol", "legacy_text_v1")
+        if self._translation_protocol not in {"legacy_text_v1", "legal_blocks_v2"}:
+            raise ValueError("Checkpoint translation protocol is not supported.")
+        has_structured_files = paths.pages_dir.exists() and (
+            any(paths.pages_dir.glob("page_*.commit.json")) or
+            (existing is None and any(paths.pages_dir.glob("page_*.structure.json"))) or
+            (existing is None and any(paths.pages_dir.glob("page_*.source_structure.json"))))
+        protected_run = bool(self._translation_protocol == "legal_blocks_v2"
+                             or (existing and existing.protocol_identity) or has_structured_files)
+        if protected_run:
+            if (existing is not None and not existing.protocol_identity
+                    and any(paths.pages_dir.glob("page_*.commit.json"))):
+                raise ValueError("Cannot mix a legacy checkpoint with structured commit evidence.")
+            if not config.resume and (existing or (paths.pages_dir.exists() and any(paths.pages_dir.iterdir()))):
+                raise ValueError("Preserve structured run artifacts; choose a separate output folder for a new run.")
+            if existing is None and (paths.run_state_path.exists()
+                    or (paths.pages_dir.exists() and any(paths.pages_dir.iterdir()))):
+                raise ValueError("Structured artifacts lack a readable checkpoint; explicit recovery is required.")
+            if existing and self._explicit_translation_protocol is not None:
+                saved_protocol = existing.protocol_identity.get("protocol", "legacy_text_v1")
+                if self._translation_protocol != saved_protocol:
+                    raise ValueError("Cannot mix legacy and structured translation protocols in a saved run.")
         if config.resume and existing is None and paths.run_state_path.exists():
             self._log("Existing run_state.json is unreadable; starting a new run state.")
             self._record_event(
@@ -3772,6 +3920,8 @@ class TranslationWorkflow:
             gmail_batch_context=config.gmail_batch_context,
         )
         missing_page_outputs = self._missing_checkpoint_page_outputs(existing, run_dir=resolved_paths.run_dir)
+        if protected_run and missing_page_outputs:
+            raise ValueError("Structured checkpoint output is missing; preserve evidence and recover explicitly.")
         if missing_page_outputs:
             self._log(
                 "Checkpoint references completed pages whose saved page files are missing; "
@@ -3851,6 +4001,7 @@ class TranslationWorkflow:
                 selection_end_page=selection_end_page,
                 selection_page_count=selection_page_count,
                 max_pages_effective=max_pages_effective,
+                protocol_identity=self._structured_run.identity if self._structured_run else None,
             )
             if mismatch_reason is None:
                 existing.frozen_outdir_abs = str(paths.frozen_outdir)
@@ -3878,7 +4029,8 @@ class TranslationWorkflow:
                 f"{mismatch_reason}. Disable resume or use New Run."
             )
 
-        clear_run_dirs(paths)
+        if self._structured_run is None:
+            clear_run_dirs(paths)
         state = new_run_state(
             config=config,
             paths=paths,
@@ -3886,12 +4038,21 @@ class TranslationWorkflow:
             context_hash=context_hash,
             total_pages=total_pages,
             selected_pages=selected_pages,
+            protocol_identity=self._structured_run.identity if self._structured_run else None,
         )
         save_run_state_atomic(paths.run_state_path, state)
         return state
 
     def _normalize_config(self, config: RunConfig) -> RunConfig:
-        outdir_abs = require_writable_output_dir(config.output_dir)
+        # Normalization is read-only: a structured checkpoint may still reject
+        # this run's identity or saved evidence before any output is touched.
+        if not str(config.output_dir).strip():
+            raise ValueError("Output folder is required.")
+        outdir_abs = config.output_dir.expanduser().resolve()
+        if not outdir_abs.exists():
+            raise ValueError(f"Output folder does not exist: {outdir_abs}")
+        if not outdir_abs.is_dir():
+            raise ValueError(f"Output folder is not a directory: {outdir_abs}")
         context_file_abs = config.context_file.expanduser().resolve() if config.context_file else None
         budget_policy = config.budget_on_exceed
         if not isinstance(budget_policy, BudgetExceedPolicy):
@@ -3947,6 +4108,20 @@ class TranslationWorkflow:
                 else None
             ),
         )
+
+    @staticmethod
+    def _require_writable_run_output_dir(output_dir: Path) -> None:
+        """Probe only accepted run preflight, using an exclusively owned file."""
+        import tempfile
+
+        try:
+            with tempfile.TemporaryFile(mode="w+b", prefix=".legalpdf_write_test_",
+                                        suffix=".tmp", dir=output_dir) as probe:
+                probe.write(b"ok")
+                probe.flush()
+                os.fsync(probe.fileno())
+        except OSError as exc:
+            raise ValueError(f"Output folder is not writable: {output_dir}") from exc
 
     def _is_usable_source_text(self, value: str) -> bool:
         return _is_usable_source_text_value(value)
@@ -4060,3 +4235,4 @@ class _PageOutcome:
     usage: dict[str, object]
     error: str | None
     page_metadata: dict[str, object] | None = None
+    structured_commit: dict[str, Any] | None = None

@@ -45,6 +45,10 @@ _PLACEHOLDER_TOKEN_SPAN_RE = re.compile(
     r"(?P<open>[\u2066\u2067\u2068]?)(?:\[\[(?P<token>.*?)\]\])(?P<close>\u2069?)",
     re.DOTALL,
 )
+_CLOCK_RUN_RE = re.compile(
+    r"(?<![\w:\[\]])(?:[01][0-9]|2[0-3]):[0-5][0-9]"
+    r"(?::[0-5][0-9])?(?![\w:\[\]])"
+)
 
 
 @dataclass(frozen=True)
@@ -188,6 +192,61 @@ def _infer_atomic_run_kind(text: str) -> str:
     return "ltr"
 
 
+def _keep_clock_separators_ltr(segments: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Keep complete HH:MM[:SS] values coherent across saved token boundaries.
+
+    The colon in [[09]]:[[30]] otherwise arrives as an isolated neutral fragment
+    and defaults to RTL, reversing the clock in Word. Recognize only complete
+    two-digit 24-hour clocks, never an identifier or part of a longer value.
+    Match a control-free view, but relabel only the original colon characters:
+    every visible character and any explicitly retained bidi control survives.
+    Existing non-clock direction decisions, spaces and line breaks are untouched.
+    """
+    text = "".join(chunk for _, chunk in segments)
+    if ":" not in text:
+        return segments
+    positions = [index for index, char in enumerate(text) if ord(char) not in _BIDI_CONTROL_CODEPOINTS]
+    visible = "".join(text[index] for index in positions)
+    clock_colons: set[int] = set()
+    for match in _CLOCK_RUN_RE.finditer(visible):
+        start, end = match.span()
+        # Python's \w excludes combining marks. Also decline an apparent clock
+        # joined by identifier punctuation to another word/number (12.09:30,
+        # ABC-09:30, 09:30.5), while allowing ordinary terminal punctuation.
+        if any(unicodedata.category(char).startswith("M")
+               for char in (visible[start - 1:start] if start else "") + visible[end:end + 1]):
+            continue
+        connectors = ".,/-\\@#+"
+        if ((start > 1 and visible[start - 1] in connectors and
+             (visible[start - 2].isalnum() or visible[start - 2] == "_" or
+              unicodedata.category(visible[start - 2]).startswith("M"))) or
+            (end + 1 < len(visible) and visible[end] in connectors and
+             (visible[end + 1].isalnum() or visible[end + 1] == "_" or
+              unicodedata.category(visible[end + 1]).startswith("M")))):
+            continue
+        raw_start, raw_end = positions[start], positions[end - 1] + 1
+        while raw_start and ord(text[raw_start - 1]) in _BIDI_CONTROL_CODEPOINTS:
+            raw_start -= 1
+        while raw_end < len(text) and ord(text[raw_end]) in _BIDI_CONTROL_CODEPOINTS:
+            raw_end += 1
+        # LRI/PDI are our normal saved-token wrappers; LRM explicitly agrees
+        # with LTR. Other retained controls can still force a conflicting
+        # direction inside a run, so leave those cases entirely unchanged.
+        if any(ord(char) in _BIDI_CONTROL_CODEPOINTS and char not in "\u200e\u2066\u2069"
+               for char in text[raw_start:raw_end]):
+            continue
+        clock_colons.update(positions[index] for index in range(start, end) if visible[index] == ":")
+    if not clock_colons:
+        return segments
+    relabeled: list[tuple[str, str]] = []
+    offset = 0
+    for kind, chunk in segments:
+        relabeled.extend(("ltr" if offset + index in clock_colons else kind, char)
+                         for index, char in enumerate(chunk))
+        offset += len(chunk)
+    return _merge_directional_runs(relabeled)
+
+
 def _segment_rtl_placeholder_aware_line(
     text: str,
     *,
@@ -222,7 +281,7 @@ def _segment_rtl_placeholder_aware_line(
         tail_runs, _ = _segment_directional_runs(tail)
         pieces.extend(tail_runs)
 
-    merged_segments = _merge_directional_runs(pieces)
+    merged_segments = _merge_directional_runs(_keep_clock_separators_ltr(pieces))
     has_rtl = any(kind == "rtl" for kind, _ in merged_segments)
     has_ltr = any(kind == "ltr" for kind, _ in merged_segments)
     if has_rtl and has_ltr:
@@ -600,6 +659,7 @@ class _AssemblyPage:
     text: str
     structure: dict | None
     structure_status: str
+    layout_eligibility: dict | None = None
 
 
 def _text_hash(text: str) -> str:
@@ -701,6 +761,49 @@ def _validated_source_pair(previous: _AssemblyPage, current: _AssemblyPage, page
         return None
 
 
+def _derive_source_continuations(pages: list[_AssemblyPage], pages_dir: Path, *, page_breaks: bool) -> None:
+    """Derive paragraph joins only in freshly loaded assembly payloads.
+
+    Page commits stay immutable. Incoming automatic flags never establish proof,
+    and an absent/edited sidecar or missing selected page cannot bridge a gap.
+    """
+    from .formatting_support import confirmed_source_continuation
+
+    for page in pages:
+        if page.structure is None:
+            continue
+        structure = page.structure
+        structure["continuation_from_previous"] = False
+        structure["continuation_to_next"] = False
+        metadata = structure.setdefault("metadata", {})
+        if metadata.get("continuation_evidence") in ("adjacent_source_fragment", "repeated_source_furniture"):
+            metadata.pop("continuation_evidence")
+        metadata.pop("continuation_bridge", None)
+        for block in structure["blocks"]:
+            block["continuation_of"] = None
+    if page_breaks:
+        return
+    for previous, current in zip(pages, pages[1:]):
+        if previous.number + 1 != current.number:
+            continue
+        sources = _validated_source_pair(previous, current, pages_dir)
+        if sources is None:
+            continue
+        proof = confirmed_source_continuation(*sources,
+            previous_layout_eligibility=previous.layout_eligibility,
+            current_layout_eligibility=current.layout_eligibility)
+        if proof is None:
+            continue
+        previous.structure["continuation_to_next"] = True
+        current.structure["continuation_from_previous"] = True
+        head = next(block for block in current.structure["blocks"] if block["id"] == proof["current_block_id"])
+        head["continuation_of"] = proof["previous_block_id"]
+        metadata = current.structure.setdefault("metadata", {})
+        metadata.setdefault("continuation_evidence", proof["kind"])
+        if proof["furniture_pairs"]:
+            metadata["continuation_bridge"] = proof
+
+
 def _validated_furniture_bridge(previous: _AssemblyPage, current: _AssemblyPage, pages_dir: Path) -> dict | None:
     """Recheck full adjacent SOURCE evidence, not translated headers or flags.
 
@@ -714,7 +817,9 @@ def _validated_furniture_bridge(previous: _AssemblyPage, current: _AssemblyPage,
     if sources is None:
         return None
     try:
-        proof = confirmed_source_continuation(*sources)
+        proof = confirmed_source_continuation(*sources,
+            previous_layout_eligibility=previous.layout_eligibility,
+            current_layout_eligibility=current.layout_eligibility)
         if not proof or not proof["furniture_pairs"]:
             return None
         declared = current.structure.get("metadata", {}).get("continuation_bridge")
@@ -1338,12 +1443,23 @@ def _section_furniture_plan(pages: list[_AssemblyPage], pages_dir: Path, *, page
                             allow_isolated_footer: bool = True) -> dict:
     """Use independently bound complete sources; never infer repeats from targets."""
     from .section_furniture import plan_section_furniture
+    from .layout_integration import load_layout_eligibility
+    from dataclasses import replace
 
     pairs = []
-    for page in pages:
+    for index, page in enumerate(pages):
         source_pair = _validated_source_pair(page, page, pages_dir) if page.structure else None
+        if source_pair:
+            eligibility = load_layout_eligibility(
+                pages_dir / f"page_{page.number:04d}.txt", source_pair[0], page.structure)
+            layout = page.structure.get("metadata", {}).get("layout")
+            if layout is not None and (not isinstance(layout, dict) or layout.get("status") != "flow"
+                                       or layout.get("review_required")):
+                eligibility = None
+            pages[index] = replace(page, layout_eligibility=eligibility)
         pairs.append((source_pair[0].to_dict(), page.structure) if source_pair else None)
-    return plan_section_furniture(pairs, page_breaks=page_breaks, allow_isolated_footer=allow_isolated_footer)
+    return plan_section_furniture(pairs, page_breaks=page_breaks, allow_isolated_footer=allow_isolated_footer,
+                                  layout_eligibilities=[page.layout_eligibility for page in pages])
 
 
 def _furniture_line_estimate(blocks: list[dict], width_pt: float, font_size: float) -> int:
@@ -1581,18 +1697,34 @@ def assemble_docx(
     strip_bidi_controls: bool = True,
     verify_readable: bool = True,
     stats: dict[str, int] | None = None,
+    page_numbers: list[int] | None = None,
+    partial_output: bool = False,
+    derive_source_continuations: bool = False,
 ) -> Path:
+    if derive_source_continuations and page_numbers is None:
+        raise ValueError("Source continuation derivation requires a completed-page selection.")
     page_files = sorted(pages_dir.glob("page_*.txt"))
     # An up_to_page preview of a larger run is not a complete isolated output.
-    allow_isolated_footer = len(page_files) == 1
+    allow_isolated_footer = len(page_files) == 1 and not partial_output
+    if page_numbers is not None:
+        if any(type(number) is not int or number < 1 for number in page_numbers) or len(set(page_numbers)) != len(page_numbers):
+            raise ValueError("Invalid completed-page selection.")
+        selected = {f"page_{number:04d}.txt" for number in page_numbers}
+        page_files = [path for path in page_files if path.name in selected]
+        if {path.name for path in page_files} != selected:
+            raise ValueError("A selected completed page is missing.")
     if up_to_page is not None:
         page_files = [path for path in page_files if int(path.stem.split("_")[1]) <= up_to_page]
     if not page_files:
         raise RuntimeError(f"No page text files available for DOCX assembly: {pages_dir}")
 
     pages = [_load_assembly_page(path) for path in page_files]
+    # Validate section furniture against unchanged source/target payloads before
+    # adding local-only paragraph links; the bound-pair contract stays strict.
     furniture_plan = _section_furniture_plan(pages, pages_dir, page_breaks=page_breaks,
                                              allow_isolated_footer=allow_isolated_footer)
+    if derive_source_continuations:
+        _derive_source_continuations(pages, pages_dir, page_breaks=page_breaks)
     _bound_furniture_reserves(furniture_plan, pages, lang)
     furniture_sections = {item["section_id"]: item for item in furniture_plan.get("sections", [])}
     furniture_enabled = not page_breaks and any(item["consolidated"] for item in furniture_sections.values())
@@ -1681,7 +1813,8 @@ def assemble_docx(
         can_continue = bool(
             not page_breaks and not page_boundary and previous and previous.number + 1 == page.number
             and previous.structure and previous.structure.get("continuation_to_next")
-            and not previous.structure.get("uncertain") and not structure.get("uncertain")
+            and (not previous.structure.get("uncertain") or previous.layout_eligibility is not None)
+            and (not structure.get("uncertain") or page.layout_eligibility is not None)
             and structure.get("continuation_from_previous") and not structure.get("document_start")
         )
         bridge = _validated_furniture_bridge(previous, page, pages_dir) if can_continue else None

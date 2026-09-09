@@ -11,6 +11,7 @@ Purpose: record official primary sources used for material external behavior/cap
 ## Entries
 | source_url | contract_or_workflow | fact_summary | verification_date |
 |---|---|---|---|
+| https://developers.openai.com/api/docs/guides/structured-outputs | `TRANSLATION_WORKFLOW.md`, structured-new-translations ExecPlan | Responses `text.format` supports JSON-schema output; refusal and incomplete responses require separate handling. Schema conformity does not establish source-block coverage or legal equivalence. No model/account or live-call acceptance is inferred. | 2026-09-09 |
 | https://developers.openai.com/api/reference/resources/responses/methods/create | `openai_docs_citation_freshness_policy`, `OPENAI_DOCS_CITATION_WORKFLOW.md` | Responses API `POST /responses` is the canonical create-response endpoint and supports model response creation with tools and structured outputs. | 2026-03-05 |
 | https://developers.openai.com/api/docs/guides/batch | `cloud_heavy_scoring_default_policy`, `CLOUD_MACHINE_EVALUATION_WORKFLOW.md` | Batch API supports asynchronous grouped requests and is positioned for non-immediate workloads with separate batch limits/pool behavior. | 2026-03-05 |
 | https://playwright.dev/docs/chrome-extensions | `browser_automation_reliability_policy`, `BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md` | Chrome extension testing requires Chromium with persistent context; side-load flags are not available in Chrome/Edge as described. | 2026-03-05 |

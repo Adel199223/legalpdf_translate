@@ -94,7 +94,7 @@ def test_repeated_furniture_uses_real_parts_and_explicit_complete_aliases(tmp_pa
     assert all("section_furniture_target_variant_standardized" in p["layout_warnings"] for p in mapping["pages"])
     assert all(not p.get("list_furniture_reflows") for p in mapping["pages"])
     assert before == {p.name: p.read_bytes() for p in folder.iterdir()}
-    assert mapping["section_furniture"]["policy"] == "source_section_furniture_v3"
+    assert mapping["section_furniture"]["policy"] == "source_section_furniture_v4"
 
 
 @pytest.mark.parametrize("middle", ["none", "headerless", "footerless", "changed_contact"])

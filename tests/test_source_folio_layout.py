@@ -188,7 +188,7 @@ def test_changing_folios_do_not_poison_repeated_contact_signatures_or_input_cove
         target["metadata"]["layout"] = derive_page_layout(source)
     before = deepcopy(pairs)
     plan = plan_section_furniture(pairs)
-    assert plan["policy"] == "source_section_furniture_v3"
+    assert plan["policy"] == "source_section_furniture_v4"
     assert not plan["review_required"]
     section, = plan["sections"]
     assert section["consolidated"] and section["page_numbers"] == [5, 6]

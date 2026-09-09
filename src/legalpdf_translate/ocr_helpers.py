@@ -3,12 +3,33 @@
 from __future__ import annotations
 
 import io
+import hashlib
 from pathlib import Path
 
 from PIL import Image
 
 from .ocr_engine import OCREngine, OcrResult, invoke_ocr_image
 from .types import OcrMode
+
+
+def _bind_ocr_structure(result: OcrResult, image_bytes: bytes) -> OcrResult:
+    """Only source-local, same-text geometry is eligible for new-run layout."""
+    from .document_structure import validate_page_structure, text_sha256
+    if result.structure is None:
+        return result
+    try:
+        structure = validate_page_structure(result.structure)
+        if (result.engine != "local" or structure.provenance != "local_ocr_tsv"
+                or structure.text.split() != result.text.split()
+                or structure.metadata.get("selected_text_sha256") != text_sha256(result.text)
+                or structure.metadata.get("image_sha256") != hashlib.sha256(image_bytes).hexdigest()):
+            raise ValueError("OCR structure does not bind the selected source.")
+        result.structure = structure.to_dict()
+    except (ValueError, TypeError, KeyError, UnicodeError):
+        result.structure = None
+        result.structure_metadata = {"layout_review_required": True,
+                                     "layout_evidence_reason": "selected_ocr_evidence_mismatch"}
+    return result
 
 
 def _page_to_png_bytes(page: fitz.Page, *, dpi: int) -> bytes:
@@ -118,6 +139,7 @@ def ocr_pdf_page_text(
     *,
     prefer_header: bool = False,
     lang_hint: str | None = None,
+    preserve_structure: bool = False,
 ) -> OcrResult:
     if mode == OcrMode.OFF:
         return OcrResult(text="", engine="none", failed_reason="ocr disabled by mode=off", chars=0)
@@ -129,7 +151,9 @@ def ocr_pdf_page_text(
         )
     except Exception as exc:  # noqa: BLE001
         return OcrResult(text="", engine="none", failed_reason=f"render failed: {exc}", chars=0)
-    return invoke_ocr_image(engine, image_bytes, lang_hint=lang_hint, source_type="pdf")
+    options = {"preserve_structure": True} if preserve_structure and not prefer_header else {}
+    result = invoke_ocr_image(engine, image_bytes, lang_hint=lang_hint, source_type="pdf", **options)
+    return _bind_ocr_structure(result, image_bytes) if options else result
 
 
 def ocr_pdf_page_crop_text(
@@ -158,6 +182,7 @@ def ocr_image_file_text(
     *,
     prefer_header: bool = False,
     lang_hint: str | None = None,
+    preserve_structure: bool = False,
 ) -> OcrResult:
     if mode == OcrMode.OFF:
         return OcrResult(text="", engine="none", failed_reason="ocr disabled by mode=off", chars=0)
@@ -165,4 +190,6 @@ def ocr_image_file_text(
         image_bytes = render_image_header_png(image_path) if prefer_header else render_image_png(image_path)
     except Exception as exc:  # noqa: BLE001
         return OcrResult(text="", engine="none", failed_reason=f"render failed: {exc}", chars=0)
-    return invoke_ocr_image(engine, image_bytes, lang_hint=lang_hint, source_type="image")
+    options = {"preserve_structure": True} if preserve_structure and not prefer_header else {}
+    result = invoke_ocr_image(engine, image_bytes, lang_hint=lang_hint, source_type="image", **options)
+    return _bind_ocr_structure(result, image_bytes) if options else result

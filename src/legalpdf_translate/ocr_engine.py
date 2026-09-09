@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import inspect
 import json
 import os
 import subprocess
@@ -58,6 +60,8 @@ class OcrResult:
     quality_score: float = 0.0
     selected_pass: str = ""
     attempts: list[dict[str, Any]] | None = None
+    structure: dict[str, Any] | None = None
+    structure_metadata: dict[str, Any] | None = None
 
 
 class OCREngine(Protocol):
@@ -77,14 +81,20 @@ def invoke_ocr_image(
     lang_hint: str | None = None,
     *,
     source_type: Literal["pdf", "image"] = "pdf",
+    preserve_structure: bool = False,
 ) -> OcrResult:
+    # Decide legacy-adapter compatibility before the only dispatch. An internal
+    # TypeError may happen after a paid request; never catch it and replay.
+    options: dict[str, Any] = {"lang_hint": lang_hint, "source_type": source_type}
+    if preserve_structure:
+        options["preserve_structure"] = True
     try:
-        return engine.ocr_image(image_bytes, lang_hint=lang_hint, source_type=source_type)
-    except TypeError as exc:
-        message = str(exc)
-        if "source_type" not in message:
-            raise
-        return engine.ocr_image(image_bytes, lang_hint=lang_hint)
+        parameters = inspect.signature(engine.ocr_image).parameters
+    except (ValueError, TypeError):
+        parameters = None
+    if parameters is not None and not any(item.kind == inspect.Parameter.VAR_KEYWORD for item in parameters.values()):
+        options = {key: value for key, value in options.items() if key in parameters}
+    return engine.ocr_image(image_bytes, **options)
 
 
 @dataclass(slots=True)
@@ -308,13 +318,15 @@ class LocalTesseractEngine:
         *,
         input_path: Path,
         pass_spec: _LocalPassSpec,
-    ) -> tuple[int, str, str]:
+        preserve_structure: bool = False,
+    ) -> tuple[int, str, str] | tuple[int, str, str, str]:
         if not self._tesseract_path:
             return 1, "", "Local OCR unavailable: 'tesseract' executable was not found in PATH."
+        output_base = input_path.parent / pass_spec.name
         command = [
             str(self._tesseract_path),
             str(input_path),
-            "stdout",
+            str(output_base) if preserve_structure else "stdout",
             "-l",
             pass_spec.lang,
             "--oem",
@@ -322,6 +334,10 @@ class LocalTesseractEngine:
             "--psm",
             str(pass_spec.psm),
         ]
+        if preserve_structure:
+            # Both renderers consume one recognition pass. Keep TXT for winner
+            # scoring and selected text; TSV is optional layout evidence only.
+            command.extend(("txt", "tsv"))
         completed = subprocess.run(
             command,
             capture_output=True,
@@ -330,6 +346,11 @@ class LocalTesseractEngine:
         )
         stdout = completed.stdout.decode("utf-8", errors="ignore")
         stderr = completed.stderr.decode("utf-8", errors="ignore")
+        if preserve_structure:
+            text_path, tsv_path = output_base.with_suffix(".txt"), output_base.with_suffix(".tsv")
+            text = text_path.read_bytes().decode("utf-8", errors="ignore") if text_path.is_file() else ""
+            tsv = tsv_path.read_bytes().decode("utf-8", errors="ignore") if tsv_path.is_file() else ""
+            return completed.returncode, text, stderr, tsv
         return completed.returncode, stdout, stderr
 
     def ocr_image(
@@ -338,6 +359,7 @@ class LocalTesseractEngine:
         lang_hint: str | None = None,
         *,
         source_type: Literal["pdf", "image"] = "pdf",
+        preserve_structure: bool = False,
     ) -> OcrResult:
         _ = source_type
         if not self._tesseract_path:
@@ -356,6 +378,7 @@ class LocalTesseractEngine:
         best_score = 0.0
         best_chars = 0
         best_pass = ""
+        best_structure = None
 
         with tempfile.TemporaryDirectory(prefix="legalpdf_ocr_") as temp_dir:
             input_path = Path(temp_dir) / "input.png"
@@ -363,10 +386,13 @@ class LocalTesseractEngine:
 
             for pass_spec in pass_specs:
                 try:
-                    return_code, stdout, stderr = self._run_pass(
+                    pass_result = self._run_pass(
                         input_path=input_path,
                         pass_spec=pass_spec,
+                        **({"preserve_structure": True} if preserve_structure else {}),
                     )
+                    return_code, stdout, stderr = pass_result[:3]
+                    tsv = pass_result[3] if len(pass_result) == 4 else ""
                 except Exception as exc:  # noqa: BLE001
                     reason = f"tesseract execution failed in {pass_spec.name}: {exc}"
                     attempts.append(
@@ -400,6 +426,26 @@ class LocalTesseractEngine:
                     continue
 
                 text = stdout.strip()
+                structure = None
+                if preserve_structure and tsv:
+                    from .document_structure import structure_from_tesseract_tsv, text_sha256
+                    try:
+                        parsed = structure_from_tesseract_tsv(tsv)
+                        if parsed.text.split() != text.split():
+                            raise ValueError("TSV does not match the selected TXT content.")
+                        # Existing PSM choices are unchanged, and can flatten
+                        # columns. Retain their boxes but not layout certainty.
+                        parsed.uncertain = True
+                        parsed.metadata.update(local_pass=pass_spec.name, psm=pass_spec.psm,
+                            language_pack=pass_spec.lang, selected_text_sha256=text_sha256(text),
+                            image_sha256=hashlib.sha256(image_bytes).hexdigest(),
+                            text_binding="ordered_non_whitespace_tokens",
+                            warnings=["local_ocr_reading_order_requires_review"])
+                        structure = parsed.to_dict()
+                    except (ValueError, TypeError, KeyError, OverflowError, UnicodeError):
+                        # Failed optional evidence never changes selected text,
+                        # quality scoring, pass count or API fallback routing.
+                        structure = None
                 score = _text_quality_score(text)
                 chars = len(text)
                 attempts.append(
@@ -421,6 +467,7 @@ class LocalTesseractEngine:
                     best_score = score
                     best_chars = chars
                     best_pass = pass_spec.name
+                    best_structure = structure
 
                 if best_score >= _EARLY_ACCEPT_SCORE:
                     break
@@ -460,6 +507,7 @@ class LocalTesseractEngine:
             quality_score=best_score,
             selected_pass=best_pass,
             attempts=attempts,
+            structure=best_structure,
         )
 
 
@@ -713,12 +761,14 @@ class LocalThenApiEngine:
         lang_hint: str | None = None,
         *,
         source_type: Literal["pdf", "image"] = "pdf",
+        preserve_structure: bool = False,
     ) -> OcrResult:
         local_result = invoke_ocr_image(
             self.local_engine,
             image_bytes,
             lang_hint=lang_hint,
             source_type=source_type,
+            **({"preserve_structure": True} if preserve_structure else {}),
         )
         if local_result.chars > 0:
             return local_result

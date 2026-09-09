@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import json
 import shutil
@@ -184,7 +185,11 @@ def new_run_state(
     context_hash: str,
     total_pages: int,
     selected_pages: list[int],
+    protocol_identity: dict[str, Any] | None = None,
 ) -> RunState:
+    from .structured_artifacts import normalize_protocol_identity
+
+    identity = normalize_protocol_identity(protocol_identity)
     if not selected_pages:
         raise ValueError("selected_pages cannot be empty.")
 
@@ -225,6 +230,7 @@ def new_run_state(
         failed_count=0,
         pending_count=selection_count,
         failure_context={},
+        protocol_identity=identity,
     )
 
 
@@ -232,7 +238,15 @@ def load_run_state(path: Path) -> RunState | None:
     if not path.exists():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        def unique_keys(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("Duplicate checkpoint key.")
+                result[key] = value
+            return result
+
+        data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_keys)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
         return None
 
@@ -310,6 +324,12 @@ def load_run_state(path: Path) -> RunState | None:
             return None
         failure_context_obj = data.get("failure_context", {})
         failure_context = dict(failure_context_obj) if isinstance(failure_context_obj, dict) else {}
+        from .structured_artifacts import normalize_protocol_identity
+
+        protocol_raw = data.get("protocol_identity", {})
+        if not isinstance(protocol_raw, dict):
+            return None
+        protocol_identity = normalize_protocol_identity(protocol_raw)
 
         return RunState(
             version=int(data["version"]),
@@ -338,6 +358,7 @@ def load_run_state(path: Path) -> RunState | None:
             failed_count=int(data.get("failed_count", failed_count)),
             pending_count=int(data.get("pending_count", pending_count)),
             failure_context=failure_context,
+            protocol_identity=protocol_identity,
         )
     except (TypeError, ValueError, KeyError):
         return None
@@ -365,7 +386,19 @@ def resume_incompatibility_reason(
     selection_end_page: int,
     selection_page_count: int,
     max_pages_effective: int,
+    protocol_identity: dict[str, Any] | None = None,
 ) -> str | None:
+    from .structured_artifacts import StructuredArtifactError, normalize_protocol_identity
+
+    # This must run before the caller writes logs, creates directories or makes
+    # any provider/authentication request. A saved legacy run stays legacy.
+    try:
+        identity = normalize_protocol_identity(state.protocol_identity)
+        expected_identity = normalize_protocol_identity(protocol_identity)
+    except StructuredArtifactError:
+        return "translation protocol identity is invalid."
+    if identity != expected_identity:
+        return "translation protocol identity mismatch."
     if state.version != RUN_STATE_VERSION:
         return f"state version mismatch: checkpoint={state.version}, expected={RUN_STATE_VERSION}"
     if state.pdf_fingerprint != pdf_fingerprint:
@@ -380,6 +413,13 @@ def resume_incompatibility_reason(
         checkpoint_settings["strip_bidi_controls"] = True
     if "glossary_file_path" not in checkpoint_settings:
         checkpoint_settings["glossary_file_path"] = ""
+    if identity:
+        # Structured translation identity separately binds all request inputs.
+        # These local assembly/scheduling choices do not invalidate paid text.
+        # Retention stays significant: a resume must not silently purge evidence.
+        for key in ("page_breaks", "strip_bidi_controls", "workers"):
+            expected_settings.pop(key, None)
+            checkpoint_settings.pop(key, None)
     if checkpoint_settings != expected_settings:
         return (
             "settings mismatch: checkpoint="
@@ -418,6 +458,10 @@ def resume_incompatibility_reason(
             "run timestamp mismatch: checkpoint="
             f"{state.run_started_at}, expected={paths.run_started_at}"
         )
+    try:
+        _verified_structured_pages(state, paths, protocol_identity=expected_identity)
+    except StructuredArtifactError as exc:
+        return f"structured checkpoint evidence requires explicit recovery: {exc}"
     return None
 
 
@@ -432,6 +476,7 @@ def is_resume_compatible(
     selection_end_page: int,
     selection_page_count: int,
     max_pages_effective: int,
+    protocol_identity: dict[str, Any] | None = None,
 ) -> bool:
     return (
         resume_incompatibility_reason(
@@ -444,6 +489,7 @@ def is_resume_compatible(
             selection_end_page=selection_end_page,
             selection_page_count=selection_page_count,
             max_pages_effective=max_pages_effective,
+            protocol_identity=protocol_identity,
         )
         is None
     )
@@ -461,12 +507,34 @@ def mark_page_done(
     retry_used: bool,
     usage: dict[str, Any] | None,
     metadata: dict[str, Any] | None = None,
+    structured_commit: dict[str, Any] | None = None,
 ) -> None:
+    from .structured_artifacts import StructuredArtifactError, normalize_protocol_identity, validate_structured_page
+
+    identity = normalize_protocol_identity(state.protocol_identity)
+    verified_commit = None
+    if identity:
+        if (type(page_number) is not int or not isinstance(structured_commit, dict)
+                or not state.run_dir_abs or str(page_number) not in state.pages):
+            raise StructuredArtifactError("structured_done_requires_committed_evidence")
+        verified_commit = validate_structured_page(Path(state.run_dir_abs) / "pages", page_number,
+            protocol_identity=identity, expected_commit=structured_commit)
+        if verified_commit["source_file_sha256"] != state.pdf_fingerprint:
+            raise StructuredArtifactError("structured_done_source_mismatch")
+        receipt = verified_commit.get("page_result")
+        if receipt is not None and (receipt["usage"] != (usage or {})
+                or receipt["image_used"] is not image_used or receipt["retry_used"] is not retry_used):
+            raise StructuredArtifactError("structured_done_outcome_mismatch")
+    elif structured_commit is not None or (metadata or {}).get("structured_commit"):
+        raise StructuredArtifactError("legacy_done_cannot_adopt_structured_evidence")
     page_key = str(page_number)
     page_data = _default_page_record(status=PageStatus.DONE.value)
     page_data.update(_coerce_page_record(state.pages.get(page_key)))
     if metadata:
         page_data.update(metadata)
+    if verified_commit is not None:
+        page_data["structured_commit"] = verified_commit
+        page_data["structured_evidence_state"] = "retained"
     page_data.update(
         {
             "status": PageStatus.DONE.value,
@@ -479,6 +547,114 @@ def mark_page_done(
     state.pages[page_key] = page_data
     state.last_completed_page = max(state.last_completed_page, page_number)
     _refresh_counts(state)
+
+
+def _verified_structured_pages(state: RunState, paths: RunPaths, *,
+                               protocol_identity: dict[str, Any] | None) -> dict[int, dict]:
+    """Read-only complete-run check, including orphan commits and stray files.
+
+    Manual TXT edits remain available to the writer's explicit local fallback,
+    but cannot satisfy structured resume. Incomplete evidence is never removed
+    or repurchased automatically. No file or in-memory checkpoint is changed.
+    """
+    from .structured_artifacts import StructuredArtifactError, normalize_protocol_identity, validate_structured_page
+
+    identity = normalize_protocol_identity(state.protocol_identity)
+    if identity != normalize_protocol_identity(protocol_identity):
+        raise StructuredArtifactError("translation_protocol_identity_mismatch")
+    if not identity:
+        if any(record.get("structured_commit") or record.get("structured_evidence_state")
+               for record in state.pages.values()):
+            raise StructuredArtifactError("mixed_legacy_structured_evidence")
+        return {}
+    if not state.run_dir_abs or Path(state.run_dir_abs).resolve() != paths.run_dir.resolve():
+        raise StructuredArtifactError("structured_run_path_mismatch")
+    verified = {}
+    allowed_names = set()
+    for key, page in state.pages.items():
+        try:
+            number = int(key)
+        except (TypeError, ValueError) as exc:
+            raise StructuredArtifactError("invalid_structured_checkpoint_page") from exc
+        if str(number) != key or number < 1:
+            raise StructuredArtifactError("invalid_structured_checkpoint_page")
+        if page.get("structured_evidence_state") == "purged":
+            raise StructuredArtifactError("structured_evidence_deliberately_purged")
+        names = [f"page_{number:04d}{suffix}" for suffix in
+                 (".txt", ".source_structure.json", ".structure.json", ".commit.json")]
+        allowed_names.update(names)
+        present = [((paths.pages_dir / name).exists() or (paths.pages_dir / name).is_symlink()) for name in names]
+        done = page.get("status") == PageStatus.DONE.value
+        if not done and not any(present):
+            if page.get("structured_commit") or page.get("structured_evidence_state"):
+                raise StructuredArtifactError("missing_structured_checkpoint_evidence")
+            continue
+        if not all(present):
+            raise StructuredArtifactError("incomplete_structured_page_bundle")
+        expected = page.get("structured_commit")
+        if done and (not isinstance(expected, dict) or page.get("structured_evidence_state") != "retained"):
+            raise StructuredArtifactError("structured_completion_proof_unavailable")
+        commit = validate_structured_page(paths.pages_dir, number, protocol_identity=identity,
+                                          expected_commit=expected)
+        if commit["source_file_sha256"] != state.pdf_fingerprint:
+            raise StructuredArtifactError("structured_source_identity_mismatch")
+        if not done and commit.get("page_result") is None:
+            raise StructuredArtifactError("orphan_commit_result_unavailable")
+        verified[number] = commit
+    if paths.pages_dir.exists():
+        for path in paths.pages_dir.iterdir():
+            if (path.name.startswith("page_") and path.name.endswith(
+                    (".txt", ".source_structure.json", ".structure.json", ".commit.json"))
+                    and path.name not in allowed_names):
+                raise StructuredArtifactError("unselected_structured_page_artifact")
+    return verified
+
+
+def recover_structured_commits(state: RunState, paths: RunPaths, *,
+                               protocol_identity: dict[str, Any] | None = None) -> list[int]:
+    """Recover only complete commit-before-DONE crashes, without any provider.
+
+    Validate every page before changing even the in-memory state. The caller
+    owns its run lock and atomically saves the returned recovered state before
+    normal processing. Disk artifacts are never edited or deleted here.
+    """
+    verified = _verified_structured_pages(state, paths, protocol_identity=protocol_identity)
+    recovered = []
+    replacements = {}
+    for number, commit in verified.items():
+        prior = state.pages[str(number)]
+        if prior.get("status") == PageStatus.DONE.value:
+            continue
+        result = commit["page_result"]
+        record = deepcopy(prior)
+        record.update(deepcopy(result["metadata"]))
+        record.update(status=PageStatus.DONE.value, error=None,
+                      usage=deepcopy(result["usage"]), image_used=result["image_used"],
+                      retry_used=result["retry_used"], structured_commit=deepcopy(commit),
+                      structured_evidence_state="retained", recovered_commit_before_done=True)
+        replacements[str(number)] = record
+        recovered.append(number)
+    state.pages.update(replacements)
+    if recovered:
+        state.last_completed_page = max(state.last_completed_page, *recovered)
+        _refresh_counts(state)
+    return sorted(recovered)
+
+
+def mark_structured_evidence_purged(state: RunState, page_numbers: list[int]) -> None:
+    """Record retention opt-out only; callers own cleanup after final assembly."""
+    from .structured_artifacts import StructuredArtifactError, normalize_protocol_identity, validate_commit_record
+
+    identity = normalize_protocol_identity(state.protocol_identity)
+    if not identity or len(set(page_numbers)) != len(page_numbers):
+        raise StructuredArtifactError("invalid_structured_purge_selection")
+    for number in page_numbers:
+        page = state.pages.get(str(number), {})
+        if type(number) is not int or page.get("status") != PageStatus.DONE.value:
+            raise StructuredArtifactError("only_completed_structured_evidence_can_be_purged")
+        validate_commit_record(page.get("structured_commit"), page_number=number, protocol_identity=identity)
+    for number in page_numbers:
+        state.pages[str(number)]["structured_evidence_state"] = "purged"
 
 
 def mark_page_failed(

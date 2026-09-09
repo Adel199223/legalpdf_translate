@@ -141,6 +141,7 @@ class RunState:
     failed_count: int
     pending_count: int
     failure_context: dict[str, Any] = field(default_factory=dict)
+    protocol_identity: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -170,6 +171,7 @@ class RunState:
             "failed_count": self.failed_count,
             "pending_count": self.pending_count,
             "failure_context": dict(self.failure_context or {}),
+            "protocol_identity": dict(self.protocol_identity),
         }
 
 

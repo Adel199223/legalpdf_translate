@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 from collections import Counter
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 import hashlib
 import io
@@ -14,6 +15,11 @@ import unicodedata
 from typing import Any
 
 STRUCTURE_VERSION = 1
+SOURCE_STRUCTURE_VERSION = "new_run_source_v2"
+MAX_SOURCE_BLOCKS = 5000
+MAX_OCR_STRUCTURE_BYTES = 4_000_000
+MAX_OCR_WORDS = 50_000
+MAX_OCR_WORD_EVIDENCE_BYTES = 4_000_000
 ROLES = frozenset({"paragraph", "heading", "header", "footer", "address", "list_item", "table_cell", "signature", "reference"})
 _BLOCK_ID = re.compile(r"p[0-9]{4,}_b[0-9]{4,}\Z")
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
@@ -104,7 +110,7 @@ def validate_page_structure(payload: dict[str, Any] | PageStructure) -> PageStru
         if type(payload.get(name, False)) is not bool:
             raise ValueError("Structure flags must be boolean.")
     raw_blocks = payload.get("blocks")
-    if not isinstance(raw_blocks, list) or len(raw_blocks) > 5000:
+    if not isinstance(raw_blocks, list) or len(raw_blocks) > MAX_SOURCE_BLOCKS:
         raise ValueError("Structure blocks must be a bounded list.")
     blocks: list[StructureBlock] = []
     seen = set()
@@ -224,15 +230,50 @@ def classify_document_boundaries(structure: PageStructure | dict[str, Any]) -> P
 def rebind_page_structure(structure: PageStructure | dict[str, Any], *, page_number: int, source_file_sha256: str = "", page_size: tuple[float, float] | None = None) -> PageStructure:
     """Attach single-image OCR geometry to its actual source page and point size."""
     result = validate_page_structure(structure)
+    result.metadata = deepcopy(result.metadata)
     old_page = result.page_number
     width, height = page_size or (result.width_pt, result.height_pt)
+    if any(type(value) not in (int, float) or not math.isfinite(value) or not 1 <= value <= 20000
+           for value in (width, height)):
+        raise ValueError("Page dimensions must be finite positive points.")
+    def scaled_box(box):
+        if (not isinstance(box, (list, tuple)) or len(box) != 4
+                or any(type(value) not in (int, float) or not math.isfinite(value) for value in box)):
+            raise ValueError("Invalid source line geometry.")
+        return [box[0] * width / result.width_pt, box[1] * height / result.height_pt,
+                box[2] * width / result.width_pt, box[3] * height / result.height_pt]
+    rebound_ids = {}
     for index, block in enumerate(result.blocks, 1):
-        block.id = f"p{page_number:04d}_b{index:04d}"
+        rebound_ids[block.id] = f"p{page_number:04d}_b{index:04d}"
+        block.id = rebound_ids[block.id]
         if block.table_id:
             block.table_id = block.table_id.replace(f"p{old_page:04d}_", f"p{page_number:04d}_")
         if block.bbox:
             x0, y0, x1, y1 = block.bbox
             block.bbox = (x0 * width / result.width_pt, y0 * height / result.height_pt, x1 * width / result.width_pt, y1 * height / result.height_pt)
+    # OCR line boxes use the same derived point frame as block boxes. Raw
+    # raster hashes/dimensions stay unchanged; never mutate supplied metadata.
+    for key in ("ocr_line_groups", "source_lines"):
+        if key in result.metadata:
+            if not isinstance(result.metadata[key], list):
+                raise ValueError("Invalid source line metadata.")
+            for line in result.metadata[key]:
+                if not isinstance(line, dict):
+                    raise ValueError("Invalid source line metadata.")
+                if line.get("bbox") is not None:
+                    line["bbox"] = scaled_box(line["bbox"])
+    # This packet is raw same-pass raster evidence, not point-space geometry.
+    # Only final emitted block ownership changes when the page is rebound.
+    if "ocr_word_evidence" in result.metadata:
+        packet = result.metadata["ocr_word_evidence"]
+        if (not isinstance(packet, dict) or type(packet.get("version")) is not int
+                or packet["version"] != 1 or not isinstance(packet.get("words"), list)
+                or len(packet["words"]) > MAX_OCR_WORDS):
+            raise ValueError("Invalid source word metadata.")
+        for word in packet["words"]:
+            if not isinstance(word, dict) or not isinstance(word.get("block_id"), str) or word["block_id"] not in rebound_ids:
+                raise ValueError("Invalid source word block ownership.")
+            word["block_id"] = rebound_ids[word["block_id"]]
     result.page_number, result.width_pt, result.height_pt = page_number, width, height
     result.source_file_sha256 = source_file_sha256 or result.source_file_sha256
     return validate_page_structure(result)
@@ -299,14 +340,17 @@ def structure_from_ordered(ordered: Any, *, page_number: int, source_file_sha256
     for raw in raw_blocks:
         group = getattr(getattr(raw, "group", "body"), "value", getattr(raw, "group", "body"))
         role = group if group in {"header", "footer"} else _role(raw.text)
-        if bool(getattr(raw, "bold", False)) and len(raw.text) < 150:
+        if (role in {"paragraph", "address"} and raw.y1 >= size[1] * .85
+                and re.match(r"\s*(?:Telef(?:one)?[.: ]|Fax[.: ]|E-?mail[.: ]|Largo\b|Rua\b|Av[. ])", raw.text, re.I)):
+            role = "footer"
+        if role not in {"header", "footer"} and bool(getattr(raw, "bold", False)) and len(raw.text) < 150:
             role = "heading"
         blocks.append(StructureBlock(
             "", raw.text, role=role, bbox=(raw.x0, raw.y0, raw.x1, raw.y1),
             bold=bool(getattr(raw, "bold", False)), italic=bool(getattr(raw, "italic", False)),
             alignment=getattr(raw, "alignment", None),
         ))
-    table_warnings = []
+    table_warnings = list(getattr(ordered, "extraction_metadata", {}).get("warnings", []))
     for table in getattr(ordered, "tables", ()):
         bbox = table.get("bbox", [])
         if len(bbox) != 4:
@@ -315,6 +359,10 @@ def structure_from_ordered(ordered: Any, *, page_number: int, source_file_sha256
                   block.bbox[0] >= bbox[0] - 2 and block.bbox[1] >= bbox[1] - 2 and
                   block.bbox[2] <= bbox[2] + 2 and block.bbox[3] <= bbox[3] + 2]
         cells = table.get("cells", [])
+        if not cells or any(not isinstance(cell.get("source_text"), str) or
+                            " ".join(cell["text"].split()) != " ".join(cell["source_text"].split()) for cell in cells):
+            table_warnings.append("table_cell_association_uncertain")
+            continue
         source_words = Counter(re.findall(r"\w+|[^\w\s]", " ".join(blocks[index].text for index in inside)))
         cell_words = Counter(re.findall(r"\w+|[^\w\s]", " ".join(cell.get("text", "") for cell in cells)))
         if not inside or source_words != cell_words:
@@ -326,6 +374,7 @@ def structure_from_ordered(ordered: Any, *, page_number: int, source_file_sha256
         blocks = [block for index, block in enumerate(blocks) if index not in inside]
         blocks[insertion:insertion] = replacement
     result = _finish(blocks, page_number=page_number, page_size=size, source_file_sha256=source_file_sha256, provenance="digital_pdf", uncertain=bool(getattr(ordered, "fragmented", False)) or bool(table_warnings))
+    result.metadata.update(getattr(ordered, "extraction_metadata", {}))
     if table_warnings:
         result.metadata["warnings"] = table_warnings
     return result
@@ -364,8 +413,79 @@ def parse_ocr_structure(raw_output: str, *, page_number: int = 1, source_file_sh
     return _finish(blocks, page_number=page_number, page_size=(width, height), source_file_sha256=source_file_sha256, provenance="api_ocr", uncertain=any(block.uncertain for block in blocks))
 
 
+def _positive_tsv_integer(value: str) -> int:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]+", value) or int(value) < 1:
+        raise ValueError("Invalid OCR word index.")
+    return int(value)
+
+
+def _confirmed_list_wrap(previous, current, *, anchor_left: float | None) -> bool:
+    """Join only adjacent, confident lines in the same OCR list paragraph."""
+    if previous is None or anchor_left is None:
+        return False
+    prior_key, prior_box, prior_text, prior_confident = previous
+    key, box, _text, confident = current
+    try:
+        current_indices = tuple(_positive_tsv_integer(value) for value in key)
+        prior_indices = tuple(_positive_tsv_integer(value) for value in prior_key)
+        if key[:2] != prior_key[:2] or current_indices[2] != prior_indices[2] + 1:
+            return False
+    except ValueError:
+        return False
+    if not prior_confident or not confident or re.search(r"[.!?;:]\s*$", prior_text):
+        return False
+    prior_height, height = prior_box[3] - prior_box[1], box[3] - box[1]
+    if min(prior_height, height) <= 0 or not .5 <= height / prior_height <= 2:
+        return False
+    gap = box[1] - prior_box[3]
+    # Reject overlapping rows, paragraph gaps, column hops and drifting indents.
+    if not 0 <= gap <= .8 * max(prior_height, height):
+        return False
+    if not anchor_left - .35 * height <= box[0] <= anchor_left + 2 * height:
+        return False
+    overlap = min(prior_box[2], box[2]) - max(prior_box[0], box[0])
+    return overlap >= .25 * min(prior_box[2] - prior_box[0], box[2] - box[0]) > 0
+
+
+def _attach_ocr_word_evidence(result: PageStructure, word_owners, *, tsv: str, pixel_width: float, pixel_height: float, page_rows) -> None:
+    """Keep bounded raw observations; never fabricate boxes for split tokens."""
+    result.metadata["ocr_tsv_sha256"] = text_sha256(tsv)
+    if len(word_owners) > MAX_OCR_WORDS:
+        result.metadata["ocr_word_evidence_unavailable"] = "word_evidence_bound_exceeded"
+        return
+    try:
+        if not pixel_width.is_integer() or not pixel_height.is_integer() or len(page_rows) != 1:
+            raise ValueError("Invalid OCR image evidence.")
+        source_page = _positive_tsv_integer(page_rows[0]["page_num"])
+        words = []
+        for row, block_index in word_owners:
+            token = row["text"]
+            confidence = float(row["conf"])
+            if (not token or re.search(r"\s", token) or not 0 <= confidence <= 100
+                    or _positive_tsv_integer(row["page_num"]) != source_page):
+                raise ValueError("Invalid OCR word evidence.")
+            left, top, word_width, word_height = (float(row[name]) for name in ("left", "top", "width", "height"))
+            words.append({
+                "block_id": result.blocks[block_index].id, "text": token,
+                "bbox_px": [left, top, left + word_width, top + word_height],
+                "confidence": confidence,
+                "group": [_positive_tsv_integer(row[name]) for name in ("block_num", "par_num", "line_num")],
+                "word_number": _positive_tsv_integer(row["word_num"]),
+            })
+        packet = {"version": 1, "tsv_sha256": result.metadata["ocr_tsv_sha256"],
+                  "image_size_px": [int(pixel_width), int(pixel_height)], "words": words}
+        if len(json.dumps(packet, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")) > MAX_OCR_WORD_EVIDENCE_BYTES:
+            result.metadata["ocr_word_evidence_unavailable"] = "word_evidence_bound_exceeded"
+            return
+        result.metadata["ocr_word_evidence"] = packet
+    except (KeyError, TypeError, ValueError):
+        result.metadata["ocr_word_evidence_unavailable"] = "invalid_word_evidence"
+
+
 def structure_from_tesseract_tsv(tsv: str, *, page_number: int = 1, page_size: tuple[float, float] | None = None, source_file_sha256: str = "") -> PageStructure:
     """Retain Tesseract line geometry/reading order from the same local OCR pass."""
+    if not isinstance(tsv, str) or len(tsv.encode("utf-8")) > MAX_OCR_STRUCTURE_BYTES:
+        raise ValueError("OCR TSV exceeds the local bound.")
     rows = list(csv.DictReader(io.StringIO(tsv), delimiter="\t"))
     if not rows or "level" not in rows[0]:
         raise ValueError("Missing Tesseract TSV geometry.")
@@ -373,17 +493,28 @@ def structure_from_tesseract_tsv(tsv: str, *, page_number: int = 1, page_size: t
     pixel_width = float(page_rows[0]["width"]) if page_rows else 0
     pixel_height = float(page_rows[0]["height"]) if page_rows else 0
     width, height = page_size or (595.276, 841.89)
-    if pixel_width <= 0 or pixel_height <= 0:
+    if not all(math.isfinite(value) and value > 0 for value in (pixel_width, pixel_height)):
         raise ValueError("Missing OCR image dimensions.")
-    lines: dict[tuple[str, str, str], list[dict[str, str]]] = {}
+    lines: list[tuple[tuple[str, str, str], list[dict[str, str]]]] = []
     for row in rows:
         if row.get("level") == "5" and row.get("text", "").strip():
+            numbers = [float(row[name]) for name in ("left", "top", "width", "height", "conf")]
+            if (not all(math.isfinite(number) for number in numbers) or min(numbers[:4]) < 0
+                    or numbers[0] + numbers[2] > pixel_width or numbers[1] + numbers[3] > pixel_height):
+                raise ValueError("Invalid OCR word geometry/confidence.")
             key = (row["block_num"], row["par_num"], row["line_num"])
-            lines.setdefault(key, []).append(row)
+            # Keep actual row order even for malformed interleaved line groups.
+            # Re-grouping such rows would silently reorder source tokens.
+            if not lines or lines[-1][0] != key:
+                lines.append((key, []))
+            lines[-1][1].append(row)
     blocks = []
     line_groups = []
+    word_owners = []
     previous_paragraph = None
-    for key, words in lines.items():
+    previous_line = None
+    list_anchor_left = None
+    for key, words in lines:
         text = " ".join(word["text"] for word in words)
         left = min(float(word["left"]) for word in words)
         top = min(float(word["top"]) for word in words)
@@ -392,16 +523,41 @@ def structure_from_tesseract_tsv(tsv: str, *, page_number: int = 1, page_size: t
         uncertain = any(float(word.get("conf", "0")) < 60 for word in words)
         bbox = (left / pixel_width * width, top / pixel_height * height, right / pixel_width * width, bottom / pixel_height * height)
         role = _role(text)
+        if top < pixel_height * .15 and re.search(r"tribunal judicial|minist.rio p.blico|procuradoria", text, re.I):
+            role = "header"
+        elif bottom > pixel_height * .85 and re.search(r"@|telef|fax|largo|p.g\.", text, re.I):
+            role = "footer"
+        ordered_words = sorted(words, key=lambda word: float(word["left"]))
+        if any(float(b["left"]) - (float(a["left"]) + float(a["width"])) > pixel_width * .12
+               for a, b in zip(ordered_words, ordered_words[1:])):
+            uncertain = True
         paragraph = key[:2]
-        if blocks and paragraph == previous_paragraph and role == "paragraph" and blocks[-1].role == "paragraph":
+        confident_line = not uncertain and all(90 <= float(word["conf"]) <= 100 for word in words)
+        confident_line = confident_line and all(float(a["left"]) + float(a["width"]) <= float(b["left"])
+                                                for a, b in zip(words, words[1:]))
+        current_line = (key, (left, top, right, bottom), text, confident_line)
+        same_paragraph = bool(blocks and paragraph == previous_paragraph and role == "paragraph")
+        paragraph_wrap = same_paragraph and blocks[-1].role == "paragraph"
+        list_wrap = (same_paragraph and blocks[-1].role == "list_item" and not blocks[-1].uncertain
+                     and _confirmed_list_wrap(previous_line, current_line, anchor_left=list_anchor_left))
+        if paragraph_wrap or list_wrap:
             prior = blocks[-1]
             prior.text += " " + text
             prior.bbox = (min(prior.bbox[0], bbox[0]), min(prior.bbox[1], bbox[1]), max(prior.bbox[2], bbox[2]), max(prior.bbox[3], bbox[3]))
             prior.uncertain = prior.uncertain or uncertain
         else:
             blocks.append(StructureBlock("", text, role=role, bbox=bbox, uncertain=uncertain))
+            list_anchor_left = left if role == "list_item" else None
+        word_owners.extend((word, len(blocks) - 1) for word in words)
         previous_paragraph = paragraph
+        previous_line = current_line
         line_groups.append({"block": key[0], "paragraph": key[1], "line": key[2], "bbox": list(bbox)})
     result = _finish(blocks, page_number=page_number, page_size=(width, height), source_file_sha256=source_file_sha256, provenance="local_ocr_tsv", uncertain=any(block.uncertain for block in blocks))
     result.metadata["ocr_line_groups"] = line_groups
+    _attach_ocr_word_evidence(result, word_owners, tsv=tsv, pixel_width=pixel_width,
+                              pixel_height=pixel_height, page_rows=page_rows)
+    result.metadata.update(extraction_version=SOURCE_STRUCTURE_VERSION,
+                           coordinate_space="image_normalized_to_points",
+                           paper_size_basis="source_pdf" if page_size else "a4_assumed",
+                           reading_order_basis="tesseract_block_paragraph_line", semantic_tables_inferred=False)
     return result

@@ -13,7 +13,7 @@ import re
 import unicodedata
 from typing import Any, Mapping, Sequence
 
-LAYOUT_PROFILE_VERSION = "compact_legal_v10_isolated_contact_footer"
+LAYOUT_PROFILE_VERSION = "compact_legal_v11_atomic_clock_runs"
 
 
 def _row(block: Any) -> dict[str, Any]:
@@ -113,7 +113,9 @@ def _contact_furniture(blocks: list[dict]) -> bool:
     return has_contact and bool(lines) and all(allowed_line.search(line) for line in lines)
 
 
-def confirmed_source_continuation(previous: Any, current: Any) -> dict[str, Any] | None:
+def confirmed_source_continuation(previous: Any, current: Any, *,
+                                  previous_layout_eligibility: dict | None = None,
+                                  current_layout_eligibility: dict | None = None) -> dict[str, Any] | None:
     """Recompute positive source proof; incoming continuation flags are not proof.
 
     Only exact repeated, geometrically stable header/address or contact-footer
@@ -122,8 +124,11 @@ def confirmed_source_continuation(previous: Any, current: Any) -> dict[str, Any]
     """
     previous = previous.to_dict() if hasattr(previous, "to_dict") else dict(previous)
     current = current.to_dict() if hasattr(current, "to_dict") else dict(current)
+    from .source_layout_eligibility import valid_layout_eligibility
+    if any(page.get("uncertain") and not valid_layout_eligibility(page, proof)
+           for page, proof in ((previous, previous_layout_eligibility), (current, current_layout_eligibility))):
+        return None
     if (previous["page_number"] + 1 != current["page_number"] or current.get("document_start")
-            or current.get("uncertain") or previous.get("uncertain")
             or previous.get("source_file_sha256") != current.get("source_file_sha256")):
         return None
     left = [b for b in previous["blocks"] if b["role"] == "paragraph" and b["text"].strip()]
