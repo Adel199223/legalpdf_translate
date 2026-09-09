@@ -18,7 +18,7 @@ from .document_layout import source_folio_ids
 from .document_structure import PageStructure, text_sha256
 from .formatting_support import _contact_furniture
 
-SECTION_FURNITURE_POLICY = "source_section_furniture_v3"
+SECTION_FURNITURE_POLICY = "source_section_furniture_v4"
 MAX_PAGES = 1000
 MAX_PART_BLOCKS = 4
 MAX_TARGET_PART_CHARACTERS = 600
@@ -72,7 +72,7 @@ def _inside_page(block: dict, page: dict) -> bool:
                 and 0 <= box[1] < box[3] <= page["height_pt"])
 
 
-def _bound_pair(pair: Any) -> tuple[dict, dict]:
+def _bound_pair(pair: Any, layout_eligibility: dict | None = None) -> tuple[dict, dict]:
     if not isinstance(pair, (tuple, list)) or len(pair) != 2:
         raise ValueError("Missing complete source/target pair")
     source, target = (PageStructure.from_dict(page).to_dict() for page in pair)
@@ -83,13 +83,15 @@ def _bound_pair(pair: Any) -> tuple[dict, dict]:
             or text_sha256("\n".join(b["text"] for b in target["blocks"])) != target["translation_sha256"]):
         raise ValueError("Stale or incomplete source/target text evidence")
     for key in ("page_number", "source_file_sha256", "source_sha256", "source_text_sha256",
-                "width_pt", "height_pt", "document_start", "continuation_from_previous", "continuation_to_next"):
+                "width_pt", "height_pt", "uncertain", "document_start", "continuation_from_previous", "continuation_to_next"):
         if source[key] != target[key]:
             raise ValueError("Source/target identity mismatch")
     if not source["blocks"] or len(source["blocks"]) != len(target["blocks"]):
         raise ValueError("Incomplete block coverage")
     if source["uncertain"] or target["uncertain"]:
-        raise ValueError("Uncertain page evidence")
+        from .source_layout_eligibility import valid_layout_eligibility
+        if not valid_layout_eligibility(source, layout_eligibility):
+            raise ValueError("Uncertain page evidence")
     for a, b in zip(source["blocks"], target["blocks"]):
         if a["text"].strip() and not b["text"].strip():
             raise ValueError("Empty translation of a nonempty source block")
@@ -110,11 +112,11 @@ def _bound_pair(pair: Any) -> tuple[dict, dict]:
     return source, target
 
 
-def _candidates(source: dict) -> tuple[list[dict], list[dict]]:
+def _candidates(source: dict, layout_eligibility: dict | None = None) -> tuple[list[dict], list[dict]]:
     # Position rather than block-list edges permits a preceding source signature
     # to stay ordinary body text while a genuine top court header is adopted.
     headers = [b for b in source["blocks"] if b["role"] == "header"]
-    folios = source_folio_ids(source)
+    folios = source_folio_ids(source, layout_eligibility=layout_eligibility)
     # A printed folio is not a contact line or a repeated contact signature.
     # Its original block stays in both pages and in the writer's PAGE mapping.
     footers = [b for b in source["blocks"] if b["id"] not in folios and
@@ -150,7 +152,7 @@ def _isolated_contact_footer(item: dict) -> bool:
     source, footers = item["source"], item["footer"]
     if not footers or source["continuation_from_previous"] or source["continuation_to_next"]:
         return False
-    excluded = source_folio_ids(source) | {block["id"] for block in footers}
+    excluded = source_folio_ids(source, layout_eligibility=item.get("layout_eligibility")) | {block["id"] for block in footers}
     body = [block for block in source["blocks"] if block["id"] not in excluded and block["text"].strip()]
     if (not any(block["role"] not in {"header", "footer", "address"}
                 and any(char.isalnum() for char in block["text"]) for block in body)
@@ -220,6 +222,7 @@ def _part(group: list[dict], name: str) -> dict | None:
 def plan_section_furniture(
     page_pairs: Sequence[tuple[dict, dict] | None], *, page_breaks: bool = False,
     allow_isolated_footer: bool = True,
+    layout_eligibilities: Sequence[dict | None] | None = None,
 ) -> dict[str, Any]:
     """Plan bounded intervals without mutating or writing source/target data.
 
@@ -233,18 +236,23 @@ def plan_section_furniture(
     if (not isinstance(page_pairs, (list, tuple)) or len(page_pairs) > MAX_PAGES
             or type(page_breaks) is not bool or type(allow_isolated_footer) is not bool):
         raise ValueError("Page pairs and page-break preference must be bounded")
+    if layout_eligibilities is not None and (not isinstance(layout_eligibilities, (list, tuple))
+                                            or len(layout_eligibilities) != len(page_pairs)):
+        raise ValueError("Layout eligibility must match the exact page selection")
     pages, items = [], []
     for index, pair in enumerate(page_pairs):
         page = {"index": index, "page_number": None, "section_id": None,
                 "adopted_header_ids": [], "adopted_footer_ids": [], "review_required": False, "warnings": []}
         pages.append(page)
         try:
-            source, target = _bound_pair(pair)
+            eligibility = layout_eligibilities[index] if layout_eligibilities is not None else None
+            source, target = _bound_pair(pair, eligibility)
             page["page_number"] = source["page_number"]
-            headers, footers = _candidates(source)
+            headers, footers = _candidates(source, eligibility)
             if not _short_target_parts(target, headers, footers):
                 raise ValueError("Target furniture is too large for conservative section adoption")
-            items.append({"index": index, "source": source, "target": target, "header": headers, "footer": footers})
+            items.append({"index": index, "source": source, "target": target, "header": headers,
+                          "footer": footers, "layout_eligibility": eligibility})
         except _PreservedRegions:
             page["warnings"].append("section_furniture_region_preserved")
             items.append(None)

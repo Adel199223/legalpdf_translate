@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import math
 import os
 import random
 import time
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable
@@ -32,6 +34,12 @@ class ApiCallResult:
     last_backoff_seconds: float = 0.0
     total_backoff_seconds: float = 0.0
     rate_limit_hit: bool = False
+    response_status: str = "completed"
+    refused: bool = False
+    incomplete_reason: str | None = None
+    model: str = ""
+    effort: str = ""
+    attempt_usage: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -43,6 +51,14 @@ class ApiCallError(RuntimeError):
     last_backoff_seconds: float
     total_backoff_seconds: float
     rate_limit_hit: bool
+    usage: dict[str, Any] = field(default_factory=dict)
+    response_id: str | None = None
+    response_status: str = ""
+    refused: bool = False
+    incomplete_reason: str | None = None
+    model: str = ""
+    effort: str = ""
+    attempt_usage: list[dict[str, Any]] = field(default_factory=list)
 
     def __str__(self) -> str:
         return self.message
@@ -167,6 +183,214 @@ class OpenAIResponsesClient:
         )
 
     def create_page_response(
+        self,
+        *,
+        instructions: str,
+        prompt_text: str,
+        effort: str,
+        image_data_url: str | None = None,
+        image_detail: str = "low",
+        timeout_seconds: float | None = None,
+        response_format: dict[str, Any] | None = None,
+        max_output_tokens: int | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> ApiCallResult:
+        # Existing callers, including their request shape and retry policy, stay legacy.
+        if response_format is None and max_output_tokens is None and cancel_check is None:
+            return self._create_legacy_page_response(
+                instructions=instructions, prompt_text=prompt_text, effort=effort,
+                image_data_url=image_data_url, image_detail=image_detail, timeout_seconds=timeout_seconds,
+            )
+        if max_output_tokens is not None and (type(max_output_tokens) is not int or max_output_tokens <= 0):
+            raise ValueError("max_output_tokens must be a positive integer.")
+        if cancel_check is not None and not callable(cancel_check):
+            raise ValueError("cancel_check must be callable.")
+        if response_format is not None and (
+            not isinstance(response_format, dict) or response_format.get("type") != "json_schema"
+            or response_format.get("strict") is not True or not isinstance(response_format.get("schema"), dict)
+            or not isinstance(response_format.get("name"), str) or not response_format["name"]
+        ):
+            raise ValueError("A strict named JSON-schema response format is required.")
+        request_options: dict[str, Any] = {}
+        if response_format is not None:
+            request_options["text"] = {"format": deepcopy(response_format)}
+        if max_output_tokens is not None:
+            request_options["max_output_tokens"] = max_output_tokens
+        content: list[dict[str, Any]] = [{"type": "input_text", "text": prompt_text}]
+        if image_data_url:
+            content.append(
+                {
+                    "type": "input_image",
+                    "image_url": image_data_url,
+                    "detail": image_detail,
+                }
+            )
+        user_input = [{"role": "user", "content": content}]
+
+        last_error: Exception | None = None
+        transport_retries_count = 0
+        last_backoff_seconds = 0.0
+        total_backoff_seconds = 0.0
+        rate_limit_hit = False
+        attempt_usage: list[dict[str, Any]] = []
+        usage: dict[str, Any] = {}
+        response_id: str | None = None
+        response_status = ""
+        refused = False
+        incomplete_reason: str | None = None
+        actual_model = OPENAI_MODEL
+        overall_timeout_seconds = (
+            float(timeout_seconds)
+            if timeout_seconds is not None
+            else float(self._request_timeout_seconds)
+        )
+        if not math.isfinite(overall_timeout_seconds) or overall_timeout_seconds <= 0:
+            raise ValueError("A positive finite request deadline is required.")
+        overall_timeout_seconds = max(0.1, overall_timeout_seconds)
+        started_at = time.perf_counter()
+
+        def _remaining_budget_seconds() -> float:
+            return max(0.0, overall_timeout_seconds - (time.perf_counter() - started_at))
+
+        def _failure(kind: str, message: str, status_code: int | None = None) -> ApiCallError:
+            return ApiCallError(
+                message=message, status_code=status_code, exception_class=kind,
+                transport_retries_count=transport_retries_count, last_backoff_seconds=last_backoff_seconds,
+                total_backoff_seconds=total_backoff_seconds, rate_limit_hit=rate_limit_hit,
+                usage=dict(usage), response_id=response_id, response_status=response_status,
+                refused=refused, incomplete_reason=incomplete_reason, model=actual_model, effort=effort,
+                attempt_usage=deepcopy(attempt_usage),
+            )
+
+        def _check_cancel() -> None:
+            if cancel_check is not None and cancel_check():
+                raise _failure("CancelledError", "Translation request cancelled; no further attempt was dispatched.")
+
+        def _check_deadline() -> float:
+            _check_cancel()
+            remaining = _remaining_budget_seconds()
+            if remaining <= 0:
+                raise _failure("APITimeoutError", "Translation request deadline exhausted.")
+            return remaining
+
+        def _sleep(seconds: float) -> None:
+            if cancel_check is None:
+                time.sleep(seconds)
+                return
+            remaining = seconds
+            while remaining > 0:
+                _check_cancel()
+                step = min(0.1, remaining)
+                time.sleep(step)
+                remaining -= step
+            _check_cancel()
+
+        # max_transport_retries is "retries after the first call"; always attempt at least once.
+        attempt_limit = self._max_transport_retries + 1
+        for attempt in range(attempt_limit):
+            remaining_budget = _check_deadline()
+            dispatched = False
+            recorded = False
+            usage, response_id, response_status = {}, None, ""
+            refused, incomplete_reason, actual_model = False, None, OPENAI_MODEL
+            try:
+                if self._pre_call_jitter_seconds > 0:
+                    jitter_seconds = min(random.uniform(0.0, self._pre_call_jitter_seconds), remaining_budget)
+                    if jitter_seconds > 0.0:
+                        _sleep(jitter_seconds)
+                remaining_budget = _check_deadline()
+                dispatched = True
+                response = self._client.responses.create(
+                    model=OPENAI_MODEL,
+                    instructions=instructions,
+                    input=user_input,
+                    reasoning={"effort": effort},
+                    store=OPENAI_STORE,
+                    timeout=max(0.1, remaining_budget),
+                    **request_options,
+                )
+                usage = _extract_usage(response)
+                response_id = _field(response, "id")
+                actual_model = _field(response, "model") or OPENAI_MODEL
+                response_status = _field(response, "status") or ("" if response_format is not None else "completed")
+                reason = _field(_field(response, "incomplete_details"), "reason")
+                # Preserve only documented content-free status detail, not an arbitrary provider string.
+                incomplete_reason = reason if reason in {"max_output_tokens", "content_filter", "steered"} else ("unknown" if reason else None)
+                refused = _has_refusal(response)
+                attempt_usage.append({
+                    "attempt": attempt + 1, "usage": dict(usage), "response_id": response_id,
+                    "model": actual_model, "effort": effort, "status": response_status,
+                    "refused": refused, "incomplete_reason": incomplete_reason,
+                })
+                recorded = True
+                if refused:
+                    raise _failure("RefusalResponseError", "The provider refused this response; it was not accepted.")
+                if response_status != "completed" or _has_incomplete_message(response):
+                    raise _failure("IncompleteResponseError", "The provider response did not complete; partial text was not accepted.")
+                try:
+                    output = _extract_output_text(response)
+                except RuntimeError:
+                    raise _failure("EmptyResponseError", "The provider response contained no usable text.") from None
+                if not output.strip():
+                    raise _failure("EmptyResponseError", "The provider response contained no usable text.")
+                _check_cancel()
+                return ApiCallResult(
+                    raw_output=output,
+                    usage=usage,
+                    response_id=response_id,
+                    transport_retries_count=transport_retries_count,
+                    last_backoff_seconds=last_backoff_seconds,
+                    total_backoff_seconds=total_backoff_seconds,
+                    rate_limit_hit=rate_limit_hit,
+                    response_status=response_status, refused=refused, incomplete_reason=incomplete_reason,
+                    model=actual_model, effort=effort, attempt_usage=deepcopy(attempt_usage),
+                )
+            except Exception as exc:  # noqa: BLE001
+                if isinstance(exc, ApiCallError):
+                    raise
+                if dispatched and not recorded:
+                    error_response = getattr(exc, "response", None)
+                    usage = _extract_usage(error_response) if error_response is not None else {}
+                    attempt_usage.append({"attempt": attempt + 1, "usage": dict(usage), "response_id": None,
+                                          "model": OPENAI_MODEL, "effort": effort, "status": "transport_failed"})
+                last_error = exc
+                status_code = _status_code_from_exception(exc)
+                if status_code == 429 or isinstance(exc, RateLimitError):
+                    rate_limit_hit = True
+                if not _is_retryable(exc) or attempt >= attempt_limit - 1:
+                    message = (f"{type(exc).__name__}: structured request failed."
+                               if response_format is not None else f"{type(exc).__name__}: {exc}")
+                    raise _failure(type(exc).__name__, message, status_code) from exc
+                # A structured timeout/connection/5xx failure can be billed even
+                # without a response. It must not silently authorize another call.
+                if response_format is not None and status_code != 429:
+                    raise _failure(type(exc).__name__, "Structured response transport failed with uncertain completion; no retry dispatched.", status_code) from exc
+                _check_cancel()
+                retry_after = _retry_after_seconds(exc)
+                sleep_seconds = _compute_sleep_seconds(
+                    attempt=attempt,
+                    retry_after=retry_after,
+                    backoff_cap_seconds=self._backoff_cap_seconds,
+                    base_backoff_seconds=self._base_backoff_seconds,
+                )
+                remaining_budget = _remaining_budget_seconds()
+                bounded_sleep = min(sleep_seconds, remaining_budget)
+                if bounded_sleep <= 0.0:
+                    raise _failure("APITimeoutError", "Translation request deadline exhausted.") from exc
+                if self._logger:
+                    self._logger(
+                        f"Transient API error ({type(exc).__name__}), retrying in {bounded_sleep:.2f}s "
+                        f"within remaining budget {remaining_budget:.2f}s."
+                    )
+                transport_retries_count += 1
+                last_backoff_seconds = bounded_sleep
+                total_backoff_seconds += bounded_sleep
+                _sleep(bounded_sleep)
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Unreachable transport retry state.")
+
+    def _create_legacy_page_response(
         self,
         *,
         instructions: str,
@@ -372,12 +596,12 @@ def _is_retryable(exc: Exception) -> bool:
 
 
 def _extract_output_text(response: Any) -> str:
-    output_text = getattr(response, "output_text", None)
+    output_text = _field(response, "output_text")
     if isinstance(output_text, str) and output_text != "":
         return output_text
 
     chunks: list[str] = []
-    for output_item in getattr(response, "output", []) or []:
+    for output_item in _field(response, "output", []) or []:
         content = getattr(output_item, "content", None)
         if content is None and isinstance(output_item, dict):
             content = output_item.get("content", [])
@@ -399,7 +623,7 @@ def _extract_output_text(response: Any) -> str:
 
 
 def _extract_usage(response: Any) -> dict[str, Any]:
-    usage_obj = getattr(response, "usage", None)
+    usage_obj = _field(response, "usage")
     if usage_obj is None:
         return {}
     usage: dict[str, Any] = {}
@@ -416,7 +640,32 @@ def _extract_usage(response: Any) -> dict[str, Any]:
                 value = details_obj.get("reasoning_tokens")
         if value is not None:
             usage[key] = value
+    input_details = _field(usage_obj, "input_tokens_details")
+    cached = _field(input_details, "cached_tokens")
+    if cached is not None:
+        usage["cached_input_tokens"] = cached
     return usage
+
+
+def _field(value: Any, name: str, default: Any = None) -> Any:
+    return value.get(name, default) if isinstance(value, dict) else getattr(value, name, default)
+
+
+def _has_refusal(response: Any) -> bool:
+    if _field(response, "refusal"):
+        return True
+    for item in _field(response, "output", []) or []:
+        if _field(item, "type") == "refusal":
+            return True
+        for part in _field(item, "content", []) or []:
+            if _field(part, "type") == "refusal":
+                return True
+    return False
+
+
+def _has_incomplete_message(response: Any) -> bool:
+    return any(_field(item, "type") == "message" and _field(item, "status") not in (None, "completed")
+               for item in _field(response, "output", []) or [])
 
 
 def _retry_after_seconds(exc: Exception) -> float | None:

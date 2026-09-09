@@ -30,7 +30,7 @@ _SOURCE_FOLIO = re.compile(
 )
 
 
-def source_folio_ids(structure: PageStructure | dict[str, Any]) -> frozenset[str]:
+def source_folio_ids(structure: PageStructure | dict[str, Any], *, layout_eligibility: dict | None = None) -> frozenset[str]:
     """Identify one positively evidenced source folio, never remove its block.
 
     This is a narrow geometry/contact-grouping exemption, not authority to
@@ -43,7 +43,7 @@ def source_folio_ids(structure: PageStructure | dict[str, Any]) -> frozenset[str
     if (source.translation_sha256 is not None or not source.source_file_sha256
             or source.source_text_sha256 != source.source_sha256
             or text_sha256(source.text) != source.source_sha256
-            or source.uncertain or any(b.uncertain for b in source.blocks)
+            or not _geometry_admitted(source, layout_eligibility) or any(b.uncertain for b in source.blocks)
             or source.metadata.get("document_boundary_review_required")
             or any(b.document_start for b in source.blocks[1:])):
         return frozenset()
@@ -435,13 +435,24 @@ def _attach_panels(layout, source, image_bytes):
                 layout["warnings"].append("unassigned_panel_evidence")
 
 
-def derive_page_layout(structure: PageStructure | dict[str, Any], image_bytes: bytes | None = None) -> dict[str, Any]:
+def _geometry_admitted(source, layout_eligibility=None):
+    if not source.uncertain:
+        return True
+    from .source_layout_eligibility import valid_layout_eligibility
+    return valid_layout_eligibility(source, layout_eligibility)
+
+
+def derive_page_layout(structure: PageStructure | dict[str, Any], image_bytes: bytes | None = None,
+                       *, layout_eligibility: dict | None = None) -> dict[str, Any]:
     """Infer physical side-by-side regions from positive source geometry only."""
     source = validate_page_structure(structure)
     if not source.blocks:
         return _base(source)
-    if source.uncertain or any(b.uncertain or not b.bbox for b in source.blocks):
+    if not _geometry_admitted(source, layout_eligibility) or any(b.uncertain or not b.bbox for b in source.blocks):
         return _base(source, "needs_review", ["source_geometry_uncertain"])
+    if source.uncertain:
+        # The OCR exception is strictly simple flow, never region/table proof.
+        return _base(source)
     try:
         for block in source.blocks:
             _box(list(block.bbox), source.width_pt, source.height_pt)

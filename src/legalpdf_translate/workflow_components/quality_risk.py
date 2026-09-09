@@ -119,6 +119,13 @@ def build_quality_risk_summary(
         score = 0.0
         reasons: list[str] = []
 
+        if _to_bool(page.get("fidelity_review_required", False)):
+            score += 0.35
+            reasons.append("legal_fidelity_not_evaluated")
+        if _to_bool(page.get("layout_review_required", False)):
+            score += 0.15
+            reasons.append("source_layout_needs_review")
+
         if status == "failed":
             score += 1.0
             reasons.append("page_failed")
