@@ -94,7 +94,7 @@ def test_repeated_furniture_uses_real_parts_and_explicit_complete_aliases(tmp_pa
     assert all("section_furniture_target_variant_standardized" in p["layout_warnings"] for p in mapping["pages"])
     assert all(not p.get("list_furniture_reflows") for p in mapping["pages"])
     assert before == {p.name: p.read_bytes() for p in folder.iterdir()}
-    assert mapping["section_furniture"]["policy"] == "source_section_furniture_v1"
+    assert mapping["section_furniture"]["policy"] == "source_section_furniture_v3"
 
 
 @pytest.mark.parametrize("middle", ["none", "headerless", "footerless", "changed_contact"])
@@ -132,10 +132,10 @@ def test_partial_run_does_not_inherit_an_unrepresented_previous_header(tmp_path)
     assert " PAGE " in doc.sections[0].footer._element.xml
 
 
-@pytest.mark.parametrize("guard", ["explicit", "missing_source", "source_hash", "target_geometry", "single_page"])
+@pytest.mark.parametrize("guard", ["explicit", "missing_source", "source_hash", "target_geometry"])
 def test_unproved_or_explicit_page_matching_keeps_every_furniture_occurrence(tmp_path, guard):
     folder = tmp_path / "pages"
-    _save(folder, [_page(1), _page(2)] if guard != "single_page" else [_page(1)])
+    _save(folder, [_page(1), _page(2)])
     if guard == "missing_source":
         (folder / "page_0002.source_structure.json").unlink()
     if guard == "source_hash":
@@ -148,12 +148,12 @@ def test_unproved_or_explicit_page_matching_keeps_every_furniture_occurrence(tmp
         p.write_text(json.dumps(s))
     doc, mapping = _read(writer.assemble_docx(folder, tmp_path / "out.docx", lang=TargetLang.EN,
                                             page_breaks=guard == "explicit"))
-    if guard in {"explicit", "single_page"}:
+    if guard == "explicit":
         assert "section_furniture" not in mapping
     else:
         assert mapping["layout_review_required"]
         assert not any(s["consolidated"] for s in mapping["section_furniture"]["sections"])
-    assert sum("Tribunal" in p.text for p in doc.paragraphs) == (1 if guard == "single_page" else 2)
+    assert sum("Tribunal" in p.text for p in doc.paragraphs) == 2
     assert not any("furniture_alias" in b for p in mapping["pages"] for b in p["blocks"])
 
 

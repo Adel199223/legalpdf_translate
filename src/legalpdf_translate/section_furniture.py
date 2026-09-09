@@ -14,15 +14,17 @@ import re
 import unicodedata
 from typing import Any, Sequence
 
+from .document_layout import source_folio_ids
 from .document_structure import PageStructure, text_sha256
 from .formatting_support import _contact_furniture
 
-SECTION_FURNITURE_POLICY = "source_section_furniture_v1"
+SECTION_FURNITURE_POLICY = "source_section_furniture_v3"
 MAX_PAGES = 1000
 MAX_PART_BLOCKS = 4
 MAX_TARGET_PART_CHARACTERS = 600
 MAX_TARGET_PART_LINES = 8
 GEOMETRY_TOLERANCE_PT = 4.0
+ISOLATED_FOOTER_CLEARANCE_PT = 6.0
 _INSTITUTION = re.compile(
     r"^(?:tribunal\b|ministerio publico\b|procuradoria\b|juizo\b|comarca\b|"
     r"departamento de investigacao e acao penal\b|secretaria\b|nucleo\b|"
@@ -112,8 +114,12 @@ def _candidates(source: dict) -> tuple[list[dict], list[dict]]:
     # Position rather than block-list edges permits a preceding source signature
     # to stay ordinary body text while a genuine top court header is adopted.
     headers = [b for b in source["blocks"] if b["role"] == "header"]
-    footers = [b for b in source["blocks"] if b["role"] == "footer"
-               or b["role"] == "address" and b.get("bbox") and b["bbox"][1] >= source["height_pt"] * .80]
+    folios = source_folio_ids(source)
+    # A printed folio is not a contact line or a repeated contact signature.
+    # Its original block stays in both pages and in the writer's PAGE mapping.
+    footers = [b for b in source["blocks"] if b["id"] not in folios and
+               (b["role"] == "footer" or b["role"] == "address" and b.get("bbox")
+                and b["bbox"][1] >= source["height_pt"] * .80)]
     for part, blocks in (("header", headers), ("footer", footers)):
         if len(blocks) > MAX_PART_BLOCKS:
             raise ValueError("Too many furniture blocks")
@@ -132,6 +138,28 @@ def _candidates(source: dict) -> tuple[list[dict], list[dict]]:
                     or any(_OPERATIVE_PROSE.search(_fold(block["text"])) for block in footers)):
         raise ValueError("Footer is not short contact-only furniture")
     return headers, footers
+
+
+def _isolated_contact_footer(item: dict) -> bool:
+    """Prove separation for one complete source page, never a run interval.
+
+    Recurrence is still required for headers and for multi-page output. Here
+    every nonempty body/header box must support a distinct bottom contact band;
+    moving contact wording does not authorize dropping unknown body evidence.
+    """
+    source, footers = item["source"], item["footer"]
+    if not footers or source["continuation_from_previous"] or source["continuation_to_next"]:
+        return False
+    excluded = source_folio_ids(source) | {block["id"] for block in footers}
+    body = [block for block in source["blocks"] if block["id"] not in excluded and block["text"].strip()]
+    if (not any(block["role"] not in {"header", "footer", "address"}
+                and any(char.isalnum() for char in block["text"]) for block in body)
+            or any(block["uncertain"] or block["continuation_of"] or not _inside_page(block, source)
+                   for block in body)):
+        return False
+    if any(a["bbox"][3] > b["bbox"][1] for a, b in zip(footers, footers[1:])):
+        return False
+    return footers[0]["bbox"][1] - max(block["bbox"][3] for block in body) >= ISOLATED_FOOTER_CLEARANCE_PT
 
 
 def _same_words(a: list[dict], b: list[dict]) -> bool:
@@ -191,15 +219,19 @@ def _part(group: list[dict], name: str) -> dict | None:
 
 def plan_section_furniture(
     page_pairs: Sequence[tuple[dict, dict] | None], *, page_breaks: bool = False,
+    allow_isolated_footer: bool = True,
 ) -> dict[str, Any]:
     """Plan bounded intervals without mutating or writing source/target data.
 
     None and invalid evidence are singleton barriers. Valid headerless/footerless
     intervals are explicit, so downstream Word sections cannot inherit furniture
-    from another document. One-off/changed metadata remains ordinary body text.
+    from another document. One-off/changed metadata remains ordinary body text,
+    except a proven contact footer in a complete isolated one-source-page output.
+    Callers filtering a larger saved run must disable that exception.
     The writer may preserve its legacy flow entirely when no group is admitted.
     """
-    if not isinstance(page_pairs, (list, tuple)) or len(page_pairs) > MAX_PAGES or type(page_breaks) is not bool:
+    if (not isinstance(page_pairs, (list, tuple)) or len(page_pairs) > MAX_PAGES
+            or type(page_breaks) is not bool or type(allow_isolated_footer) is not bool):
         raise ValueError("Page pairs and page-break preference must be bounded")
     pages, items = [], []
     for index, pair in enumerate(page_pairs):
@@ -236,9 +268,19 @@ def plan_section_furniture(
                    and _same_part(first["footer"], items[end]["footer"])):
                 end += 1
         group = items[cursor:end]
-        consolidated = bool(not page_breaks and first is not None and end - cursor >= 2
-                            and (first["header"] or first["footer"]))
+        repeated = bool(not page_breaks and first is not None and end - cursor >= 2
+                        and (first["header"] or first["footer"]))
+        isolated_footer = False
+        if not page_breaks and allow_isolated_footer and len(items) == 1 and first is not None and first["footer"]:
+            isolated_footer = _isolated_contact_footer(first)
+            if not isolated_footer:
+                pages[cursor]["review_required"] = True
+                pages[cursor]["warnings"].append("section_furniture_isolated_contact_evidence_unavailable")
+        consolidated = repeated or isolated_footer
+        adoption_basis = ("isolated_source_contact_footer_v1" if isolated_footer else
+                          "repeated_source_furniture" if repeated else None)
         section_id = "sf_" + _fingerprint({"policy": SECTION_FURNITURE_POLICY, "start": cursor, "end": end,
+            "adoption_basis": adoption_basis,
             "pages": [(item["source"]["page_number"], item["source"]["source_file_sha256"],
                        item["source"]["source_sha256"], item["target"]["translation_sha256"],
                        item["source"]["width_pt"], item["source"]["height_pt"],
@@ -250,7 +292,9 @@ def plan_section_furniture(
                    "source_file_sha256": first["source"]["source_file_sha256"] if first else None,
                    "page_size_pt": [first["source"]["width_pt"], first["source"]["height_pt"]] if first else None,
                    "consolidated": consolidated,
-                   "parts": {part: _part(group, part) if consolidated else None for part in ("header", "footer")}}
+                   "adoption_basis": adoption_basis,
+                   "parts": {part: _part(group, part) if repeated or isolated_footer and part == "footer" else None
+                             for part in ("header", "footer")}}
         sections.append(section)
         standardized_variants = consolidated and any(
             part and any(alias["target_variant"] for alias in part["aliases"])
@@ -265,7 +309,8 @@ def plan_section_furniture(
                 pages[position]["warnings"].append("section_furniture_target_variant_standardized")
             if consolidated:
                 for name in ("header", "footer"):
-                    pages[position][f"adopted_{name}_ids"] = [b["id"] for b in items[position][name]]
+                    if section["parts"][name]:
+                        pages[position][f"adopted_{name}_ids"] = [b["id"] for b in items[position][name]]
         cursor = end
     for previous, current in zip(items, items[1:]):
         if previous is None or current is None:

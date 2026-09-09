@@ -211,7 +211,7 @@ def test_exact_reference_separator_caps_both_adjacent_gaps_without_text_change(t
     source, target = separator_pair(text)
     before = deepcopy((source, target))
     result = infer(source, target)
-    assert result["version"] == "source_block_spacing_v2"
+    assert result["version"] == "source_block_spacing_v3"
     assert len(result["overrides"]) == 2
     for override in result["overrides"].values():
         assert override["desired_gap_pt"] == 12
@@ -258,3 +258,120 @@ def test_separator_cap_preserves_binding_and_adjacency_guards():
     assert not infer(source, target, excluded_block_ids={"p0001_b0002"})["overrides"]
     target["blocks"][1]["text"] = "**"
     assert infer(source, target)["status"] == "unavailable"
+
+
+def centered_header_pair(*, right=False):
+    source, target = pair([
+        {"text": "Institution", "role": "header", "alignment": "center", "bbox": [139, 99, 470, 109]},
+        {"text": "Department", "role": "header", "alignment": "center", "bbox": [176, 113, 433, 122]},
+        {"text": "Evidence", "role": "heading", "alignment": "left", "bbox": [71, 151, 166, 160]},
+        {"text": "Complete numbered source evidence", "role": "list_item", "alignment": "justify",
+         "bbox": [107, 171, 524, 201]},
+    ])
+    if right:
+        for page in (source, target):
+            for row in page["blocks"]:
+                box = row["bbox"]
+                row["bbox"] = [page["width_pt"] - box[2], box[1], page["width_pt"] - box[0], box[3]]
+            page["blocks"][2]["alignment"] = "right"
+    for page in (source, target):
+        page["metadata"]["layout"] = {"status": "flow", "bands": [], "review_required": False}
+    return source, target
+
+
+@pytest.mark.parametrize("right", [False, True])
+def test_centered_letterhead_to_first_offset_heading_uses_source_gap(right):
+    source, target = centered_header_pair(right=right)
+    before = deepcopy((source, target))
+    result = infer(source, target)
+    assert result["overrides"]["p0001_b0003"] == {
+        "previous_block_id": "p0001_b0002", "source_gap_pt": 29.0, "desired_gap_pt": 24.0,
+        "basis": "source_header_body_gap", "clamped": True,
+    }
+    assert (source, target) == before
+
+
+@pytest.mark.parametrize("change", [
+    "layout_regions", "layout_review", "not_centered", "off_center",
+    "low_header", "not_first_heading", "address_prefix", "paragraph_not_heading",
+    "no_following_body", "narrow_body", "body_misses_heading", "body_misses_header",
+    "body_overlaps_heading", "body_too_far", "header_overlap", "uncertain_body",
+    "body_table", "body_continuation", "body_document_start", "heading_document_start",
+    "target_continuation", "excluded_header", "excluded_body", "real_parallel_columns",
+])
+def test_offset_header_exception_requires_positive_shared_flow_evidence(change):
+    source, target = centered_header_pair()
+    exclusions = set()
+    if change == "layout_regions":
+        source["metadata"]["layout"] = {"status": "regions", "bands": [{"regions": [{"block_ids": ["p0001_b0004"]}]}]}
+    elif change == "layout_review":
+        target["metadata"]["layout"]["review_required"] = True
+    elif change == "not_centered": change_both(source, target, 1, alignment="left")
+    elif change == "off_center": change_both(source, target, 1, bbox=[330, 113, 480, 122])
+    elif change == "low_header":
+        for page in (source, target):
+            for row in page["blocks"]:
+                row["bbox"][1] += 150
+                row["bbox"][3] += 150
+    elif change == "not_first_heading": change_both(source, target, 0, role="heading")
+    elif change == "address_prefix": change_both(source, target, 0, role="address")
+    elif change == "paragraph_not_heading": change_both(source, target, 2, role="paragraph")
+    elif change == "no_following_body": change_both(source, target, 3, role="reference")
+    elif change == "narrow_body": change_both(source, target, 3, bbox=[107, 171, 310, 201])
+    elif change == "body_misses_heading": change_both(source, target, 3, bbox=[170, 171, 524, 201])
+    elif change == "body_misses_header":
+        change_both(source, target, 3, bbox=[0, 171, 300, 201])
+    elif change == "body_overlaps_heading": change_both(source, target, 3, bbox=[107, 159, 524, 201])
+    elif change == "body_too_far": change_both(source, target, 3, bbox=[107, 300, 524, 330])
+    elif change == "header_overlap": change_both(source, target, 0, bbox=[139, 99, 470, 120])
+    elif change == "uncertain_body": change_both(source, target, 3, uncertain=True)
+    elif change == "body_table": change_both(source, target, 3, role="table_cell", table_id="p0001_t1", row=0, col=0)
+    elif change == "body_continuation": change_both(source, target, 3, continuation_of="p0001_b0003")
+    elif change == "body_document_start": change_both(source, target, 3, document_start=True)
+    elif change == "heading_document_start": change_both(source, target, 2, document_start=True)
+    elif change == "target_continuation": target["continuation_from_previous"] = True
+    elif change == "excluded_header": exclusions.add("p0001_b0002")
+    elif change == "excluded_body": exclusions.add("p0001_b0004")
+    elif change == "real_parallel_columns":
+        for page in (source, target):
+            for index, box in enumerate(([50, 250, 220, 280], [350, 250, 520, 280]), 5):
+                page["blocks"].append(StructureBlock(f"p0001_b{index:04d}", "Column text", bbox=box).to_dict())
+            page["source_sha256"] = page["source_text_sha256"] = text_sha256("\n".join(row["text"] for row in source["blocks"]))
+        target["translation_sha256"] = text_sha256("\n".join(row["text"] for row in target["blocks"]))
+    assert "p0001_b0003" not in infer(source, target, excluded_block_ids=exclusions)["overrides"]
+
+
+@pytest.mark.parametrize("missing", ["source", "target", "both"])
+def test_missing_passive_layout_can_be_derived_from_bound_original_geometry(missing):
+    source, target = centered_header_pair()
+    if missing in {"source", "both"}: source["metadata"].pop("layout")
+    if missing in {"target", "both"}: target["metadata"].pop("layout")
+    before = deepcopy((source, target))
+    assert infer(source, target)["overrides"]["p0001_b0003"]["desired_gap_pt"] == 24
+    assert (source, target) == before
+
+
+@pytest.mark.parametrize("edge,delta,allowed", [
+    ("body_width", 0, True), ("body_width", -.01, False),
+    ("heading_overlap", 0, True), ("heading_overlap", .01, False),
+    ("body_gap", 0, True), ("body_gap", .01, False),
+])
+def test_header_gap_corrobation_numeric_boundaries(edge, delta, allowed):
+    source, target = centered_header_pair()
+    if edge == "body_width":
+        change_both(source, target, 3, bbox=[107, 171, 107 + source["width_pt"] * .5 + delta, 201])
+    elif edge == "heading_overlap":
+        change_both(source, target, 3, bbox=[118.5 + delta, 171, 535, 201])
+    else:
+        change_both(source, target, 3, bbox=[107, 232 + delta, 524, 262 + delta])
+    assert ("p0001_b0003" in infer(source, target)["overrides"]) is allowed
+
+
+@pytest.mark.parametrize("earlier_header", ["excluded", "continuation", "uncertain"])
+def test_all_leading_headers_must_supply_usable_evidence(earlier_header):
+    source, target = centered_header_pair()
+    exclusions = set()
+    if earlier_header == "excluded": exclusions.add("p0001_b0001")
+    elif earlier_header == "continuation": target["blocks"][0]["continuation_of"] = "p0001_b0002"
+    else: change_both(source, target, 0, uncertain=True)
+    assert "p0001_b0003" not in infer(source, target, excluded_block_ids=exclusions)["overrides"]

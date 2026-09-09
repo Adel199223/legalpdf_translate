@@ -567,6 +567,33 @@ _PAGE_LABEL_RE = re.compile(
 )
 
 
+def _is_page_number_footer(block: dict) -> bool:
+    """Match the visible complete label, not Arabic's internal token wrappers.
+
+    Only source-owned footer roles qualify. Partial matches, operative prose,
+    malformed placeholders and identical body text remain editable content.
+    """
+    visible = sanitize_bidi_controls(unwrap_internal_placeholders(block["text"])).strip()
+    return block["role"] == "footer" and _PAGE_LABEL_RE.fullmatch(visible) is not None
+
+
+def _opening_document_start_id(blocks: list[dict]) -> str | None:
+    """Identify one opening marker represented by an already-applied boundary.
+
+    A title can follow court/reference/recipient frontmatter belonging to the
+    same new document. Substantive content before a marker proves it is later,
+    so that marker (and all subsequent markers) must keep its own hard break.
+    This consumes rendering state only; source flags and IDs remain unchanged.
+    """
+    for block in blocks:
+        if block.get("document_start"):
+            return block["id"]
+        if (sanitize_bidi_controls(unwrap_internal_placeholders(block["text"])).strip()
+                and block["role"] not in {"header", "reference", "address"}):
+            return None
+    return None
+
+
 @dataclass(frozen=True)
 class _AssemblyPage:
     number: int
@@ -1217,7 +1244,7 @@ def _render_region_blocks(container, blocks: list[dict], *, panels: list[dict],
         index += 1
         mapping = mappings[block["id"]]
         role, text = block["role"], block["text"]
-        if role == "footer" and _PAGE_LABEL_RE.fullmatch(sanitize_bidi_controls(text).strip()):
+        if _is_page_number_footer(block):
             mapping["location"] = {"kind": "generated_footer_page_field"}
             continue
         if role != "table_cell" and not sanitize_bidi_controls(unwrap_internal_placeholders(text)).strip():
@@ -1307,7 +1334,8 @@ def _render_page_layout(document, layout: dict, blocks: list[dict], *, lang: Tar
     return list(mappings.values())
 
 
-def _section_furniture_plan(pages: list[_AssemblyPage], pages_dir: Path, *, page_breaks: bool) -> dict:
+def _section_furniture_plan(pages: list[_AssemblyPage], pages_dir: Path, *, page_breaks: bool,
+                            allow_isolated_footer: bool = True) -> dict:
     """Use independently bound complete sources; never infer repeats from targets."""
     from .section_furniture import plan_section_furniture
 
@@ -1315,7 +1343,7 @@ def _section_furniture_plan(pages: list[_AssemblyPage], pages_dir: Path, *, page
     for page in pages:
         source_pair = _validated_source_pair(page, page, pages_dir) if page.structure else None
         pairs.append((source_pair[0].to_dict(), page.structure) if source_pair else None)
-    return plan_section_furniture(pairs, page_breaks=page_breaks)
+    return plan_section_furniture(pairs, page_breaks=page_breaks, allow_isolated_footer=allow_isolated_footer)
 
 
 def _furniture_line_estimate(blocks: list[dict], width_pt: float, font_size: float) -> int:
@@ -1555,13 +1583,16 @@ def assemble_docx(
     stats: dict[str, int] | None = None,
 ) -> Path:
     page_files = sorted(pages_dir.glob("page_*.txt"))
+    # An up_to_page preview of a larger run is not a complete isolated output.
+    allow_isolated_footer = len(page_files) == 1
     if up_to_page is not None:
         page_files = [path for path in page_files if int(path.stem.split("_")[1]) <= up_to_page]
     if not page_files:
         raise RuntimeError(f"No page text files available for DOCX assembly: {pages_dir}")
 
     pages = [_load_assembly_page(path) for path in page_files]
-    furniture_plan = _section_furniture_plan(pages, pages_dir, page_breaks=page_breaks)
+    furniture_plan = _section_furniture_plan(pages, pages_dir, page_breaks=page_breaks,
+                                             allow_isolated_footer=allow_isolated_footer)
     _bound_furniture_reserves(furniture_plan, pages, lang)
     furniture_sections = {item["section_id"]: item for item in furniture_plan.get("sections", [])}
     furniture_enabled = not page_breaks and any(item["consolidated"] for item in furniture_sections.values())
@@ -1606,6 +1637,10 @@ def assemble_docx(
         if blocks is None:
             blocks = [{"id": f"legacy_p{page.number:04d}_line{index:04d}", "text": line, "role": "paragraph"}
                       for index, line in enumerate(page.text.split("\n"), 1)]
+        # An explicit source-page/section boundary, or the initial document
+        # page, already starts its opening document. Consume at most its first
+        # frontmatter/title marker; never suppress later intra-page documents.
+        opening_start_id = _opening_document_start_id(blocks) if page_boundary or page_idx == 0 else None
         layout, layout_status, layout_review, layout_warnings = _validated_layout(structure)
         page_map = {
             "source_page_number": page.number,
@@ -1662,14 +1697,14 @@ def assemble_docx(
             if admitted and block["id"] in furniture_locations:
                 mapping.update(furniture_locations[block["id"]])
                 continue
-            if role == "footer" and _PAGE_LABEL_RE.fullmatch(sanitize_bidi_controls(text).strip()):
+            if _is_page_number_footer(block):
                 mapping["location"] = {"kind": "generated_footer_page_field"}
                 continue
             if role != "table_cell" and not sanitize_bidi_controls(unwrap_internal_placeholders(text)).strip():
                 mapping["location"] = {"kind": "empty_block"}
                 continue
             document_start = bool(block.get("document_start"))
-            if document_start and (rendered_on_page or (page_idx and not page_boundary)):
+            if document_start and block["id"] != opening_start_id and (rendered_on_page or (page_idx and not page_boundary)):
                 if furniture_enabled:
                     section = _start_furniture_section(document)
                     _configure_furniture_section(document, section, None, size=size, lang=lang,

@@ -13,7 +13,7 @@ import re
 import unicodedata
 from typing import Any, Mapping, Sequence
 
-LAYOUT_PROFILE_VERSION = "compact_legal_v7_sections_spacing"
+LAYOUT_PROFILE_VERSION = "compact_legal_v10_isolated_contact_footer"
 
 
 def _row(block: Any) -> dict[str, Any]:

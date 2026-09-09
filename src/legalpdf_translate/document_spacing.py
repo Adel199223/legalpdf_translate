@@ -14,9 +14,10 @@ import re
 from typing import Any
 
 from .document_structure import validate_page_structure
+from .document_layout import derive_page_layout, source_folio_ids
 
 
-DOCUMENT_SPACING_VERSION = "source_block_spacing_v2"
+DOCUMENT_SPACING_VERSION = "source_block_spacing_v3"
 MAX_SPACING_BLOCKS = 512
 _BODY = frozenset({"paragraph", "list_item", "heading", "reference", "signature"})
 _TIGHT = frozenset({"header", "address", "footer"})
@@ -130,6 +131,64 @@ def _exact_decorative_separator(source: dict, target: dict) -> bool:
             and _ASTERISK_SEPARATOR.fullmatch(text) is not None)
 
 
+def _first_heading_after_centered_headers(source: dict, target: dict, boxes: dict,
+                                          excluded: set[str], continued: set[str]) -> str | None:
+    """Identify one non-overlapping ink transition in a proven full-page flow.
+
+    Centered letterhead ink and a short margin-aligned first heading need not
+    overlap horizontally. Require the immediate following body block to span
+    both, rather than treating centering alone as evidence of a shared column.
+    This never creates adjacency, crosses regions or relocates source furniture.
+    """
+    derived = None
+    for page in (source, target):
+        layout = page.get("metadata", {}).get("layout")
+        # Retained source sidecars predate format-only derivatives. Prove their
+        # flow from the complete bound SOURCE geometry locally; never replace
+        # a present uncertain/region layout or infer flow from target text.
+        if layout is None:
+            if derived is None:
+                derived = derive_page_layout(source)
+            layout = derived
+        if (not isinstance(layout, dict) or layout.get("status") != "flow"
+                or layout.get("review_required", False) or layout.get("bands")):
+            return None
+    blocks = source["blocks"]
+    first_body = next((index for index, row in enumerate(blocks) if row["role"] != "header"), 0)
+    if not 1 <= first_body < len(blocks) - 1:
+        return None
+    headers, heading, body = blocks[:first_body], blocks[first_body], blocks[first_body + 1]
+    if heading["role"] != "heading" or heading["alignment"] not in {"left", "right"}:
+        return None
+    if body["role"] not in {"paragraph", "list_item"}:
+        return None
+    width, height = source["width_pt"], source["height_pt"]
+    tolerance = min(24.0, width * .04)
+    for index, row in enumerate([*headers, heading, body]):
+        box = boxes[row["id"]]
+        if (row["id"] in excluded or row["id"] in continued or row["uncertain"]
+                or row["table_id"] or (index > 0 and row["document_start"])
+                or not row["text"].strip() or box is None):
+            return None
+    for row in headers:
+        box = boxes[row["id"]]
+        if (row["alignment"] != "center" or box[3] > height * .25
+                or abs((box[0] + box[2]) / 2 - width / 2) > tolerance):
+            return None
+    if any(boxes[a["id"]][3] > boxes[b["id"]][1]
+           for a, b in zip(headers, [*headers[1:], heading])):
+        return None
+    heading_box, body_box = boxes[heading["id"]], boxes[body["id"]]
+    header_box = boxes[headers[-1]["id"]]
+    if (heading_box[3] > height * .30 or body_box[2] - body_box[0] < width * .5
+            or not 0 <= body_box[1] - heading_box[3] <= min(72.0, height * .1)
+            or not body_box[0] <= (header_box[0] + header_box[2]) / 2 <= body_box[2]
+            or min(heading_box[2], body_box[2]) - max(heading_box[0], body_box[0])
+            < (heading_box[2] - heading_box[0]) * .5):
+        return None
+    return heading["id"]
+
+
 def infer_page_spacing(*, source_page: dict, translated_page: dict,
                        excluded_block_ids: Collection[str] = ()) -> dict[str, Any]:
     """Recommend bounded total gaps for adjacent, fully bound source blocks.
@@ -165,13 +224,16 @@ def infer_page_spacing(*, source_page: dict, translated_page: dict,
     decorative_ids = {row["id"] for row, translated in zip(blocks, target["blocks"])
                       if _exact_decorative_separator(row, translated)}
     boxes = {row["id"]: _box(row, source) for row in blocks}
-    parallel = _has_parallel_columns(blocks, boxes, excluded)
+    # A proven footer folio is not body-column evidence. Its ID remains in the
+    # adjacency/coverage walk; no general footer or numeric content is exempted.
+    parallel = _has_parallel_columns(blocks, boxes, excluded | source_folio_ids(source))
     body_ids = [row["id"] for row in blocks if row["role"] in _BODY]
     continued = {row["id"] for page in (source, target) for row in page["blocks"] if row["continuation_of"]}
     if body_ids and (source["continuation_from_previous"] or target["continuation_from_previous"]):
         continued.add(body_ids[0])
     if body_ids and (source["continuation_to_next"] or target["continuation_to_next"]):
         continued.add(body_ids[-1])
+    header_heading_id = _first_heading_after_centered_headers(source, target, boxes, excluded, continued)
     for previous, current in zip(blocks, blocks[1:]):
         identity = current["id"]
         first, second = boxes[previous["id"]], boxes[identity]
@@ -194,7 +256,8 @@ def infer_page_spacing(*, source_page: dict, translated_page: dict,
             reason = "geometry_unavailable"
         elif second[1] < first[3]:
             reason = "overlapping_geometry"
-        elif not _same_flow(previous, current, first, second, source["width_pt"]):
+        elif not (_same_flow(previous, current, first, second, source["width_pt"])
+                  or identity == header_heading_id):
             reason = "different_horizontal_flow"
         elif second[1] - first[3] > min(72.0, source["height_pt"] * .1):
             reason = "oversized_source_gap"
