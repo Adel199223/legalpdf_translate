@@ -55,7 +55,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 
 ## Authoritative Worktree
 
-- branch: `main`
+- Branch: `main`
 - Routine app authority: `C:\Users\FA507\.codex\legalpdf_translate`, branch `main`; inspect its actual current HEAD before handoff.
 - Publication candidate: `C:\Users\FA507\.codex\legalpdf_translate_new_runs`, branch `codex/structured-new-translations`, based on `8470645cd96bf93848d6a6735673a17e8399bbc6`. This isolated task branch does not replace canonical daily-use authority before a verified merge.
 - The candidate's bounded synthetic shadow/native acceptance is complete; the live app and Gmail were not operated for that acceptance. Any post-merge smoke must remain read-only at the UI level with isolated metadata/DB initialization, disabled live Gmail bridge and a process-only protocol flag. It is not a new translation/model/native test.
