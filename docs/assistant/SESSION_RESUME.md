@@ -49,10 +49,10 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 
 ## Authoritative Worktree
 
-- Canonical daily-use authority remains `C:\Users\FA507\.codex\legalpdf_translate`, branch `main`.
-- Current task authority: `C:/Users/FA507/.codex/legalpdf_translate_footer_integration`, branch `codex/footer-spacing-integration`, base `main@ec406dac02ec7898dd339c37320f52f7881a043b`.
-- Branch: `codex/footer-spacing-integration`
-- The user accepted the v18 native/visual one-page footer pilot and supplied `NEXT_STAGE_4`. Follow the [active footer-spacing integration ExecPlan](exec_plans/active/2026-09-09_footer_spacing_integration.md); new-tree validation passed 615 focused tests, 2,492 full-suite tests and serial full validation with successful direct-Dart fallback. Publication/merge remain pending separate approval; canonical `main` is unchanged.
+- Worktree: `C:\Users\FA507\.codex\legalpdf_translate`
+- Branch: `main`
+- Canonical status: daily-use and fresh-session authority; verify actual HEAD and merged release state before app handoff.
+- The user accepted the v18 native/visual one-page footer pilot, supplied `NEXT_STAGE_4`, and then explicitly approved publication, merge after successful checks and app verification. The [completed footer-spacing integration ExecPlan](exec_plans/completed/2026-09-09_footer_spacing_integration.md) records the accepted subset from `main@ec406dac02ec7898dd339c37320f52f7881a043b`, with 615 focused tests, 2,492 full-suite tests and serial full validation passed. Its integration branch is `codex/footer-spacing-integration`; local validation and successful direct-Dart fallback do not prove remote checks, merge or canonical post-merge success. Verify actual status and complete only remaining lifecycle steps.
 - Integrate only the six formatter/four native-export modules and directly relevant tests/docs. Compact-reflow changes require `page_breaks=False` and complete source/target sidecars; fresh TXT production, OCR/model policy and structured-translation activation remain unchanged. No additional native call or paid evaluation is part of this stage.
 
 ## Approved Formatting Continuity
@@ -64,7 +64,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 
 ## Accepted Honorarios Repair Continuity
 
-- Historical accepted repair worktree: `C:/Users/FA507/.codex/legalpdf_translate_honorarios_pdf`, branch `feat/honorarios-pdf-export`, based on `main@9afe1d05577f271a8618969e8f0be31eb8641a3e`. That repair's evidence is retained below; use the current footer integration plan above for pending work and verify actual canonical HEAD rather than replaying this historical rollout.
+- Historical accepted repair worktree: `C:/Users/FA507/.codex/legalpdf_translate_honorarios_pdf`, branch `feat/honorarios-pdf-export`, based on `main@9afe1d05577f271a8618969e8f0be31eb8641a3e`. That repair's evidence is retained below; use the completed footer integration plan above for lifecycle continuity and verify actual canonical HEAD rather than replaying this historical rollout.
 - See [the completed repair ExecPlan](exec_plans/completed/2026-09-07_honorarios_pdf_export_reliability.md). Eight real Word exports took approximately 6-8 seconds each; both honorarios kinds, the isolated real browser route, Qt worker, open/unsaved Word coexistence and post-timeout recovery passed. All six retained honorarios PDFs passed every-page visual review, with source DOCX and tested existing Word state preserved.
 - One initial 45-second export replaces automatic preflight/retry cycles. Shared exact ownership, staged-file verification and serialization protect the operation; ambiguous cleanup remains quarantined. Explicit manual Qt retry and local/select-existing-PDF recovery remain available, with Gmail fail-closed behavior unchanged.
 - Full pytest passed 2,176 tests and full validation passed; the known native Qt small-screen layout-test `0x8001010d` diagnostic remains separate. No live Gmail or paid API operation was performed, no production model was promoted, and translations remain DOCX only.
@@ -113,7 +113,7 @@ This file is the roadmap anchor file and the stable fresh-session anchor.
 ## Next Concrete Action
 - No active roadmap needs resume handling.
 - For new work, use normal ExecPlan flow unless the user explicitly opens a new roadmap.
-- Finish the approved footer/native-safeguard publication lifecycle first, after separate publication approval: local focused/full/wrapper validation and independent diff review passed on the new subset. Follow exact-head GitHub checks before merging and validating canonical main. Historical native/visual pilot approval does not authorize another native attempt.
+- Finish or verify the explicitly approved footer/native-safeguard publication lifecycle first: local focused/full/wrapper validation and independent diff review passed on the new subset. Check actual exact-head GitHub results before merge, canonical app verification and safe cleanup; do not replay already-completed lifecycle steps. No further native attempt is authorized by that publication approval.
 - For continued legal-translation improvements afterward, inspect the preserved research ExecPlan and isolate source-associated production structure/model-dependent acceptance work. Layout and honorarios-export approval are not approval of new models or legal fidelity; do not reset or duplicate the lifetime benchmark allowance.
 - If continuing modernization, choose one narrow browser/Gmail presentation or coordinator-pressure slice, create an isolated worktree from clean `main`, use focused tests first, publish through a GitHub PR, wait for Actions, smoke in shadow mode when relevant, and clean up the merged branch/worktree.
 - Publish/merge requests should follow the standard commit/publish workflow and should not start a new Gmail/runtime thread while accepted live fixes remain only in local commits.

@@ -18,7 +18,10 @@ checks, proven ownership/cleanup and one A4 page visually inspected; the user
 has now approved that footer. This is not full-language/model/cost acceptance.
 No additional Word exports, paid/OCR/key calls, settings changes or recovery
 replay are needed for transplant validation. Preserve all old evidence and the
-original lifetime USD10 ledger. Follow the publication approval gate separately.
+original lifetime USD10 ledger. The user subsequently explicitly approved
+publication, merge after successful checks, and verification of the integrated
+app. This authorizes the standard scoped PR/merge/cleanup lifecycle, not force
+push, private-evidence publication or a new native/paid operation.
 
 ## Scope
 
@@ -78,7 +81,7 @@ boundaries, no reduced fonts. Full test suite and full validation pass on this
 new subset; historical full-suite counts do not replace integration validation.
 Inspect any Windows COM diagnostic serially; record successful direct-Dart
 fallback after known AOT errors without claiming a host repair. Publish only
-this clean integration branch if authorized; verify exact-head required checks
+this approved clean integration branch; verify exact-head required checks
 before merge and canonical post-integration validation afterward.
 
 ## Risks and mitigation
@@ -89,7 +92,8 @@ before merge and canonical post-integration validation afterward.
   block associations and that model/structured activation remains deferred.
 - Frozen private evidence: no edits/replay of source artifacts, journal or ledger.
 - Scope drift: exclude new OCR, legal protocol and model modules even if useful.
-- Publication authority: stop at validated local commits if approval is absent.
+- Publication gates: approval is recorded; stop before merge if exact-head
+  checks, branch lineage or review requirements are not satisfied.
 
 ## Assumptions and fallback
 
@@ -98,9 +102,9 @@ before merge and canonical post-integration validation afterward.
 - Canonical `main` remains unchanged while this isolated branch is validated.
   If integration validation fails, repair only the demonstrated subset defect;
   do not use the dirty research tree as a substitute or reset user evidence.
-- If publication approval is not received, retain the validated local commits
-  and this active plan for the next authorized publication step. No unrelated
-  work should begin while this accepted integration remains pending.
+- If a publication or merge gate fails, retain the validated local commits and
+  report the specific blocker. No unrelated work should begin while this
+  accepted integration remains only on its side branch.
 
 ## Progress
 
@@ -113,8 +117,8 @@ before merge and canonical post-integration validation afterward.
   test from the boundary-label fixture because that protocol is not promoted.
 - Human approval retained in a separate private Stage4 event; immutable native
   and visual closeouts still truthfully preserve their original pending state.
-- Asked separately whether to publish/PR/merge/cleanup through GitHub; validation
-  and local commit preparation can continue while that answer is pending.
+- Publication was requested separately from pilot acceptance. The user then
+  explicitly approved publishing, merging after checks and verifying the app.
 - Focused integration regressions: 615 passed in 95.66 seconds across 16 suites.
   Full pytest passed 2,492 tests in 380.77 seconds, without a COM diagnostic.
   Serial `validate_dev.ps1 -Full` passed: 233 browser compatibility tests in
@@ -137,20 +141,25 @@ before merge and canonical post-integration validation afterward.
   `777c6b7a6418e435bd2529080c0ce06e3c82c09e`. Scoped documentation records the
   actual new-tree results and limitations; direct docs/hygiene checks pass.
   No code changed after the successful focused/full/wrapper validation.
+- Implementation and scoped documentation are complete. Archived this plan and
+  restored canonical session authority for branch closeout before merge; all
+  six touched-doc links now target this completed record. Publication approval
+  does not itself prove a PR, CI result, merge or post-merge app check.
 
 ## Publication handoff and prepared continuation packs
 
-Current stop: local validation is complete; separate publication approval was
-asked for but has not been received. Do not treat these local commits as a
-GitHub PR, a merge or a canonical deployment. Keep this plan active while the
-accepted integration remains pending; preserve the research worktree.
+This completed plan records the accepted implementation, scoped docs and
+successful local validation. The user approved the remaining publication
+lifecycle. At branch closeout, no successful GitHub checks, merge or canonical
+post-merge verification is claimed. Verify actual GitHub/main state before
+deciding which steps remain; preserve the research worktree and private evidence.
 
-1. After explicit publication approval: fetch and check current main/floor,
+1. Execute the approved publication lifecycle: fetch and check current main/floor,
    confirm this branch still contains the latest approved base, inspect the
    exact local commits and publish only `codex/footer-spacing-integration`.
-   Open a PR to main, make branch closeout decision-complete (move this plan to
-   completed, update its links and restore canonical session authority before
-   merge), and require successful checks on the exact final head. No force push,
+   Open or update the PR to main and require successful checks on the exact
+   final head. Branch-scoped implementation/docs closeout is prepared here;
+   check it remains consistent with the reviewed head before merge. No force push,
    private evidence, native retry or experimental production activation.
 2. After a successful merge: verify the actual merge, safely synchronize clean
    canonical main without switching a running server's branch, then run focused
