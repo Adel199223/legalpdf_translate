@@ -1,6 +1,6 @@
 # Docs Refresh Notes
 
-Use this file when docs updates are deferred. Append an entry whenever `src/` or `tests/` changes and the user did NOT request a docs refresh.
+Use this file for scoped Docs Sync decisions and genuinely deferred gaps. Useful maintenance has standing user authorization from 2026-09-16; do not ask for approval again. Record scope and executed validation without duplicating operation history from living plans.
 
 ## Template (copy for new entries)
 ## YYYY-MM-DD — <branch> (<commit>)
@@ -16,6 +16,47 @@ Use this file when docs updates are deferred. Append an entry whenever `src/` or
 
 
 ## Entries
+
+## 2026-09-16 — qualified French acceptance and local candidate closeout
+
+- Recorded actual FF02 normal run-owned formatting, sole native export and two full-page visual reviews, with unchanged paid text and editable metadata cells. Kept FQ02 `extraction_checks_failed` unchanged: one trailing U+0020 extends beyond its metadata-cell predicate while complete page/document text and nonspace ownership remain exact. Qualified physical acceptance retains source/glossary/abbreviation, decorative/style and geometry limits; no unconditional automated pass or human certification is claimed. Final synthesis `b1b82a8e` and supplemental diagnostic `aaeee1e1` retain that disposition.
+- Preserved 12 current-file beforeimages under private `application_docs_modernization_20260916_01/final_candidate_closeout_beforeimages_01`. Closed the three bounded acceptance/browser/docs parents under PLANS rules 8/9; the previous 23 archived children stay byte-identical. Kept the original global-activation plan active but explicitly deferred, with its prior body exact. Updated current routes while preserving dated/original historical handoffs.
+- Current lifetime accounting remains 178 finalized rows, USD2.825296750000 spent and zero lifetime holds. No paid/native operation, production/test edit, commit/push/publication, global default promotion, or >=20% model-efficiency claim is part of this docs pass.
+- Root final direct-Dart docs (`167bec`, 1.6579019 seconds), workspace hygiene (`ae4f50`, 1.1462242 seconds) and CRLF-aware whitespace (`7356af`, 0.2438054 seconds) all passed against freeze `abc955bc`; private `final_validation_01.json` retains the results. Root local scope review and working-tree triage are complete. This minimal factual status refresh has exact eight-file beforeimages under `final_status_after_validation_beforeimages_01`. No relevant code changed. Prior 6,477-case full regression and separate Standard Full remain the named unchanged application snapshot evidence.
+
+
+
+## 2026-09-16 — qualified FR04 checkpoint and scoped plan lifecycle
+
+- Replaced stale duplicated current FR03 sections with one current checkpoint per front door/parent plan. Recorded genuine FR04 completion, qualified term-assisted bilingual acceptance, 34 unchanged target partitions and 178-row lifetime accounting. Preserved the source/title/abbreviation qualifications and FR03 content failure. The first private formatting failure is explicit; corrected FF02 formatting passed with unchanged paid text and editable metadata cells. Native/visual acceptance remains pending.
+- Preserved exact 32-file beforeimages under private `application_docs_modernization_20260916_01/final_scoped_closeout_beforeimages_01`. The two long parent-plan chronological tails remain byte-identical. Dated original front doors and private originals are unchanged.
+- Applied PLANS rules 8/9 to close 23 bounded implementation scopes with executed validation/outcomes, and updated current Arabic-plan routing to completed. Four parent/docs plans stay active pending actual French QA/final closeout. Canonical main/publication status is unchanged.
+- Read existing issue-memory guidance. The planned lifecycle cleanup adds no governance recurrence. The separately observed Windows held-lock variant increments its existing operational issue to five, supported by disposable diagnostic `42c7a2cf` and successful fresh formatter `d4fe8e17`; the workflow now distinguishes byte checks before/after ownership from identity checks while held. Three supplemental beforeimages are preserved. No global bootstrap/template change or application-lock weakening occurred.
+- Reused actual 6,477-case full regression and separate Standard Full on snapshot `bec79f29`; no test rerun or application/helper import occurred. Root still must run final docs and hygiene checks after the remaining QA. Those new checks are not claimed passed here.
+
+## 2026-09-16 — completed full-validation checkpoint
+
+- Refreshed only HANDOFF, the current-state sections of the acceptance-runtime and ordinary-browser plans, the citation-elision plan, and this notes file. Exact five-file beforeimages remain under private `application_docs_modernization_20260916_01/full_validation_checkpoint_beforeimages_01`; chronological sections were preserved byte-for-byte.
+- Complete pytest run03 passed 6,477 tests, zero failures/errors/skips, in 1,795.40 seconds (launcher 1,797.907787 seconds; result `0cceeb4c`). Standard Full run02 passed in 1,262.541817 seconds (result `adfcafe8`). Both used the same unchanged 481-file snapshot `bec79f29`; results support that named source/test snapshot, not a new paid/native or independently audited zero-egress claim.
+- Recorded FR03's successful no-dispatch physical binding (`164c43`, runtime inputs `6982e3a6`): zero provider/native calls, reservations and audit denials; root subsequently launched FR03 once (`240520`, session `31870`) after independent authority review, and its terminal outcome plus final 34-fragment French formatting/native/visual acceptance remain pending. Failed FR01/FR02 artifacts, their accounting and the current lifetime ledger are not changed by this documentation task.
+- Marked citation implementation/validation complete while deferring its move from active plans to the final docs closeout. The main ordinary acceptance plan remains open for real French native and every-page QA.
+- Validation for this refresh: read and verified the existing result hashes, JUnit counters, stdout terminal summary and matching snapshot files; checked the scoped text diff and beforeimages. No application/test source edits or test reruns. A fresh final docs/hygiene check after this refresh and the actual French closeout remains required and is not claimed passed.
+
+## 2026-09-16 — actual audit shapes and attempt accounting
+
+- Updated the existing Windows guard issue-memory entry and harness workflow after the real tempfile opener-label mismatch. Disposable standard-library diagnostics and the subsequent actual call verify the narrow fix; the failed operation and unresolved local hold remain preserved.
+- Documented the difference between translation attempts, actual SDK dispatches and settlement, and the limits of offline retained-response validation. This harvest follows the existing high-priority issue-memory signal, without changing global bootstrap/templates or widening operation authority.
+- Exact four-file beforeimages are retained privately under `application_docs_modernization_20260916_01/harness_lessons_beforeimages_01`. Current standard Full/docs validation is running; record its actual terminal result in the live integration checkpoint.
+
+## 2026-09-16 — current guidance and reviewed-source/DOCX guide
+- Replaced duplicated obsolete acceptance logs in the architecture bridge, handoff, roadmap anchor and validation front doors with concise current routing. Exact original front-door bytes remain in `history/2026-09-16_front_doors/`; all 29 original protected documents and R/W scope beforeimages are retained privately.
+- Current guidance distinguishes canonical main from the unpublished integration candidate, assistant model preference from app provider policy, and private/synthetic/ordinary acceptance evidence. Current validation and operation status belongs to the two linked living plans.
+- Added the reviewed-source/DOCX user guide and entry links, including saved-policy restrictions, independent text selections, explicit derivative/table/spacing decisions and exact recovery/session limits.
+- Updated the project Docs Sync mode and narrowly corresponding Dart policy validation/tests. No vendored templates, UCBS, source features, routes, settings or acceptance defaults were changed.
+- Removed remaining active approval prompts in Golden Principles, UPDATE_POLICY, PROJECT_INSTRUCTIONS and the translation handoff checklist, with exact beforeimages retained. Scoped Qt ownership guidance to Qt and kept authorized publication distinct from testing acceptance. Added the parent-verified 2026-09-16 Terra/pricing/reasoning reference above unchanged historical registry entries; public facts do not establish account access or dispatch authority.
+- Consulted the existing issue-memory roles; this correction addresses duplicated stale continuation guidance directly, without rewriting historical issue records or broadening the staged workflow. Further bootstrap generalization remains a separate explicit task.
+- Integration/validation: root harvested the exact 28-file packet after verifying all current baselines and beforeimages. The independent review verified all resulting files and preserved copies. Direct-Dart policy tests passed all 102 emitted cases after correcting a stale dormant-marker fixture; docs validation, workspace hygiene and Git whitespace checks passed. The initial deep temporary-path Git failure and later stale-fixture failure remain recorded privately. The obsolete hard-coded success-message count was removed without changing tests or assertions. Complete application pytest separately passed 6,403 tests and standard Full passed on the unchanged application snapshot.
+
 ## 2026-09-07 — feat/honorarios-pdf-export (approved docs sync)
 - Synchronized the honorarios-only Word PDF repair, recovery guidance, validation and current-status handoff; translation deliverables remain DOCX and translation/model research stays unpromoted.
 - Updated the existing `desktop-qt-honorarios-export-reliability` issue-memory entry because the earlier accepted mitigation did not prevent the September failure. Durable ownership/quarantine, native-call signature and full-export acceptance guidance now lives in the host integration workflow.

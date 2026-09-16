@@ -86,6 +86,29 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 
 ## Active Entries
 
+### windows-private-launch-guard-preflight-fidelity
+
+- Title: Private Windows guards missed actual launch, import, temporary-file and held-lock semantics.
+- First seen timestamp: `2026-09-10T17:57:00Z`
+- Last seen timestamp: `2026-09-16T20:01:02Z`
+- Repeat count: `5`
+- Status: `mitigated`
+- Trigger source: `operational`
+- Symptoms: earlier argv-versus-serialized-command mismatch, Popen class replacement breaking an asyncio import, and an omitted executable yielding `None` before CreateProcess; a `NamedTemporaryFile` directory-label open stopped FR01 before SDK contact, and FF01 later failed reading its already-owned byte-range lock through a second handle.
+- Likely root cause: synthetic platform assumptions did not exercise actual Windows caller, import, temporary-file opener and held-lock read contracts.
+- Attempted fix history: serialized argv validation; inert transport import seam; explicit pinned executable with actual-Popen dry run and CreateProcess replaced by a rejecting stub; corrected v2 executor tested all six exact commands without launch and then completed the six separately authorized real OCR passes.
+- Accepted fix: explicit-executable guard held for all six real commands, with zero retries/guard violations after nine negative, two shape and six actual-Popen no-launch checks. This verifies the bounded pilot harness, not source fidelity or all future platforms. Retain `mitigated`, not `resolved`; the tempfile-opener and held-lock variants bring the repeat count to five. Stable lock bytes are now checked before/after ownership and identity while held; fresh FF02 formatting passed, with native/visual QA still pending.
+- Regressed after accepted fix: `false` (different guard assumptions; no claim this latest private executor previously passed a live pilot).
+- Affected workflows/docs: `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`, `docs/assistant/VALIDATION.md`, `docs/assistant/exec_plans/active/2026-09-10_structured_translation_ordinary_use.md`, and `docs/assistant/exec_plans/completed/2026-09-16_ordinary_browser_integration.md`.
+- Bootstrap relevance: `possible`; no global bootstrap/template changes performed.
+- Docs-sync relevance: high; before a bounded native action, test the real platform dispatch boundary with process creation suppressed, then freeze exact executable/argv. Preserve class interfaces and require fresh scope after a stop-on-error gate.
+- Evidence refs: private `structured_activation_source_capture_2026_09_10/failure.json`, `structured_activation_source_readiness_stage3_2026_09_10/import_preflight_diagnostic.json`, `structured_activation_source_repair_pilot_2026_09_10/incident_review.json` and `launch_guard_repair_preflight.json`; corrected `structured_activation_source_repair_pilot_v2_2026_09_10/executor_manifest.json` and `pilot_result.json`; `docs/assistant/exec_plans/active/2026-09-10_structured_translation_ordinary_use.md`.
+
+- 2026-09-16 follow-up: an actual `NamedTemporaryFile` directory-label open stopped FR01 before SDK contact. Its failed state and local hold remain intact. A disposable real-stdlib diagnostic verified the narrowly pinned caller/mode/prefix/suffix exception with negative cases; fresh FR02 then reached one SDK response with zero audit denials. Its later citation failure is a separate product issue, not a recurrence of the tempfile guard defect. A separate fictional binary diagnostic observed `w+b` normalized to audit `w+` before formatter execution.
+- Current durable rule: exercise changed audit assumptions on actual disposable platform calls; separate attempts from actual SDK dispatch/settlement; never replay consumed operations or release unknown holds. See the harness workflow. New evidence: private `application_ordinary_real_fr_20260916_01/tempfile_diagnostic_v1/runtime_v1/result.json`, `application_ordinary_real_fr_20260916_02/run_v1/result.json` and `application_ordinary_fr_formatting_20260916_01/binary_tempfile_diagnostic_01/result.json`.
+
+- 2026-09-16 held-lock follow-up: the disposable Windows diagnostic `42c7a2cf` confirmed that the second handle opens but reading fails with `PermissionError` / errno 13, while identity and post-release bytes remain unchanged. FF01 remains preserved. Fresh FF02 (`d4fe8e17`) passed normal run-owned formatting with all 34 paid fragments unchanged and zero audit/provider/native calls. Application locking was not changed. New evidence: private `application_ordinary_fr_formatting_review_20260916_01/windows_lock_diagnostic_01/result.json` and `application_ordinary_fr_formatting_20260916_02/formatting_v1/result.json`.
+
 ### google-photos-oauth-picker-validation-hygiene
 - Title: Google Photos OAuth and Picker validation repeatedly stalled on env, popup, secret, and selection-completion evidence
 - First seen timestamp: `2026-04-28T00:00:00Z`

@@ -1,510 +1,67 @@
 # APP_KNOWLEDGE
 
-This file is canonical for app-level architecture and status.
+This file is canonical for app-level architecture and status. Source code is final truth when documentation conflicts. Read this overview first; consult a specific module, user guide or current plan next instead of loading the historical acceptance corpus.
 
-## App Summary
-LegalPDF Translate is a Windows-first Python app that translates PDFs into DOCX using one-page-per-request processing for each translation job, supports sequential multi-document queue execution, supports true multi-window Qt workspaces for parallel jobs, and supports a Windows-only Gmail intake batch-reply workflow.
+## Current build and status
 
-- Primary UI: local browser app on `127.0.0.1`.
-- Secondary UI: Qt/PySide6 desktop shell.
-- Secondary interface: CLI.
-- Model transport: OpenAI Responses API.
-- Key invariant: page-by-page translation flow, no whole-document batch request.
-- Preferred day-to-day mode: browser app `live` mode.
-- Explicit development/testing mode: browser `shadow` mode with isolated state roots.
+- **Daily-use build:** canonical `C:/Users/FA507/.codex/legalpdf_translate`, branch `main`. PR #295 is already merged at `4780a2e16c32adf7af7479656f0b5fafdff83224`; recheck actual Git state before work.
+- **Unpublished integration candidate:** `C:/Users/FA507/.codex/legalpdf_translate_structured_activation`, branch `feat/structured-translation-activation`, based on that merge. Its reviewed-source, accounting, formatting and browser changes are not yet a claim about canonical main.
+- **Authoring worktree:** `C:/Users/FA507/.codex/legalpdf_translate_reviewed_regions`, branch `codex/reviewed-regions`. Harvest exact reviewed scopes; never overwrite a newer integration snapshot wholesale.
+- Current acceptance and validation results live in the [ordinary browser integration plan](docs/assistant/exec_plans/completed/2026-09-16_ordinary_browser_integration.md) and [Arabic rendered-correction plan](docs/assistant/exec_plans/completed/2026-09-16_arabic_render_corrections.md). Completed private derivatives, synthetic browser evidence and real ordinary-workflow acceptance are distinct.
+- No global translation model/protocol promotion or publication is implied. The user's Astra Ultra preference concerns the assistant's Codex task. Terra evaluation concerns the app's translation provider. Saved app preferences and explicit per-run selections remain authoritative.
 
-## Entrypoints
-- Browser app: `python -m legalpdf_translate.shadow_web.server --open`
-- Browser app URL (daily use): `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#new-job`
-- Browser app URL (isolated testing): `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#new-job`
-- Browser app Gmail handoff URL: `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`
-- Browser review-preview URL (fixed branch-review contract): `http://127.0.0.1:8888/?mode=shadow&workspace=workspace-preview#new-job`
-- Detached browser-app launcher: `python tooling/launch_browser_app_live_detached.py`
-- Review-preview launcher: double-click `Launch LegalPDF Browser App (Preview).cmd` in the repo root.
-- GUI: `python -m legalpdf_translate.qt_app`
-- GUI compatibility shim: `python -m legalpdf_translate.qt_main`
-- Beginner Windows launcher: double-click `Launch LegalPDF Translate.bat` in the repo root. It delegates to `tooling/launch_qt_build.py --worktree <repo-root>`.
-- CLI: `legalpdf-translate --pdf <file> --lang EN|FR|AR --outdir <dir>`
-  - Cost guardrails (optional): `--budget-cap-usd <float> --cost-profile-id <string> --budget-on-exceed warn|block`
-  - Queue mode (optional): `legalpdf-translate --queue-manifest <manifest.jsonl> --rerun-failed-only true --lang EN --outdir <dir>`
-- Build: `powershell -ExecutionPolicy Bypass -File scripts/build_qt.ps1`
+## Product surfaces
 
-## Browser App Shell
-- The local browser app is now the preferred day-to-day interface for this repo.
-- Main beginner-first browser surfaces:
-  - `New Job` as the default daily landing screen
-  - conditional `Gmail` for dedicated Gmail handoff/review
-  - `Recent Jobs`
-  - `More`, which keeps `Dashboard`, `Settings`, `Profile`, `Power Tools`, and `Extension Lab` reachable without crowding the first screen
-- `New Job` is translation-first by default and keeps interpretation inside the same shell through an in-page task switcher.
-- Interpretation now also supports a Google Photos Picker import path in shadow/live browser mode. The flow is Interpretation-only: connect Google Photos, choose one user-selected photo, import the selected image/metadata into the existing photo/OCR autofill path, review `Review Case Details`, and continue through the normal honorários review/export path only after user confirmation. The review drawer keeps case city and service city separate, uses city-aware court-email options, and keys distance to the effective service city.
-- `Gmail` is a dedicated browser view for exact-message context, attachment review, and continuation into translation or interpretation; deeper Gmail session/finalization work stays in same-tab drawers instead of crowding the intake screen.
-- Gmail intake now starts as one compact review-first surface instead of a stacked workspace. The first screen keeps message summary, supported attachments, workflow choice, target language, and one primary continue action visible.
-- Gmail translation continuation stays bounded in browser-native secondary surfaces:
-  - a focused attachment-review drawer for selection and preview
-  - a `Finish Translation` drawer for save/export/review actions
-  - a `Finalize Gmail Batch` drawer for the last reply step
-  - a `Redo Current Attachment` path that resets only the translation-side state for the active unconfirmed Gmail attachment without resetting the whole Gmail workspace or requiring a cold start
-- Gmail interpretation continuation now stays inside the same calm shell:
-  - `#new-job` shows one compact `Current Interpretation Step` panel during an active Gmail interpretation session
-  - the detailed work happens in a bounded `Review Interpretation` drawer instead of a persistent admin-style page stack
-- `Recent Jobs` is the main secondary production route. It starts with a bounded overview of the latest saved rows and keeps deeper translation/interpretation histories collapsed until requested.
-- `Settings` is a bounded operator sheet with grouped sections for defaults, OCR/Gmail integration, and diagnostics/job-log tuning.
-- `Profile` keeps the primary profile and profile list on-page while the actual editor opens in a same-tab drawer.
-- `Power Tools` and `Extension Lab` remain available, but they are intentionally treated as operator surfaces instead of part of the normal first-run journey.
-- Browser workspace state is URL-scoped through `workspace=<id>`, so separate tabs can keep independent draft/progress state.
-- `mode=live` uses the real settings, profiles, job log, outputs, and Gmail workflow.
-- `mode=shadow` is the explicit isolated test mode for development and browser automation. It uses separate state roots and never silently falls back to live data.
-- Gmail extension handoff is same-tab for `workspace=gmail-intake`: the native host/runtime prepares the live server, the extension redirects the current Gmail tab to the fixed browser workspace, posts `/gmail-intake` after redirect commit, and stores `source_gmail_url` so `Return to Gmail` restores the original message.
-- Browser client hydration and `asset_version` proof still guard stale browser assets, but Gmail bridge context must not be stranded behind hydration; diagnostics must show `bridge_context_posted=true` for an accepted click.
-- Browser JS/CSS/module-worker assets now ship under one runtime `asset_version` so the whole module graph invalidates together. The extension compares server and client `asset_version` values and allows one exact-tab reload before declaring stale-browser-asset failure.
-- The static browser frontend is intentionally modular: `app.js`, `gmail.js`, `translation.js`, and `power-tools.js` coordinate state, API calls, routing, and side effects; focused `*_ui.js` modules own safe DOM writes; and focused `*_presentation.js` modules derive labels, status, and card data. Future browser modernization should preserve that boundary.
-- Port `8877` remains the canonical daily-use/live/Gmail browser port; port `8888` is reserved for fixed branch-review previews so stale review tabs and normal work tabs do not collide.
-- The preview port on `8888` never owns the real live Gmail bridge. Live Gmail extension handoff always points back to the canonical browser app on `8877`.
-- `Extension Lab` is a diagnostics and simulation companion for the real Gmail extension. It does not replace the extension itself.
+The primary product is a **local browser app**, producing editable DOCX translations from Portuguese into EN, FR or AR. Translation PDFs/PNGs are internal review evidence. Honorários generation and its Word-to-PDF export are a separate feature.
 
-## Desktop UI Shell
-- The desktop app now uses a dashboard-style shell instead of the older stacked utility card.
-- Each top-level app window is an independent workspace under one `QApplication`.
-- Main visible regions:
-  - left sidebar: `Dashboard`, `New Job`, `Recent Jobs`, `Settings`, `Profile`
-  - hero row: centered `LegalPDF Translate` title and right-aligned status text
-  - left card: `Job Setup`
-  - right card: `Run Status`
-  - bottom action rail: `Start Translate`, `Cancel`, `...`
-- `Advanced Settings` stays collapsed by default inside the setup card, with a compact info affordance for extra guidance.
-- Review Queue and Save to Job Log remain available from the `Tools` menu; the `...` menu keeps output/report/job-log actions.
-- Workspace titles show `Workspace N` and can add the current source filename as a hint so parallel windows stay distinguishable.
-- The shell uses three responsive layout modes:
-  - `desktop_exact`
-  - `desktop_compact`
-  - `stacked_compact`
-- `Settings > Appearance > Theme` is now a real live runtime choice:
-  - `dark_futuristic`: the elevated default with stronger translucent depth and cyan-accent glow
-  - `dark_simple`: a toned-down darker variant built from the same shared style system
-- The dashboard plus the shared dialog/tool surfaces (`Settings` appearance/glossary/study/diagnostics tabs, Gmail review/preview, glossary editor, glossary builder, calibration audit, Save/Edit Job Log, and honorários export) now share one centralized elevated/translucent visual language from `src/legalpdf_translate/qt_gui/styles.py` instead of drifting through local widget styling.
-- Top-level fixed-vocabulary selectors in the shell, settings/admin tabs, and glossary/calibration tool dialogs now use guarded non-editable combos/spins; dense table-local editors keep their existing local combo contract.
-- Top-level windows and major dialogs now use shared screen-bounded sizing via `src/legalpdf_translate/qt_gui/window_adaptive.py`.
-- Main-shell resize work is deferred/coalesced so live resizing stays stable; the hero row also reserves width for the status label so short states such as `Idle` are not clipped during narrow-width transitions.
-- The beginner-first primary-flow cleanup also keeps the shell lighter by default: `Run Status` uses shorter visible copy, the always-visible output-format line is hidden, Gmail review compresses provenance/output detail behind an info button, interpretation Job Log uses compact `+` vocabulary buttons plus a default-collapsed `SERVICE` section, and interpretation honorários export now uses `SERVICE`, `TEXT`, and `RECIPIENT` disclosure sections.
+| Surface | Ownership and purpose |
+| --- | --- |
+| Browser `live`, port 8877 | Real settings, profiles, job log, outputs and authorized Gmail workflows on canonical main. |
+| Browser `shadow` | Isolated development/test state. Verify the actual build and owned data roots; the word shadow is not by itself a network/native safety boundary. |
+| Gmail bridge, port 8765 | Exact-message extension handoff, canonical live owner only. No live Gmail actions without explicit scope. |
+| Qt | Supported secondary desktop shell/fallback; use the existing build-identity launcher when reviewing Qt. |
+| CLI and queue | Existing translation, resume, rebuild and sequential queue entry points. |
 
-## Core Runtime Modules
-- `src/legalpdf_translate/workflow.py`: translation pipeline orchestration.
-- `src/legalpdf_translate/new_translation_blocks.py`: isolated opt-in adapter from the existing source winner to exact translated block IDs; `translation_structure.py`, `structured_arabic_literals.py` and `structured_glossary.py` own strict protocol/literal/glossary rules. `structured_artifacts.py` publishes hash-bound page bundles commit-last.
-- `src/legalpdf_translate/legal_header_glossary.py`: shared Portuguese legal-header catalog, normalization, and institutional phrase matching for EN/FR/AR glossary injection plus metadata extraction.
-- `src/legalpdf_translate/cost_guardrails.py`: deterministic pre-run/post-run cost estimation and budget decisions.
-- `src/legalpdf_translate/queue_runner.py`: sequential queue execution, checkpointing, and queue summaries.
-- `src/legalpdf_translate/review_export.py`: review queue export to CSV and Markdown.
-- `src/legalpdf_translate/gmail_intake.py`: localhost Gmail message intake bridge for exact-message handoff.
-- `src/legalpdf_translate/gmail_batch.py`: exact-message Gmail fetch, attachment filtering/download, and batch-state orchestration helpers.
-- `src/legalpdf_translate/gmail_draft.py`: Windows `gog` Gmail prerequisite checks and draft creation helpers.
-- `src/legalpdf_translate/google_photos_oauth.py`: Google Photos Picker OAuth configuration, source-aware env resolution, safe callback diagnostics, and token storage separate from Gmail.
-- `src/legalpdf_translate/google_photos_picker.py`: Google Photos Picker session create/get/list/delete client and sanitized metadata normalization.
-- `src/legalpdf_translate/interpretation_google_photos.py`: Interpretation-only selected-photo import orchestration into the existing photo/OCR autofill pipeline.
-- `src/legalpdf_translate/workflow_components/contracts.py`: typed workflow internal contracts.
-- `src/legalpdf_translate/workflow_components/evaluation.py`: output-evaluation and retry-reason delegation.
-- `src/legalpdf_translate/workflow_components/quality_risk.py`: deterministic quality risk scoring and review queue construction.
-- `src/legalpdf_translate/workflow_components/ocr_advisor.py`: deterministic OCR/image recommendation logic.
-- `src/legalpdf_translate/workflow_components/summary.py`: run-summary and cost/suspected-cause delegation.
-- `src/legalpdf_translate/cli.py`: CLI parsing/execution.
-- `src/legalpdf_translate/qt_gui/app_window.py`: main GUI workflow orchestration.
-- `src/legalpdf_translate/qt_gui/window_adaptive.py`: shared screen-bounded top-level sizing, deferred resize callbacks, and collapsible section helpers.
-- `src/legalpdf_translate/openai_client.py`: OpenAI transport and retry handling.
-- `src/legalpdf_translate/ocr_engine.py`: OCR routing and policy.
-- `src/legalpdf_translate/docx_writer.py`: DOCX output construction, with evidence-bound layout, spacing and section furniture in `document_layout.py`, `document_spacing.py`, `section_furniture.py`, `formatting_support.py` and `layout_integration.py`.
-- `src/legalpdf_translate/word_automation.py`: shared Word readiness/export entrypoints; `word_pdf_script.py` owns the isolated native helper, `word_process_start.py` owns direct hidden launch and the retained process handle, `word_pdf_control.py` owns serialization/recovery, and `word_pdf_artifacts.py` owns staged-source and fresh-PDF verification.
-- `src/legalpdf_translate/joblog_db.py`: SQLite schema and migrations for job logging.
-- `src/legalpdf_translate/user_settings.py`: settings schema and persistence.
+Browser navigation keeps `New Job`, `Recent Jobs`, conditional `Gmail` and `More` as the main surface. `#new-job` and `#gmail-intake` retain their existing meanings. Mode/workspace ownership applies to jobs, actions, uploads and artifacts. Static assets form a versioned startup snapshot; a reload of an old server does not prove new CSS/JS was served.
 
-## Primary User Journeys
-1. Translate a PDF to EN/FR/AR.
-2. Analyze-only extraction preflight without translation API calls.
-3. Resume interrupted runs from checkpoint artifacts.
-4. Rebuild DOCX from existing page outputs.
-5. Use glossary and diagnostics workflows for consistency and QA.
-6. Optionally apply CLI budget guardrails (`warn` continue or `block` before page processing).
-7. Run analyze-only first and inspect/apply an OCR advisor recommendation before translation.
-8. Inspect or export a Review Queue when high-risk pages are flagged.
-9. Save completed runs to the Job Log with prefilled run metrics.
-10. Review historical Job Log rows, edit them inline or through the full dialog, delete mistaken rows with confirmation, and resize the table for dense saved data.
-11. Execute a queue manifest with checkpoint-aware resume and failed-only rerun behavior.
-12. Start from an open Gmail message in Edge/Chromium, let the native host auto-start the configured checkout when needed, review supported attachments from that exact email, then either run the translation batch flow or handle one interpretation notice attachment, with mandatory Save-to-Job-Log confirmation before the related honorarios and Gmail draft finalization and the ability to redo the current unconfirmed Gmail attachment from the same live workspace without a cold start.
-13. Open multiple workspaces and translate different jobs in parallel without interrupting the current run.
-14. Create or edit interpretation Job Log rows manually, from a notification PDF, from a photo/screenshot, from one selected Google Photos image, or from a Gmail notice attachment, then generate the interpretation honorarios DOCX plus sibling PDF locally, create a fresh Gmail draft from the saved row, or create a threaded Gmail reply draft when the flow started from Gmail intake.
+## Translation and review data flow
 
-Recurring Portuguese court/prosecution headers now use a shared phrase-level institutional catalog across EN, FR, and AR. The translation workflow injects matched header phrases ahead of generic glossary rows, and metadata/header extraction reuses the same matcher so `case_entity` prefers the most specific institutional line instead of falling back to looser regex hits or contact-block noise. When a local court unit such as `Juízo de Competência Genérica de Cuba` conflicts with broader district text such as `Comarca de Beja`, Gmail translation save seeds, Job Log rows, honorários DOCX/PDF output, and Gmail finalization use the local unit city (`Cuba`) while preserving the exact extracted court email.
+1. The form/CLI builds a `RunConfig` from explicit input and saved settings. Source selection, OCR policy, retention, output formatting and costs must not be changed silently.
+2. `TranslationWorkflow` serializes operations on the actual run directory, binds checkpoint/resume identity and accounts for provider dispatches. The ordinary path and private acceptance continuation have distinct authority.
+3. The optional public source-review service retains genuine local TXT/TSV/image evidence and explicit decisions. `OrdinaryReviewedSourceContext` binds the immutable revision to the per-run structured protocol. It verifies source identity before dispatch, on transport retries and before publication.
+4. Structured page artifacts bind source/target IDs, protocol identity and commits. Missing or changed evidence fails or declines explicitly; it is not reconstructed into accepted provenance.
+5. Ordinary export/rebuild collects source layout evidence and preserves historical findings/accounting. An explicitly selected reviewed revision can produce a separate validated editable DOCX derivative. Unsupported profiles use the documented decline/fallback path.
+6. Browser source/formatting managers expose owned review handles and exact operation associations. The UI collects decisions; it never supplies authoritative hashes or evidence paths. A reload can recover only a server-associated operation; process-owned handles are not restored automatically after server restart.
 
-Arabic legal-term hardening now adds a second narrow prompt-first layer on top of that shared institutional seeding: `O Juiz de Direito` is injected as a priority legal title, Portuguese legal citation abbreviations such as `n.º`, `alínea`, and `p. e p. pelos arts.` are canonicalized before glossary matching and diagnostics, `registo criminal` terminology is harmonized on the `السجل العدلي` family, and Arabic quality-risk scoring now consumes persisted numeric/citation/bidi validation counters instead of staying artificially low on citation-heavy runs.
+## Runtime map
 
-## Output and Run Artifacts
+| Responsibility | Main files under `src/legalpdf_translate/` |
+| --- | --- |
+| Form/jobs/browser API | `translation_service.py`, `shadow_web/app.py`, `shadow_web/source_review_api.py`, `shadow_web/formatting_review_api.py` |
+| Translation orchestration/resume | `workflow.py`, `checkpoint.py`, `new_translation_blocks.py`, `run_workspace_lock.py` |
+| Protocol and faithful literals | `translation_structure.py`, `structured_artifacts.py`, `structured_arabic_literals.py`, `structured_arabic_entities.py`, `structured_glossary.py` |
+| Source/OCR policy and review | `ocr_engine.py`, `source_readiness.py`, `reviewed_source.py`, `source_review_candidate.py`, `ordinary_source_review_service.py`, `ordinary_reviewed_source.py` |
+| Every-call cost and limits | `openai_client.py`, `usage_accounting.py`, `accounting_policy.py`, `budget_reservations.py`, `cost_guardrails.py` |
+| Editable DOCX and mappings | `docx_writer.py`, `layout_integration.py`, `run_docx_formatting.py`, `ordinary_formatting_review_service.py`, `reviewed_formatting.py`, `reviewed_regions.py` and their writers |
+| Owned browser review | `browser_source_review.py`, `browser_formatting_review.py`, `shadow_web/static/source_review*.js`, `shadow_web/static/formatting_review*.js` |
+| Summaries and user review | `run_report.py`, `translation_diagnostics.py`, `review_export.py`, `workflow_components/` |
+| Persistence and queues | `user_settings.py`, `joblog_db.py`, `queue_runner.py` |
+| Gmail and interpretation | `gmail_intake.py`, `gmail_batch.py`, `gmail_draft.py`, `interpretation_google_photos.py` |
+| Native honorários export | `word_automation.py`, `word_process_start.py`, `word_pdf_control.py`, `word_pdf_artifacts.py` |
 
-Accepted footer/native-safeguard release: the user approved the one-page Arabic v18 Word-rendered pilot, authorized `NEXT_STAGE_4`, and subsequently explicitly approved publication, merge after checks and app verification. The [completed footer-spacing integration ExecPlan](docs/assistant/exec_plans/completed/2026-09-09_footer_spacing_integration.md) records the clean subset from `main@ec406dac`. Local validation passed: 615 focused tests, 2,492 full-suite tests and serial `validate_dev.ps1 -Full`, including successful direct-Dart fallback. Verify actual GitHub checks, merge and canonical-build verification before claiming deployment; approval and local validation alone do not establish those outcomes. Pilot acceptance is not a whole-document, language or model benchmark.
+Private acceptance modules/tooling enforce their own declared provenance, budget and consumed-operation contracts. They are not a shortcut for ordinary user review. The original lifetime acceptance ledger and Word journal must be preserved, never reset or replaced to bypass a failed operation.
 
-The follow-up formatting changes apply only to compact reflow (`page_breaks=False`) with complete matching source/target sidecars. They preserve source-based gaps and printed-folio provenance and allow a proven contact-only footer in a complete isolated single-source-page output. This exception does not adopt an isolated header, infer furniture from a partial preview, or move substantive text into a footer. Different, absent and uncertain section furniture remains independent; explicit page matching and fresh TXT-only production behavior remain unchanged.
+## Reviewed formatting limits
 
-The approved compact Word writer is a formatting-only release. It uses Arial 11 pt for Arabic and Times New Roman 10.5 pt for English/French, approximately 1.7 cm side margins and 1.5 cm starting vertical margins, coherent mixed-script runs, and real Word PAGE fields. Explicit source-page breaks remain supported. No model IDs, efforts, translation prompts, OCR routing, paid review/correction, glossary/calibration behavior or API accounting changed with this release.
+The current ordinary browser review requires a genuine complete browser-image source profile and explicit source/target mappings. Local source acquisition preserves OCR policy and requires retained local evidence. Digital/OCR-only provenance, partial selections and incompatible preferences can decline honestly. A page-matched derivative is an explicit choice that preserves original `page_breaks=False`; it is not a global preference change. Source-supported gutters, measured vertical spacing, table-cell ownership, document groups and local folios require review. Geometry uncertainty and unassessed rendered layout stay visible.
 
-Source-aware formatting is evidence-gated: complete matching source/target structure sidecars enable editable notice regions, tables, bounded source paragraph gaps and independent Word sections for repeated court headers/contact footers. Different, absent, uncertain and separate-document furniture does not inherit an earlier section's identity. Canonical repeated wording retains every original source ID and translation variant in the source map; unresolved variants and layout limitations enter the existing review workflow. Arabic structured body/list paragraphs use modest automatic 1.10 leading where exact source line metrics are unavailable. Substantive and unproven one-off material stays in the body.
+Final delivery must preserve legal meaning and complete content. Do not shorten text or shrink fonts to meet a page target. Review the actual output before delivery; a valid package or completed model response is not legal certification.
 
-Current production translation still returns page TXT, not source-associated translated blocks. New TXT runs receive conservative readable typography/RTL/PAGE defaults, but the writer never invents source/target alignment from matching paragraph counts or numbers. Full source-aware layout is available for retained, validated structured runs through local rebuilds. The structured translation/model-quality project remains separate and unpromoted. Rebuilds reuse saved translations, preserve historical usage/review evidence, and do not construct API/OCR clients. Source-map rendered page counts remain unknown until measured in Word.
+## Where to go next
 
-The `codex/structured-new-translations` publication candidate connects fresh runs to this formatter through `TranslationWorkflow(translation_protocol="legal_blocks_v2")`, or the internal `LEGALPDF_TRANSLATION_PROTOCOL` environment selection. Ordinary launches still default to `legacy_text_v1`; the verification process's session-only flag is not durable production activation or a new browser/CLI submitted value. Saved checkpoint identity wins for an implicit resume; explicit conflicts fail before writes/authentication. Browser service/routes, CLI/queue and Qt callers share the same coordinator. See [the new-run implementation and publication closeout](docs/assistant/exec_plans/completed/2026-09-09_structured_new_translations.md) for measured evidence and remaining lifecycle checks. Canonical `main` at `C:/Users/FA507/.codex/legalpdf_translate` remains routine app authority; the isolated task branch is a publication candidate until actual merge verification.
-
-The candidate retains all selected digital source blocks and passive TSV evidence from the same winning local OCR pass. It adds no OCR pass/provider and does not replace OCR/model/effort routing. Exact source-token mismatch discards geometry, not the chosen text. API-only/plain OCR and uncertain column order remain layout-review-required. Neighbor context is bounded to 600 characters per side, only from selected direct-text pages proven authoritative; it cannot trigger extra OCR. Strict Responses JSON coverage is checked separately from refusal/incomplete status. At most one source-grounded correction follows a demonstrated block defect; unsuccessful/cancelled responses retain available usage and never become completed pages.
-
-Structured pages retain TXT plus matching source/target sidecars and a commit-last manifest with an outcome receipt. Resume verifies identity and every bundle; complete commit-before-checkpoint crashes recover without translating again. Missing/corrupt/mixed evidence is preserved for explicit recovery, never silently cleared. Final/partial/rebuild assembly whitelists verified completed pages and derives confirmed source continuations in memory without rewriting bound artifacts. A TXT-only manual edit blocks resume but can rebuild to a new editable DOCX with explicit review; prior DOCX edits are not imported or overwritten. Formatting-only settings do not invalidate translation reuse. Disabling intermediate retention marks evidence purged and prevents later structured resume/rebuild, while retaining the final DOCX.
-
-Block IDs/numeric checks are not legal acceptance: all candidate pages retain `fidelity_review_required` with `not_evaluated` status in the existing review queue. Same-ID omissions and unfamiliar event labels cannot count as proven equivalence. Available provider tokens, cached breakdowns and failed attempts are retained; structured summaries explicitly mark all-call cost `not_evaluated_all_calls` and do not quote a total cost or savings. OCR/auth/cache/uncertain-failure accounting and the original lifetime USD10 reservation gate must be checked before any paid acceptance run. Stage 2 uses fake providers only; Stage 3, whole-document Word review, human language approval and model/cost promotion remain separate.
-
-Historical first Stage 3 on 2026-09-09 blocked rollout of that earlier candidate. Actual browser upload uses raster bundles, and the unchanged local OCR policy marked source reading order uncertain; its layout derivation and furniture admission therefore left headers/contact footers in body flow. One complete synthetic EN control (26 blocks) reproduced this in its Word-rendered output. The AR validator also rejected exact source-preserved names after `Destinatário` and inside table-like content because those source-name contexts were not recognized. These were app-integration/validation defects, not evidence for changing model effort. The corrective implementation and bounded acceptance below supersede that rollout blocker, not the retained failure evidence; no paid model or full-reference acceptance is claimed.
-
-The authorized corrective Stage 2 adds contextual, source-exact Arabic person-name protection and versioned same-pass OCR word evidence. A separate `local_ocr_simple_flow_v1` eligibility derivative binds the source file, browser raster, exact rendered OCR input, selected text, word ownership/confidence and geometry. It admits only simple flow to the existing section-furniture and confirmed-continuation rules; it never clears source uncertainty or infers semantic tables/columns. Low-confidence, ambiguous, ruled or incompletely explained scans remain review-required. Original source/target/TXT/commit bytes remain unchanged during format-only rebuilding. Old sidecars without sufficient word evidence cannot acquire eligibility by changing a flag. Production protocol/model and provider routing remain unchanged.
-
-Clock corrective Stage 3 native layout verification passed on the then-frozen 46-file candidate that passed 3,322 full tests. Three public formatting-only rebuilds from copied saved synthetic browser runs preserved original source/TXT/targets/history, usage and fidelity evidence. Every uncompressed DOCX package entry in English/French matches its previously Word-reviewed original; Arabic changes only body XML, grouping `09:30` into one LTR run without altering visible text, fonts, names, headers or footer. The user's explicit `yes` authorized one 45-second/no-retry Arabic Word check; it succeeded in 6.183 seconds with confirmed owned-process cleanup and unchanged pre-existing process identities. Full-page inspection by two reviewers and physical PDF glyph coordinates confirm `09:30`, intact accented names, clear header spacing and a bottom footer on one synthetic A4 page. That authority is consumed; preserve the advanced original safety journal and all historical failure evidence. The user approved the corrected Arabic preview with `looks right` on 2026-09-09, completing this bounded layout acceptance. This does not establish real legal quality, full private-reference page counts or savings. The separate pre-manager Arabic auto-open HTTP retry issue remains outside this correction.
-
-Current Stage 4: publication and canonical verification are explicitly authorized. Final source-grapheme hardening uses `structured_arabic_literals_v5_exact_source_graphemes` in a bounded two-file source/test delta. Its 318 focused tests passed in 7.39s; final full pytest passed 3,391 tests in 428.49s, and independent review is clear. Serial release validation passed with exit code 0; the known Dart AOT wrapper issue used a successful direct-Dart fallback. The prior 46-file digest and totals remain historical evidence. Complete the explicitly authorized publication workflow: require observed green GitHub checks, then verify canonical `main` and perform only safe scoped cleanup. No GitHub CI result, merge or post-merge smoke is claimed by this branch documentation. Ordinary launch policy remains legacy by default; neither publication approval nor the session-only verification flag authorizes durable activation, paid evaluation, another native call or host repair.
-
-Translations stay DOCX. Internal PDF/PNG layout checks are not a required translation export. The formatting-only release did not change honorarios export; the separate, now-accepted honorarios PDF repair is described below and preserves the existing Gmail gates.
-Run artifacts live under:
-- manual/local runs: `<outdir>/<pdf_stem>_<LANG>_run/`
-- Gmail-started translation runs: `<outdir>/<pdf_stem>_gmail_<session_token>_p<start_page>_<attachment_token>_run/`
-
-The Gmail-scoped run directory keeps fresh Gmail starts from colliding with legacy generic folders such as `Auto_FR_run`.
-
-Typical files:
-- `pages/page_XXXX.txt`
-- `run_state.json`
-- `run_summary.json`
-- `run_report.md` (when generated)
-- `run_events.jsonl`
-- `analyze_report.json` (analyze-only)
-
-For browser translation jobs, `Generate Run Report` now writes or refreshes the same `<run_dir>/run_report.md`, triggers a one-time download immediately, and leaves a persistent `Download Run Report` artifact link in the completion drawer for repeat access. The human-readable report now labels `run tokens` separately from `billed total (includes reasoning)` so token counts do not look contradictory.
-
-For Gmail-started runs, that same `run_report.md` now preserves the `Gmail Intake / Batch Context` section even when you generate it at the Arabic review/save gate before Gmail finalization.
-
-When a run comes from Gmail intake, the effective output directory also gains durable Gmail session diagnostics:
-- `<outdir>/_gmail_batch_sessions/<session_id>/gmail_batch_session.json`
-- `<outdir>/_gmail_interpretation_sessions/<session_id>/gmail_interpretation_session.json`
-
-`run_summary.json` keeps existing totals and now also supports additive cost/risk/advisor fields:
-- `cost_estimation_status`
-- `cost_profile_id`
-- `budget_cap_usd`
-- `budget_decision`
-- `budget_decision_reason`
-- `budget_pre_run`
-- `budget_post_run`
-- `quality_risk_score`
-- `review_queue_count`
-- `review_queue`
-- `advisor_recommendation_applied`
-- `advisor_recommendation`
-- `failure_context`
-- `gmail_batch_context`
-
-When present, `gmail_batch_context` records the selected Gmail attachment filename/count, the Gmail intake workflow kind, the translation target language when that workflow is `translation`, the selected start page for that run, and the durable Gmail batch session report path. Gmail-originated reruns now preserve that context through the same live runtime by clearing conflicting manual-upload state before submit, so rerun reports do not silently lose Gmail provenance.
-
-For Arabic target runs, persisted page-validation metadata now also feeds the quality-risk layer with numeric mismatch, citation mismatch, structure warning, bidi warning, bidi-control, and replacement-character counts so `quality_risk_score` and `review_queue` better reflect citation-heavy or mixed-direction risk.
-
-`failure_context` is used for bounded OCR/runtime failure reporting and includes:
-- `request_type`
-- `request_timeout_budget_seconds`
-- `request_elapsed_before_failure_seconds`
-- `cancel_requested_before_failure`
-- `exception_class`
-
-For larger host-bound workflows, keep these per-run artifacts primary. If a feature later adds a broader handoff/finalization session layer, route it through `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md` and keep any additive `workflow_context` or session artifact secondary to the run report/summary.
-
-`analyze_report.json` now also supports additive OCR advisor keys:
-- `recommended_ocr_mode`
-- `recommended_image_mode`
-- `recommendation_reasons`
-- `confidence`
-- `advisor_track`
-
-Queue manifests create sidecar artifacts beside the manifest file:
-- `<manifest_stem>.queue_checkpoint.json`
-- `<manifest_stem>.queue_summary.json`
-
-## Persistence Notes
-- The browser app now has two explicit runtime/storage modes:
-  - `live`: real settings, profiles, job log, outputs, and Gmail-linked flows
-  - `shadow`: isolated test data keyed per build/worktree identity
-- Browser runtime metadata records the active mode, workspace, build identity, listener ownership, and bridge provenance so live vs isolated runs stay diagnosable.
-- Browser shell/bootstrap state now also records additive asset provenance:
-  - `build_sha` for build identity
-  - runtime `asset_version` for the served browser asset graph
-  - client-ready hydration markers that the extension can probe on the opened localhost tab
-- The job log SQLite schema now includes additive run-metric/risk columns: `run_id`, `target_lang`, `total_tokens`, `estimated_api_cost`, and `quality_risk_score`.
-- The job log also stores additive translation artifact paths for Gmail/honorarios reuse: `output_docx_path` and `partial_docx_path`.
-- Job-form draft edits are workspace-local session state. Shared settings now persist launch fields only when a task explicitly starts, so closing or resetting one workspace does not write another window's draft inputs back into `settings.json`.
-- Gmail intake bridge settings persist in GUI settings as `gmail_intake_bridge_enabled`, `gmail_intake_bridge_token`, and `gmail_intake_port`.
-- When the browser server is running, the browser app is the primary live Gmail bridge owner. The real extension/native host now prepares the browser server, while the extension owns the visible Gmail surface by redirecting the current Gmail tab into `gmail-intake`.
-- The browser-owned live Gmail bridge uses the fixed live browser workspace `gmail-intake`. A successful Gmail click must end with the same tab at `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake...`, `bridge_context_posted=true`, and a current `handoff_session_id`.
-- Rejected or failed `/gmail-intake` posts stay fail-closed in Gmail and show the browser-page banner error instead of spawning the browser app workspace.
-- Canonical live Edge native-host registration now targets the no-console launcher EXE at `dist\\legalpdf_translate\\LegalPDFGmailFocusHost.exe`; the old `.cmd` wrapper is diagnostic fallback only and must not be the canonical live target because it can create visible CMD/PseudoConsole churn.
-- Noncanonical live runtimes can no longer rewrite the app-data native-host wrapper or manifest to themselves. Live Gmail stays blocked until the runtime restarts into canonical `main`.
-- Browser live-bridge ownership is now guarded by port: noncanonical live listeners such as the fixed review preview on `8888` skip bridge registration and direct the extension back to the canonical live browser URL on `8877`.
-- In normal app launches, the Gmail intake bridge is app-level. It reuses the last active workspace only when that workspace is idle and pristine; otherwise it opens a new blank workspace for the intake automatically.
-- Multi-window runs share a controller-owned reservation map keyed by the resolved run directory. A second workspace cannot start `translate`, `analyze`, `rebuild`, or `queue` if it would reuse the same run folder as an active workspace.
-- Fresh Gmail prepares clear stale terminal workspace job bindings before they seed `#new-job`, so the next prepared attachment does not stay attached to the previous failed or completed Gmail run.
-- Fresh Gmail prepares seed authoritative defaults for new Gmail starts: `image_mode=auto`, `ocr_mode=auto`, `ocr_engine=local_then_api`, `resume=false`, `keep_intermediates=true`, and those defaults are enforced server-side unless the operator intentionally changes them before `Start Translate`.
-- Fresh Gmail translation runs derive run/checkpoint identity from Gmail attachment scope (`session_id`, `attachment_id`, `selected_start_page`, and target language), so generic folders such as `Auto_FR_run` are not valid fresh-start resume targets.
-- Gmail intake translation batches now write one durable app-owned session report at `<effective_outdir>/_gmail_batch_sessions/<session_id>/gmail_batch_session.json`.
-- Gmail intake interpretation notice runs now write one durable app-owned session report at `<effective_outdir>/_gmail_interpretation_sessions/<session_id>/gmail_interpretation_session.json`.
-  - These reports are the main cross-run/debug bridge between browser handoff, Save-to-Job-Log confirmation, honorários export, and Gmail draft finalization.
-  - The browser extension does not write its own report file.
-- Browser/operator diagnostics can now also generate:
-  - a browser failure report when Gmail/browser preparation fails before a translation run creates a `run_dir`
-  - a Gmail finalization report whenever the last-step Gmail finalization state is blocked or completed, including successful `draft_ready` completion
-  - for translation runs, a first-class `run_report.md` artifact in the run folder that the completion drawer can generate/refresh directly and serve back through `Download Run Report`
-- Save-to-Job-Log pre-fills those values from `run_summary.json` when available, while preserving user edit control before save.
-- Save-to-Job-Log now also exposes `Open translated DOCX`, which reopens the resolved final or partial DOCX for the current run without leaving the dialog.
-- Save-to-Job-Log now uses a scrollable form body with a fixed action row so create/edit flows stay usable on smaller screens without hiding `Save`, `Cancel`, `Open translated DOCX`, or the honorários action.
-- In that dialog, `Run Metrics` and `Amounts` start collapsed by default on every open; the main case/service/edit fields remain visible first.
-- The same Job Log payload normalization now backs create-mode save, historical full-dialog edit mode, and inline row editing, so numeric/date validation and `expected_total` / `profit` recalculation stay aligned.
-- Job Log `Words` now means translated output words, with precedence: final DOCX, then partial DOCX, then `pages/page_*.txt`, then `0`.
-- `expected_total` and `profit` in the Save-to-Job-Log flow are recalculated from that translated-output word count.
-- Existing Job Log rows can now be updated in place either through the full `Edit Job Log Entry` dialog or by double-clicking visible cells for row-scoped inline editing.
-- The Job Log window now uses a fixed `Actions` column with icon-based edit/delete controls; row deletion is confirmation-gated and only one row can be inline-edited at a time.
-- Historical Job Log editing no longer requires the original `pdf_path`. Translation rows simply disable `Autofill from PDF header` when no source PDF is available, while interpretation rows can still use `Autofill from PDF header` through a manual PDF picker fallback; `Open translated DOCX` still works when stored translated DOCX paths resolve.
-- Job Log columns now auto-fit visible headers by default, remain user-resizable, persist their widths in settings, and overflow through a horizontal scrollbar instead of squeezing the table to the viewport.
-- Save/Edit Job Log now uses selection-only guarded combos for fixed vocab fields such as `Job type`, `Lang`, and case/service entity or city; `Court Email` stays editable.
-- Editable Job Log and honorários dates now use one shared Monday-first calendar picker while still accepting manual `YYYY-MM-DD` typing. The same shared control also backs inline Job Log date editing.
-- The Job Log now supports additive interpretation fields and behavior on top of translation rows:
-  - `job_type == "Interpretation"` switches the full dialog to interpretation-first editing
-  - blank/manual interpretation rows can be opened from `Job Log > Add... > Blank/manual interpretation entry`
-  - the main window also exposes `Tools > New Interpretation Honorários...` and the same footer-overflow action for the save-first no-document path
-  - interpretation notification imports keep the local `pdf_path` when present
-  - interpretation photo imports stay image-only and do not create a PDF-backed row contract
-  - interpretation photo/screenshot imports tolerate missing service entity or city values and keep the form editable instead of failing autofill
-  - Google Photos interpretation imports use the Picker API with the minimal `photospicker.mediaitems.readonly` scope, create a Picker session, open the Google Photos Picker or visible fallback, poll until `mediaItemsSet=true`, list the selected media item, download the selected image bytes, and feed the existing photo/OCR autofill path
-  - Google Photos `createTime` and downloaded EXIF dates are safe photo-date provenance only; OCR/legal text still wins, but the photo date may prefill `service_date` as an editable fallback when OCR does not recover a legal date
-  - Google Photos place/location labels and downloaded EXIF GPS are not supported facts in the current validation state; `service_city` and `case_city` must come from OCR/document evidence or explicit user selection
-  - Google Photos/photo review now rejects placeholder and address/title fragments for city/entity fields, recovers service-turn evidence such as `Serviço de Turno | Moura`, and does not silently default blank service city/KM to the case city
-  - Review Case Details uses city-aware court-email options, a controlled service-entity selector, top-level add-city/add-email dialogs, and service-city distance refresh so switching the service city updates the one-way KM when the profile has a saved value
-  - translation-only inputs are hidden in interpretation mode instead of shown as inactive clutter
-  - the primary visible date in interpretation mode is the service date
-  - interpretation distance is shown as one visible one-way value in the UI, keyed by `service_city`, and mirrored internally into outbound/return storage for compatibility
-  - `Service same as Case` defaults on for interpretation unless an explicit different service location already exists; Google Photos/photo imports set it only when recovered service-city evidence matches the case city
-  - interpretation edit mode now collapses `SERVICE` by default when it simply mirrors the case, and saved entity/city add actions use compact `+` buttons plus inline help affordances instead of long visible helper copy
-  - profile-backed distance defaults are reused automatically by service city, and newly entered one-way values are persisted back to that profile-city mapping on save
-- Interpretation honorarios now use a kind-aware document branch:
-  - manual interpretation rows can generate honorários from the Job Log dialog or from the save-first `Tools > New Interpretation Honorários...` quick action
-  - notification PDF and photo/screenshot imports prefill interpretation case/service values before the user confirms the row
-  - interpretation honorarios exports use the responsive/scrollable profile-backed export dialog, keep the general case/profile inputs visible first through `SERVICE`, `TEXT`, and `RECIPIENT` disclosure sections, save a DOCX first, then attempt a sibling PDF immediately without blocking the main UI
-  - the export dialog keeps `Include transport/distance sentence in honorários text` on by default, but you can turn it off when transport is being handled separately and the generated text should omit that clause
-  - generated interpretation honorários now auto-complete a missing case city in generic court addressees, use the revised one-line-IBAN / centered `Espera deferimento,` closing block, keep `service_date` in the body, and use the document creation day in the footer date line before the signature
-  - when automatic PDF export fails, the dialog keeps the saved DOCX usable locally and offers retry/select-existing-PDF/open-folder recovery before any Gmail draft path is allowed to continue
-  - manual/local interpretation exports can offer a fresh non-threaded Gmail draft when `Court Email`, Gmail prerequisites, and the generated honorários PDF are all available
-  - Gmail-started interpretation notice intake can create one threaded Gmail reply draft with the generated honorários PDF only
-  - when the originating Gmail message explicitly states a reply address, that address overrides weaker derived recipient guesses in the browser Gmail finalization flow
-  - browser interpretation save/export/finalization now guards service-city and distance integrity: unknown cities and transport `0 km` exports are blocked until the operator confirms or adds a valid city/distance pair
-- Gmail draft attachment reuse for honorarios now prefers known translated output artifacts in this order: final DOCX path, partial DOCX path, exact `run_id` recovery, then a manual `.docx` picker only as the final fallback.
-- If a legacy historical row needs one manual translated-DOCX selection, the app persists that choice back into the row so the picker should not appear again for that same row.
-- Gmail intake batch downloads, interpretation-notice staging data, and confirmed per-item results are kept in memory only for the active Gmail intake session. They are cleared on reset, failure paths, app shutdown, or successful finalization.
-- Browser Gmail translation jobs now persist additive `gmail_batch_context` identity on the run config so the same live runtime can detect when the current attachment was already run and can offer `Redo Current Attachment` without resetting the whole Gmail workspace.
-- Gmail extension clicks now prefer a fresh handoff over any recovered finalized batch. Previously finalized Gmail translation batches remain available only as secondary recovered history through `Open Last Finalization Result`.
-- Gmail batch draft finalization uses an immutable staged copy of each translated DOCX rather than trusting the mutable user-facing output path directly.
-- Gmail honorários drafts now require the generated honorários PDF:
-  - translation reply drafts attach the translated DOCX files plus the honorários PDF
-  - Gmail-intake interpretation reply drafts attach the honorários PDF only
-  - manual/local interpretation drafts attach the honorários PDF only
-- Honorários PDF export now uses a dedicated worker/result flow:
-  - Word PDF export runs off the GUI thread, so long-running Word startup or timeout paths do not freeze the visible Qt shell
-  - PDF failures show a concise warning with expandable technical details instead of a raw inline PowerShell/COM dump
-  - partial-success exports keep one calm recovery flow instead of stacking duplicate Gmail missing-PDF warnings
-  - browser and Qt callers make one initial bounded 45-second export call, without a redundant launch preflight or automatic timeout retry; the existing explicit Qt manual retry retains its 90-second allowance and result/signal contract
-  - the shared exporter starts the resolved Word executable directly and hidden with `/w`, retains the launch handle and requires seven startup identity checks before exact window/document ownership and staged-document opening; it does not attach to the user's active Word instance
-  - a shared lock and content-free phase journal prevent competing export/readiness operations; uncertain cleanup blocks further native work until safe recovery is established, without terminating unknown Word processes or bypassing quarantine
-  - success requires a fresh readable staged PDF and confirmed cleanup before promotion; failures preserve the original DOCX and any previous good PDF, while manual retry, select-existing-PDF and local-only recovery remain available
-
-The separate honorarios repair passed eight actual same-host Word exports in approximately 6-8 seconds each, including canaries, translation-kind and interpretation-kind honorarios, the real isolated browser route, the asynchronous Qt worker, coexistence with an unsaved Word document, an already-open source, and a healthy export after bounded startup-timeout recovery. The six retained honorarios PDFs were one page each, with all twelve substantive paragraphs and every rendered page visually inspected. Source DOCX hashes and tested open Word content/window state were preserved. The browser acceptance used the real route/service/exporter with isolated synthetic paths and a transparent call observer, not a browser-button click or mocked export.
-
-The original acceptance and scoped Docs Sync on `feat/honorarios-pdf-export`, based on `main@9afe1d05577f271a8618969e8f0be31eb8641a3e`, are historical evidence: see [the completed repair ExecPlan](docs/assistant/exec_plans/completed/2026-09-07_honorarios_pdf_export_reliability.md). Its full pytest passed 2,176 tests and `validate_dev.ps1 -Full` passed; those counts do not validate the current footer/native-safeguard integration subset. Verify actual canonical HEAD/PR status for deployment. The pre-existing native small-screen Qt layout-test `0x8001010d` diagnostic remains a separate known limitation; it was not an export failure or silently fixed. No live Gmail action, paid API call, model promotion, legal-text/rate change or translation-PDF workflow was part of that repair.
-
-## Queue Behavior Notes
-- Queue execution is sequential and checkpoint-aware.
-- Queue cancellation is cooperative and leaves untouched jobs resumable instead of converting them into failures.
-
-## Gmail Intake Batch Workflow
-- This workflow is Windows-only and starts from Gmail web in Edge/Chromium, not from a second Gmail OAuth stack inside the app.
-- A Manifest V3 extension on `https://mail.google.com/*` posts exact Gmail message context to a token-protected localhost bridge bound only to `127.0.0.1`.
-- The extension now self-heals stale Gmail tabs by reinjecting its content script when needed and shows visible Gmail-page banner errors instead of failing silently.
-- On real toolbar clicks, the native host prepares or reuses the browser app live server only; it must not launch a browser surface or route through a console-capable wrapper for the Gmail path.
-- After successful native preparation, the extension redirects the current Gmail tab to the live Gmail workspace, waits for redirect commit, posts `/gmail-intake`, and records click diagnostics under the shared launch/handoff session.
-- The intake contract is fail-closed: if the browser cannot identify exactly one open Gmail message, the app is not listening, or the bearer token is wrong, the handoff stops immediately.
-- Failed or rejected localhost POST attempts stay on the current Gmail page and report the problem through the Gmail banner instead of opening a stale or empty browser-app handoff tab.
-- Duplicate or still-in-progress toolbar clicks can show wait guidance only for the same current-tab `handoff_session_id`; stale “already preparing” state from older clicks must be cleared instead of surviving into the next attempt.
-- If the app cannot bind the localhost bridge port, the UI now shows a visible `Gmail intake bridge unavailable` state instead of looking idle.
-- The app fetches only the exact intake message through Windows `gog`, resolves the Gmail account in this order, and no other order:
-  1. explicit Settings `gmail_account_email`
-  2. intake `account_email` if that account is authenticated in `gog`
-  3. single authenticated Gmail account from `gog`
-  4. otherwise stop with a clear Settings/preflight error
-- The attachment review step shows only supported, non-inline attachments from that exact message. Inline/signature/media junk stays hidden.
-- The review dialog first selects the Gmail intake workflow kind:
-  - `Translation` keeps the existing multi-attachment translation batch flow
-  - `Interpretation notice` handles exactly one selected PDF/image court notice that should not be translated
-- The review header now starts with a compact summary banner and keeps sender/account/output-folder provenance behind an inline info button so attachment choices stay primary.
-- The Gmail browser flow no longer uses a persistent session control-center page as the normal path. After handoff, the user moves through one focused intake step and then bounded same-tab drawers for review, save, export, and Gmail finalization.
-- The attachment review step also includes the target-language selector for the whole Gmail batch, and the selected language is pushed back into the main app UI before preparation starts.
-- The review dialog now also supports per-attachment start-page selection and an in-app attachment preview before preparation begins.
-- PDF previews use a lazy continuous-scroll viewer backed by the bundled browser PDF path (`pdf.js`) instead of server-startup `PyMuPDF`. Page `1` is always the default first page to translate; use `Start from this page` only when the batch should begin later. Image attachments remain single-page and always start at page `1`.
-- The Gmail attachment preview now coalesces resize-driven rescaling instead of recomputing scaled preview geometry on every live resize tick, which reduces visible jitter while dragging the window.
-- Previewed attachments are cached temporarily and reused during `Prepare selected attachments` when still valid so the batch does not redownload the same file unnecessarily.
-- If preview or `Prepare selected attachments` fails before a translation run exists, the Gmail browser surface preserves the current selection/start-page state, surfaces structured browser diagnostics including raw `pdf.js` worker/module URLs plus fetch/content-type details and raw browser error text, and offers a direct browser failure report action instead of requiring Power Tools-only recovery.
-- If live Gmail is opened from a noncanonical build, preview and prepare stay hard-blocked until `Restart from Canonical Main` succeeds. Normal live Gmail work no longer continues on a noncanonical runtime.
-- If the current output folder is stale or missing, Gmail batch startup recovers automatically in this order: current valid output folder, valid `default_outdir`, then `Downloads`.
-- Completed checkpoints with missing page artifacts are treated as stale and are not reused as resumable state.
-- Translation mode now uses a prepare-only handoff. `Prepare selected` opens `#new-job` in a prepared Gmail state, shows the selected attachment plus seeded OCR/image/resume settings, and waits for explicit `Start Translate`.
-- Fresh Gmail prepare restores the prepared attachment state across normal refresh/navigation in the same live workspace until a real translation job begins.
-- Interpretation-notice handoff now transitions to one compact `Current Interpretation Step` shell plus a bounded `Review Interpretation` drawer. Gmail reply finalization stays inside that interpretation review flow instead of bouncing back to a generic Gmail session dashboard.
-- Arabic runs now insert a Word review gate before Save-to-Job-Log opens. In the browser flow, the dialog auto-opens the durable DOCX in Word, waits for a manual save, and offers `Open in Word`, `Continue now`, and `Continue without changes` if save detection misses or the operator wants to skip the edit. The browser no longer auto-mutates the DOCX during this review step.
-- Shared Arabic DOCX assembly now keeps mixed Arabic/Latin punctuation, identifier markers, dates, and separator bars in stable runs so manual Word right alignment no longer drags commas or bars into the wrong side of the line.
-- Integrity-suspect EN/FR pages that require visual recovery can no longer silently finish as unrecovered text-only. The workflow escalates them to crop OCR merge or image-grounded fallback and keeps those pages review-worthy in the finished run.
-- Failed Arabic Gmail current-attachment runs now switch the handoff back into an explicit recovery state until rerun or resume produces a completed translation with a real save seed. Gmail confirmation stays blocked for failed or rebuild-only partial outputs.
-- Selected attachments are translated one at a time. After each successful translation, the app opens Save to Job Log and requires a confirmed save before continuing.
-- For Arabic Gmail batch items, the DOCX saved after that review gate is the reviewed artifact later used by the downstream batch item flow.
-- A Gmail batch remains valid only while every confirmed item resolves to the same `case_number`, `case_entity`, `case_city`, and `court_email`. Any mismatch stops the batch and tells the user to split it into separate replies.
-- After all selected attachments are translated and confirmed, the user may generate one honorários export for the batch and one Gmail reply draft in the original thread. The app saves the honorários DOCX locally, attempts a sibling PDF immediately, and attaches all translated DOCXs plus that single honorários PDF when draft creation succeeds. Interpretation-notice replies attach only the honorários PDF. The app never auto-sends.
-- When the original Gmail message contains an explicit reply destination, Gmail finalization now prefers that reply address over looser case-derived recipient guesses.
-- Gmail batch finalization now uses a two-tier Word readiness contract:
-  - `launch_preflight` proves Word/COM can be reached
-  - `export_canary` proves the same DOCX-to-PDF export path used by finalization can really produce a PDF
-  - Gmail draft creation stays blocked until that export-ready path is healthy and the honorários PDF exists
-- Accepted April 19 Gmail/honorários closeout evidence: cold-start Gmail intake on canonical `main` build `0b2687f` used AppData live state, EXE native host, same-tab Gmail handoff, `Processed pages: 2/2` for an intentional page-2 start, populated both run-report artifact paths, reached `draft_ready`, passed Word PDF export, and generated honorários addressed to `Juízo de Competência Genérica de Cuba` with closing city `Cuba`.
-- If the user picks an existing translated filename when saving honorários, the app auto-renames the honorários file instead of overwriting the translation.
-- Gmail draft creation now blocks duplicate attachment paths and contaminated translated artifacts (for example, a translated DOCX path that actually contains honorários content).
-- Arabic failures now surface additive diagnostics such as `validator_defect_reason`, `ar_violation_kind`, and limited sampled offending snippets in run artifacts and the stop dialog.
-
-## Operational Guidance
-- Browser-app launch is now the canonical day-to-day local entry path for this repo:
-  - attached/local browser server: `python -m legalpdf_translate.shadow_web.server --open`
-  - detached live launcher: `python tooling/launch_browser_app_live_detached.py`
-  - default daily-use URL: `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#new-job`
-  - explicit isolated test URL: `http://127.0.0.1:8877/?mode=shadow&workspace=workspace-1#new-job`
-  - Gmail handoff URL: `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`
-- Windows-native GUI launch is canonical for this repo:
-  - attached launch: `python -m legalpdf_translate.qt_app`
-  - detached Windows launch: `Start-Process .\.venv311\Scripts\pythonw.exe -ArgumentList '-m','legalpdf_translate.qt_app'`
-- `python -m legalpdf_translate.qt_gui` remains a valid GUI compatibility entrypoint, but `qt_app` is the canonical docs command.
-- On Windows, the beginner-friendly manual launch path is `Launch LegalPDF Translate.bat` in the repo root. It uses the same canonical Qt launcher helper instead of duplicating startup logic.
-- Use browser `live` mode for real work. Use browser `shadow` mode only when you intentionally want isolated test data and no real live Gmail bridge ownership.
-- Open another browser workspace by using a different `workspace=` URL in a new tab or window. Use Qt `New Window` only when you are intentionally working in the desktop fallback shell.
-- The main dashboard shell should stay horizontally adaptive without a shell-level horizontal scrollbar; dense secondary tables such as Job Log may still overflow horizontally inside their own window or table viewport.
-- Major dialogs and dense secondary windows should remain screen-bounded and user-resizable instead of relying on fixed geometries that can open off-screen on smaller displays.
-- Duplicate run-folder blocking across windows is intentional. If two workspaces resolve to the same run directory, the second start is blocked until the owner workspace finishes or you change the effective source/output/language combination.
-- Arabic DOCX review/automation is a Windows-host feature that depends on installed Microsoft Word plus PowerShell COM automation; WSL-only validation is not enough for this path.
-- Screenshot-driven Qt UI work should use the fixed render contract in `docs/assistant/workflows/REFERENCE_LOCKED_QT_UI_WORKFLOW.md` rather than approximate visual review.
-- OCR-heavy documents should start with a small slice and safe settings:
-  - `ocr_mode=always`
-  - `ocr_engine=api` when local OCR is unavailable
-  - `image_mode=off`
-  - `workers=1`
-  - `keep_intermediates=on`
-  - first prove pages `1-2`, then continue in small batches
-- OCR-heavy runs now use bounded per-request deadlines instead of effectively unbounded waits.
-- `Cancel and wait` is still cooperative, but it is bounded by the active request deadline and persists clearer halt reasons instead of looking indefinitely hung.
-- OCR-success pages stay text-first; page images remain off unless a concrete layout/quality reason justifies them.
-- The GUI can show an OCR-heavy warning with an optional per-run `Apply safe OCR profile` action. It updates the current form only and does not overwrite saved defaults.
-- Mouse-wheel guards now cover the main run controls, Gmail review workflow/target-language selectors, settings defaults/provider selectors, and fixed-vocabulary Job Log combos; glossary/study/tool selectors and dense table editors still keep their local plain-combo behavior.
-- OCR-heavy runtime triage routes to `docs/assistant/workflows/OCR_HEAVY_TRANSLATION_TRIAGE_WORKFLOW.md`.
-- Host-bound workflows that add localhost listeners, browser/app bridges, or separate handoff/run/finalization failure surfaces should also route through `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`.
-- Gmail intake live validation must use the same Windows host for the signed-in Edge/Chromium Gmail tab, the browser app or Qt shell that owns the workflow, and Windows `gog`; a WSL-only smoke does not satisfy the final host-bound check.
-- If Gmail shows `accepted` but the app stays idle, check port ownership first. The listener on `127.0.0.1:<gmail_intake_port>` should normally belong to the browser app server process, not to `pytest`, a stale server, or another stray process.
-- If the browser app opens but only a shell or stale tab appears, treat that as a provenance/readiness issue first:
-  - confirm `asset_version` agreement between the shell payload and the loaded tab
-  - prefer one exact-tab reload or extension reload before treating it as a product regression
-- Before live Gmail finalization testing, use the browser operator surfaces to check Translation Auth, OCR Provider, Native Host, and Word PDF export canary readiness instead of assuming shell launch alone proves the last-mile reply path is healthy.
-- For future triage, the durable support packet is:
-  1. Gmail banner text/screenshot when handoff failed before app intake
-  2. browser dashboard or Qt window build identity plus visible bridge status
-  3. `run_report.md` / `run_summary.json` for the affected translation run
-  4. `gmail_batch_session.json` for batch-level finalization or draft issues
-
-## Governance and Routing Docs
-- Assistant docs index: `docs/assistant/INDEX.md`
-- Machine routing map: `docs/assistant/manifest.json`
-- Roadmap anchor / fresh-session resume: `docs/assistant/SESSION_RESUME.md`
-- Golden rules: `docs/assistant/GOLDEN_PRINCIPLES.md`
-- Workflow runbooks: `docs/assistant/workflows/`
-- User guides: `docs/assistant/features/`
-- External-source registry: `docs/assistant/EXTERNAL_SOURCE_REGISTRY.md`
-- Local host/runtime profile: `docs/assistant/LOCAL_ENV_PROFILE.local.md`
-- Local capability inventory: `docs/assistant/LOCAL_CAPABILITIES.md`
-- Host-bound integration preflight: `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
-- Harness isolation and diagnostics: `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
-- Project-local harness sync: `docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md`
-- Roadmap governance: `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
-
-## Project Harness and Roadmap Continuity
-- `implement the template files` is a project-local harness apply trigger. It reads vendored templates in `docs/assistant/templates/` as source input and updates only the local harness surfaces for this repo.
-- `sync project harness` is the accepted technical alias for the same local apply behavior.
-- `audit project harness` inspects vendored-template drift without editing files.
-- `check project harness` runs harness validation without editing files.
-- `update codex bootstrap` and `UCBS` target the reusable template system itself. They are not aliases for project-local harness sync.
-- When vendored template changes alter continuity or cleanup contracts, project-local harness sync must resync the publish/docs-maintenance governance surfaces instead of stopping at routing docs and validators.
-- `docs/assistant/SESSION_RESUME.md` is the roadmap anchor file and the stable first resume stop for `resume master plan`, `where did we leave off`, and equivalent fresh-session resume requests.
-- Roadmap governance supports both active and dormant states. In active state, `SESSION_RESUME.md` links one active roadmap tracker and one active wave ExecPlan. In dormant roadmap state on `main`, it must explicitly say that no active roadmap is currently open and route normal tasks back to standard ExecPlan flow.
-- During active worktree execution, that worktree's `SESSION_RESUME.md`, active roadmap tracker, and active wave ExecPlan are authoritative for live roadmap state. `main` remains the stable merged baseline and may carry a dormant roadmap anchor between roadmap-scoped threads.
-- Issue memory remains a reusable repeated-issue registry. It is not normal roadmap history and it does not replace the roadmap tracker or `SESSION_RESUME.md`.
-
-## Module Status (Bootstrap v2)
-All optional modules are enabled and enforced:
-- Beginner Layer
-- Localization + Performance
-- Issue Memory System
-- Project Harness Sync
-- Local Environment Overlay
-- Capability Discovery
-- Worktree / Build Identity
-- Roadmap Governance
-- Host Integration Preflight
-- Harness Isolation + Diagnostics
-- Reference Discovery
-- Browser Automation + Environment Provenance
-- Cloud Machine Evaluation + Local Acceptance Gate
-- Staged Execution
-- OpenAI Docs + Citation
-
-## Canonical and Bridge Contract
-- Canonical app truth lives here.
-- `docs/assistant/APP_KNOWLEDGE.md` is intentionally shorter and defers here.
-- Source code is final truth when documentation conflicts occur.
-
-## Deep-Dive Supplemental References
-These remain valid supplemental references for implementation detail:
-- `docs/assistant/API_PROMPTS.md`
-- `docs/assistant/PROMPTS_KNOWLEDGE.md`
-- `docs/assistant/QT_UI_KNOWLEDGE.md`
-- `docs/assistant/QT_UI_PLAYBOOK.md`
-- `docs/assistant/GLOSSARY_BUILDER_KNOWLEDGE.md`
-- `docs/assistant/WORKFLOW_GIT_AI.md`
-
-## Verification Commands
-PowerShell:
-- `powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1`
-- `powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1 -Full`
-- `powershell -ExecutionPolicy Bypass -File scripts/create_review_bundle.ps1`
-
-POSIX:
-- `python3 -m pytest -q`
-- `python3 -m compileall src tests`
-- `dart tooling/validate_agent_docs.dart`
-- `dart tooling/validate_workspace_hygiene.dart`
-
-## Local Python Baseline (Windows)
-- Preferred interpreter: Python `3.11`.
-- Preferred local environment path: `.venv311`.
-- Bootstrap/recovery script: `scripts/setup_python311_env.ps1`.
-- Preferred validation wrapper: `scripts/validate_dev.ps1`.
-- Preferred clean review ZIP helper: `scripts/create_review_bundle.ps1`.
-
-For normal Windows work, do not install dev dependencies into bare/global Python. Use `.venv311` and the repo scripts above.
-
-If local `pip`/`pytest` fails with import errors like `html.entities` or `idna`, treat it as a machine Python issue and rebuild `.venv311`:
-- `powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate`
-- `. .\.venv311\Scripts\Activate.ps1`
-- `powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1`
+- In the dormant roadmap state, [SESSION_RESUME](docs/assistant/SESSION_RESUME.md) identifies any active roadmap tracker and otherwise routes normal ExecPlan work. Issue memory remains a reusable repeated-issue registry, not the current task ledger.
+- Follow [harness isolation and diagnostics](docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md) for localhost listeners, browser/app bridges and handoff/run/finalization boundaries.
+- [Fresh-session handoff](docs/assistant/HANDOFF.md) and [dormant roadmap anchor](docs/assistant/SESSION_RESUME.md).
+- [App user guide](docs/assistant/features/APP_USER_GUIDE.md), [PDF translation guide](docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md), [reviewed-source and DOCX guide](docs/assistant/features/REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md).
+- [Validation tiers and commands](docs/assistant/VALIDATION.md), [workflow index](docs/assistant/INDEX.md), [machine routing manifest](docs/assistant/manifest.json).
+- [Historical front-door snapshots](docs/assistant/history/2026-09-16_front_doors/README.md). These preserve the former detailed architecture and dated operations; their old gates, budgets and status are not current instructions.

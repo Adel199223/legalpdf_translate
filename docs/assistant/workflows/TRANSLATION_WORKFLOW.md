@@ -116,5 +116,5 @@ python3 -m pytest -q tests/test_gmail_batch.py tests/test_translation_report.py 
 1. List touched files and rationale.
 2. Include targeted test commands and outcomes.
 3. Confirm no unrelated runtime behavior changed.
-4. Ask the docs sync prompt only if the change is significant, relevant touched-scope docs still remain unsynced, and immediate same-task synchronization is necessary.
+4. Synchronize useful touched-scope docs under the standing user authorization; do not ask for Docs Sync approval again. Preserve historical evidence and current operation boundaries.
 5. If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass.

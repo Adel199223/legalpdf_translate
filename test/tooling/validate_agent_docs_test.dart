@@ -82,6 +82,32 @@ String _resolve(String root, String relPath) {
   return '$root${Platform.pathSeparator}$normalized';
 }
 
+const String _autonomousDocsPolicy =
+    'Standing user authorization (2026-09-16): perform useful Docs Sync autonomously. Do not ask again. Update only touched-scope docs; no blanket rewrites. Preserve history and exact beforeimages when replacing current guidance. Publication, destructive operations and live Gmail remain separately gated.';
+const String _legacyDocsPolicy =
+    'After significant implementation changes ask exactly: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary. If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass. If the relevant docs sync already ran during the same task/pass, do not ask again.';
+
+String _legacyDocsSyncFixture({bool omitMode = false}) {
+  final String root = _fixtureRoot();
+  final Map<String, dynamic> manifest = _readJson(root, 'docs/assistant/manifest.json');
+  if (omitMode) {
+    manifest.remove('docs_sync');
+  } else {
+    manifest['docs_sync'] = <String, dynamic>{'mode': 'prompt_when_needed'};
+  }
+  final Map<String, dynamic> contracts = manifest['contracts'] as Map<String, dynamic>;
+  for (final String key in <String>['post_change_docs_sync_prompt_policy', 'docs_sync_prompt_policy']) {
+    contracts[key] = _legacyDocsPolicy;
+  }
+  _writeJson(root, 'docs/assistant/manifest.json', manifest);
+  for (final String path in <String>[
+    'AGENTS.md', 'agent.md', 'docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md',
+  ]) {
+    _replaceInFile(root, path, _autonomousDocsPolicy, _legacyDocsPolicy);
+  }
+  return root;
+}
+
 void _copyDirectory(Directory source, Directory destination) {
   destination.createSync(recursive: true);
   for (final FileSystemEntity entity in source.listSync(recursive: false)) {
@@ -416,7 +442,7 @@ void main() {
   }, failures);
 
   _runCase('fails when AGENTS docs-sync phrase removed', () {
-    final String root = _fixtureRoot();
+    final String root = _legacyDocsSyncFixture();
     _replaceInFile(
       root,
       'AGENTS.md',
@@ -430,7 +456,7 @@ void main() {
   }, failures);
 
   _runCase('fails when AGENTS omits docs-sync conditional wording', () {
-    final String root = _fixtureRoot();
+    final String root = _legacyDocsSyncFixture();
     _replaceInFile(
       root,
       'AGENTS.md',
@@ -444,7 +470,7 @@ void main() {
   }, failures);
 
   _runCase('fails when AGENTS omits docs-sync deferral wording', () {
-    final String root = _fixtureRoot();
+    final String root = _legacyDocsSyncFixture();
     _replaceInFile(
       root,
       'AGENTS.md',
@@ -458,7 +484,7 @@ void main() {
   }, failures);
 
   _runCase('fails when manifest docs-sync contract omits deferred default', () {
-    final String root = _fixtureRoot();
+    final String root = _legacyDocsSyncFixture();
     final Map<String, dynamic> manifest = _readJson(
       root,
       'docs/assistant/manifest.json',
@@ -472,6 +498,90 @@ void main() {
       rootPath: root,
     );
     _expect(_hasRule(issues, 'AD017'), 'Expected AD017');
+  }, failures);
+
+  _runCase('autonomous Docs Sync accepts dated standing authorization without the old question', () {
+    final String root = _fixtureRoot();
+    final List<validator.ValidationIssue> issues = validator.validateAgentDocs(rootPath: root);
+    _expect(!_hasRule(issues, 'AD017') && !_hasRule(issues, 'AD020') && !_hasRule(issues, 'AD041'),
+        'Authorized autonomous policy must pass all docs-sync gates');
+    _expect(!File(_resolve(root, 'AGENTS.md')).readAsStringSync().contains(
+        'Would you like me to run Assistant Docs Sync for this change now?'),
+        'Autonomous runbook must not retain the obsolete approval question');
+  }, failures);
+
+  for (final bool omitMode in <bool>[false, true]) {
+    _runCase('legacy Docs Sync compatibility remains explicit or absent mode: $omitMode', () {
+      final String root = _legacyDocsSyncFixture(omitMode: omitMode);
+      final List<validator.ValidationIssue> issues = validator.validateAgentDocs(rootPath: root);
+      _expect(!_hasRule(issues, 'AD017') && !_hasRule(issues, 'AD020') && !_hasRule(issues, 'AD041'),
+          'Legacy prompt contract must still pass its original policy checks');
+    }, failures);
+  }
+
+  for (final dynamic badPolicy in <dynamic>[
+    null,
+    <String, dynamic>{'mode': true},
+    <String, dynamic>{'mode': 'automatic'},
+    <String, dynamic>{'mode': 'autonomous'},
+    <String, dynamic>{'mode': 'prompt_when_needed', 'authorization': <String, dynamic>{}},
+  ]) {
+    _runCase('invalid explicit Docs Sync mode/record fails: ${jsonEncode(badPolicy)}', () {
+      final String root = _fixtureRoot();
+      final Map<String, dynamic> manifest = _readJson(root, 'docs/assistant/manifest.json');
+      manifest['docs_sync'] = badPolicy;
+      _writeJson(root, 'docs/assistant/manifest.json', manifest);
+      _expect(_hasRule(validator.validateAgentDocs(rootPath: root), 'AD017'),
+          'Malformed explicit policy cannot silently authorize autonomous Docs Sync');
+    }, failures);
+  }
+
+  for (final Map<String, dynamic> change in <Map<String, dynamic>>[
+    <String, dynamic>{'kind': 'inferred_permission'},
+    <String, dynamic>{'scope': 'all_actions'},
+    <String, dynamic>{'granted_on': true},
+    <String, dynamic>{'granted_on': '2026-02-30'},
+    <String, dynamic>{'instruction': '  '},
+    <String, dynamic>{'unexpected': 'extra_authority'},
+  ]) {
+    _runCase('autonomous Docs Sync rejects altered authority fields: ${change.keys.join(',')}', () {
+      final String root = _fixtureRoot();
+      final Map<String, dynamic> manifest = _readJson(root, 'docs/assistant/manifest.json');
+      final Map<String, dynamic> policy = manifest['docs_sync'] as Map<String, dynamic>;
+      (policy['authorization'] as Map<String, dynamic>).addAll(change);
+      _writeJson(root, 'docs/assistant/manifest.json', manifest);
+      _expect(_hasRule(validator.validateAgentDocs(rootPath: root), 'AD017'),
+          'Autonomous mode must require a valid scoped standing-user record');
+    }, failures);
+  }
+
+  for (final String path in <String>['AGENTS.md', 'agent.md',
+      'docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md']) {
+    _runCase('autonomous Docs Sync rejects reintroduced approval question in $path', () {
+      final String root = _fixtureRoot();
+      _replaceInFile(root, path, _autonomousDocsPolicy, _legacyDocsPolicy);
+      final List<validator.ValidationIssue> issues = validator.validateAgentDocs(rootPath: root);
+      _expect(_hasRule(issues, path.endsWith('WORKFLOW.md') ? 'AD041' : 'AD020'),
+          'Current autonomous guidance must not require the legacy approval question');
+    }, failures);
+  }
+
+  _runCase('autonomous manifest contracts must match the selected mode', () {
+    final String root = _fixtureRoot();
+    final Map<String, dynamic> manifest = _readJson(root, 'docs/assistant/manifest.json');
+    (manifest['contracts'] as Map<String, dynamic>)['docs_sync_prompt_policy'] = _legacyDocsPolicy;
+    _writeJson(root, 'docs/assistant/manifest.json', manifest);
+    _expect(_hasRule(validator.validateAgentDocs(rootPath: root), 'AD017'),
+        'Legacy wording cannot override the explicit autonomous project mode');
+  }, failures);
+
+  _runCase('autonomous maintenance must retain scoped history-preservation limits', () {
+    final String root = _fixtureRoot();
+    _replaceInFile(root, 'docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md',
+        'Preserve history and exact beforeimages when replacing current guidance.',
+        'Replace earlier evidence freely.');
+    _expect(_hasRule(validator.validateAgentDocs(rootPath: root), 'AD041'),
+        'Standing Docs Sync authority does not waive history preservation');
   }, failures);
 
   _runCase('fails when GOLDEN_PRINCIPLES missing', () {
@@ -1425,11 +1535,17 @@ void main() {
 
   _runCase('fails when dormant roadmap state markers drift', () {
     final String root = _fixtureRoot();
+    const String marker = 'no active roadmap currently open on this worktree';
+    _expect(
+      File(_resolve(root, 'docs/assistant/SESSION_RESUME.md'))
+          .readAsStringSync().contains(marker),
+      'Current SESSION_RESUME fixture must contain the dormant marker',
+    );
     _replaceInFile(
       root,
       'docs/assistant/SESSION_RESUME.md',
-      '- No active roadmap currently open on this worktree.',
-      '- Roadmap status pending clarification.',
+      marker,
+      'roadmap status pending clarification',
     );
     final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
       rootPath: root,
@@ -1493,5 +1609,5 @@ void main() {
     exit(1);
   }
 
-  stdout.writeln('All agent docs validator tests passed (72 cases).');
+  stdout.writeln('All agent docs validator tests passed.');
 }

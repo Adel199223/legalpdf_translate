@@ -3,13 +3,18 @@
 ## What This Workflow Is For
 Maintaining assistant docs contracts with minimal drift and scoped updates.
 
+## Standing Project Authorization
+Standing user authorization (2026-09-16): perform useful Docs Sync autonomously. Do not ask again. Update only touched-scope docs; no blanket rewrites. Preserve history and exact beforeimages when replacing current guidance. Publication, destructive operations and live Gmail remain separately gated.
+
+The project manifest records this autonomous mode and its dated user authorization. The validator checks that declared policy for consistency; it does not create user authority. Legacy template prompt mode remains a separate compatibility contract, not this project's current policy. This workflow does not invoke UCBS or vendored-template application.
+
 ## Expected Outputs
 - Updated docs only for touched scope.
 - Preserved canonical/bridge separation.
 - Successful docs and workspace validators.
 
 ## When To Use
-- User approves docs sync.
+- Useful documentation needs synchronization under the standing user authorization.
 - A deferred/batched docs-maintenance pass is being run after implementation work.
 - Governance/workflow/manifest contracts change.
 - User-guide support content needs synchronization with feature changes.
@@ -52,7 +57,7 @@ dart tooling/validate_workspace_hygiene.dart
 - User guide drift after major feature changes: update only relevant sections in app/primary guides.
 - Repeated debugging pattern still lives only in an ExecPlan: harvest the reusable rule into a durable workflow/playbook doc before closing the thread.
 - Wrong-base worktree or ambiguous build-under-test incident repeats: add or update a durable workflow/governance doc and route it through `INDEX.md` and `manifest.json` instead of leaving the lesson only in thread history.
-- Accepted functionality still lives only on a side branch: update governance docs so merge-immediately-after-acceptance remains the enforced default before more feature work proceeds.
+- Accepted functionality still lives only on a side branch despite authorized promotion: keep governance docs aligned with merge-immediately-after-acceptance within the current authorized publication scope. Testing acceptance alone does not authorize publication.
 - Ambiguous `commit` or `push` shorthand caused repeated git-hygiene mistakes: harden the commit/publish workflow docs and validator rules so the shorthand has fixed semantics instead of thread-local interpretation.
 - Strong repeated issue signal appears during normal work: update `ISSUE_MEMORY.md` and `ISSUE_MEMORY.json` instead of leaving the pattern only in thread history or refresh notes.
 - A reusable issue may affect bootstrap maintenance: mark its bootstrap relevance in issue memory and let `update codex bootstrap` / `UCBS` decide whether it generalizes.
@@ -70,11 +75,10 @@ dart tooling/validate_workspace_hygiene.dart
   - record the gap in `DOCS_REFRESH_NOTES.md` instead of forcing same-pass sync
 
 ## Handoff Checklist
-1. Ask exact prompt after significant implementation changes only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary:
-   - "Would you like me to run Assistant Docs Sync for this change now?"
-2. If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass and record the gap in `DOCS_REFRESH_NOTES.md`.
-3. If the relevant docs sync already ran during the same task/pass, do not ask the prompt again.
-4. If approved, update only touched-scope docs.
+1. Apply the standing authorization to useful scoped maintenance; never require a fresh Docs Sync approval question.
+2. If another bounded task or package freeze must finish first, record the gap in `DOCS_REFRESH_NOTES.md` and perform a later docs-maintenance pass.
+3. Keep one current handoff and architecture/validation entry layer; move superseded operation detail into dated history with beforeimages instead of repeating it across front doors.
+4. Update only touched-scope docs. Preserve current operation ownership and source/test freezes; documentation work is not authority to replay provider/native operations.
 5. Ensure user guides stay discoverable in `INDEX.md` and `manifest.json`.
 6. Sync relevant user-guide sections when major feature behavior changes.
 7. Keep template read policy and routing protections intact.

@@ -1,140 +1,22 @@
 # SESSION_RESUME
 
-## First Resume Stop
-Open this file first for:
-- `resume master plan`
-- `where did we leave off`
-- `what is the next roadmap step`
-- any fresh session that needs the current recommended product entrypoint
+## First resume stop
 
-This file is the roadmap anchor file and the stable fresh-session anchor.
+This is the roadmap anchor file for `resume master plan`, `where did we leave off` and fresh-session continuity. Start with [HANDOFF.md](HANDOFF.md), then the current sections of the linked integration plans. Do not load or replay the chronological acceptance corpus by default.
 
-## Current Recommended Entry
-- Preferred daily-use surface: local browser app in `live` mode
-- Canonical daily URL: `http://127.0.0.1:8877/?mode=live&workspace=workspace-1#new-job`
-- Gmail handoff workspace: `http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`
-- Preferred detached launcher: `python tooling/launch_browser_app_live_detached.py`
-- Fixed review-preview URL: `http://127.0.0.1:8888/?mode=shadow&workspace=workspace-preview#new-job`
-- Shadow Gmail Review/Preview demo URL: `http://127.0.0.1:8888/?mode=shadow&workspace=gmail-review-demo#gmail-intake`
-- Qt status: supported secondary shell and fallback, not the lead day-to-day surface
+## Roadmap state
 
-## Browser Mode Contract
-- `live` mode uses the real settings, job log, outputs, Gmail workflow, and browser-owned Gmail bridge.
-- `shadow` mode is the isolated browser testing/development copy. It keeps separate state roots and does not own the real Gmail bridge.
-- The real Gmail extension remains canonical. After a successful Gmail click, the current Gmail tab redirects into the fixed live workspace `gmail-intake`; `Return to Gmail` restores the captured source Gmail URL.
-- Live Gmail is hard-blocked on noncanonical runtimes. `Restart from Canonical Main` is the only supported recovery path for normal work.
-- Port `8877` remains the canonical daily-use/live/Gmail browser port.
-- Port `8888` is review-preview only and must not become the real live Gmail bridge owner.
+**Dormant roadmap state:** no active roadmap currently open on this worktree. Use normal ExecPlan flow for the newly authorized publication task. Do not invent a master roadmap or treat older stage tokens as new requests.
 
-## Current Architecture State
-- The browser-first Gmail flow is the current canonical product experience on this repo:
-  - `#new-job` remains the default landing screen
-  - `#gmail-intake` remains the dedicated Gmail extension handoff screen
-  - `Prepare selected` is prepare-only and opens `#new-job` in a prepared state that waits for explicit `Start Translate`
-  - the primary browser shell stays reduced to `New Job`, `Recent Jobs`, conditional `Gmail`, and `More`
-  - Gmail handoff is compact and review-first
-  - translation continuation stays bounded in finish/finalize surfaces instead of restacking large Gmail and translation pages
-  - interpretation continuation stays in one compact current-step shell plus a bounded same-tab review drawer
-  - secondary/browser-operator routes stay reachable, but no longer dominate the normal path
-- Canonical Edge native-host registration now targets `LegalPDFGmailFocusHost.exe`; the old `.cmd` wrapper is diagnostic fallback only and must not be the normal live target because it can surface visible CMD/PseudoConsole churn.
-- Browser Gmail handoff now uses per-click `handoff_session_id`, same-tab redirect, immediate post-redirect `/gmail-intake`, and client/server `asset_version` diagnostics so stale service workers, stale tabs, and `Pending load` states do not masquerade as accepted handoffs.
-- Browser-managed Gmail PDF preview/prepare now uses the bundled browser `pdf.js` path instead of depending on `PyMuPDF` during browser startup.
-- Gmail Review Attachments and PDF Preview drawers should persist instead of feeling lost: outside clicks keep them open, explicit close/minimize paths preserve state, and restore chips bring back the selected attachment/start page/preview page.
-- Shadow Gmail intake can seed a safe demo PDF with `Load demo attachments` for feature-branch Review/Preview testing without live Gmail, native-host handoff, private attachments, or drafts.
-- Gmail batch finalization readiness now depends on a real Word export canary, not a launch-only Word probe.
-- Gmail translation honorários metadata now prefers the specific local court-unit city over a broader comarca city. The accepted April 19 live closeout on build `0b2687f` confirmed `case_city=Cuba`, `service_city=Cuba`, populated nested `result.artifacts.run_report_path`, `Processed pages: 2/2` for an intentional page-2 start, and finalization `draft_ready` with a Cuba honorários PDF.
-- Google Photos Interpretation Review Details follow-up is accepted in shadow validation: one selected Google Photos image reached Review Details with Beja case metadata, Beja court email, `Serviço de Turno | Moura`, service date `2026-04-25`, KM `26`, and `service_same=false`. Google Photos place/location remains unavailable from the Picker API; the service city is OCR/document evidence or user selection, while photo date is only an editable fallback when OCR has no date.
-- Report-restored completed Gmail translation batches are now secondary recovered history only; a fresh extension handoff or loaded Gmail message should supersede them automatically.
-- Browser-app live vs isolated-test mode remains a deliberate reusable system that should be preserved in later template-sync work.
+## Authoritative worktree
 
-## Current Bounded Task
+- Branch: `feat/structured-translation-activation`
+- Integration worktree: `C:/Users/FA507/.codex/legalpdf_translate_structured_activation`.
+- Canonical daily-use build: `C:/Users/FA507/.codex/legalpdf_translate`, branch `main`.
+- Check actual Git/process state and the [publication plan](exec_plans/active/2026-09-16_reviewed_candidate_publication.md) before changing the checkout. The [completed ordinary integration plan](exec_plans/completed/2026-09-16_ordinary_browser_integration.md) retains the candidate evidence and qualifications.
 
-- Current Stage 4: publication and canonical verification are explicitly authorized. Bounded Stage 3 native/human layout acceptance is complete: the one-time corrected Arabic Word check passed in 6.183 seconds, two complete-page reviews and physical glyph coordinates confirmed `09:30`, names and header/footer placement, and the user approved the preview with `looks right`. English/French reuse exact package-matched native evidence. The prior 46-file digest and 910 targeted/3,322 full tests are historical evidence. Final `structured_arabic_literals_v5_exact_source_graphemes` hardening is a two-file source/test delta; 318 focused tests passed in 7.39s, final full pytest passed 3,391 tests in 428.49s, and independent review is clear. Serial release validation passed with exit code 0; the known Dart AOT wrapper issue used a successful direct-Dart fallback. Follow the [implementation/publication closeout](exec_plans/completed/2026-09-09_structured_new_translations.md); require actual exact-head GitHub checks before merge and canonical verification afterward. No merge/CI/post-merge result is claimed here. Native authority is consumed; preserve the advanced journal, originals, historical failures and unchanged ledger. No additional native or paid scope is implied.
-- The base is `main@8470645cd96bf93848d6a6735673a17e8399bbc6`, the merged PR #294 footer/native release. Its publication lifecycle is complete; do not replay historical pending instructions or consumed native helpers below.
-- This scope retains digital/same-pass local OCR evidence, exact translated block IDs and safe page publication/resume. API/plain-text OCR without reliable geometry remains layout-review-required. Ordinary launches still use `legacy_text_v1`; a session-only `legal_blocks_v2` verification flag is not durable activation. Model/OCR routing and the original USD10 allowance are unchanged.
+## Next concrete action
 
-## Authoritative Worktree
+The user now authorizes the recommended commit → push → PR → CI → merge → canonical app verification sequence for the reviewed candidate. Follow the [publication plan](exec_plans/active/2026-09-16_reviewed_candidate_publication.md), preserving original dirty canonical docs/evidence before any checkout update and recording actual Git/CI/build outcomes when they occur. No new commit, PR or merge result is claimed yet. Existing final validation and local scope review are complete. Genuine French ordinary/native/visual evidence remains qualified, with the strict trailing-space extraction failure disclosed. The 23 child scopes and three bounded acceptance/browser/docs parents stay completed. The [original global-activation plan](exec_plans/active/2026-09-10_structured_translation_ordinary_use.md) remains deferred: protocol/model/effort defaults and the unproven >=20% model-efficiency target are unchanged. No provider/native acceptance replay or live Gmail follows from publication. Useful scoped Docs Sync remains authorized.
 
-- Branch: `main`
-- Routine app authority: `C:\Users\FA507\.codex\legalpdf_translate`, branch `main`; inspect its actual current HEAD before handoff.
-- Publication candidate: `C:\Users\FA507\.codex\legalpdf_translate_new_runs`, branch `codex/structured-new-translations`, based on `8470645cd96bf93848d6a6735673a17e8399bbc6`. This isolated task branch does not replace canonical daily-use authority before a verified merge.
-- The candidate's bounded synthetic shadow/native acceptance is complete; the live app and Gmail were not operated for that acceptance. Any post-merge smoke must remain read-only at the UI level with isolated metadata/DB initialization, disabled live Gmail bridge and a process-only protocol flag. It is not a new translation/model/native test.
-- The earlier footer/native release is historical and already merged as PR #294. Its [completed footer-spacing integration ExecPlan](exec_plans/completed/2026-09-09_footer_spacing_integration.md) and old counts do not validate this new candidate. Do not repeat its publication or consumed native operations.
-
-## Approved Formatting Continuity
-
-- Formatting integration is scoped from `main@022b5af`; see the completed `2026-09-07_approved_formatting_integration.md` ExecPlan and actual merged PR for the tested tree. Verify current `main` rather than using the historical modernization SHA below.
-- The accepted AR/French Word presentation is retained through local, hash-bound structure/layout evidence. New TXT-only production runs receive safe compact typography/RTL/page fields and a manual layout-review notice; they do not gain guessed block associations.
-- No translation/model/OCR/prompt or honorarios export policy is promoted in this formatting-only release. The unfinished quality worktree remains recoverable at local checkpoint `66a7374a2b874f59994215177af4ff48d1d5f100`; it must not be merged or pushed wholesale.
-- Translation documents stay editable DOCX. Honorarios PDF export reliability was subsequently repaired and accepted in its own scope below; it is not a translation/model-policy promotion. Private references and the original capped benchmark ledger remain outside Git.
-
-## Accepted Honorarios Repair Continuity
-
-- Historical accepted repair worktree: `C:/Users/FA507/.codex/legalpdf_translate_honorarios_pdf`, branch `feat/honorarios-pdf-export`, based on `main@9afe1d05577f271a8618969e8f0be31eb8641a3e`. That repair's evidence is retained below; use the completed footer integration plan above for lifecycle continuity and verify actual canonical HEAD rather than replaying this historical rollout.
-- See [the completed repair ExecPlan](exec_plans/completed/2026-09-07_honorarios_pdf_export_reliability.md). Eight real Word exports took approximately 6-8 seconds each; both honorarios kinds, the isolated real browser route, Qt worker, open/unsaved Word coexistence and post-timeout recovery passed. All six retained honorarios PDFs passed every-page visual review, with source DOCX and tested existing Word state preserved.
-- One initial 45-second export replaces automatic preflight/retry cycles. Shared exact ownership, staged-file verification and serialization protect the operation; ambiguous cleanup remains quarantined. Explicit manual Qt retry and local/select-existing-PDF recovery remain available, with Gmail fail-closed behavior unchanged.
-- Full pytest passed 2,176 tests and full validation passed; the known native Qt small-screen layout-test `0x8001010d` diagnostic remains separate. No live Gmail or paid API operation was performed, no production model was promoted, and translations remain DOCX only.
-- Preserve the local-only quality checkpoint `66a7374a2b874f59994215177af4ff48d1d5f100` and prior formatting worktree; publish only this scoped repair and approved documentation, never the combined research branch.
-
-## Current Modernization Baseline
-- Product-modernization baseline at closeout is `c3ec60e57852af4ff69ba96cd0410c489a25ba69` after PR #226, `[codex] Extract Gmail prepare action presentation`.
-- This is historical context, not the current head; use `git rev-parse HEAD` in `C:\Users\FA507\.codex\legalpdf_translate` for the exact current `main` commit.
-- CI and worktree counts above the historical baseline must be rechecked. The separate unmerged quality checkpoint is intentionally retained during formatting rollout.
-- Recent browser modernization split the static frontend into focused modules: `*_ui.js` modules own safe DOM writes, `*_presentation.js` modules own pure labels/status/card shaping, and `app.js`, `gmail.js`, `translation.js`, and `power-tools.js` remain coordinators for state, API calls, routing, and side effects.
-- The next normal modernization slice should be a small TDD PR from clean `main`, preferably another narrow Gmail/browser presentation or coordinator-pressure cleanup. Use `mode=shadow` for browser smoke unless the user explicitly asks for live Gmail, OAuth, or native-host testing.
-
-## Roadmap State
-- Dormant roadmap state.
-- No active roadmap currently open on this worktree.
-- No active roadmap tracker is currently authoritative.
-- Recent completed Gmail/browser closeout history for reference:
-  - `docs/assistant/exec_plans/completed/2026-04-05_gmail_fresh_handoff_priority.md`
-  - `docs/assistant/exec_plans/completed/2026-04-05-gmail-run-report-provenance.md`
-  - `docs/assistant/exec_plans/completed/2026-04-05_browser_run_report_artifacts.md`
-  - `docs/assistant/exec_plans/completed/2026-04-19_gmail_honorarios_local_court_city_fix.md`
-  - `docs/assistant/exec_plans/completed/2026-04-03_gmail_redo_current_attachment.md`
-  - `docs/assistant/exec_plans/completed/2026-04-03_arabic_legal_risk_hardening.md`
-  - `docs/assistant/exec_plans/completed/2026-03-30_gmail_finalization_word_pdf_reliability.md`
-  - `docs/assistant/exec_plans/completed/2026-03-30_browser_asset_provenance_gmail_prepare.md`
-  - `docs/assistant/exec_plans/completed/2026-03-30_first_open_gmail_hydration_recovery.md`
-  - `docs/assistant/exec_plans/completed/2026-03-30_gmail_prepare_pdf_worker_reportability.md`
-  - `docs/assistant/exec_plans/completed/2026-03-30_windows_blocked_pdf_browser_recovery.md`
-  - `docs/assistant/exec_plans/completed/2026-03-29_web_app_end_to_end_stabilization.md`
-  - `docs/assistant/exec_plans/completed/2026-03-29_gmail_inline_preview_regression.md`
-  - `docs/assistant/exec_plans/completed/2026-03-29_cold_start_reliability_rebuild.md`
-  - `docs/assistant/exec_plans/completed/2026-03-28_browser_translation_auth_diagnostics.md`
-  - `docs/assistant/exec_plans/completed/2026-03-28_browser_gmail_autostart_repair.md`
-  - `docs/assistant/exec_plans/completed/2026-03-28_gmail_intake_regression_fixes.md`
-  - `docs/assistant/exec_plans/completed/2026-03-21_gmail_focus_shell_layout_fix.md`
-  - `docs/assistant/exec_plans/completed/2026-03-21_gmail_review_parity_stage1.md`
-  - `docs/assistant/exec_plans/completed/2026-03-21_gmail_review_declutter.md`
-  - `docs/assistant/exec_plans/completed/2026-03-21_gmail_post_handoff_qt_parity.md`
-  - `docs/assistant/exec_plans/completed/2026-03-21_gmail_bridge_host_fix.md`
-  - `docs/assistant/exec_plans/completed/2026-03-22_gmail_reply_address_fix.md`
-  - `docs/assistant/exec_plans/completed/2026-03-22_interpretation_browser_ux_polish.md`
-  - `docs/assistant/exec_plans/completed/2026-03-22_interpretation_city_distance_integrity.md`
-  - `docs/assistant/exec_plans/completed/2026-04-28_google_photos_service_city_distance_drawer.md`
-- Historical browser-to-Qt roadmap history remains available under `docs/assistant/exec_plans/completed/`.
-
-## Next Concrete Action
-
-- Current task: complete the explicitly authorized Stage 4 publication lifecycle for the exact candidate; serial release validation has passed. The two-file v5 source-grapheme delta has clear independent review, 318 passing focused checks and 3,391 passing final full pytest tests in 428.49s. Record actual GitHub/merge/canonical results only after they occur. Preserve completed native/human layout acceptance without replay, and keep ordinary-launch policy legacy by default.
-- No active roadmap needs resume handling.
-- For new work, use normal ExecPlan flow unless the user explicitly opens a new roadmap.
-- Finish only the remaining source-associated candidate publication steps before unrelated work: check exact-head local/GitHub results, merge when green, verify canonical app identity and perform safe scoped cleanup. Historical footer release instructions are not another work item, and publication approval grants no further native attempt.
-- For continued legal-translation improvements afterward, inspect the preserved research ExecPlan and isolate source-associated production structure/model-dependent acceptance work. Layout and honorarios-export approval are not approval of new models or legal fidelity; do not reset or duplicate the lifetime benchmark allowance.
-- If continuing modernization, choose one narrow browser/Gmail presentation or coordinator-pressure slice, create an isolated worktree from clean `main`, use focused tests first, publish through a GitHub PR, wait for Actions, smoke in shadow mode when relevant, and clean up the merged branch/worktree.
-- Publish/merge requests should follow the standard commit/publish workflow and should not start a new Gmail/runtime thread while accepted live fixes remain only in local commits.
-
-## Resume Order
-1. Read this file.
-2. Open `APP_KNOWLEDGE.md` for current product truth when implementation context is needed.
-3. If the task touches Gmail/browser parity or native-host behavior, read the recent completed Gmail/browser closeout ExecPlans listed above.
-4. If older browser-to-Qt roadmap context is needed, use the completed browser-to-Qt packets under `docs/assistant/exec_plans/completed/`.
-5. If older OCR roadmap context is needed, use the completed OCR packets under `docs/assistant/exec_plans/completed/`.
-6. Otherwise continue with normal task routing and create a standard ExecPlan only when the task warrants it.
-
-## Authority Notes
-- Issue memory is only for repeatable governance/workflow failures. It is not normal roadmap history.
-- Completed roadmap and ExecPlan artifacts remain reference history, not live authority.
-- If a future roadmap is opened, its wave ExecPlan must be updated first, roadmap tracker second, and `SESSION_RESUME.md` third.
+Issue memory is only for repeatable governance/workflow failures; use current plans for operation-specific progress. Historical scope/status remains in the [dated original resume file](history/2026-09-16_front_doors/SESSION_RESUME.md), not in the active roadmap.

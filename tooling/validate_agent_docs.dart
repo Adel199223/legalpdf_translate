@@ -301,6 +301,107 @@ const String _docsSyncPromptImmediateNeed =
 const String _docsSyncPromptDeferredPass = 'later docs-maintenance pass';
 const String _docsSyncPromptNoRepeat = 'already ran during the same task/pass';
 
+String _docsSyncMode(Map<String, dynamic> manifest) {
+  // A missing mode preserves existing template compatibility. Invalid explicit
+  // modes never silently become a grant of autonomous maintenance authority.
+  if (!manifest.containsKey('docs_sync')) return 'prompt_when_needed';
+  final dynamic policy = manifest['docs_sync'];
+  if (policy is! Map<String, dynamic> || policy['mode'] is! String) {
+    return 'invalid';
+  }
+  return policy['mode'] as String;
+}
+
+void _validateDocsSyncAuthorization(
+  Map<String, dynamic> manifest,
+  List<ValidationIssue> issues,
+) {
+  if (!manifest.containsKey('docs_sync')) return;
+  final dynamic policy = manifest['docs_sync'];
+  final String mode = _docsSyncMode(manifest);
+  if (policy is! Map<String, dynamic> ||
+      !<String>{'prompt_when_needed', 'autonomous'}.contains(mode)) {
+    issues.add(
+      ValidationIssue('AD017', 'Invalid explicit docs_sync policy mode.'),
+    );
+    return;
+  }
+  if (mode == 'prompt_when_needed') {
+    if (policy.length != 1) {
+      issues.add(
+        ValidationIssue(
+          'AD017',
+          'Legacy docs_sync mode accepts only its mode field.',
+        ),
+      );
+    }
+    return;
+  }
+  final dynamic authorization = policy['authorization'];
+  const Set<String> fields = <String>{
+    'kind',
+    'granted_on',
+    'scope',
+    'instruction',
+  };
+  if (policy.length != 2 ||
+      authorization is! Map<String, dynamic> ||
+      authorization.length != fields.length ||
+      !fields.containsAll(authorization.keys)) {
+    issues.add(
+      ValidationIssue(
+        'AD017',
+        'Autonomous docs_sync requires an exact standing-user authorization record.',
+      ),
+    );
+    return;
+  }
+  final dynamic date = authorization['granted_on'];
+  final DateTime? parsed =
+      date is String && RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(date)
+      ? DateTime.tryParse(date)
+      : null;
+  final dynamic instruction = authorization['instruction'];
+  if (authorization['kind'] != 'standing_user_authorization' ||
+      authorization['scope'] != 'project_docs_sync' ||
+      parsed == null ||
+      parsed.toIso8601String().substring(0, 10) != date ||
+      instruction is! String ||
+      instruction.trim().isEmpty) {
+    issues.add(
+      ValidationIssue(
+        'AD017',
+        'Autonomous docs_sync needs dated user authorization for project_docs_sync.',
+      ),
+    );
+  }
+  // This validates a declared record, not the existence of user consent. The
+  // actual user instruction remains the authority for changing project policy.
+}
+
+bool _docsSyncTextMatches(
+  String text,
+  String mode, {
+  bool requireLegacyPrompt = true,
+}) {
+  final String lower = text.toLowerCase();
+  if (mode == 'autonomous') {
+    return lower.contains('standing user authorization') &&
+        lower.contains('perform useful docs sync autonomously') &&
+        lower.contains('do not ask again') &&
+        lower.contains('touched-scope docs') &&
+        lower.contains('no blanket rewrites') &&
+        lower.contains('preserve history') &&
+        !lower.contains(_docsSyncPrompt.toLowerCase());
+  }
+  if (mode != 'prompt_when_needed') return false;
+  return (!requireLegacyPrompt || text.contains(_docsSyncPrompt)) &&
+      lower.contains(_docsSyncPromptCondition) &&
+      lower.contains(_docsSyncPromptImmediateNeed) &&
+      lower.contains(_docsSyncPromptDeferredPass) &&
+      lower.contains(_docsSyncPromptNoRepeat);
+}
+
 const Map<String, List<String>>
 _requiredBootstrapMarkers = <String, List<String>>{
   'docs/assistant/templates/CODEX_PROJECT_BOOTSTRAP_PROMPT.md': <String>[
@@ -612,12 +713,12 @@ List<ValidationIssue> validateAgentDocs({
     _validateCanonicalBridgePolicies(issues, readText);
     _validateCommands(manifest, issues);
     _validateCoreContracts(manifest, issues);
-    _validateRunbookPolicies(issues, readText);
+    _validateRunbookPolicies(manifest, issues, readText);
     _validateQtLaunchIdentityDiscipline(issues, readText);
     _validateApprovedBasePromotionDiscipline(issues, readText, rootPath);
     _validateCommitPushShorthandDiscipline(issues, readText);
     _validateUserGuides(manifest, issues, readText, exists);
-    _validateDocsMaintenance(issues, readText);
+    _validateDocsMaintenance(manifest, issues, readText);
     _validateIssueMemory(issues, readText, exists, rootPath);
     _validateQtRenderScratchPathGuidance(issues, readText);
     _validateProjectLocalOperationalLayer(manifest, issues, readText, exists);
@@ -1871,6 +1972,8 @@ void _validateCoreContracts(
   Map<String, dynamic> manifest,
   List<ValidationIssue> issues,
 ) {
+  _validateDocsSyncAuthorization(manifest, issues);
+  final String docsSyncMode = _docsSyncMode(manifest);
   final Map<String, dynamic> contracts =
       manifest['contracts'] is Map<String, dynamic>
       ? manifest['contracts'] as Map<String, dynamic>
@@ -1911,16 +2014,11 @@ void _validateCoreContracts(
     'docs_sync_prompt_policy',
   ]) {
     final String value = (contracts[contractKey] ?? '').toString();
-    final String lower = value.toLowerCase();
-    if (!value.contains(_docsSyncPrompt) ||
-        !lower.contains(_docsSyncPromptCondition) ||
-        !lower.contains(_docsSyncPromptImmediateNeed) ||
-        !lower.contains(_docsSyncPromptDeferredPass) ||
-        !lower.contains(_docsSyncPromptNoRepeat)) {
+    if (!_docsSyncTextMatches(value, docsSyncMode)) {
       issues.add(
         ValidationIssue(
           'AD017',
-          'Manifest $contractKey must preserve the exact docs-sync prompt plus the deferred-default/immediate-need conditions.',
+          'Manifest $contractKey must match its declared docs_sync mode and scoped maintenance conditions.',
         ),
       );
     }
@@ -1967,6 +2065,7 @@ void _validateCoreContracts(
 }
 
 void _validateRunbookPolicies(
+  Map<String, dynamic> manifest,
   List<ValidationIssue> issues,
   String Function(String relPath) readText,
 ) {
@@ -1988,11 +2087,7 @@ void _validateRunbookPolicies(
         missingSections.add('$docName -> $heading');
       }
     }
-    if (!text.contains(_docsSyncPrompt) ||
-        !text.toLowerCase().contains(_docsSyncPromptCondition) ||
-        !text.toLowerCase().contains(_docsSyncPromptImmediateNeed) ||
-        !text.toLowerCase().contains(_docsSyncPromptDeferredPass) ||
-        !text.toLowerCase().contains(_docsSyncPromptNoRepeat) ||
+    if (!_docsSyncTextMatches(text, _docsSyncMode(manifest)) ||
         !text.contains('REFERENCE_DISCOVERY_WORKFLOW.md')) {
       missingSections.add('$docName -> docs-sync/reference policy text');
     }
@@ -2117,6 +2212,7 @@ void _validateUserGuides(
 }
 
 void _validateDocsMaintenance(
+  Map<String, dynamic> manifest,
   List<ValidationIssue> issues,
   String Function(String relPath) readText,
 ) {
@@ -2142,14 +2238,15 @@ void _validateDocsMaintenance(
       ),
     );
   }
-  if (!text.contains(_docsSyncPromptCondition) ||
-      !text.contains(_docsSyncPromptImmediateNeed) ||
-      !text.contains(_docsSyncPromptDeferredPass) ||
-      !text.contains(_docsSyncPromptNoRepeat)) {
+  if (!_docsSyncTextMatches(
+    text,
+    _docsSyncMode(manifest),
+    requireLegacyPrompt: false,
+  )) {
     issues.add(
       ValidationIssue(
         'AD041',
-        'Docs maintenance workflow must state the deferred-default docs-sync rule plus the immediate-need and no-repeat conditions.',
+        'Docs maintenance workflow must match its declared docs_sync mode and scoped maintenance conditions.',
       ),
     );
   }

@@ -12,7 +12,7 @@ Quick guardrails for Codex/agent work in `legalpdf_translate`.
 ## Project Snapshot
 - Canonical repo path: `C:\Users\FA507\.codex\legalpdf_translate`
 - Canonical branch for live Gmail: `main`
-- PR #46 merge commit on `main`: `dbca0ca536429f3c92edfb503f461da21b5909f8`
+- Current build/branch and acceptance status: `docs/assistant/HANDOFF.md`; distinguish unpublished integration work from canonical main.
 - Primary UI: local browser app; live/Gmail port `8877`; Gmail bridge port `8765`
 - Development UI review mode: browser `mode=shadow` with isolated app data
 
@@ -78,21 +78,20 @@ Ask before executing any of the following:
   - `docs/assistant/workflows/CLOUD_MACHINE_EVALUATION_WORKFLOW.md`
 - Commit/push requests must follow:
   - `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`
-- Post-PR #46 continuity starts with:
-  - `docs/assistant/HANDOFF.md`
-  - `docs/assistant/PR46_POST_MERGE_SUMMARY.md`
+- Fresh-session continuity starts with `docs/assistant/HANDOFF.md`, then only the applicable current plan section. PR summaries and dated history are evidence, not current continuation authority.
 
 ## Stage-Gate Protocol
+Current user authorization and an explicitly approved operation scope take precedence over historical continuation text. Do not request a consumed token again or apply an old stage/credit stop to routine work already authorized. Publication, destructive and live-service boundaries remain in force.
+
 - For risk-triggered complex work, enforce staged execution via:
   - `docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md`
 - Stop at stage boundaries and require exact continuation token format:
   - `NEXT_STAGE_X`
 
 ## Docs Sync Policy
-After significant implementation changes, ask exactly:
-"Would you like me to run Assistant Docs Sync for this change now?"
+Standing user authorization (2026-09-16): perform useful Docs Sync autonomously. Do not ask again. Update only touched-scope docs; no blanket rewrites. Preserve history and exact beforeimages when replacing current guidance. Publication, destructive operations and live Gmail remain separately gated.
 
-Ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary.
-If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass.
-If the relevant docs sync already ran during the same task/pass, do not ask again.
-If approved, update only relevant docs for touched scope (no blanket rewrites).
+Use `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`. Keep architecture, current handoff, validation and relevant user guides coherent; record deferred gaps when another bounded task must finish first. This does not invoke UCBS or authorize vendored-template changes.
+
+## Assistant and App Context
+The user's Astra Ultra preference concerns the assistant/Codex task; app translation models, effort and protocol remain separate saved or explicit per-run choices. Discover tools available in the current session and use their current documentation. Do not infer model capabilities, credentials, browser state or app ownership from stale inventories.

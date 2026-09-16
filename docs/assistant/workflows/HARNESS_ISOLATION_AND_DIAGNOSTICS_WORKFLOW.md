@@ -62,6 +62,29 @@ dart tooling/validate_agent_docs.dart
 - Focus-sensitive desktop tests must explicitly activate the target window/control and close leaked popups or modal dialogs between cases instead of relying on inherited focus state.
 
 ## Listener Ownership and Runtime Conflict Rules
+
+### Browser bootstrap is not necessarily read-only
+
+- The unpublished 2026-09-10 activation candidate provides `BrowserAppServices` injection and an offline service bundle at app construction. Use the bundle before creating the app, with explicit temporary state paths, then install hard tripwires for ambient credentials, outbound/native/process/registry and live-state access. Honest `not_evaluated` statuses are required; injected readiness must not look successful.
+- The bundle covers construction and the ten bootstrap/capability/status GET routes enumerated in `test_shadow_web_isolated_services.py`, not arbitrary app actions. Other routes remain registered, including OAuth callbacks and explicit preflights. An isolated harness must enforce its own exact route allowlist; do not treat this bundle as a general HTTP/network/native sandbox.
+- Real isolated workflow execution must additionally inject caller-owned `gui_settings`, a configured fake/client boundary, an `environment_loader` that does not discover `.env`, and an `ocr_engine_factory` that cannot resolve ambient credentials. A settings snapshot or cloned SDK alone does not isolate OCR or environment discovery. Keep ordinary CLI/Qt defaults separate from these harness substitutions.
+- Accounting acceptance must use the original ledger through a hash/identity-bound manifest, with per-call reservations before SDK dispatch. Do not swap a memory-only accounting object into a hard-capped run, recreate a missing ledger, release crash/unknown holds, or present legacy forecast prices as verified all-call cost.
+
+- A GET route can perform native/provider work. In the PR #295 verification path, bootstrap/capabilities could reach `assess_word_pdf_export_readiness` (Word probe/export canary), Gmail account/credential enumeration and Google Photos OAuth state. Constructors and extension summaries can resolve live paths before a disabled-bridge flag is applied.
+- `mode=shadow`, private metadata/DB paths, GET-only requests and `enable_live_gmail_bridge=False` do not by themselves prove isolation from those paths. Inspect app construction and the full requested route chain before dispatch, not just the final button or HTTP method.
+- Under offline/UI-only scope, install fail-closed native/process/registry/outbound/live-path guards before app construction and substitute only the explicit capability/credential boundaries with honest `not_evaluated` results. Keep real UI/route logic for the claimed wiring check. If the boundaries cannot be isolated, stop and report the missing authority instead of running a readiness probe.
+- Never describe that guarded smoke as live provider/OAuth/Gmail/Word health acceptance. Record injected boundaries, actual route/build identity, guard verdicts and owned cleanup separately. Do not redirect APPDATA or create another profile to bypass a Word safety journal, replay consumed helpers, or infer new operation authority from historical stage tokens.
+
+### Actual audit shapes and provider accounting
+
+Before a bounded provider/native operation, validate changed audit assumptions with the real standard-library operation on disposable fictional data. On the verified Windows/Python runtime, `NamedTemporaryFile` emits a directory-label `open` before creating its exclusive temporary file, and binary mode `w+b` appears as audit mode `w+`. Bind any exception to the exact pinned function, caller, directory, mode, prefix/suffix and flags; retain negative cases. Do not allow arbitrary directory writes or weaken exclusive creation/rename checks. A diagnostic pass covers that runtime shape only.
+
+On the verified Windows runtime, a second handle can open a byte-range-locked file even in the owning process, then fail on read with `PermissionError` / errno 13. For a stable lock file, check physical bytes before acquiring and after releasing ownership, and compare file identity while the lock is held. Do not weaken application locking to satisfy a private harness. Preserve failed attempts and report sanitized exception type, code site and errno without private exception text. The disposable diagnostic and successful fresh formatting caller establish this bounded behavior; they do not establish native or visual acceptance.
+
+Keep attempts, actual provider dispatches and settlement separate. A validation correction can be attempted and blocked before SDK contact. Reconcile actual call IDs and retained responses with finalized accounting; preserve unknown/local holds and failed run state. Offline revalidation of a retained response can establish a corrected validator result, but cannot convert its original failed operation into a completed run. Any necessary later provider operation needs a distinct current scope and identity within the unchanged lifetime allowance.
+
+### Listener and browser identity
+
 - If a feature depends on a localhost listener, verify the expected port is free or owned by the expected process before treating the integration as healthy.
 - Classify unexpected listener ownership or bind conflicts as preflight `unavailable`, not as product `failed`.
 - Runtime listener startup failures must surface visible status, not silent logs only.

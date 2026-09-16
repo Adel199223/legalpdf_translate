@@ -1,5 +1,9 @@
 # PDF to DOCX Translation User Guide
 
+## Explicit source and formatting review
+
+The [reviewed-source and DOCX guide](REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md) covers the candidate browser's **Review source before translating** and **Review DOCX formatting** controls. Use it for explicit source decisions, independent source/translation ranges, tables, page-matched derivatives and exact revision recovery. Saved settings and the original output remain authoritative; no model/protocol promotion is implied. Check [the current handoff](../HANDOFF.md) for candidate-versus-main availability and acceptance status. Earlier integration results below are historical evidence, not a guarantee for this new workflow.
+
 ## Use This Guide When
 - You need help with the app's main workflow: translating a PDF into DOCX.
 - You are supporting users who are unfamiliar with technical tooling.
@@ -40,13 +44,13 @@ The footer/spacing follow-up is accepted and passed local integration checks. Wi
 
 The current live translation pipeline produces page text without these block associations. Such runs still get the safer typography, mixed-script handling and page numbering, but not guessed source-exact columns or headers. The app reports missing or uncertain layout evidence; a successful rebuild is not certification of legal accuracy. The separate structured-translation/model upgrade is not activated by this formatting release.
 
-A source-associated candidate connects fresh translations to that layout. Publication is approved, but ordinary app launches still use the existing text-only translation policy; a temporary verification setting does not turn the new policy on permanently. Digital pages with trustworthy structure can retain tables and paragraph relationships; scans without reliable layout evidence still need manual layout review. The candidate's success means the assigned blocks were returned, not that a legal reviewer approved their meaning. Model upgrades and lower-cost claims still need their own evaluation.
+A source-associated workflow now connects fresh translations to that layout when explicitly enabled. It was integrated in PR #295, but ordinary app launches still use the existing text-only policy; a temporary verification setting does not turn the new policy on permanently. Digital pages with trustworthy structure can retain tables and paragraph relationships; scans without reliable layout evidence still need manual layout review. Returning the assigned blocks does not mean a legal reviewer approved their meaning. Model upgrades and lower-cost claims still need their own evaluation.
 
-The candidate's follow-up checks preserve exact names such as João Guerreiro in Arabic and allow simple scanned pages to use real headers/footers only when the retained OCR and image evidence support it. Joined documents still keep their own section boundaries. Older scans without that evidence, complex layouts and unclear tables remain available as editable text for review; a more expensive translation model does not supply missing layout evidence. Word inspection found an Arabic clock-ordering bug despite correct saved text. A local formatter correction now keeps ordinary complete clocks such as `09:30` together, including when rebuilding saved translations. Its automated checks and fresh one-page Arabic Word layout check pass, and the user approved the corrected preview. Exact accented-character checks were also tightened (validator v5): independent review is clear, and the final full test suite passed 3,391 tests in 428.49s. Serial release validation also passed; GitHub publication, merge and canonical verification remain pending. The [implementation closeout](../exec_plans/completed/2026-09-09_structured_new_translations.md) distinguishes these steps from actual merge results. The accepted synthetic layout is not a guarantee for every document or permission for additional paid translations or Word checks.
+The integrated follow-up checks preserve exact accented names (for example, the fictional name Álvaro Exemplo) in Arabic and allow simple scanned pages to use real headers/footers only when the retained OCR and image evidence support it. Joined documents still keep their own section boundaries. Older scans without that evidence, complex layouts and unclear tables remain available as editable text for review; a more expensive translation model does not supply missing layout evidence. Word inspection found an Arabic clock-ordering bug despite correct saved text. A local formatter correction now keeps ordinary complete clocks such as `09:30` together, including when rebuilding saved translations. Its automated checks and fresh one-page Arabic Word layout check pass, and the user approved the corrected preview. Exact accented-character checks were also tightened. Local validation, final GitHub checks, merge and canonical integration verification are complete; the [implementation closeout](../exec_plans/completed/2026-09-09_structured_new_translations.md) records the results. The accepted synthetic layout and guarded browser checks are not proof of real legal accuracy, every document's pagination, provider readiness or cost savings. Permanent activation and real-document acceptance are the next assessment, not completed features or permission for additional paid translations or Word checks.
 
 Use `... > Rebuild DOCX` with retained page outputs to change formatting locally without buying another translation. Keep intermediates when you want later rebuilding; old text-only runs remain supported. Check the final Word file before delivery and resolve any existing review findings. Rebuilding does not erase earlier translation warnings or change recorded API costs.
 
-For structured candidate runs, changing page breaks or other formatting can reuse the saved translation. If you manually edit a saved page-text file, automatic resume stops to protect the original evidence; rebuilding can still create a separate Word file with a review warning. Edits made directly in Word stay in that Word file and are not imported by rebuilding. Missing or damaged structure files require explicit recovery, not an automatic paid retry. Turning off intermediate retention keeps the final Word file but removes the evidence needed for later resume/rebuild.
+For opt-in structured runs, changing page breaks or other formatting can reuse the saved translation. If you manually edit a saved page-text file, automatic resume stops to protect the original evidence; rebuilding can still create a separate Word file with a review warning. Edits made directly in Word stay in that Word file and are not imported by rebuilding. Missing or damaged structure files require explicit recovery, not an automatic paid retry. Turning off intermediate retention keeps the final Word file but removes the evidence needed for later resume/rebuild.
 
 Automatic Word-to-PDF export is not needed for translation DOCX creation. Translations stay in Word. The separate honorarios export retains its editable DOCX and now creates a verified fresh PDF through an isolated Word operation. PDFs/PNGs generated for development layout checks remain internal evidence only.
 
@@ -401,6 +405,20 @@ Queue mode writes these sidecar files next to the manifest:
 
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.
+
+The unpublished structured-activation candidate strengthens this protection;
+the daily-use app has not been switched to that build. Its run reports distinguish
+known all-request cost from incomplete or unpriced usage. A BLOCK cap needs
+verified prices and conservative request limits before any provider request;
+without them it stops. WARN/no cap keeps its existing behavior. The private
+acceptance allowance is not a new global cap on your translations. See the
+[active plan](../exec_plans/active/2026-09-10_structured_translation_ordinary_use.md)
+for release and real-document acceptance status.
+
+In that candidate, Resume protects saved work even when the original job began
+as a new run. Missing accounting/checkpoint evidence requires explicit recovery;
+it does not silently purchase the translation again. The automatic save-row
+suggestion uses local text; explicit autofill is a separate user action.
 
 1. Set a budget cap:
    - `legalpdf-translate --pdf <file> --lang EN --outdir <dir> --budget-cap-usd 3.50`

@@ -1,5 +1,21 @@
 # Connect new translations to approved source-aware Word formatting
 
+Public-copy note: `Álvaro Exemplo` is an explicitly fictional replacement for a personal-name example. Exact original text is retained in private beforeimage evidence; historical execution outcomes and legal artifacts are unchanged.
+
+
+## Post-merge addendum — current lifecycle truth
+
+Recorded in the fresh-chat documentation pass after the completed 2026-09-09 publication. The dated sections below preserve their original checkpoints; pending wording there is history, not instructions to repeat work.
+
+- PR [#295](https://github.com/Adel199223/legalpdf_translate/pull/295) merged at `4780a2e16c32adf7af7479656f0b5fafdff83224`; canonical `main` and the observed remote main matched and were clean before the local handoff edits.
+- Final published head `2ef286c36a2e29191d54d582dcc00bc07f7d8ca6` fixes exact `- Branch: \`main\`` capitalization after the initial CI docs-fixture failure. The 72 agent-docs tests passed; final [Actions run 34411719376](https://github.com/Adel199223/legalpdf_translate/actions/runs/34411719376) passed both jobs. Windows: 3,391 passed, one upstream Starlette/AnyIO deprecation warning, 635.44s. The earlier failure remains recorded, not erased.
+- Local final code validation: 318 focused tests, 3,391 full tests in 428.49s, independent review clear and serial `validate_dev.ps1 -Full` passed with the documented direct-Dart fallback. These are exact publication-build results.
+- Canonical post-merge: 20 offline caller/recovery/policy checks passed in 4.11s; canonical imports and default/opt-in/explicit selection isolation passed. All 46 runtime/test files match digest `dcc4981ce7efd5a03ca50a64b3b18988346c1b85a8e2a2cd7b1a0db3d1fb689e`.
+- Canonical UI smoke passed for build identity, New Job/Recent Jobs, languages and UI/API wiring only. The original unguarded helper was never executed: GET/bootstrap could launch Word/account/provider paths despite shadow mode and a disabled bridge. The corrected private helper installed fail-closed guards before app construction and used explicit `not_evaluated` capability boundaries. Real provider/native/auth/Gmail readiness was not evaluated. Only owned server processes and the owned Chrome tab were closed; the original tab and user Edge/Gmail were preserved.
+- Local/remote `codex/structured-new-translations` branches were deleted. `C:/Users/FA507/.codex/legalpdf_translate_new_runs` remains clean/detached at the merge, retaining private test logs and its canonical `.venv311` junction. Unrelated worktrees/user documents were preserved; no new paid/native calls or permanent activation occurred.
+- Machine-readable private evidence: `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/structured_new_runs_corrective_stage3_2026_09_09/stage4_publication.json`, status `complete_merged_verified_and_scoped_cleanup_done`. Protected budget, advanced original Word journal and approved DOCX/preview hashes were unchanged through publication verification.
+- Next task and user requirements are in [FRESH_CHAT_BRIEF.md](../../FRESH_CHAT_BRIEF.md): assess safe durable activation and real-document acceptance at Stage 1. Ordinary launches remain legacy; no Terra/Sol promotion, full-reference legal acceptance or measured savings is implied. Do not replay the historical gates/native helpers below.
+
 ## Implementation and acceptance closeout
 
 The bounded implementation and synthetic native/human layout acceptance are
@@ -221,7 +237,7 @@ Offline Stage 2 must verify:
   real workflow/caller paths with fake providers; API/text fallback is uncertain.
 - Complete exact block/list/table coverage in EN/FR/AR and both page-break modes;
   changed/headerless/footerless joined documents; single-page versus partial
-  selection; page-5 starts; confirmed split sentences; coherent João Guerreiro.
+  selection; page-5 starts; confirmed split sentences; coherent Álvaro Exemplo.
 - Refused/incomplete/invalid/foreign/duplicate/missing responses never become
   DONE or trusted output, including complete-looking JSON with incomplete status.
 - Swapped dates/altered citations/omitted obligations are not falsely labelled
@@ -465,7 +481,7 @@ this runtime/test identity. No commit is claimed by this digest.
   The final EN-only helper accepts exactly the observed fragments and normal
   glossary; it does not bypass the independent Arabic name failure.
 - **Arabic acceptance failure**: actual browser job `tx-0473517d00c8` preserves
-  the source name `João Guerreiro` exactly after `Destinatário` and in table-like
+  the source name `Álvaro Exemplo` exactly after `Destinatário` and in table-like
   text, but the real validator reports `unsupported_latin_or_digit_content` for
   `p0001_b0004` and `p0001_b0011`. The adapter's source-name labels and literal
   helper's `Nome`/`Name` detection miss those contexts. A pure per-block replay
@@ -638,7 +654,7 @@ above and separately authorized publication Stage 4 below.
   `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/structured_new_runs_corrective_stage3_2026_09_09`.
   The failed prior pass is preserved. A fresh two-page synthetic Portuguese scan
   has 11+9 assigned rows, genuine glyph-sized per-word boxes, two wrapped lists,
-  recipient `João Guerreiro`, prose `Nuno Carrujo`, a split sentence, and repeated
+  recipient `Álvaro Exemplo`, prose `Nuno Carrujo`, a split sentence, and repeated
   court/contact furniture. Both rendered source pages were visually inspected;
   independent bilingual review found no clear consequential fixture error.
   Source PDF SHA256:

@@ -1,5 +1,11 @@
 # Assistant Docs Index
 
+## Start a current task
+- [HANDOFF.md](HANDOFF.md): current build/worktree, evidence distinctions and next action.
+- [SESSION_RESUME.md](SESSION_RESUME.md): dormant roadmap anchor; use normal ExecPlan flow.
+- Read only the current section of the applicable living plan, then the relevant architecture/workflow. Dated acceptance records are evidence, not active stage/credit instructions.
+- Useful scoped Docs Sync has standing user authorization; do not ask again. See [DOCS_MAINTENANCE_WORKFLOW.md](workflows/DOCS_MAINTENANCE_WORKFLOW.md).
+
 ## Use when you need canonical architecture/status
 - `APP_KNOWLEDGE.md`: canonical app architecture and status.
 - `docs/assistant/APP_KNOWLEDGE.md`: short bridge for fast routing.
@@ -7,11 +13,15 @@
 ## Use when you need governance rules
 - `agent.md`: operational runbook.
 - `AGENTS.md`: quick guardrails / compatibility entrypoint.
-- `docs/assistant/HANDOFF.md`: durable fresh-thread handoff after PR #46, including canonical main status, live Gmail caveats, and next steps.
+- `docs/assistant/HANDOFF.md`: compact current handoff, qualified local candidate readiness and explicitly deferred activation/publication decisions.
 - `docs/assistant/VALIDATION.md`: exact validation commands, CI expectations, known Dart fallback semantics, and merge-stop rules.
 - `docs/assistant/GMAIL_LIVE_TESTING.md`: canonical-main-only live Gmail extension retest guide and listener diagnostics.
 - `docs/assistant/PR46_POST_MERGE_SUMMARY.md`: historical summary of PR #46 scope, fixes, validation, merge, and post-merge retest setup.
 - `docs/assistant/SESSION_RESUME.md`: first resume stop for `resume master plan` and fresh-session roadmap continuity.
+- `docs/assistant/exec_plans/completed/2026-09-16_ordinary_browser_integration.md`: latest ordinary source/formatting integration, validation and actual-workflow evidence.
+- `docs/assistant/exec_plans/completed/2026-09-16_arabic_render_corrections.md`: declared Arabic rendered profile and qualified all-page results.
+- `docs/assistant/FRESH_CHAT_BRIEF.md`, `docs/assistant/NEW_CHAT_HANDOFF_2026-09-15.md` and older acceptance plans: historical requirements and operation references; do not treat old pending gates as current authority.
+- `docs/assistant/history/2026-09-16_front_doors/README.md`: former front doors, with the validation copy's disclosed fictional name substitution; exact originals remain privately preserved.
 - `docs/assistant/GOLDEN_PRINCIPLES.md`: enforceable rule source-of-truth.
 - `docs/assistant/exec_plans/PLANS.md`: ExecPlan format and lifecycle.
 - `docs/assistant/runtime/CANONICAL_BUILD.json`: canonical runnable build policy for Qt launch handoffs.
@@ -24,6 +34,7 @@
 - `docs/assistant/features/APP_USER_GUIDE.md`: beginner support guide covering the browser app as the normal daily-use surface, `live` vs isolated `shadow` mode, Gmail intake, OCR advisor, review queue, job log save/edit flows, interpretation honorários, and queue runs.
 - `docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md`: Google Photos Picker import runbook for Interpretation requests, including OAuth setup, Picker sessions, metadata provenance rules, troubleshooting, validation, and artifact hygiene.
 - `docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md`: primary workflow guide covering browser-app-first translation, Gmail intake/reply flows, cost guardrails, review export, OCR advisor, queue runner behavior, and interpretation Job Log/honorários flows.
+- `docs/assistant/features/REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md`: explicit source review, independent formatting selections, editable tables, saved-setting-preserving derivatives and exact recovery/session limits in the candidate browser workflow.
 - `docs/assistant/features/PRIMARY_FEATURE_USER_GUIDE.md`: compatibility shim to primary workflow guide.
 - `docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md`: plain-language guide for the saved multi-root VS Code workspace and the active LegalPDF Git worktrees on this machine.
 
