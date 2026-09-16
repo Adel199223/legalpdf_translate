@@ -4,7 +4,7 @@
 
 The user authorized the recommended commit → push → PR → CI → merge → canonical app verification sequence on 2026-09-16. Publish the already reviewed local candidate through the normal PR workflow, then verify that the canonical app resolves to the merged build. This is a new publication scope following completed local acceptance; it does not imply any Git action has occurred yet.
 
-Status: authoring/review only. No new commit SHA, PR number, CI result, merge SHA or canonical verification outcome is asserted. Root owns actual execution and subsequent factual updates. Follow `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`.
+Status: commits `b74c2094` (runtime) and `048143b4` (docs) are published in PR #296. Initial exact-head CI run `35152085485` passed docs/tooling and targeted core checks but failed Windows full-test collection because a fresh install selected OpenAI SDK 3.14.1 without the legacy `httpx` test dependency. The dependency correction is under validation; no merge or canonical verification is asserted. Follow `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`.
 
 ## Scope and non-goals
 
@@ -47,4 +47,6 @@ Publication deploys the reviewed code while retaining existing global defaults a
 
 ## Assumptions and outcome log
 
-The user authorized the publication lifecycle, not new acceptance purchases or default promotion. Root controls execution and the factual outcome log. Current outcome: plan and current-authorization edits prepared privately; Git publication and canonical verification results are not yet recorded.
+The user authorized the publication lifecycle, not new acceptance purchases or default promotion. Root controls execution and the factual outcome log. Current outcome: the reviewed runtime and docs commits are published in [PR #296](https://github.com/Adel199223/legalpdf_translate/pull/296). All 13 pre-existing canonical documentation files were preserved byte-for-byte privately and in path-scoped stash `4786048b40a32c11f195e09379c19312f71371ee`; canonical main remains clean at `4780a2e1`. Do not automatically reapply or drop that stash.
+
+CI correction: constrain the OpenAI SDK to `>=2.36.0,<3`, explicitly declare `httpx>=0.28.1,<0.29` in the development extra, and install that extra in CI. SDK 3 changes the default HTTP client family and trust-store behavior ([upstream migration guide](https://github.com/openai/openai-python/blob/v3.14.1/httpx2.md)); adopting it requires a separate compatibility review. The lower bound reflects the locally validated SDK baseline. Retain the already validated SDK 2 transport family for this publication. The original 6,477-test receipt covers the pre-correction snapshot; fresh targeted/Full checks and exact-head CI validate this dependency/workflow correction. No application logic, acceptance assertions, global defaults or paid execution changed.
