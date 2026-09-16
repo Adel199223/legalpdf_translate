@@ -2,9 +2,9 @@
 
 ## Goal and current authority
 
-The user authorized the recommended commit → push → PR → CI → merge → canonical app verification sequence on 2026-09-16. Publish the already reviewed local candidate through the normal PR workflow, then verify that the canonical app resolves to the merged build. This is a new publication scope following completed local acceptance; it does not imply any Git action has occurred yet.
+The user authorized the recommended commit → push → PR → CI → merge → canonical app verification sequence on 2026-09-16. That bounded publication scope completed on 2026-09-16; it does not promote global translation defaults or extend paid/native/Gmail authority.
 
-Status: commits `b74c2094` (runtime) and `048143b4` (docs) are published in PR #296. Initial exact-head CI run `35152085485` passed docs/tooling and targeted core checks but failed Windows full-test collection because a fresh install selected OpenAI SDK 3.14.1 without the legacy `httpx` test dependency. The dependency correction is under validation; no merge or canonical verification is asserted. Follow `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`.
+Status: completed for the authorized publication and canonical-verification scope. PR #296 merged at `068e4312269106e26677185ae33bc1b556e3c073` after required CI on `79fecff413414ebac927b5a9cacdf78b3077bc22`; canonical verification is recorded below. Follow-up documentation publication remains subject to its own exact-head PR/CI workflow and is not claimed merged by this record.
 
 ## Scope and non-goals
 
@@ -37,7 +37,13 @@ No new production routes, payloads, submitted values, Gmail/native-host contract
 
 ## Validation and acceptance
 
-Retained local proof is complete repository pytest: 6,477 passed, zero failures/errors/skips, plus separate standard Full on the exact unchanged 481-file snapshot. Root also passed final direct-Dart docs/hygiene/whitespace and completed local scope review. Qualified French synthesis `b1b82a8e` joins the actual two-call ordinary run, run-owned formatting, native export, full-page reviews and preserved strict extraction failure; it is not a global model benchmark.
+The validation evidence has three distinct scopes:
+
+- Original reviewed implementation: complete local pytest, 6,477 passed with zero failures/errors/skips, plus standard Full on the same retained 481-file snapshot.
+- Dependency/CI correction `79fecff4`: six offline SDK transport tests and a fresh standard Full (624 cases plus compile/docs/hygiene) passed locally. The documented Dart wrapper issue used its successful direct-Dart fallback.
+- Fresh remote environment on exact head `79fecff4`: both CI jobs passed, including 6,477 tests with two warnings. CI installed OpenAI 2.54.0, HTTPX 0.28.1 and Starlette 1.6.0. Exact timings, receipts and source identities are recorded in the outcome table below.
+
+Qualified French synthesis `b1b82a8e` joins the actual two-call ordinary run, run-owned formatting, native export, full-page reviews and preserved strict extraction failure. It is not a global model benchmark. The earlier implementation receipt is not relabeled as testing the changed dependency declaration.
 
 Validate this scoped docs delta; reuse prior implementation proof only while its source/test identity remains applicable. A rebase, implementation fix or new failure may require targeted or broader checks. Required remote CI must pass on the exact published head. Successful publication additionally requires an actual merged revision, preserved original canonical work/evidence and verified canonical app build; do not mark this plan complete based only on a pushed branch or open PR.
 
@@ -46,6 +52,28 @@ Validate this scoped docs delta; reuse prior implementation proof only while its
 Publication deploys the reviewed code while retaining existing global defaults and saved-run policies. A red CI check, dirty-file conflict, lineage mismatch or ambiguous process identity is a concrete blocker to its dependent step; preserve the current state and resolve it without resets, silent overwrites or new paid experiments. A post-merge missed change uses a follow-up branch/PR unless the user explicitly authorizes a different repair. Do not use the deferred global-default activation plan as rollback or restart authority.
 
 ## Assumptions and outcome log
+
+The authorized publication scope completed with these actual results:
+
+| Item | Recorded result |
+| --- | --- |
+| Runtime commit | `b74c20940164d05e62d01e896be362d1f7ff76ce` |
+| Documentation commit | `048143b436d107a7f826020d0ea3f1e7a61ae202` |
+| PR and exact reviewed head | PR #296: [PR #296](https://github.com/Adel199223/legalpdf_translate/pull/296); `79fecff413414ebac927b5a9cacdf78b3077bc22` |
+| Dependency/CI correction | `79fecff413414ebac927b5a9cacdf78b3077bc22`; SDK 2 bound, explicit dev httpx, CI dev installation |
+| Corrected validation | six offline SDK transport tests passed (1.50 seconds); fresh `validate_dev.ps1 -Full` passed 624 cases (233 browser/API, 2 Gmail review units, 5 selected intake units, 231 source review and 153 formatting review), compile/docs/hygiene in 1,074.10 seconds. The documented Dart AOT wrapper failure used the successful direct-Dart fallback. Private result `application_publication_20260916_01/dependency_fix_validation_01/result.json`, SHA256 `733afe5ecb64f2f71ce5732e0c4ace91914800abfb5cc83d0af8b4c3fb5f19f1`; original 6,477 cases remain pre-dependency-correction evidence |
+| Required CI | [CI run 35153163582](https://github.com/Adel199223/legalpdf_translate/actions/runs/35153163582); both CI jobs completed successfully on the exact reviewed head; full Windows suite: 6,477 passed, 2 warnings, 2,247.92 seconds. Fresh CI resolved OpenAI 2.54.0 / HTTPX 0.28.1 / Starlette 1.6.0; private terminal receipt SHA256 `f5e283e04e59904fb8d5bad6f86997f7af55232c7134c58c65310a27da43c204` |
+| Merge | `068e4312269106e26677185ae33bc1b556e3c073`; 2026-09-16T22:16:51Z |
+| Canonical checkout | `C:/Users/FA507/.codex/legalpdf_translate`, `main`, `068e4312269106e26677185ae33bc1b556e3c073` |
+| Canonical app verification | private `application_publication_20260916_01/canonical_http_verification_run_02/result.json`, SHA256 `3b0b142797d43d7b026814a5b1137f74576713d4a29d8d0f493fd0c379fc93b9`; `a3cd055c90e2` (93 served assets); real canonical main/build/lineage, token-bound shadow `publication-review` HTTP readiness/home and all 93 versioned JS/MJS/CSS assets verified. Source/asset snapshot stayed unchanged; actual server and its Windows venv launcher exited cleanly and port 18887 was released. This is HTTP/build/assets verification with isolated services; browser JavaScript, paid providers, OCR, Word, OAuth and live Gmail were not exercised. Initial run01 failed the private checker's launcher/server PID equality; its evidence is preserved. Corrected helper03 binds the OS PID/PPID relationship and retains an exact server process handle for exit verification |
+| Original canonical preservation | all 13 original files retained byte-for-byte in private `application_publication_20260916_01/canonical_preservation_01` and path-scoped stash `4786048b40a32c11f195e09379c19312f71371ee`; preservation receipt SHA256 `2773310538f2f6fe546d5a9ddf7468b28ea3cca14cc11ae88041ea3342b47697`. Do not automatically apply or drop the stash |
+| Worktree/branch cleanup | retained for scoped documentation closeout from the merged main revision; the fully merged feature branch was removed locally and remotely. Recheck actual Git state before new work; retained private/ignored evidence is not disposable; historical dirty worktrees and ignored/private evidence retained; no private/legal/Word artifacts deleted. Named native-host and desktop launch paths resolve to canonical C; the existing desktop shortcut remains Qt. No launcher or registration change was needed (private routing receipt `06f086777ab5830583e579b179b3f0715e41d94d175042390467809c7bc38c39`) |
+
+The French term-assisted/text-only acceptance remains qualified and the strict trailing-space extraction failure remains preserved. Global defaults, saved preferences, the separate >=20% model-efficiency goal and unresolved historical holds are unchanged. Historical authoring observations above remain point-in-time evidence. Follow-up docs PR status: this closeout is authored on a follow-up documentation branch; its merge is not predicted here. Consult this file's Git history and PR for the final documentation revision.
+
+### Preserved pre-merge checkpoint at 79fecff413414ebac927b5a9cacdf78b3077bc22
+
+Status: commits `b74c2094` (runtime) and `048143b4` (docs) are published in PR #296. Initial exact-head CI run `35152085485` passed docs/tooling and targeted core checks but failed Windows full-test collection because a fresh install selected OpenAI SDK 3.14.1 without the legacy `httpx` test dependency. The dependency correction is under validation; no merge or canonical verification is asserted. Follow `docs/assistant/workflows/COMMIT_PUBLISH_WORKFLOW.md`.
 
 The user authorized the publication lifecycle, not new acceptance purchases or default promotion. Root controls execution and the factual outcome log. Current outcome: the reviewed runtime and docs commits are published in [PR #296](https://github.com/Adel199223/legalpdf_translate/pull/296). All 13 pre-existing canonical documentation files were preserved byte-for-byte privately and in path-scoped stash `4786048b40a32c11f195e09379c19312f71371ee`; canonical main remains clean at `4780a2e1`. Do not automatically reapply or drop that stash.
 

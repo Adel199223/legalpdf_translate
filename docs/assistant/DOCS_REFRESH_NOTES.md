@@ -17,6 +17,15 @@ Use this file for scoped Docs Sync decisions and genuinely deferred gaps. Useful
 
 ## Entries
 
+
+## 2026-09-16 — reviewed workflow publication closeout
+
+- Recorded PR #296 merge `068e4312`, exact-head CI (6,477 passed), and canonical HTTP/build verification of all 93 assets at version `a3cd055c90e2` in the completed publication plan.
+- Updated current architecture, handoff/resume, index and three user guides to describe availability on main. Dated acceptance history, the qualified French result and strict trailing-space finding remain preserved; global defaults and the broader efficiency/default-promotion decision remain unchanged.
+- Preserved all 13 original canonical docs privately and in the documented stash. Retained historical worktrees and private/native evidence; removed only the fully merged feature branch.
+- Recorded dated official SDK migration sources. The docs validator now accepts HTTPS file URLs in `openai/openai-python` while rejecting unrelated GitHub owners/repositories, non-file routes and URL lookalikes. Existing allowed-host behavior is unchanged.
+- Validation: 105 docs-policy cases passed, including the new positive/negative URL cases; direct docs/hygiene and whitespace checks passed. The follow-up PR owns its final Full/CI outcome. The canonical HTTP check used isolated services and did not exercise browser JavaScript or paid/native/Gmail operations.
+
 ## 2026-09-16 — qualified French acceptance and local candidate closeout
 
 - Recorded actual FF02 normal run-owned formatting, sole native export and two full-page visual reviews, with unchanged paid text and editable metadata cells. Kept FQ02 `extraction_checks_failed` unchanged: one trailing U+0020 extends beyond its metadata-cell predicate while complete page/document text and nonspace ownership remain exact. Qualified physical acceptance retains source/glossary/abbreviation, decorative/style and geometry limits; no unconditional automated pass or human certification is claimed. Final synthesis `b1b82a8e` and supplemental diagnostic `aaeee1e1` retain that disposition.

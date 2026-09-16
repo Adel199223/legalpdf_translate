@@ -10,7 +10,7 @@ This bridge is intentionally shorter. Defer to [root APP_KNOWLEDGE.md](../../APP
 - [App guide](features/APP_USER_GUIDE.md), [PDF guide](features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md), [reviewed-source/DOCX guide](features/REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md).
 - [Index](INDEX.md) and [manifest](manifest.json): select only the applicable workflow.
 
-Canonical main is the daily-use build. The `feat/structured-translation-activation` worktree contains unpublished candidate work; do not assume its features are on main. Assistant model preference is separate from app provider policy and saved settings.
+Canonical main is the daily-use build. The reviewed-source, accounting, formatting and browser implementation is available in builds containing the verified PR #296 merge; use the [current handoff](HANDOFF.md) for the actual revision and verification scope. Assistant model preference is separate from app provider policy and saved settings.
 
 Docs Sync has standing user authorization for useful scoped maintenance; do not ask again. Historical acceptance tokens and budget checkpoints remain evidence, not new authority. See the [dated former bridge](history/2026-09-16_front_doors/APP_KNOWLEDGE_BRIDGE.md) only when its detail is needed.
 

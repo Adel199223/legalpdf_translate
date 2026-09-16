@@ -4,16 +4,16 @@ Updated 2026-09-16. Read `AGENTS.md` and `agent.md`, then this page. Current use
 
 ## Active task and build
 
-The reviewed-source/formatting candidate and qualified real-workflow acceptance are complete locally; final docs/hygiene/whitespace checks and local scope review/triage passed. The user now authorizes the recommended commit → push → PR → CI → merge → canonical app verification sequence. Follow the [publication ExecPlan](exec_plans/active/2026-09-16_reviewed_candidate_publication.md); no new Git/merge outcome is claimed here. There is no active master roadmap. Global protocol/model/effort defaults remain unchanged and the older activation plan stays deferred.
+The reviewed-source/formatting implementation was published through PR #296 at merge `068e4312269106e26677185ae33bc1b556e3c073`, after required CI passed on exact head `79fecff413414ebac927b5a9cacdf78b3077bc22`. Canonical app verification completed on `2026-09-16T22:23:49.151967+00:00` with scope and limits recorded in the [publication closeout](exec_plans/completed/2026-09-16_reviewed_candidate_publication.md). The real-workflow acceptance remains qualified. There is no active master roadmap. Global protocol/model/effort defaults remain unchanged and the older activation plan stays deferred.
 
 | Role | Path / branch |
 | --- | --- |
 | Canonical daily-use C | `C:/Users/FA507/.codex/legalpdf_translate` / `main` |
-| Integration R | `C:/Users/FA507/.codex/legalpdf_translate_structured_activation` / `feat/structured-translation-activation` |
+| Retained integration R | `C:/Users/FA507/.codex/legalpdf_translate_structured_activation`; inspect current Git branch before work |
 | Isolated authoring W | `C:/Users/FA507/.codex/legalpdf_translate_reviewed_regions` / `codex/reviewed-regions` |
 | Private evidence P | `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks` |
 
-PR #295 is merged at base `4780a2e16c32adf7af7479656f0b5fafdff83224`; verify current Git state and active processes. Do not repeat its publication. R is unpublished and may be held frozen for a named test/operation. Coordinate exact file ownership and harvest before editing it.
+Canonical `main` was verified at `068e4312269106e26677185ae33bc1b556e3c073`; recheck current Git and owned-process state before work. Original canonical documentation was preserved before the update: all 13 original files retained byte-for-byte in private `application_publication_20260916_01/canonical_preservation_01` and path-scoped stash `4786048b40a32c11f195e09379c19312f71371ee`; preservation receipt SHA256 `2773310538f2f6fe546d5a9ddf7468b28ea3cca14cc11ae88041ea3342b47697`. Do not automatically apply or drop the stash. Integration-worktree disposition: retained for scoped documentation closeout from the merged main revision; the fully merged feature branch was removed locally and remotely. Recheck actual Git state before new work; retained private/ignored evidence is not disposable. Do not repeat completed publication or acceptance operations.
 
 ## Current evidence: keep the categories separate
 
@@ -23,7 +23,7 @@ PR #295 is merged at base `4780a2e16c32adf7af7479656f0b5fafdff83224`; verify cur
 | Synthetic source-to-formatting browser run | Actual public UI upload/review/Workflow/build/download and exact recovery using fictional OCR/SDK; no real translation quality claim. |
 | Actual Arabic ordinary partial rebuild (RP02) | Saved 2-of-9-page ordinary rebuild and expected unsupported formatting decline, with no provider/native call; not complete ordinary translation. |
 | Actual ordinary French FR04 | Genuine completed two-page, two-call ordinary run and normal reviewed formatting/native export; 34 unchanged target fragments and editable 3-cell metadata. Qualified term-assisted bilingual/full-page visual acceptance. The strict extraction check remains failed on one trailing-space cell-bound predicate; separate text/ownership and visual evidence support the qualified disposition. Failed operations remain preserved. |
-| Regression | Complete pytest run03 passed 6,477 tests with zero failures/errors/skips (1,795.40 seconds). Separate standard Full run02 passed (1,262.541817 seconds). Both retained the same 481-file snapshot; the completed checkpoint records result hashes and scope. Final direct-Dart docs/hygiene and CRLF-aware whitespace checks passed, and local scope review/triage are complete. |
+| Regression | Corrected publication head `79fecff4` passed fresh CI: 6,477 tests, 2 warnings. Local Full passed 624 cases; six offline SDK transport tests and docs/hygiene checks also passed. The earlier pre-correction 6,477-test/481-file receipt remains separate. Exact evidence and scopes are in the [publication closeout](exec_plans/completed/2026-09-16_reviewed_candidate_publication.md). |
 
 For **current results and next actions**, read the latest sections of:
 
@@ -39,7 +39,7 @@ Those closeout plans own exact artifact identities, outcomes and qualifications.
 - Use tools actually available in the current session. Identify the app/build/owned tab or process from evidence before acting; never infer live state from a stale screenshot or old server asset version.
 - Saved OCR, retention, page-break and bidi settings remain authoritative. Reviewed derivatives require explicit profile/revision selection; unknown operations do not authorize retries or automatic latest-revision selection.
 - Preserve complete legal content, editable DOCX, source uncertainty, existing findings and accounting. Original documents, the lifetime ledger, Word journal and consumed helper evidence remain intact.
-- The current publication scope authorizes the reviewed Git/PR/CI/merge lifecycle and canonical app verification. Preserve dirty canonical files and private evidence before updating the canonical checkout. Global default promotion, live Gmail, new paid/native acceptance, destructive data operations and history rewrites remain outside this scope.
+- The authorized Git/PR/CI/merge lifecycle and canonical app verification are recorded in the completed publication plan. Use a follow-up branch/PR for later changes. Global default promotion, live Gmail, new paid/native acceptance, destructive data operations and history rewrites remain outside that scope.
 - Keep runtime fixtures, logs and private legal evidence outside Git. Do not reset dirty worktrees or delete old evidence merely to obtain clean Source Control.
 
 ### Current French qualification
@@ -48,6 +48,6 @@ FR04 uses the normal run-specific glossary for `ofício de notificação` → `c
 
 ## Next concrete action
 
-Execute the [publication plan](exec_plans/active/2026-09-16_reviewed_candidate_publication.md) under [COMMIT_PUBLISH_WORKFLOW.md](workflows/COMMIT_PUBLISH_WORKFLOW.md): preserve original dirty canonical docs/evidence, confirm current branch lineage and exact reviewed scope, create grouped commits, push, open/update the PR, wait for required checks on its exact head, merge when clear, and verify the actual canonical app build. Record actual commit/PR/CI/merge/build identities as each step completes. Use [VALIDATION.md](VALIDATION.md) for relevant checks; do not repeat paid/native acceptance or full regression without a new relevant change. The [original activation plan](exec_plans/active/2026-09-10_structured_translation_ordinary_use.md) remains deferred; global defaults and the separately unproven >=20% model-efficiency goal are unchanged. Canonical build verification does not authorize live Gmail or new provider/native work.
+The reviewed implementation is published and the canonical build has been verified; consult the [publication closeout](exec_plans/completed/2026-09-16_reviewed_candidate_publication.md) for exact identities and verification limits. Continue new work through normal ExecPlan and branch/PR flow. Use [VALIDATION.md](VALIDATION.md) for relevant checks; do not repeat paid/native acceptance or full regression without a new relevant change. The [original activation plan](exec_plans/active/2026-09-10_structured_translation_ordinary_use.md) remains deferred; global defaults and the separately unproven >=20% model-efficiency goal are unchanged. Canonical build verification does not authorize live Gmail or new provider/native work.
 
 The previous long handoff is preserved [byte-for-byte in dated history](history/2026-09-16_front_doors/HANDOFF.md). [NEW_CHAT_HANDOFF_2026-09-15.md](NEW_CHAT_HANDOFF_2026-09-15.md) and [FRESH_CHAT_BRIEF.md](FRESH_CHAT_BRIEF.md) are historical pointers, not current stage gates.

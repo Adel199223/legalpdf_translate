@@ -1,6 +1,6 @@
 # Review source text and DOCX formatting
 
-Availability: these optional controls are implemented in the unpublished integration candidate. Check the [current handoff](../HANDOFF.md) for build and acceptance status; do not assume they are already available on canonical main.
+Availability: these optional controls are available in builds containing the reviewed-source and DOCX implementation. Check the [current handoff](../HANDOFF.md) for the verified build and acceptance limits.
 
 ## Use This Guide When
 

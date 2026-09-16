@@ -2,7 +2,7 @@
 
 ## Explicit source and formatting review
 
-The [reviewed-source and DOCX guide](REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md) covers the candidate browser's **Review source before translating** and **Review DOCX formatting** controls. Use it for explicit source decisions, independent source/translation ranges, tables, page-matched derivatives and exact revision recovery. Saved settings and the original output remain authoritative; no model/protocol promotion is implied. Check [the current handoff](../HANDOFF.md) for candidate-versus-main availability and acceptance status. Earlier integration results below are historical evidence, not a guarantee for this new workflow.
+The [reviewed-source and DOCX guide](REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md) covers **Review source before translating** and **Review DOCX formatting** in builds containing that implementation. Use it for explicit source decisions, independent source/translation ranges, tables, page-matched derivatives and exact revision recovery. Saved settings and the original output remain authoritative; no model/protocol promotion is implied. Check [the current handoff](../HANDOFF.md) for the verified build and acceptance limits. Earlier integration results below remain historical evidence.
 
 ## Use This Guide When
 - You need help with the app's main workflow: translating a PDF into DOCX.
@@ -406,16 +406,15 @@ Queue mode writes these sidecar files next to the manifest:
 ## Cost Guardrails (CLI)
 Use this when you run from terminal and want cost protection.
 
-The unpublished structured-activation candidate strengthens this protection;
-the daily-use app has not been switched to that build. Its run reports distinguish
-known all-request cost from incomplete or unpriced usage. A BLOCK cap needs
-verified prices and conservative request limits before any provider request;
-without them it stops. WARN/no cap keeps its existing behavior. The private
-acceptance allowance is not a new global cap on your translations. See the
-[active plan](../exec_plans/active/2026-09-10_structured_translation_ordinary_use.md)
-for release and real-document acceptance status.
+Builds containing the reviewed accounting implementation strengthen this
+protection: run reports distinguish known all-request cost from incomplete
+or unpriced usage. A BLOCK cap needs verified prices and conservative request
+limits before any provider request; without them it stops. WARN/no cap keeps
+its existing behavior. The private acceptance allowance is not a new global
+cap on your translations. See the [current handoff](../HANDOFF.md) for the
+verified build and qualified real-document acceptance status.
 
-In that candidate, Resume protects saved work even when the original job began
+In these builds, Resume protects saved work even when the original job began
 as a new run. Missing accounting/checkpoint evidence requires explicit recovery;
 it does not silently purchase the translation again. The automatic save-row
 suggestion uses local text; explicit autofill is a separate user action.
