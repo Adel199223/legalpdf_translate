@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import fitz
 import pytest
 
 import legalpdf_translate.translation_service as translation_service_module
@@ -284,6 +285,71 @@ def test_translation_seed_uses_specific_local_court_city_for_honorarios_metadata
     assert seed.case_entity == "Juízo de Competência Genérica de Cuba"
     assert seed.case_city == "Cuba"
     assert seed.service_city == "Cuba"
+    assert seed.court_email == "cuba.ministeriopublico@tribunais.org.pt"
+
+
+def test_translation_seed_scanned_header_never_triggers_paid_metadata_or_key_lookup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Post-run save-row suggestions are intentionally embedded-text-only."""
+
+    run_dir = _seed_translation_run_dir(tmp_path)
+    scanned_pdf = tmp_path / "input.pdf"
+    pixels = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 240, 100), False)
+    pixels.clear_with(255)
+    with fitz.open() as document:
+        page = document.new_page()
+        page.insert_image(fitz.Rect(30, 30, 330, 155), pixmap=pixels)
+        document.save(scanned_pdf)
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "ocr_mode": "always",
+                "ocr_engine": "api",
+                "metadata_ai_enabled": True,
+                "vocab_cities": ["Cuba"],
+                "vocab_court_emails": ["cuba.ministeriopublico@tribunais.org.pt"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("Automatic post-run metadata attempted OCR, AI, or credential lookup")
+
+    monkeypatch.setattr("legalpdf_translate.metadata_autofill._build_ocr_engine_from_config", forbidden)
+    monkeypatch.setattr("legalpdf_translate.metadata_autofill.ocr_pdf_page_text", forbidden)
+    monkeypatch.setattr("legalpdf_translate.metadata_autofill._resolve_api_client", forbidden)
+    monkeypatch.setattr("legalpdf_translate.metadata_autofill.resolve_ocr_api_key", forbidden)
+
+    seed = _build_translation_seed_from_run_summary(
+        settings_path=settings_path,
+        config=RunConfig(
+            pdf_path=scanned_pdf,
+            output_dir=tmp_path,
+            target_lang=TargetLang.FR,
+        ),
+        summary=RunSummary(
+            success=True,
+            exit_code=0,
+            output_docx=None,
+            partial_docx=None,
+            run_dir=run_dir,
+            completed_pages=1,
+            failed_page=None,
+            run_summary_path=run_dir / "run_summary.json",
+        ),
+    )
+
+    assert seed.pdf_path == scanned_pdf
+    assert seed.case_entity == ""
+    assert seed.case_city == ""
+    assert seed.case_number == ""
+    # Existing local vocabulary fallback remains available; only paid extraction
+    # is prohibited during automatic post-run suggestion building.
     assert seed.court_email == "cuba.ministeriopublico@tribunais.org.pt"
 
 

@@ -6,16 +6,24 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from typing import Callable
+from typing import Callable, Sequence
 
 from .document_structure import PageStructure, validate_page_structure
 from .layout_cache import LayoutCache
 from .formatting_support import digest_text, fingerprint, write_json_atomic
 
-LAYOUT_DERIVATION_VERSION = "source_regions_v4"
+LAYOUT_DERIVATION_VERSION = "source_regions_v5"
 LAYOUT_RENDER_DPI = 120
 _PAGE_FILE = re.compile(r"page_[0-9]{4,}\.txt\Z")
 _MAX_SIDECAR_BYTES = 8 * 1024 * 1024
+REVIEWED_PROFILE_NOTICE_CODES = frozenset({
+    "reviewed_profile_unsupported_selection", "reviewed_profile_requires_page_breaks",
+    "reviewed_profile_requires_bidi_stripping", "reviewed_profile_unsupported_reviewer",
+    "reviewed_profile_unsupported_source_reviewer", "reviewed_profile_unsupported_protocol",
+    "reviewed_profile_unsupported_source_provenance", "reviewed_profile_stale_edited_target",
+    "reviewed_profile_review_missing", "reviewed_profile_stale_review",
+    "reviewed_profile_review_profile_mismatch",
+})
 
 
 def _read_json(path: Path) -> dict:
@@ -104,6 +112,13 @@ def derive_source_layout(
     from .source_document import is_pdf_source
 
     source = validate_page_structure(structure)
+    from .reviewed_source import REVIEWED_SOURCE_VERSION
+    if source.provenance == REVIEWED_SOURCE_VERSION or "reviewed_source" in source.metadata:
+        return _review_layout(source, "reviewed_source_geometry_not_verified")
+    if source.metadata.get("document_boundary_review_required"):
+        # Do not reuse a geometry-only cache or derive regions across an
+        # unresolved joined-document boundary. No new render is needed to stop.
+        return _review_layout(source, "document_boundary_unresolved")
     if cancelled and cancelled():
         return _review_layout(source, "layout_derivation_cancelled")
     preliminary = derive_page_layout(source, layout_eligibility=layout_eligibility)
@@ -300,25 +315,99 @@ def prepare_layout_rebuild(
     return result
 
 
-def collect_docx_layout_review(output_docx: Path, pages_dir: Path, preparation: dict) -> dict[int, list[str]]:
-    """Read only a DOCX- and TXT-bound map; never equate layout with fidelity."""
-    files = {int(path.stem.split("_")[1]): path for path in pages_dir.glob("page_*.txt")
-             if _PAGE_FILE.fullmatch(path.name)}
+def _review_files(pages_dir: Path, page_numbers: Sequence[int] | None) -> dict[int, Path]:
+    if page_numbers is None:
+        return {int(path.stem.split("_")[1]): path for path in pages_dir.glob("page_*.txt")
+                if _PAGE_FILE.fullmatch(path.name)}
+    numbers = tuple(page_numbers)
+    if (any(type(number) is not int or number < 1 for number in numbers)
+            or tuple(sorted(set(numbers))) != numbers):
+        raise ValueError("Layout review needs an ordered, unique source-page selection.")
+    # Missing selected TXT is still a required page, not silently omitted.
+    return {number: pages_dir / f"page_{number:04d}.txt" for number in numbers}
+
+
+def _bounded_bytes(path: Path, maximum: int) -> bytes:
+    with path.open("rb") as stream:
+        raw = stream.read(maximum + 1)
+    if len(raw) > maximum:
+        raise ValueError("Layout evidence exceeds the local bound.")
+    return raw
+
+
+def _reviewed_map_pages(output_docx: Path, map_bytes: bytes, payload: dict,
+                        files: dict[int, Path], projection, *, expected_reviewer_kind="ai_test_review") -> None:
+    """Check the actual package, then bind its selected pages to retained text.
+
+    The ordinary adapter supplies its freshly validated projection. This check
+    does not manufacture source-image/reviewer authority or render acceptance.
+    """
+    from .reviewed_formatting_writer import MAX_PACKAGE_BYTES, validate_reviewed_docx
+
+    docx_bytes = _bounded_bytes(output_docx, MAX_PACKAGE_BYTES)
+    validate_reviewed_docx(docx_bytes, map_bytes, projection=projection,
+                           expected_reviewer_kind=expected_reviewer_kind)
+    numbers = tuple(sorted(files))
+    if (tuple(page.page_number for page in projection.pages) != numbers
+            or tuple(row["page_number"] for row in payload["pages"]) != numbers):
+        raise ValueError("Reviewed layout map has a different source-page selection.")
+    for page in projection.pages:
+        path = files[page.page_number]
+        target = json.loads(page.target_structure_json)
+        text_bytes = _bounded_bytes(path, _MAX_SIDECAR_BYTES)
+        text = text_bytes.decode("utf-8")
+        expected = page.original_parent_separator.join(block["text"] for block in target["blocks"])
+        if text != expected or digest_text(text) != target.get("translation_sha256"):
+            raise ValueError("Reviewed layout map belongs to different saved text.")
+        for suffix, expected_hash in ((".source_structure.json", page.source_structure_sha256),
+                                       (".structure.json", page.target_structure_sha256)):
+            if fingerprint(_read_json(path.with_suffix(suffix))) != expected_hash:
+                raise ValueError("Reviewed layout map belongs to different retained source or target.")
+    if (_file_hash(output_docx) != hashlib.sha256(docx_bytes).hexdigest()
+            or _bounded_bytes(output_docx.with_suffix(".source_map.json"), _MAX_SIDECAR_BYTES) != map_bytes):
+        raise ValueError("Reviewed layout output changed during inspection.")
+
+
+def collect_docx_layout_review(output_docx: Path, pages_dir: Path, preparation: dict, *,
+        page_numbers: Sequence[int] | None = None, reviewed_projection=None,
+        expected_reviewer_kind: str = "ai_test_review") -> dict[int, list[str]]:
+    """Read a DOCX- and TXT-bound map; never equate layout with fidelity.
+
+    ``page_numbers`` is the caller's actual DONE-page assembly selection. When
+    omitted, the existing integer-v1 collector still covers every saved TXT.
+    Reviewed map versions require the adapter's validated projection and the
+    actual package checker; a recognized version string alone is insufficient.
+    Reviewer context comes from the caller's explicit profile, never map labels.
+    """
+    files = _review_files(pages_dir, page_numbers)
     reasons: dict[int, set[str]] = {number: set() for number in files}
     try:
-        payload = _read_json(output_docx.with_suffix(".source_map.json"))
+        map_bytes = _bounded_bytes(output_docx.with_suffix(".source_map.json"), _MAX_SIDECAR_BYTES)
+        payload = json.loads(map_bytes.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Layout evidence must be an object.")
         rows = payload.get("pages")
-        if (payload.get("version") != 1 or payload.get("docx_sha256") != _file_hash(output_docx)
+        version = payload.get("version")
+        reviewed = version in ("reviewed_formatting_source_map_v1", "reviewed_region_source_map_v1")
+        if ((not reviewed and (type(version) is not int or version != 1))
+                or payload.get("docx_sha256") != _file_hash(output_docx)
                 or not isinstance(rows, list) or len(rows) != len(files)):
             raise ValueError("DOCX layout map is missing or stale.")
+        if reviewed:
+            _reviewed_map_pages(output_docx, map_bytes, payload, files, reviewed_projection,
+                                expected_reviewer_kind=expected_reviewer_kind)
+            for codes in reasons.values():
+                codes.add("layout_review_required")
         seen = set()
         for row in rows:
             if not isinstance(row, dict):
                 raise ValueError("Invalid layout map page.")
-            number = row.get("source_page_number")
+            number = row.get("page_number" if reviewed else "source_page_number")
             if type(number) is not int or number not in files or number in seen:
                 raise ValueError("Invalid layout map coverage.")
             seen.add(number)
+            if reviewed:
+                continue  # Exact package/projection/TXT check above owns this schema.
             if row.get("translation_sha256") != digest_text(files[number].read_text(encoding="utf-8")):
                 raise ValueError("Layout map belongs to different saved text.")
             if row.get("structure_status") != "validated":
@@ -353,7 +442,7 @@ def merge_layout_review_queue(payload: dict, page_records: dict) -> None:
     """
     additions = []
     allowed = {"layout_mapping_unavailable", "source_block_layout_unavailable",
-               "layout_review_required", "section_furniture_target_variant_standardized"}
+               "layout_review_required", "section_furniture_target_variant_standardized"} | REVIEWED_PROFILE_NOTICE_CODES
     for key, page in page_records.items():
         if not isinstance(page, dict) or not page.get("layout_review_required"):
             continue

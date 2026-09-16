@@ -3,7 +3,9 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from legalpdf_translate.glossary import GlossaryEntry
+from legalpdf_translate.glossary import (
+    GlossaryEntry, default_ar_entries, default_en_entries, default_fr_entries,
+)
 from legalpdf_translate.structured_glossary import (
     BlockGlossaryContract, StructuredGlossaryError, build_structured_glossary as build,
     verified_glossary_literal_spans,
@@ -113,6 +115,78 @@ def test_known_citation_alias_uses_actual_source_spelling_without_consuming_labe
     assert all(entry.tier == 1 for entry in glossary.entries)
 
 
+@pytest.mark.parametrize('target_lang,target', [('AR', 'رقم'), ('FR', 'nº'), ('EN', 'No.')])
+@pytest.mark.parametrize('term', ['nº', 'n°', 'no', 'Nº', 'N.º', 'n. o'])
+@pytest.mark.parametrize('separator', [' ', '   ', '\u00a0', '\t', '\n'])
+def test_ordinal_alias_excludes_only_separator_from_exact_source_term(target_lang, target, term, separator):
+    source = f'Referência: {term}{separator}27'
+    source_blocks = blocks(source)
+    configured = [row('n.º', target, tier=2)]
+    glossary = build(source_blocks, configured, target_lang=target_lang)
+    assert glossary.entries == (row(term, target, tier=1),)
+    assert glossary.for_block('p0001_b0001').entries == glossary.entries
+    assert source_blocks == blocks(source)
+    assert configured == [row('n.º', target, tier=2)]
+    assert source[len('Referência: ') + len(term):] == separator + '27'
+
+
+def test_ordinal_alias_does_not_override_ambiguous_arabic_list_label_contract():
+    # A line-initial "n. " is also a protected enumerator. Do not erase it by
+    # treating the entire spaced alias as a term with no preserved literal.
+    with pytest.raises(StructuredGlossaryError, match='incompatible_glossary_literal_contract'):
+        contract('n. o 27', [row('n.º', 'رقم', tier=2)])
+
+
+def test_ordinal_alias_repeated_variants_dedupe_without_consuming_numbers_or_literals():
+    source = 'nº 2; nº 3; N° 27; às 09:30'
+    glossary, prepared, normalized = accepted(source,
+        'رقم 2؛ رقم 3؛ رقم 27؛ في 09:30', [row('n.º', 'رقم', tier=2)])
+    assert [entry.source_text for entry in glossary.entries] == ['nº', 'N°']
+    for literal in ('2', '3', '27', '09', '30'):
+        assert prepared.count(f'[[{literal}]]') == 1
+        assert normalized.count(f'\u2066[[{literal}]]\u2069') == 1
+    assert '[[09]]:[[30]]' in prepared
+    assert '\u2066[[09]]\u2069:\u2066[[30]]\u2069' in normalized
+
+
+@pytest.mark.parametrize('source,expected', [
+    ('n.º 2', ['n.º']), ('n.º\t2', ['n.º']),
+    # Characterize existing canonical precedence and compact-term boundaries.
+    # The separator repair must not silently widen either matching contract.
+    ('n.º 2; nº 3', ['n.º']), ('nº2', []), ('no2', []), ('n.º2', []),
+    ('n°2', ['n°']), ('anº 2', []), ('_nº 2', []), ('nºx 2', []),
+    ('nº', []), ('nº fim', []), ('(nº 2)', ['nº']), ('nº 2.', ['nº']),
+])
+def test_ordinal_alias_keeps_existing_recognizer_and_exact_match_boundaries(source, expected):
+    glossary = build(blocks(source), [row('n.º', 'No.', tier=2)], target_lang='EN')
+    assert [entry.source_text for entry in glossary.entries] == expected
+
+
+@pytest.mark.parametrize('source,tiers,expected', [
+    ('nº 2', [1], [('nº', 1)]), ('nº 2', [2], []),
+    ('n.º 2', [1], [('n.º', 1)]), ('n.º 2', [2], [('n.º', 2)]),
+])
+def test_ordinal_alias_preserves_priority_and_enabled_tiers(source, tiers, expected):
+    glossary = build(blocks(source), [row('n.º', 'No.', tier=2)], target_lang='EN', enabled_tiers=tiers)
+    assert [(entry.source_text, entry.tier) for entry in glossary.entries] == expected
+
+
+@pytest.mark.parametrize('configured_lang,source_lang', [
+    ('FR', 'PT'), ('EN', 'PT'), ('AUTO', 'PT'), ('ANY', 'PT'),
+    ('PT', 'FR'), ('PT', 'EN'), ('PT', 'AUTO'),
+])
+def test_ordinal_alias_does_not_expand_non_portuguese_configuration(configured_lang, source_lang):
+    glossary = build(blocks('nº 2'), [row('n.º', 'No.', tier=2, language=configured_lang)],
+                     target_lang='EN', source_lang=source_lang)
+    assert glossary.entries == ()
+
+
+@pytest.mark.parametrize('invalid_term', ['n.º ', ' n.º', 'n.º\t', 'n.º\n', 'n.\to', 'n.\no', 'n\u202eº'])
+def test_ordinal_separator_fix_never_cleans_invalid_configured_entries(invalid_term):
+    with pytest.raises(StructuredGlossaryError, match='invalid_structured_glossary_entry'):
+        build(blocks('nº 2'), [row(invalid_term, 'No.')], target_lang='EN')
+
+
 @pytest.mark.parametrize('source,target', [
     ('Inquéritos de Beja', 'وحدة التحقيقات في Porto'),
     ('Inquéritos de Évora', 'وحدة التحقيقات في Evora'),
@@ -140,13 +214,142 @@ def test_header_like_prose_cannot_be_blessed_as_city_or_name():
             contract(source)
 
 
-def test_custom_matching_pair_and_dynamic_priority_conflict_is_visible():
+def test_configured_header_precedence_preserves_custom_pair_and_identical_duplicates():
+    # Approved precedence change: a synthesized header is a fallback, not a
+    # competing configured preference. Conflicting configured rows stay errors.
     source = 'Inquéritos de Évora'
-    with pytest.raises(StructuredGlossaryError, match='conflicting_structured_glossary_entries'):
-        contract(source, [row(source, 'تحقيق مخالف في Évora')])
+    custom = row(source, 'تحقيق خاص في Évora')
+    chosen, _ = contract(source, [custom])
+    duplicated, _ = contract(source, [custom, custom])
+    assert chosen.entries == duplicated.entries == (custom,)
+    assert chosen.fingerprint == duplicated.fingerprint
     original, _ = contract(source)
     duplicate, _ = contract(source, [original.entries[0], original.entries[0]])
     assert original.entries == duplicate.entries and original.fingerprint == duplicate.fingerprint
+
+
+@pytest.mark.parametrize('source', ['audiência de julgamento', 'Audiência de julgamento'])
+@pytest.mark.parametrize('lang,defaults,lower,capitalized', [
+    ('FR', default_fr_entries, 'audience de jugement', 'Audience de jugement'),
+    ('EN', default_en_entries, 'trial hearing', 'Trial hearing'),
+    ('AR', default_ar_entries, 'جلسة المحاكمة', 'جلسة المحاكمة'),
+])
+def test_configured_header_precedence_preserves_public_preset_case(source, lang, defaults, lower, capitalized):
+    configured = defaults()
+    before = list(configured)
+    source_blocks = blocks(source)
+    result = build(source_blocks, configured, target_lang=lang)
+    expected = lower if source[0].islower() else capitalized
+    assert result.entries == (row(source, expected, tier=2),)
+    assert result.for_block('p0001_b0001').entries == result.entries
+    assert configured == before and source_blocks == blocks(source)
+
+
+@pytest.mark.parametrize('tier,mode,language', [
+    (3, 'contains', 'PT'), (1, 'exact', 'AUTO'), (2, 'contains', 'ANY'),
+])
+def test_configured_header_precedence_keeps_exact_custom_metadata(tier, mode, language):
+    source = 'audiência de julgamento'
+    custom = row(source, 'AUDIENCE choisie', tier=tier, mode=mode, language=language)
+    result = build(blocks(source), [custom], target_lang='FR', enabled_tiers=[1, 2, 3])
+    assert result.entries == (custom,)
+    assert result.for_block('p0001_b0001').entries == (custom,)
+    assert 'AUDIENCE choisie' in result.prompt_text
+
+
+def test_configured_header_precedence_keeps_sorted_same_target_duplicate_metadata():
+    source = 'audiência de julgamento'
+    lower_priority = row(source, 'Chosen hearing', tier=2, language='PT')
+    first = row(source, 'Chosen hearing', tier=1, mode='contains', language='ANY')
+    tied = replace(first, match_mode='exact', source_lang='AUTO')
+    result = build(blocks(source), [lower_priority, first, tied], target_lang='EN')
+    assert result.entries == (first,)
+    reversed_tie = build(blocks(source), [lower_priority, tied, first], target_lang='EN')
+    assert reversed_tie.entries == (tied,)
+
+
+@pytest.mark.parametrize('other', [
+    row('audiência de julgamento', 'Second choice', tier=1),
+    row('audiência de julgamento', 'Second choice', tier=2, mode='contains', language='ANY'),
+])
+def test_configured_header_precedence_never_resolves_conflicting_configured_rows(other):
+    configured = [row('audiência de julgamento', 'First choice', tier=2), other]
+    with pytest.raises(StructuredGlossaryError, match='^conflicting_structured_glossary_entries$'):
+        build(blocks('audiência de julgamento'), configured, target_lang='FR')
+
+
+@pytest.mark.parametrize('invalid', [
+    row('audiência de julgamento ', 'Invalid disabled term', tier=6),
+    row('audiência de julgamento', 'Invalid\nwrong-language target', language='FR'),
+    row('absent term', '', tier=6, language='FR'),
+])
+def test_configured_header_precedence_still_validates_invalid_inactive_rows(invalid):
+    with pytest.raises(StructuredGlossaryError, match='^invalid_structured_glossary_entry$'):
+        build(blocks('audiência de julgamento'), [invalid], target_lang='FR')
+
+
+@pytest.mark.parametrize('inactive', [
+    row('audiência de julgamento', 'Disabled choice', tier=6),
+    row('audiência de julgamento', 'Wrong-language choice', language='FR'),
+    row('Audiência de julgamento', 'Different-case choice'),
+    row('audiencia de julgamento', 'Different-accent choice'),
+    row('audiência de julgamentox', 'Nonmatching choice'),
+])
+def test_configured_header_precedence_ineligible_rows_leave_header_fallback(inactive):
+    source = 'audiência de julgamento'
+    fallback = build(blocks(source), [], target_lang='FR')
+    result = build(blocks(source), [inactive], target_lang='FR')
+    assert result.entries == (row(source, 'Audience de jugement', tier=2),)
+    assert result.fingerprint == fallback.fingerprint
+
+
+def test_configured_header_precedence_shorter_matching_phrase_does_not_hide_full_header():
+    source = 'audiência de julgamento'
+    shorter = row('julgamento', 'Judgment', tier=2)
+    result = build(blocks(source), [shorter], target_lang='EN')
+    assert result.entries == (row(source, 'Trial hearing', tier=2), shorter)
+
+
+def test_configured_header_precedence_does_not_change_alias_priority_or_alias_conflicts():
+    source = 'audiência de julgamento; nº 2'
+    preferred = row('audiência de julgamento', 'Chosen hearing', tier=2)
+    canonical = row('n.º', 'Number', tier=2)
+    result = build(blocks(source), [preferred, canonical], target_lang='EN')
+    assert set(result.entries) == {preferred, row('nº', 'Number', tier=1)}
+    # Exact configured source preference overrides headers only, not a genuine
+    # conflict with the independently derived citation alias.
+    with pytest.raises(StructuredGlossaryError, match='^conflicting_structured_glossary_entries$'):
+        build(blocks(source), [preferred, canonical, row('nº', 'Other number', tier=2)], target_lang='EN')
+
+
+@pytest.mark.parametrize('source_lang', ['EN', 'FR', 'AUTO'])
+def test_configured_header_precedence_keeps_non_portuguese_behavior(source_lang):
+    source = 'audiência de julgamento'
+    custom = row(source, 'Explicit source-language choice', tier=2, language=source_lang)
+    assert build(blocks(source), [], target_lang='FR', source_lang=source_lang).entries == ()
+    result = build(blocks(source), [custom], target_lang='FR', source_lang=source_lang)
+    assert result.entries == (custom,)
+
+
+def test_configured_header_precedence_remains_bound_to_arabic_literals_and_fingerprint():
+    source = 'Inquéritos de Évora'
+    custom = row(source, 'تحقيق خاص في Évora')
+    result, prepared, translated = accepted(source, custom.preferred_translation, [custom])
+    assert '[[Évora]]' in prepared and '\u2066[[Évora]]\u2069' in translated
+    changed, _ = contract(source, [replace(custom, preferred_translation='وحدة خاصة في Évora')])
+    assert result.fingerprint != changed.fingerprint
+    proof = result.for_block('p0001_b0001')
+    with pytest.raises(StructuredGlossaryError, match='^changed_block_glossary_contract$'):
+        verified_glossary_literal_spans(source, replace(proof, fingerprint='0' * 64))
+    with pytest.raises(StructuredGlossaryError, match='^incompatible_glossary_literal_contract$'):
+        contract(source, [replace(custom, preferred_translation='تحقيق خاص في Porto')])
+
+
+@pytest.mark.parametrize('limits', [{'max_entries': 1}, {'max_chars': 1}])
+def test_configured_header_precedence_does_not_relax_glossary_limits(limits):
+    rows = [row('audiência de julgamento', 'Chosen hearing', tier=2), row('arguido', 'Defendant')]
+    with pytest.raises(StructuredGlossaryError, match='^structured_glossary_budget_exceeded$'):
+        build(blocks('audiência de julgamento; arguido'), rows, target_lang='EN', **limits)
 
 
 def test_limit_exhaustion_is_not_silent_term_dropping():

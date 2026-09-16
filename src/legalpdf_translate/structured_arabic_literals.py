@@ -18,7 +18,7 @@ from .arabic_pre_tokenize import (
     URL_RE, is_portuguese_month_date_token,
 )
 
-STRUCTURED_ARABIC_LITERALS_VERSION = 'structured_arabic_literals_v5_exact_source_graphemes'
+STRUCTURED_ARABIC_LITERALS_VERSION = 'structured_arabic_literals_v13_optional_signature_abbreviation'
 _LIMIT = 120_000
 _LRI, _PDI = '\u2066', '\u2069'
 _BIDI = re.compile('[\u200e\u200f\u202a-\u202e\u2066-\u2069]')
@@ -44,6 +44,11 @@ _STREET = re.compile(
     r'Alameda|Estrada|Urbanização|Urbanizacao|Beco|Calçada|Calcada)\s+')
 _ADDRESS_LABEL = re.compile(r'(?i)^(?:Morada|Endereço|Endereco|Address|Domicílio|Domicilio)\s*[:\-]\s*')
 _NAME_LABEL = re.compile(r'(?i)^(?:Nome|Name)\s*[:\-]\s*')
+_POSTAL_SALUTATION = re.compile(r'(?:Exmo\(a\)[ \t]+Senhor\(a\)|Exmo\.[ \t]+Senhor|Exma\.[ \t]+Senhora)\Z', re.I)
+_HOUSE_NUMBER_COLON = re.compile(r'(?<!\w)Nr\.:[ \t]*[0-9]+[ \t]*\Z', re.I)
+_HARD_LINE_BREAKS = '\v\f\x1c\x1d\x1e\x85\u2028\u2029'
+_OFFICIAL_SIGNATURE_TITLE = re.compile(r'(?:O/A|O|A)[ \t]+Oficial[ \t]+de[ \t]+Justiça,\Z', re.I)
+_OFFICIAL_SIGNATURE_RANK = re.compile(r'Técnico[ \t]+de[ \t]+Justiça\Z', re.I)
 # A capitalized phrase alone is not evidence of a person. New detections need
 # a person field/attribution in this exact source block; no target text is used.
 _PERSON_ROLE = (r'nome|name|destinat[áa]ri[oa]|arguid[oa]|testemunha|signat[áa]ri[oa]|'
@@ -63,12 +68,23 @@ _PERSON_FIELD = re.compile(rf'(?:{_PERSON_ROLE}|nome completo|documento de ident
 _PERSON_TABLE_PREFIX = re.compile(
     rf'(?:^|[|\r\n])[ \t]*(?:{_PERSON_ROLE}|nome completo|documento de identifica[çc][ãa]o)[ \t]*\|[ \t]*\Z', re.I)
 _NAME_CONNECTORS = {'da', 'de', 'do', 'dos', 'das'}
+_WITNESS_HEADING = re.compile(r'(?:prova testemunhal|rol de testemunhas|testemunhas)[ \t]*:', re.I)
+_WITNESS_ITEM = re.compile(r'[ \t]*(?:[a-z][.)]|[0-9]{1,3}[.)])[ \t]+')
 _PROSE_WORDS = {'deve', 'deverá', 'devera', 'obrigado', 'obrigação', 'obrigacao',
     'notifica', 'notificado', 'comparecer', 'pagamento', 'pagar', 'condenado',
     'declara', 'requer', 'decide', 'determina', 'sentença', 'sentenca'}
 # These are source-associated abbreviations, not a blanket uppercase-word rule.
 _ABBREVIATIONS = re.compile(r'(?<!\w)(?:CPP|CPC|CP|GNR|IMT|PSP|SEF|AIMA|DIAP|IBAN|'
-    r'RGCO|RGIT|CIVA|TJUE|UE|NIF|NISS|NIPC|EUR|USD|citius|Citius)(?!\w)')
+    r'RGCO|RGIT|CIVA|TJUE|UE|NIF|NISS|NIPC|EUR|USD|TIR|PGR|MP|RMP|CRC|SPP|SIMP|citius|Citius)(?!\w)')
+# The ordinary glossary recognizes one line at a time. A source district heading
+# may wrap once without losing its place attribution. This is not a general
+# paragraph joiner: the complete prefix and independently verified place are
+# required, and the total matched heading may contain at most one line break.
+_HEADER_SPACE = r'(?:[ \t]+|[ \t]*\r?\n[ \t]*)'
+_DISTRICT_PREFIX = (
+    rf'(?m)^[ \t]*(?i:Minist[ée]rio{_HEADER_SPACE}P[úu]blico[ \t]*[-–][ \t]*'
+    rf'Procuradoria{_HEADER_SPACE}da{_HEADER_SPACE}Rep[úu]blica{_HEADER_SPACE}'
+    rf'da{_HEADER_SPACE}Comarca{_HEADER_SPACE}de){_HEADER_SPACE}')
 
 
 class StructuredArabicLiteralError(ValueError):
@@ -211,6 +227,51 @@ def source_person_name_for_field(field_text: str, value_text: str) -> str | None
     return value if _PERSON_FIELD.fullmatch(field) and _name(value) else None
 
 
+def _witness_list_name_spans(text: str) -> list[_Span]:
+    """Attribute only contiguous source entries under an explicit witness heading.
+
+    A list marker alone is not evidence of a person. Blank/non-item lines end
+    the heading's scope; names cannot cross lines/cells or consume trailing
+    prose. The target never contributes attribution or spelling evidence.
+    """
+    spans, offset, active = [], 0, False
+    for raw in text.splitlines(keepends=True):
+        if any(char in raw for char in '\v\f\x1c\x1d\x1e\x85\u2028\u2029'):
+            active = False  # Page/paragraph controls do not prove adjacency.
+            offset += len(raw)
+            continue
+        line = raw.rstrip('\r\n')
+        if _WITNESS_HEADING.fullmatch(line.strip()):
+            active = True
+        elif active:
+            marker = _WITNESS_ITEM.match(line)
+            words = _name_word_spans(line[marker.end():]) if marker else []
+            if not words or words[0].start != 0:
+                active = False
+            else:
+                value = line[marker.end():]
+                end = words[0].end
+                for following in words[1:10]:
+                    if (value[end:following.start] != ' '
+                            or value[following.start:following.end] not in _NAME_CONNECTORS
+                            and not value[following.start].isupper()):
+                        break
+                    end = following.end
+                name, tail = value[:end], value[end:]
+                # A comma introduces descriptive text, never part of the name.
+                # An unpunctuated obligation/conjunction or table cell is not
+                # an independently bounded name entry.
+                if (not _name(name) or any(_PERSON_ROLE_WORD.fullmatch(unicodedata.normalize('NFC', word))
+                                          for word in name.split())
+                        or tail.strip() and not re.match(r'^[ \t]*[,;.]', tail)):
+                    active = False
+                else:
+                    start = offset + marker.end()
+                    spans.append(_Span(start, start + end))
+        offset += len(raw)
+    return spans
+
+
 def _contextual_name_spans(text: str) -> list[_Span]:
     """Bounded source-only person attribution; never cross a line or table cell.
 
@@ -219,7 +280,7 @@ def _contextual_name_spans(text: str) -> list[_Span]:
     Unknown/unattributed capitalized prose remains unprotected and reviewable.
     """
     words = _name_word_spans(text)
-    spans = []
+    spans = _witness_list_name_spans(text)
     for index, first in enumerate(words):
         if not text[first.start].isupper():
             continue
@@ -250,9 +311,12 @@ def _contextual_name_spans(text: str) -> list[_Span]:
 
 
 def _address(value: str, *, role: str = '') -> bool:
-    if (not value or len(value) > 220 or '\n' in value or '\r' in value
+    # Validation view only: preserve the original source punctuation in spans.
+    # A colon belongs to an address only in this explicit numbered-house label.
+    checked = _HOUSE_NUMBER_COLON.sub(lambda match: match[0].replace(':', ''), value)
+    if (not value or len(value) > 220 or any(char in value for char in '\r\n' + _HARD_LINE_BREAKS)
             or any(not (_latin(char) or char.isdecimal() or char.isspace()
-                        or char in "-–—.,/()ºª'’") for char in value)):
+                        or char in "-–—.,/()ºª'’") for char in checked)):
         return False
     if set(re.findall(r'\w+', value.casefold())) & _PROSE_WORDS:
         return False
@@ -261,6 +325,55 @@ def _address(value: str, *, role: str = '') -> bool:
     postal_line = bool(postal and postal.start() == 0 and value[postal.end():].strip()
                        and all(_latin(char) or char in " '-.’" for char in value[postal.end():]))
     return bool(starts_street and (postal or role == 'address') or postal_line)
+
+
+def _source_lines(text: str) -> list[tuple[str, _Span]]:
+    """Keep blank/hard/table boundaries and exact visible line offsets."""
+    lines, offset = [], 0
+    for raw in text.splitlines(keepends=True):
+        value = raw.rstrip('\r\n').strip(' \t')
+        start = offset + len(raw) - len(raw.lstrip(' \t'))
+        valid = not any(char in raw for char in _HARD_LINE_BREAKS) and '|' not in value
+        lines.append((value if valid else '', _Span(start, start + len(value))))
+        offset += len(raw)
+    return lines
+
+
+def _official_signature_spans(text: str) -> list[_Span]:
+    """Require the complete source title/name/rank judicial-officer signature."""
+    lines, names = _source_lines(text), []
+    for index in range(1, len(lines) - 1):
+        name, span = lines[index]
+        if (_OFFICIAL_SIGNATURE_TITLE.fullmatch(lines[index - 1][0])
+                and _OFFICIAL_SIGNATURE_RANK.fullmatch(lines[index + 1][0]) and _name(name)
+                and not any(_PERSON_ROLE_WORD.fullmatch(unicodedata.normalize('NFC', word))
+                            for word in name.split())):
+            names.append(span)
+    return names
+
+
+def _postal_block_spans(text: str) -> tuple[list[_Span], list[_Span]]:
+    """Attribute adjacent street/postcode and salutation/name/street/postcode.
+
+    A whole-page body role is not address evidence. These complete chains are
+    source-only and may not cross empty lines, hard separators or table cells.
+    Every returned range retains the exact original visible text.
+    """
+    lines = _source_lines(text)
+    addresses, names = [], []
+    for index, (value, span) in enumerate(lines[:-1]):
+        postal = lines[index + 1][0]
+        if (not value or not _STREET.match(value) or not _address(value, role='address')
+                or not POSTAL_CODE_RE.match(postal) or not _address(postal)):
+            continue
+        addresses.append(span)
+        if index >= 2:
+            salutation, (name, name_span) = lines[index - 2][0], lines[index - 1]
+            if (_POSTAL_SALUTATION.fullmatch(salutation) and _name(name)
+                    and not any(_PERSON_ROLE_WORD.fullmatch(unicodedata.normalize('NFC', word))
+                                for word in name.split())):
+                names.append(name_span)
+    return addresses, names
 
 
 def _safe_literal(value: str) -> bool:
@@ -284,18 +397,31 @@ def _choose(spans: Iterable[_Span]) -> list[_Span]:
     return sorted(result, key=lambda item: item.start)
 
 
+def _source_entities(text: str):
+    from .structured_arabic_entities import extract_source_entities
+    from .structured_glossary import _place_name
+    return extract_source_entities(text,
+        valid_name=lambda value: _name(value) and not any(
+            _PERSON_ROLE_WORD.fullmatch(unicodedata.normalize('NFC', word)) for word in value.split()),
+        valid_address=lambda value: bool(_STREET.match(value)) and _address(value, role='address'),
+        valid_place=_place_name)
+
+
 def _source_spans(text: str, tokens: list[_Span], *, role: str = '',
                   names: Iterable[str] = (), glossary_spans: Iterable[_Span] = ()) -> list[_Span]:
+    entities = _source_entities(text)
+    entity_spans = [_Span(*span) for span in (*entities.literals, *entities.persons)]
     approved = tuple(glossary_spans)
-    source_names = _contextual_name_spans(text)
-    spans = [*approved, *source_names]
+    source_addresses, addressee_names = _postal_block_spans(text)
+    source_names = [*_contextual_name_spans(text), *_official_signature_spans(text), *addressee_names]
+    spans = [*approved, *source_names, *source_addresses, *entity_spans]
     for token in tokens:
         literal = text[token.start:token.end]
         if is_portuguese_month_date_token(literal):
             # Portuguese month words must be translated, not hidden as Latin.
             continue
         _require(_safe_literal(literal) or any(span.start <= token.start and token.end <= span.end
-                                              for span in approved), 'unsupported_source_literal')
+                                              for span in (*approved, *entity_spans)), 'unsupported_source_literal')
         spans.append(token)
     for name in names:
         _require(isinstance(name, str) and _name(name), 'invalid_source_name_literal')
@@ -363,7 +489,26 @@ def _glossary_spans(text: str, contract) -> list[_Span]:
     # Lazy import avoids a cycle: the pure contract builder uses the same strict
     # span/count checks to reject inconsistent glossary pairs before dispatch.
     from .structured_glossary import verified_glossary_literal_spans
-    return [_Span(start, end) for start, end in verified_glossary_literal_spans(text, contract)]
+    approved = [_Span(start, end) for start, end in verified_glossary_literal_spans(text, contract)]
+    result = list(approved)
+    for literal in {text[span.start:span.end] for span in approved}:
+        pattern = _DISTRICT_PREFIX + r'(?P<place>' + re.escape(literal) + r')[ \t]*(?=\r?$)'
+        for match in re.finditer(pattern, text):
+            if match[0].count('\n') > 1:
+                continue
+            span = _Span(*match.span('place'))
+            if span in approved:
+                continue
+            # Do not override a configured phrase translating/transliterating
+            # this occurrence. Source proof and preferences are both required;
+            # target output never supplies authority or a spelling repair.
+            for entry in contract.entries:
+                if any(found.start <= span.start and span.end <= found.end
+                       for found in _occurrences(text, entry.source_text)):
+                    _require(bool(_occurrences(_view(entry.preferred_translation)[0], literal)),
+                             'conflicting_source_place_literal')
+            result.append(span)
+    return result
 
 
 def prepare_structured_arabic_source(text: str, *, role: str = '',
@@ -385,6 +530,12 @@ def prepare_structured_arabic_source(text: str, *, role: str = '',
     return _wrap(visible, spans, isolates=False)
 
 
+def _signature_abbreviation_occurrences(text: str, literal: str) -> list[_Span]:
+    return [_Span(*match.span()) for match in re.finditer(r'(?<![\w.])d\.s\.?(?![\w.])', text)
+            if match[0] == literal and (match.end() == len(text)
+            or not unicodedata.category(text[match.end()]).startswith('M'))]
+
+
 def normalize_structured_arabic_translation(prepared_source: str, translated: str, *, glossary_contract=None) -> str:
     """Validate exact literal counts/associations and canonicalize wrappers only.
 
@@ -395,16 +546,30 @@ def normalize_structured_arabic_translation(prepared_source: str, translated: st
     """
     source, supplied = _view(prepared_source)
     source_spans = _source_spans(source, supplied, glossary_spans=_glossary_spans(source, glossary_contract))
-    return _normalize_with_source_spans(source, source_spans, translated)
+    # A complete source signature independently proves this date abbreviation.
+    # Preserve an exact retained spelling, or leave the existing translated
+    # Arabic-date-formula path alone. The target never supplies source authority.
+    visible, _ = _view(translated)
+    optional = [_Span(*span) for span in _source_entities(source).signature_abbreviations
+                if _signature_abbreviation_occurrences(visible, source[span[0]:span[1]])]
+    # Selecting a spelling requires every proved source occurrence, with the
+    # same count and order as the other literals; unrelated source prose is not
+    # promoted. Whole variants prevent d.s from matching a d.s. prefix.
+    source_spans = _choose([*source_spans, *optional])
+    return _normalize_with_source_spans(source, source_spans, translated,
+        exact_signature_abbreviations=frozenset(source[span.start:span.end] for span in optional))
 
 
-def _normalize_with_source_spans(source: str, source_spans: list[_Span], translated: str) -> str:
+def _normalize_with_source_spans(source: str, source_spans: list[_Span], translated: str, *,
+                                 exact_signature_abbreviations: frozenset[str] = frozenset()) -> str:
     """Shared pure validator; glossary preflight supplies only verified source spans."""
     expected = [source[span.start:span.end] for span in source_spans]
     visible, _ = _view(translated)
     source_enumerators = {literal for span, literal in zip(source_spans, expected)
                           if re.fullmatch(r'[a-z][).]', literal) and _line_start(source, span)}
-    candidates = [span for literal in set(expected) for span in _occurrences(visible, literal)
+    candidates = [span for literal in set(expected) for span in (
+                  _signature_abbreviation_occurrences(visible, literal)
+                  if literal in exact_signature_abbreviations else _occurrences(visible, literal))
                   if literal not in source_enumerators
                   or (_line_start(visible, span)
                       and (span.end == len(visible) or visible[span.end].isspace()))]

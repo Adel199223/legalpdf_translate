@@ -15,7 +15,7 @@ import unicodedata
 from typing import Any
 
 STRUCTURE_VERSION = 1
-SOURCE_STRUCTURE_VERSION = "new_run_source_v2"
+SOURCE_STRUCTURE_VERSION = "new_run_source_v3"
 MAX_SOURCE_BLOCKS = 5000
 MAX_OCR_STRUCTURE_BYTES = 4_000_000
 MAX_OCR_WORDS = 50_000
@@ -165,7 +165,7 @@ def plain_text_from_structure(structure: PageStructure | dict[str, Any]) -> str:
 
 
 def classify_document_boundaries(structure: PageStructure | dict[str, Any]) -> PageStructure:
-    """Mark separate source documents only from explicit document-title evidence.
+    """Mark source boundaries from corroborated titles, flag missing-title scans.
 
     Court names, process identifiers and ordinary reasoning headings do not
     establish a new document. Ambiguous candidates request review rather than
@@ -224,6 +224,50 @@ def classify_document_boundaries(structure: PageStructure | dict[str, Any]) -> P
         result.uncertain = True
         result.metadata["document_boundary_review_required"] = True
         result.metadata["document_boundary_basis"] = "ambiguous_document_type_title"
+    elif result.provenance == "local_ocr_tsv":
+        # A scan can start a decision/prosecution without a standalone title.
+        # No title is not proof of continuation. Recurring court headers and
+        # identifiers alone cannot safely distinguish joined source documents.
+        # Keep all source text/boxes and request review, never invent a title or
+        # use private case/page-specific exceptions to force a document break.
+        result.uncertain = True
+        result.metadata["document_boundary_review_required"] = True
+        result.metadata["document_boundary_basis"] = "unconfirmed_ocr_document_boundary"
+        result.metadata["document_boundary_signals"] = sorted({
+            "recurring_header_not_sufficient" for block in result.blocks
+            if block.role == "header"})
+    return result
+
+
+def apply_reviewed_document_boundary(structure: PageStructure | dict[str, Any], review: dict) -> PageStructure:
+    """Apply a completed explicit review bound to the entire pre-decision source.
+
+    This is a caller-owned review record, not a classifier-generated approval.
+    It changes only boundary flags; text, boxes and OCR uncertainty stay intact.
+    Acceptance independently requires the final source in its approved review.
+    """
+    from .source_readiness import source_structure_digest
+    result = validate_page_structure(structure)
+    if (not isinstance(review, dict) or set(review) != {"source_structure_sha256", "decision", "review_kind", "review_evidence_sha256"}
+            or review["source_structure_sha256"] != source_structure_digest(result)
+            or review["decision"] not in {"start", "continuation"}
+            or review["review_kind"] not in {"ai_test_review", "operator_review"}
+            or not isinstance(review["review_evidence_sha256"], str)
+            or not _HASH.fullmatch(review["review_evidence_sha256"])
+            or not result.source_file_sha256 or not result.metadata.get("source_page_identity")
+            or result.page_number == 1 and review["decision"] != "start"):
+        raise ValueError("document_boundary_review_invalid")
+    result.document_start = review["decision"] == "start"
+    # Boundary continuation is not proof of a paragraph-level continuation.
+    if result.document_start:
+        result.continuation_from_previous = False
+    for index, block in enumerate(result.blocks):
+        block.document_start = result.document_start and index == 0
+        if block.document_start:
+            block.continuation_of = None
+    result.metadata.pop("source_readiness", None)
+    result.metadata.update(document_boundary_review_required=False,
+        document_boundary_basis="explicit_reviewed_source_boundary", document_boundary_review=deepcopy(review))
     return result
 
 

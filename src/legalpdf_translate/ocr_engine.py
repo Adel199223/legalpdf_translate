@@ -9,7 +9,8 @@ import json
 import os
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, field
 from pathlib import Path
 from shutil import which
 from typing import Any, Literal, Protocol
@@ -27,7 +28,16 @@ from .ocr_defaults import (
     default_ocr_api_env_name,
 )
 from .secrets_store import get_ocr_key, get_openai_key
+from .openai_client import (
+    _accounted_openai_create,
+    _active_accountant,
+    _dispatch_limits,
+    _validate_dispatch_input_bound,
+)
 from .types import OcrApiProvider, OcrEnginePolicy, RunConfig, TargetLang
+from .usage_accounting import MemoryDispatchAccounting
+
+_PROVIDER_TEST_ACCOUNTING = MemoryDispatchAccounting()
 
 _PROFILE_PT_LATIN_DEFAULT = "pt_latin_default"
 _PROFILE_AR_TRACK_DEFAULT = "ar_track_default"
@@ -51,6 +61,17 @@ class _LocalPassSpec:
     psm: int
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class LocalOcrEvidence:
+    """Opt-in private acquisition bytes; never place in result metadata/reports."""
+
+    selected_pass: str
+    image_sha256: str
+    text_bytes: bytes
+    tsv_bytes: bytes
+    structure_bytes: bytes
+
+
 @dataclass(slots=True)
 class OcrResult:
     text: str
@@ -62,6 +83,7 @@ class OcrResult:
     attempts: list[dict[str, Any]] | None = None
     structure: dict[str, Any] | None = None
     structure_metadata: dict[str, Any] | None = None
+    local_evidence: LocalOcrEvidence | None = field(default=None, repr=False)
 
 
 class OCREngine(Protocol):
@@ -360,8 +382,11 @@ class LocalTesseractEngine:
         *,
         source_type: Literal["pdf", "image"] = "pdf",
         preserve_structure: bool = False,
+        retain_local_evidence: bool = False,
     ) -> OcrResult:
         _ = source_type
+        if retain_local_evidence:
+            preserve_structure = True
         if not self._tesseract_path:
             return OcrResult(
                 text="",
@@ -379,6 +404,7 @@ class LocalTesseractEngine:
         best_chars = 0
         best_pass = ""
         best_structure = None
+        best_evidence = None
 
         with tempfile.TemporaryDirectory(prefix="legalpdf_ocr_") as temp_dir:
             input_path = Path(temp_dir) / "input.png"
@@ -468,6 +494,27 @@ class LocalTesseractEngine:
                     best_chars = chars
                     best_pass = pass_spec.name
                     best_structure = structure
+                    best_evidence = None
+                    if retain_local_evidence and structure is not None:
+                        # Read the actual renderer files before TemporaryDirectory
+                        # cleanup. Never regenerate TSV from derived word boxes.
+                        try:
+                            base = input_path.parent / pass_spec.name
+                            with base.with_suffix(".txt").open("rb") as stream:
+                                raw_txt = stream.read(8_000_001)
+                            with base.with_suffix(".tsv").open("rb") as stream:
+                                raw_tsv = stream.read(8_000_001)
+                            if (len(raw_txt) <= 8_000_000 and len(raw_tsv) <= 8_000_000
+                                    and raw_txt.decode("utf-8") == stdout
+                                    and raw_tsv.decode("utf-8") == tsv):
+                                best_evidence = LocalOcrEvidence(pass_spec.name,
+                                    hashlib.sha256(image_bytes).hexdigest(), raw_txt, raw_tsv,
+                                    json.dumps(structure, ensure_ascii=False, sort_keys=True,
+                                        separators=(",", ":"), allow_nan=False).encode("utf-8"))
+                        except (OSError, ValueError, TypeError, UnicodeError):
+                            # Missing optional retention cannot alter winner or
+                            # normal OCR routing; the acquisition caller declines.
+                            best_evidence = None
 
                 if best_score >= _EARLY_ACCEPT_SCORE:
                     break
@@ -508,7 +555,20 @@ class LocalTesseractEngine:
             selected_pass=best_pass,
             attempts=attempts,
             structure=best_structure,
+            structure_metadata=self._readiness_metadata(best_structure),
+            local_evidence=best_evidence,
         )
+
+    @staticmethod
+    def _readiness_metadata(structure):
+        # Additive diagnostics only. Never feed these back into legacy winner
+        # ranking, early acceptance, pass count or provider fallback policy.
+        from .source_readiness import source_readiness_diagnostics
+        if structure is None:
+            return {"source_readiness": {"status": "review_required",
+                "fidelity_status": "not_evaluated", "winner_score_is_fidelity": False,
+                "codes": ["same_pass_word_evidence_invalid_or_missing"]}}
+        return {"source_readiness": source_readiness_diagnostics(structure)}
 
 
 def _extract_output_text(response: Any) -> str:
@@ -555,6 +615,7 @@ class ApiOcrEngine:
         )
         self._model = model.strip()
         self._timeout_seconds = max(0.1, float(timeout_seconds))
+        self._dispatch_accounting = MemoryDispatchAccounting()
 
     def ocr_image(
         self,
@@ -570,7 +631,8 @@ class ApiOcrEngine:
         encoded = base64.b64encode(image_bytes).decode("ascii")
         data_url = f"data:image/png;base64,{encoded}"
         try:
-            response = self._client.responses.create(
+            response = _accounted_openai_create(
+                client=self._client, accountant=self._dispatch_accounting, purpose="ocr",
                 model=self._model,
                 input=[
                     {
@@ -654,9 +716,13 @@ def _gemini_post_json(
             raw = response.read().decode("utf-8", errors="ignore")
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"gemini HTTP {exc.code}: {detail or exc.reason}") from exc
+        try:
+            body = json.loads(detail)
+        except (ValueError, TypeError):
+            body = None
+        raise GeminiRequestError(f"gemini HTTP {exc.code}", body=body, status_code=exc.code) from exc
     except URLError as exc:
-        raise RuntimeError(f"gemini transport error: {exc.reason}") from exc
+        raise GeminiRequestError("gemini transport error") from exc
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -664,6 +730,63 @@ def _gemini_post_json(
     if not isinstance(parsed, dict):
         raise RuntimeError("gemini returned an invalid payload type")
     return parsed
+
+
+class GeminiRequestError(RuntimeError):
+    def __init__(self, message: str, *, body: Any = None, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.body = body if isinstance(body, dict) else {}
+        self.status_code = status_code
+
+
+def _accounted_gemini_post_json(
+    *, accountant: Any, purpose: str, api_key: str, model: str,
+    base_url: str | None, payload: dict[str, Any],
+) -> dict[str, Any]:
+    active = _active_accountant(accountant)
+    purpose, limits = _dispatch_limits(active, provider="gemini", purpose=purpose, model=model)
+    request = deepcopy(payload)
+    maximum = limits.get("max_output_tokens")
+    if maximum is not None:
+        if type(maximum) is not int or maximum <= 0:
+            raise ValueError("Dispatch output token bound must be a positive integer.")
+        generation = request.setdefault("generationConfig", {})
+        generation["maxOutputTokens"] = min(maximum, generation.get("maxOutputTokens", maximum))
+    encoded = json.dumps(request, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    text_request = deepcopy(request)
+    image_count = 0
+    for content in text_request.get("contents", []):
+        for part in content.get("parts", []):
+            if "inline_data" in part:
+                image_count += 1
+                part["inline_data"].pop("data", None)
+    observed = {"input_bytes": len(json.dumps(text_request, ensure_ascii=False).encode("utf-8")) + 64,
+                "image_count": image_count}
+    _validate_dispatch_input_bound(active, limits, observed)
+    # This route has no approved billing-tier policy in the ordinary snapshot.
+    # Preserve OCR usage, but never infer standard OpenAI pricing for Gemini.
+    if active.hard_budget:
+        raise ValueError("Gemini hard-budget billing scope is not verified.")
+    verifier = getattr(active, "verify_dispatch", None)
+    if callable(verifier):
+        verifier(request=request, provider="gemini", purpose=purpose, attempt=1,
+                 route="models.generateContent", base_url=base_url)
+    ticket = active.begin(provider="gemini", requested_model=model, purpose=purpose,
+                          request_hash=hashlib.sha256(encoded).hexdigest(), bounds={**limits, **observed}, attempt=1,
+                          route="models.generateContent", base_url=base_url)
+    try:
+        response = _gemini_post_json(api_key=api_key, model=model, base_url=base_url, payload=request)
+    except BaseException as exc:
+        evidence = getattr(exc, "body", {})
+        if not isinstance(evidence, dict):
+            evidence = {}
+        active.finish(ticket, outcome="timeout" if isinstance(exc, TimeoutError) else "failed",
+                      usage=evidence.get("usageMetadata"), response_id=evidence.get("responseId"),
+                      actual_model=evidence.get("modelVersion"), error_code=type(exc).__name__)
+        raise
+    active.finish(ticket, outcome="succeeded", usage=response.get("usageMetadata"),
+                  response_id=response.get("responseId"), actual_model=response.get("modelVersion"))
+    return response
 
 
 class GeminiApiOcrEngine:
@@ -681,6 +804,7 @@ class GeminiApiOcrEngine:
         self._api_key = api_key.strip()
         self._model = model.strip()
         self._base_url = (base_url or GEMINI_OCR_DEFAULT_BASE_URL).strip()
+        self._dispatch_accounting = MemoryDispatchAccounting()
 
     def ocr_image(
         self,
@@ -716,7 +840,8 @@ class GeminiApiOcrEngine:
             },
         }
         try:
-            parsed = _gemini_post_json(
+            parsed = _accounted_gemini_post_json(
+                accountant=self._dispatch_accounting, purpose="ocr",
                 api_key=self._api_key,
                 model=self._model,
                 base_url=self._base_url,
@@ -812,7 +937,8 @@ def test_ocr_provider_connection(config: OcrEngineConfig, *, api_key: str | None
             "contents": [{"parts": [{"text": "Reply exactly with OK."}]}],
             "generationConfig": {"temperature": 0},
         }
-        parsed = _gemini_post_json(
+        parsed = _accounted_gemini_post_json(
+            accountant=_PROVIDER_TEST_ACCOUNTING, purpose="auth",
             api_key=resolved_api_key,
             model=model,
             base_url=base_url,
@@ -822,8 +948,9 @@ def test_ocr_provider_connection(config: OcrEngineConfig, *, api_key: str | None
             raise RuntimeError("gemini OCR provider test did not return OK")
         return
 
-    client = OpenAI(api_key=resolved_api_key, base_url=(base_url or None))
-    response = client.responses.create(
+    client = OpenAI(api_key=resolved_api_key, base_url=(base_url or None), max_retries=0)
+    response = _accounted_openai_create(
+        client=client, accountant=_PROVIDER_TEST_ACCOUNTING, purpose="auth",
         model=model,
         input=[{"role": "user", "content": [{"type": "input_text", "text": "Reply exactly with OK."}]}],
         max_output_tokens=16,

@@ -147,6 +147,11 @@ def _alias_entries(source: str, entries: list[GlossaryEntry]) -> list[GlossaryEn
                 # The recognizer looks ahead through the clause label; only the
                 # abbreviation itself is the term, never consume that label.
                 exact = exact[:exact.index('.') + 1]
+            elif entry.source_text == 'n.º':
+                # The recognizer consumes separator whitespace before the number.
+                # Keep only the exact observed term span, not its separator/label;
+                # configured entries and their strict validation stay untouched.
+                exact = exact.rstrip()
             result.append(replace(entry, source_text=exact))
     return result
 
@@ -180,8 +185,11 @@ def _literal_contract(source: str, entries: tuple[GlossaryEntry, ...], block_id:
         for start, end in matches:
             # Preserve the original block context: taking an inline ``p. e p.``
             # abbreviation out of context must not invent a leading list label.
-            existing = [_Span(span.start - start, span.end - start) for span in ordinary
-                        if start <= span.start and span.end <= end]
+            # A configured phrase may cover only part of a protected entity.
+            # Its exact intersecting characters must still survive; otherwise
+            # the prompt would demand both preservation and translation.
+            existing = [_Span(max(span.start, start) - start, min(span.end, end) - start)
+                        for span in ordinary if span.start < end and start < span.end]
             try:
                 _normalize_with_source_spans(phrase, _choose([*existing, *spans]), entry.preferred_translation)
             except StructuredArabicLiteralError:
@@ -276,6 +284,12 @@ def build_structured_glossary(source_blocks: Sequence[dict], entries: Sequence[G
         seen.add(block_id)
         source = _visible(block['text'], block_id)
         priority, _cities = _header_entries(source, target_lang) if source_lang == 'PT' else ([], ())
+        # Generated headers are defaults, not competing configured preferences.
+        # Suppress only an exact eligible source key; configured conflicts still
+        # reach strict dedupe, and citation-alias priority remains unchanged.
+        configured_sources = {entry.source_text for entry in configured if entry.tier in allowed
+            and entry.source_lang in {source_lang, 'AUTO', 'ANY'} and _matches(source, entry.source_text)}
+        priority = [entry for entry in priority if entry.source_text not in configured_sources]
         priority += _alias_entries(source, configured) if source_lang == 'PT' else []
         candidates = priority + sorted(configured, key=lambda entry: (entry.tier, -len(entry.source_text), entry.source_text))
         matched = _dedupe([entry for entry in candidates if entry.tier in allowed

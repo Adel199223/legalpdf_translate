@@ -59,15 +59,13 @@ class _FailingClient:
         )
 
 
-class _UnauthorizedPreflightClient:
-    def run_translation_auth_test(self) -> TranslationAuthTestResult:
+class _MissingPreflightClient:
+    def local_credential_preflight(self) -> TranslationAuthTestResult:
         return TranslationAuthTestResult(
             ok=False,
-            status="unauthorized",
-            message="OpenAI authentication failed.",
-            credential_source=OpenAICredentialSourceInfo(kind="stored", name=""),
-            status_code=401,
-            exception_class="AuthenticationError",
+            status="missing",
+            message="OpenAI translation credentials are not configured.",
+            credential_source=None,
         )
 
     def create_page_response(self, **kwargs) -> ApiCallResult:  # noqa: ANN003
@@ -76,11 +74,11 @@ class _UnauthorizedPreflightClient:
 
 
 class _AuthFailingPageClient:
-    def run_translation_auth_test(self) -> TranslationAuthTestResult:
+    def local_credential_preflight(self) -> TranslationAuthTestResult:
         return TranslationAuthTestResult(
             ok=True,
             status="ok",
-            message="OpenAI translation auth test passed.",
+            message="OpenAI credentials are configured locally.",
             credential_source=OpenAICredentialSourceInfo(kind="stored", name=""),
             latency_ms=5,
         )
@@ -342,7 +340,7 @@ def test_auto_mode_direct_text_skips_lazy_ocr_build(tmp_path: Path, monkeypatch:
 
     monkeypatch.setattr(workflow_module, "build_ocr_engine", _build_should_not_run)
 
-    summary = TranslationWorkflow(client=_FakeClient()).run(
+    summary = TranslationWorkflow(translation_protocol="legacy_text_v1", client=_FakeClient()).run(
         _config(pdf, outdir, ocr_engine=OcrEnginePolicy.LOCAL_THEN_API, max_pages=1)
     )
     assert summary.success is True
@@ -393,7 +391,7 @@ def test_helpful_route_is_local_only_even_when_policy_allows_api(
 
     monkeypatch.setattr(workflow_module, "build_ocr_engine", _build_engine)
 
-    summary = TranslationWorkflow(client=_FakeClient()).run(_config(pdf, outdir, ocr_engine=engine_policy, max_pages=1))
+    summary = TranslationWorkflow(translation_protocol="legacy_text_v1", client=_FakeClient()).run(_config(pdf, outdir, ocr_engine=engine_policy, max_pages=1))
     assert summary.success is True
     assert captured_policies == ["local"]
 
@@ -437,7 +435,7 @@ def test_helpful_unavailable_falls_back_without_warning_and_required_build_cache
 
     monkeypatch.setattr(workflow_module, "build_ocr_engine", _missing_local)
 
-    summary = TranslationWorkflow(client=_FakeClient()).run(
+    summary = TranslationWorkflow(translation_protocol="legacy_text_v1", client=_FakeClient()).run(
         _config(pdf, outdir, ocr_engine=OcrEnginePolicy.LOCAL_THEN_API, max_pages=2)
     )
     assert summary.success is True
@@ -500,7 +498,7 @@ def test_required_route_builds_policy_engine_once_for_multiple_pages(
 
     monkeypatch.setattr(workflow_module, "build_ocr_engine", _build_engine)
 
-    summary = TranslationWorkflow(client=_FakeClient()).run(
+    summary = TranslationWorkflow(translation_protocol="legacy_text_v1", client=_FakeClient()).run(
         _config(pdf, outdir, ocr_engine=OcrEnginePolicy.LOCAL_THEN_API, max_pages=2)
     )
     assert summary.success is True
@@ -565,7 +563,7 @@ def test_ocr_success_uses_text_route_without_auto_attaching_image(
         diagnostics_admin_mode=True,
     )
 
-    summary = TranslationWorkflow(client=_FakeClient()).run(config)
+    summary = TranslationWorkflow(translation_protocol="legacy_text_v1", client=_FakeClient()).run(config)
     assert summary.success is True
 
     run_state = json.loads((summary.run_dir / "run_state.json").read_text(encoding="utf-8"))
@@ -630,7 +628,7 @@ def test_inline_integrity_crop_recovery_merges_amount_into_prompt(
         diagnostics_admin_mode=True,
     )
 
-    summary = TranslationWorkflow(client=client).run(config)
+    summary = TranslationWorkflow(translation_protocol="legacy_text_v1", client=client).run(config)
     assert summary.success is True
     assert len(client.calls) == 1
     assert "498,03 €" in str(client.calls[0]["prompt_text"])
@@ -703,7 +701,7 @@ def test_inline_integrity_crop_failure_forces_image_grounding_and_review_queue(
         diagnostics_admin_mode=True,
     )
 
-    summary = TranslationWorkflow(client=client).run(config)
+    summary = TranslationWorkflow(translation_protocol="legacy_text_v1", client=client).run(config)
     assert summary.success is True
     assert len(client.calls) == 1
     assert str(client.calls[0]["image_data_url"]).startswith("data:image/jpeg;base64,")
@@ -768,7 +766,7 @@ def test_text_only_pages_use_text_timeout_budget(
         diagnostics_admin_mode=True,
     )
 
-    summary = TranslationWorkflow(client=client).run(config)
+    summary = TranslationWorkflow(translation_protocol="legacy_text_v1", client=client).run(config)
     assert summary.success is True
     assert len(client.calls) == 1
     assert float(client.calls[0]["timeout_seconds"]) == pytest.approx(480.0, abs=0.1)
@@ -823,7 +821,7 @@ def test_image_backed_pages_use_image_timeout_budget(
         diagnostics_admin_mode=True,
     )
 
-    summary = TranslationWorkflow(client=client).run(config)
+    summary = TranslationWorkflow(translation_protocol="legacy_text_v1", client=client).run(config)
     assert summary.success is True
     assert len(client.calls) == 1
     assert float(client.calls[0]["timeout_seconds"]) == pytest.approx(720.0, abs=0.1)
@@ -877,7 +875,7 @@ def test_failed_run_summary_includes_failure_context(
         diagnostics_admin_mode=True,
     )
 
-    summary = TranslationWorkflow(client=_FailingClient()).run(config)
+    summary = TranslationWorkflow(translation_protocol="legacy_text_v1", client=_FailingClient()).run(config)
     assert summary.success is False
     payload = json.loads((summary.run_dir / "run_summary.json").read_text(encoding="utf-8"))
     assert payload["suspected_cause"] != "rate_limiting"
@@ -929,7 +927,7 @@ def test_translate_auth_preflight_failure_stops_before_page_processing(
         diagnostics_admin_mode=True,
     )
 
-    summary = TranslationWorkflow(client=_UnauthorizedPreflightClient()).run(config)
+    summary = TranslationWorkflow(translation_protocol="legacy_text_v1", client=_MissingPreflightClient()).run(config)
 
     assert summary.success is False
     assert summary.failed_page is None
@@ -940,10 +938,10 @@ def test_translate_auth_preflight_failure_stops_before_page_processing(
     assert payload["suspected_cause"] == "authentication_failure"
     failure_context = payload["failure_context"]
     assert failure_context["scope"] == "preflight"
-    assert failure_context["status_code"] == 401
-    assert failure_context["exception_class"] == "AuthenticationError"
-    assert failure_context["credential_source"] == {"kind": "stored", "name": ""}
-    assert failure_context["message"] == "OpenAI authentication failed."
+    assert failure_context["status_code"] is None
+    assert failure_context["exception_class"] == ""
+    assert failure_context["credential_source"] == {"kind": "missing", "name": ""}
+    assert failure_context["message"] == "OpenAI translation credentials are not configured."
     event_types = {str(item.get("event_type", "")) for item in _events(summary.run_dir / "run_events.jsonl")}
     assert "translate_auth_preflight_failed" in event_types
 
@@ -998,7 +996,7 @@ def test_page_level_auth_failure_is_classified_as_authentication_failure(
         diagnostics_admin_mode=True,
     )
 
-    summary = TranslationWorkflow(client=_AuthFailingPageClient()).run(config)
+    summary = TranslationWorkflow(translation_protocol="legacy_text_v1", client=_AuthFailingPageClient()).run(config)
 
     assert summary.success is False
     assert summary.failed_page == 1

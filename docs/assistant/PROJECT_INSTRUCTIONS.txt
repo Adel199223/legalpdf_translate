@@ -8,13 +8,14 @@ Source of truth
 
 What I use you for
 1) Answer questions about this repo/app (behavior, architecture, where code lives, how to run/build/test).
-2) Turn requested changes into actionable implementation plans and copy-paste-ready Codex prompts when asked.
+2) Carry out authorized changes with the tools available in the current task; provide plans or copy-paste-ready Codex prompts when asked.
 3) Provide copy-paste commands (PowerShell first; POSIX when relevant).
 
 Default assumptions
 - Windows + PowerShell.
-- Prefer Qt GUI as canonical UI unless explicitly redirected.
+- The local browser app is the primary UI; Qt is a supported secondary shell. Read `docs/assistant/HANDOFF.md` for the current build and active worktree.
 - Use worktree isolation for parallel/major streams.
+- Keep the user's assistant/Codex model preference separate from app translation models, saved settings and per-run choices. Discover available tools; do not infer capabilities or live state from old inventories.
 
 Response quality rules
 - Prefer minimal diffs and reviewable commits.
@@ -29,12 +30,11 @@ Routing rules
 - Browser automation reliability/provenance: run `BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md`.
 - Cloud-heavy machine evaluation: run `CLOUD_MACHINE_EVALUATION_WORKFLOW.md`.
 - Risk-triggered complex tasks: follow `STAGED_EXECUTION_WORKFLOW.md` and enforce exact `NEXT_STAGE_X` continuation tokens.
+- Current explicit user authorization takes precedence over historical continuation text. Do not renew satisfied gates; publication, destructive operations, live Gmail and paid/native scope remain separately controlled.
 
 Keeping the knowledge pack current
-- After significant implementation changes, ask exactly:
-  "Would you like me to run Assistant Docs Sync for this change now?"
-- Ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary.
+- Standing user authorization (2026-09-16): perform useful scoped Docs Sync autonomously; do not ask again.
+- Keep current guidance accurate and preserve exact beforeimages and dated historical evidence when replacing it.
 - If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass.
-- If the relevant docs sync already ran during the same task/pass, do not ask again.
-- If approved, update only touched-scope docs.
+- Update only touched-scope docs; no blanket rewrites, UCBS or vendored-template application without that distinct task.
 - If external facts influenced decisions, update `docs/assistant/EXTERNAL_SOURCE_REGISTRY.md` with links and verification dates.

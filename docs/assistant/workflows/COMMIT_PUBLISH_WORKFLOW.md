@@ -49,7 +49,7 @@ git ls-files --others --exclude-standard
 - Wrong branch for major work: create/switch to `feat/<scope-name>`.
 - Wrong worktree base for the current branch: stop before commit/push, compare against the latest approved baseline SHA, and transplant/rebase first.
 - Current branch does not contain the approved-base floor from `docs/assistant/runtime/CANONICAL_BUILD.json`: stop before commit/push and fix branch lineage first.
-- User-accepted functionality exists only on a side branch: stop publish flow, promote that branch into the approved base immediately, then continue.
+- Within the current authorized publication scope, user-accepted functionality exists only on a side branch: stop publish flow, promote that branch into the approved base immediately, then continue.
 - User-accepted overlapping functionality is stranded across multiple dirty side worktrees: stop publish flow, take local-only safety checkpoints on each side branch, build one clean integration branch from `main`, transplant the accepted scopes there, and publish only that integrated branch.
 - Live launcher/native-host wrapper still points at a validation worktree after browser or Gmail testing: stop before calling cleanup complete, restore the launcher to canonical `main`, and verify the next live open no longer resolves to the validation build or its recovered session state.
 - Unintended staged files: `git restore --staged <path>` and restage explicitly.
@@ -113,14 +113,14 @@ git ls-files --others --exclude-standard
      - the PR base is correct
      - branch lineage is clean
      - no unresolved review blockers remain
-   - when the task involves a GUI build and more than one worktree/build can exist, use `tooling/launch_qt_build.py` for the handoff
+   - when the task involves a Qt build and more than one worktree/build can exist, use `tooling/launch_qt_build.py` for the handoff; for the browser app, verify the actual server/worktree, mode/workspace and served asset version through the available session tools
    - identify the build under test in the handoff:
      - repo/worktree path
      - branch
      - HEAD SHA
      - canonical vs noncanonical status
      - distinguishing feature set
-   - if the branch has already been user-accepted, merge it into the approved base before starting the next unrelated feature branch
+   - within the current authorized publication scope, if the branch has already been user-accepted, merge it into the approved base before starting the next unrelated feature branch
 8. Cleanup after merge:
    - delete the source branch when it is no longer needed
    - prune refs

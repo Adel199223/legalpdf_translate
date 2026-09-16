@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import re
 import sys
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -22,7 +22,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from legalpdf_translate.browser_arabic_review import ArabicDocxReviewManager, job_requires_arabic_review
-from legalpdf_translate.browser_gmail_bridge import BrowserLiveGmailBridgeManager
+from legalpdf_translate.browser_source_review import BrowserSourceReviewManager
+from legalpdf_translate.browser_formatting_review import BrowserFormattingReviewManager
+from legalpdf_translate.shadow_web.formatting_review_api import DisabledFormattingReviews, FormattingReviewRoutes
+from legalpdf_translate.browser_gmail_bridge import BrowserLiveBridgeSyncResult, BrowserLiveGmailBridgeManager
 from legalpdf_translate.browser_pdf_bundle import (
     browser_pdf_bundle_manifest_path,
     write_browser_pdf_bundle,
@@ -133,6 +136,7 @@ from legalpdf_translate.shadow_runtime import (
     SHADOW_DEFAULT_PORT,
     SHADOW_HOST,
     ShadowRuntimePaths,
+    ShadowListenerOwnership,
     build_shadow_runtime_metadata,
     classify_shadow_listener,
     clear_shadow_runtime_metadata,
@@ -145,9 +149,48 @@ from legalpdf_translate.shadow_runtime import (
     write_shadow_runtime_metadata,
 )
 from legalpdf_translate.user_settings import load_settings_from_path
+from legalpdf_translate.shadow_web.source_review_api import DisabledSourceReviews, SourceReviewRoutes, owned_browser_source
 _SAFE_UPLOAD_TOKEN_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _PREPARE_REASON_MESSAGES = {item["reason"]: item["message"] for item in extension_prepare_reason_catalog()}
 _EXTENSION_LAUNCH_SESSION_SCHEMA_VERSION = 4
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserAppServices:
+    """Injected construction and read-only capability boundaries for the browser app.
+
+    The default bundle delegates to the production services. Offline callers can
+    instead use :func:`offline_browser_app_services` for construction and the
+    bootstrap/capability/status routes enumerated by the isolated-service tests.
+    Those routes do not resolve live settings, credentials, provider clients,
+    Gmail, Photos, Word, native hosts, listeners, or process state. Other routes
+    remain registered: this bundle is not a general route or network sandbox.
+    """
+
+    detect_build_identity: Callable[..., RuntimeBuildIdentity]
+    detect_runtime_paths: Callable[..., ShadowRuntimePaths]
+    detect_data_paths: Callable[..., BrowserDataPaths]
+    classify_listener: Callable[..., ShadowListenerOwnership]
+    automation_preflight: Callable[..., dict[str, object]]
+    launch_session_status: Callable[..., dict[str, Any]]
+    translation_jobs_factory: Callable[[], Any]
+    arabic_reviews_factory: Callable[[], Any]
+    gmail_sessions_factory: Callable[[], Any]
+    live_gmail_bridge_factory: Callable[..., Any]
+    browser_bootstrap: Callable[..., dict[str, Any]]
+    power_tools_bootstrap: Callable[..., dict[str, Any]]
+    translation_bootstrap: Callable[..., dict[str, Any]]
+    gmail_bootstrap: Callable[..., dict[str, Any]]
+    google_photos_status: Callable[..., dict[str, Any]]
+    extension_summary: Callable[..., dict[str, Any]]
+    browser_provider_state: Callable[..., dict[str, object]]
+    browser_capability_snapshot: Callable[..., dict[str, Any]]
+    shell_bridge_state: Callable[..., dict[str, Any]]
+    shell_bridge_state_snapshot: Callable[..., dict[str, Any]]
+    document_runtime_state: Callable[..., dict[str, Any]]
+    native_host_state: Callable[..., dict[str, Any]]
+    source_reviews_factory: Callable[[Any], Any] | None = None
+    formatting_reviews_factory: Callable[[Any], Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +207,9 @@ class ShadowWebContext:
     gmail_sessions: GmailBrowserSessionManager
     live_gmail_bridge: BrowserLiveGmailBridgeManager
     enable_live_gmail_bridge: bool
+    services: BrowserAppServices
+    source_reviews: Any
+    formatting_reviews: Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,7 +390,7 @@ def _active_target(
         or request.query_params.get("workspace_id")
         or request.headers.get("X-LegalPDF-Workspace-Id")
     )
-    data_paths = detect_browser_data_paths(
+    data_paths = context.services.detect_data_paths(
         mode=mode,
         repo=context.repo_root,
         identity=context.build_identity,
@@ -399,7 +445,7 @@ def _runtime_payload(context: ShadowWebContext, target: ActiveBrowserTarget) -> 
 
 
 def _runtime_diagnostics(context: ShadowWebContext, target: ActiveBrowserTarget) -> dict[str, object]:
-    listener = classify_shadow_listener(port=context.port, expected_pid=os.getpid())
+    listener = context.services.classify_listener(port=context.port, expected_pid=os.getpid())
     runtime_metadata = build_shadow_runtime_metadata(
         repo=context.repo_root,
         identity=context.build_identity,
@@ -447,8 +493,8 @@ def _runtime_diagnostics(context: ShadowWebContext, target: ActiveBrowserTarget)
 def _runtime_ready_payload(context: ShadowWebContext, target: ActiveBrowserTarget) -> dict[str, Any]:
     runtime_payload = _runtime_payload(context, target)
     bridge_sync = asdict(context.live_gmail_bridge.last_result)
-    listener = classify_shadow_listener(port=context.port, expected_pid=os.getpid())
-    launch_session = latest_window_trace_status(target.data_paths.app_data_dir)
+    listener = context.services.classify_listener(port=context.port, expected_pid=os.getpid())
+    launch_session = context.services.launch_session_status(target.data_paths.app_data_dir)
     return {
         "runtime": runtime_payload,
         "readiness": {
@@ -631,8 +677,16 @@ def _shell_ready_capability_flags(
 ) -> dict[str, Any]:
     reason = str(current_mode_bridge.get("reason", "") or "").strip() or str(bridge_sync.get("reason", "") or "").strip()
     bridge_ready = bool(current_mode_bridge.get("ready"))
-    status = "ok" if bridge_ready else "bad" if reason in {"bridge_browser_mismatch", "split_brain_browser_owner"} else "warn"
-    label = "Ready" if bridge_ready else "Host issue" if status == "bad" else "Needs attention"
+    not_evaluated = (
+        str(current_mode_bridge.get("status", "") or "") == "not_evaluated"
+        or str(bridge_sync.get("status", "") or "") == "not_evaluated"
+    )
+    status = (
+        "not_evaluated"
+        if not_evaluated
+        else "ok" if bridge_ready else "bad" if reason in {"bridge_browser_mismatch", "split_brain_browser_owner"} else "warn"
+    )
+    label = "Not evaluated" if not_evaluated else "Ready" if bridge_ready else "Host issue" if status == "bad" else "Needs attention"
     message = (
         "The Gmail bridge is ready for workspace handoff."
         if bridge_ready
@@ -661,23 +715,35 @@ def _shell_bridge_capability_flags(
     bridge_sync = asdict(context.live_gmail_bridge.last_result)
     reason = str(current_mode_bridge.get("reason", "") or "").strip() or str(bridge_sync.get("reason", "") or "").strip()
     ready = bool(current_mode_bridge.get("ready"))
-    status = "ok" if ready else "bad" if reason in {"bridge_browser_mismatch", "split_brain_browser_owner"} else "warn"
-    label = "Ready" if ready else "Host issue" if status == "bad" else "Needs attention"
+    not_evaluated = (
+        str(current_mode_bridge.get("status", "") or "") == "not_evaluated"
+        or str(bridge_sync.get("status", "") or "") == "not_evaluated"
+    )
+    status = (
+        "not_evaluated"
+        if not_evaluated
+        else "ok" if ready else "bad" if reason in {"bridge_browser_mismatch", "split_brain_browser_owner"} else "warn"
+    )
+    label = "Not evaluated" if not_evaluated else "Ready" if ready else "Host issue" if status == "bad" else "Needs attention"
     message = (
         "The browser workspace is ready for Gmail handoff."
         if ready
         else str(current_mode_bridge.get("reason_message", "") or "The browser workspace is not ready for Gmail handoff.")
     )
     return {
-        "native_host": {
-            "status": "ok" if native_host_state.get("ready") else "warn" if native_host_state.get("repairable") else "bad",
-            "label": "Ready" if native_host_state.get("ready") else "Repairable" if native_host_state.get("repairable") else "Blocked",
-            "message": str(native_host_state.get("message", "") or "Edge native host status is unavailable."),
-            "reason": str(native_host_state.get("reason", "") or ""),
-            "repairable": bool(native_host_state.get("repairable")),
-            "self_test_status": str(native_host_state.get("self_test_status", "") or ""),
-            "current_runtime_python": str(native_host_state.get("current_runtime_python", "") or ""),
-        },
+        "native_host": (
+            dict(native_host_state)
+            if str(native_host_state.get("status", "") or "") == "not_evaluated"
+            else {
+                "status": "ok" if native_host_state.get("ready") else "warn" if native_host_state.get("repairable") else "bad",
+                "label": "Ready" if native_host_state.get("ready") else "Repairable" if native_host_state.get("repairable") else "Blocked",
+                "message": str(native_host_state.get("message", "") or "Edge native host status is unavailable."),
+                "reason": str(native_host_state.get("reason", "") or ""),
+                "repairable": bool(native_host_state.get("repairable")),
+                "self_test_status": str(native_host_state.get("self_test_status", "") or ""),
+                "current_runtime_python": str(native_host_state.get("current_runtime_python", "") or ""),
+            }
+        ),
         "gmail_bridge": {
             "status": status,
             "label": label,
@@ -690,14 +756,18 @@ def _shell_bridge_capability_flags(
             "live_desktop_ready_while_shadow_disabled": False,
             "user_action_needed": not ready,
         },
-        "document_runtime": {
-            "status": "ok" if document_runtime_state.get("native_pdf_available") else "warn",
-            "label": "Ready" if document_runtime_state.get("native_pdf_available") else "Browser-managed",
-            "message": str(document_runtime_state.get("message", "") or "Document runtime status is unavailable."),
-            "reason": str(document_runtime_state.get("reason", "") or ""),
-            "native_pdf_available": bool(document_runtime_state.get("native_pdf_available")),
-            "browser_pdf_bundle_supported": bool(document_runtime_state.get("browser_pdf_bundle_supported", False)),
-        },
+        "document_runtime": (
+            dict(document_runtime_state)
+            if str(document_runtime_state.get("status", "") or "") == "not_evaluated"
+            else {
+                "status": "ok" if document_runtime_state.get("native_pdf_available") else "warn",
+                "label": "Ready" if document_runtime_state.get("native_pdf_available") else "Browser-managed",
+                "message": str(document_runtime_state.get("message", "") or "Document runtime status is unavailable."),
+                "reason": str(document_runtime_state.get("reason", "") or ""),
+                "native_pdf_available": bool(document_runtime_state.get("native_pdf_available")),
+                "browser_pdf_bundle_supported": bool(document_runtime_state.get("browser_pdf_bundle_supported", False)),
+            }
+        ),
     }
 
 
@@ -707,32 +777,38 @@ def _browser_capability_flags(
     *,
     extension_summary: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    provider_state = build_browser_provider_state(settings_path=target.data_paths.settings_path)
-    flags = build_browser_capability_snapshot(
+    provider_state = context.services.browser_provider_state(settings_path=target.data_paths.settings_path)
+    flags = context.services.browser_capability_snapshot(
         data_paths=target.data_paths,
         automation_preflight=context.automation_preflight,
         word_pdf_preflight=provider_state.get("word_pdf_export", {}) if isinstance(provider_state, Mapping) else {},
         extension_summary=extension_summary,
     )
     native_host_state = provider_state.get("native_host", {}) if isinstance(provider_state, Mapping) else {}
-    flags["native_host"] = {
-        "status": "ok" if native_host_state.get("ready") else "warn" if native_host_state.get("repairable") else "bad",
-        "label": "Ready" if native_host_state.get("ready") else "Repairable" if native_host_state.get("repairable") else "Blocked",
-        "message": str(native_host_state.get("message", "") or "Edge native host status is unavailable."),
-        "reason": str(native_host_state.get("reason", "") or ""),
-        "repairable": bool(native_host_state.get("repairable")),
-        "self_test_status": str(native_host_state.get("self_test_status", "") or ""),
-        "wrapper_target_python": str(native_host_state.get("wrapper_target_python", "") or ""),
-    }
+    if str(native_host_state.get("status", "") or "") == "not_evaluated":
+        flags["native_host"] = dict(native_host_state)
+    else:
+        flags["native_host"] = {
+            "status": "ok" if native_host_state.get("ready") else "warn" if native_host_state.get("repairable") else "bad",
+            "label": "Ready" if native_host_state.get("ready") else "Repairable" if native_host_state.get("repairable") else "Blocked",
+            "message": str(native_host_state.get("message", "") or "Edge native host status is unavailable."),
+            "reason": str(native_host_state.get("reason", "") or ""),
+            "repairable": bool(native_host_state.get("repairable")),
+            "self_test_status": str(native_host_state.get("self_test_status", "") or ""),
+            "wrapper_target_python": str(native_host_state.get("wrapper_target_python", "") or ""),
+        }
     document_runtime_state = provider_state.get("document_runtime", {}) if isinstance(provider_state, Mapping) else {}
-    flags["document_runtime"] = {
-        "status": "ok" if document_runtime_state.get("native_pdf_available") else "warn",
-        "label": "Ready" if document_runtime_state.get("native_pdf_available") else "Browser-managed",
-        "message": str(document_runtime_state.get("message", "") or "Document runtime status is unavailable."),
-        "reason": str(document_runtime_state.get("reason", "") or ""),
-        "native_pdf_available": bool(document_runtime_state.get("native_pdf_available")),
-        "browser_pdf_bundle_supported": bool(document_runtime_state.get("browser_pdf_bundle_supported", False)),
-    }
+    if str(document_runtime_state.get("status", "") or "") == "not_evaluated":
+        flags["document_runtime"] = dict(document_runtime_state)
+    else:
+        flags["document_runtime"] = {
+            "status": "ok" if document_runtime_state.get("native_pdf_available") else "warn",
+            "label": "Ready" if document_runtime_state.get("native_pdf_available") else "Browser-managed",
+            "message": str(document_runtime_state.get("message", "") or "Document runtime status is unavailable."),
+            "reason": str(document_runtime_state.get("reason", "") or ""),
+            "native_pdf_available": bool(document_runtime_state.get("native_pdf_available")),
+            "browser_pdf_bundle_supported": bool(document_runtime_state.get("browser_pdf_bundle_supported", False)),
+        }
     return flags
 
 
@@ -960,15 +1036,24 @@ def _noncanonical_live_gmail_block_response(
     )
 
 
+def _owned_translation_job(context: ShadowWebContext, target: ActiveBrowserTarget, job_id: str) -> dict[str, Any] | None:
+    job = context.translation_jobs.get_job(job_id)
+    if (not isinstance(job, dict) or job.get("job_id") != job_id or job.get("runtime_mode") != target.mode
+            or job.get("workspace_id") != target.workspace_id):
+        return None
+    return job
+
+
 def _translation_job_or_error(
     context: ShadowWebContext,
+    target: ActiveBrowserTarget,
     *,
     job_id: str,
 ) -> dict[str, Any]:
     cleaned_job_id = str(job_id or "").strip()
     if cleaned_job_id == "":
         raise ValueError("Arabic DOCX review requires the current browser translation job id.")
-    job = context.translation_jobs.get_job(cleaned_job_id)
+    job = _owned_translation_job(context, target, cleaned_job_id)
     if job is None:
         raise ValueError("Browser translation job was not found for Arabic DOCX review.")
     return job
@@ -991,21 +1076,402 @@ def _arabic_review_validation_payload(
     }
 
 
+_OFFLINE_SERVICE_REASON = "injected_offline_services"
+_OFFLINE_SERVICE_MESSAGE = "This capability was not evaluated by the injected offline service bundle."
+
+
+def _not_evaluated_capability(**extra: Any) -> dict[str, Any]:
+    return {
+        "status": "not_evaluated",
+        "label": "Not evaluated",
+        "message": _OFFLINE_SERVICE_MESSAGE,
+        "reason": _OFFLINE_SERVICE_REASON,
+        **extra,
+    }
+
+
+def _offline_word_pdf_state() -> dict[str, Any]:
+    check = _not_evaluated_capability(ok=False)
+    return _not_evaluated_capability(
+        ok=False,
+        finalization_ready=False,
+        preflight=dict(check),
+        launch_preflight=dict(check),
+        export_canary=dict(check),
+    )
+
+
+def _offline_native_host_state() -> dict[str, Any]:
+    return _not_evaluated_capability(
+        ready=False,
+        repairable=False,
+        self_test_status="not_evaluated",
+        wrapper_target_python="",
+        current_runtime_python="",
+    )
+
+
+def _offline_document_runtime_state() -> dict[str, Any]:
+    return _not_evaluated_capability(
+        native_pdf_available=False,
+        browser_pdf_bundle_supported=False,
+    )
+
+
+def _offline_extension_summary() -> dict[str, Any]:
+    bridge = _not_evaluated_capability(ready=False, owner_kind="none")
+    return {
+        "status": "not_evaluated",
+        "reason": _OFFLINE_SERVICE_REASON,
+        "message": _OFFLINE_SERVICE_MESSAGE,
+        "bridge_summary": dict(bridge),
+        "bridge_context": {
+            "current_mode": dict(bridge),
+            "live_desktop": dict(bridge),
+            "shadow_isolation_active": True,
+            "live_desktop_ready_while_shadow_disabled": False,
+            "owner_provenance": "none",
+        },
+        "notes": [_OFFLINE_SERVICE_MESSAGE],
+    }
+
+
+def _offline_provider_state() -> dict[str, object]:
+    return {
+        "translation": _not_evaluated_capability(credentials_configured=False),
+        "ocr": _not_evaluated_capability(api_configured=False, local_available=False),
+        "gmail_draft": _not_evaluated_capability(ready=False),
+        "word_pdf_export": _offline_word_pdf_state(),
+        "document_runtime": _offline_document_runtime_state(),
+        "native_host": _offline_native_host_state(),
+    }
+
+
+def _offline_capability_snapshot(
+    *,
+    automation_preflight: Mapping[str, Any],
+    word_pdf_preflight: Mapping[str, Any],
+    extension_summary: Mapping[str, Any] | None = None,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    extension = dict(extension_summary or _offline_extension_summary())
+    return {
+        "interpretation": _not_evaluated_capability(),
+        "translation": _not_evaluated_capability(
+            credentials_configured=False,
+            credential_source={"kind": "not_evaluated", "name": ""},
+            auth_test_supported=False,
+        ),
+        "ocr": _not_evaluated_capability(api_configured=False, local_available=False),
+        "gmail": _not_evaluated_capability(),
+        "word_pdf_export": dict(word_pdf_preflight),
+        "browser_automation": dict(automation_preflight),
+        "gmail_bridge": dict(extension.get("bridge_summary", _not_evaluated_capability())),
+    }
+
+
+def _offline_browser_bootstrap(*, data_paths: BrowserDataPaths, **_kwargs: Any) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "normalized_payload": {
+            "blank_seed": build_blank_browser_profile(),
+            "navigation": [],
+            "dashboard_cards": [],
+            "recent_jobs": [],
+            "recent_job_counts": {},
+            "settings_summary": _not_evaluated_capability(),
+            "profile_summary": _not_evaluated_capability(),
+            "parity_audit": _not_evaluated_capability(),
+            "extension_lab": _offline_extension_summary(),
+            "runtime_mode": {
+                "current_mode": data_paths.mode,
+                "label": data_paths.label,
+                "live_data": False,
+                "banner_text": data_paths.banner_text,
+                "supported_modes": _supported_browser_modes(),
+            },
+        },
+        "diagnostics": {"isolation": _not_evaluated_capability()},
+        "capability_flags": {},
+    }
+
+
+def _offline_power_tools_bootstrap(**_kwargs: Any) -> dict[str, Any]:
+    provider_state = _offline_provider_state()
+    return {
+        "settings_admin": {
+            "form_values": {},
+            "provider_state": provider_state,
+            "status": "not_evaluated",
+        },
+        "power_tools": _not_evaluated_capability(provider_state=provider_state),
+    }
+
+
+def _offline_translation_bootstrap(*, active_jobs: list[dict[str, Any]] | None = None, **_kwargs: Any) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "normalized_payload": {
+            "defaults": {},
+            "history": [],
+            "active_jobs": list(active_jobs or []),
+            "status": "not_evaluated",
+            "reason": _OFFLINE_SERVICE_REASON,
+        },
+        "diagnostics": {"isolation": _not_evaluated_capability()},
+        "capability_flags": {
+            "translation": _not_evaluated_capability(
+                credentials_configured=False,
+                credential_source={"kind": "not_evaluated", "name": ""},
+            )
+        },
+    }
+
+
+def _offline_gmail_bootstrap(**_kwargs: Any) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "normalized_payload": _not_evaluated_capability(),
+        "diagnostics": {"isolation": _not_evaluated_capability()},
+        "capability_flags": {"gmail": _not_evaluated_capability()},
+    }
+
+
+def _offline_google_photos_status(**_kwargs: Any) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "normalized_payload": {"google_photos": _not_evaluated_capability(connected=False)},
+        "diagnostics": {"isolation": _not_evaluated_capability()},
+        "capability_flags": {"google_photos": _not_evaluated_capability(connected=False)},
+    }
+
+
+def _offline_shell_bridge_state(**kwargs: Any) -> dict[str, Any]:
+    target = kwargs.get("target")
+    workspace_id = str(getattr(target, "workspace_id", "") or "")
+    runtime_mode = str(getattr(target, "mode", "") or "")
+    return {
+        **_not_evaluated_capability(ready=False, owner_kind="none"),
+        "mode": runtime_mode,
+        "runtime_mode": runtime_mode,
+        "workspace_id": workspace_id,
+        "bridge_enabled": False,
+        "bridge_port": None,
+        "account_email": "",
+        "browser_url": "",
+        "launch_session": {},
+        "prepare_response": {
+            "ok": False,
+            "reason": _OFFLINE_SERVICE_REASON,
+            "ui_owner": "none",
+            "workspace_id": workspace_id,
+            "runtime_mode": runtime_mode,
+        },
+        "reason_message": _OFFLINE_SERVICE_MESSAGE,
+    }
+
+
+class _OfflineTranslationJobs:
+    def list_jobs(self, **_kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    def get_job(self, _job_id: str) -> None:
+        return None
+
+    @staticmethod
+    def _blocked(**_kwargs: Any) -> dict[str, Any]:
+        raise ValueError("Translation actions are disabled by the injected offline service bundle.")
+
+    start_analyze = _blocked
+    start_translate = _blocked
+    resume_job = _blocked
+    rebuild_job = _blocked
+    generate_run_report = _blocked
+
+    def cancel_job(self, **_kwargs: Any) -> bool:
+        return False
+
+    def job_artifact_path(self, **_kwargs: Any) -> Path:
+        raise ValueError("Translation artifacts are unavailable in the injected offline service bundle.")
+
+
+class _OfflineArabicReviews:
+    def state_for_workspace(self, **_kwargs: Any) -> dict[str, Any]:
+        return _not_evaluated_capability()
+
+
+class _OfflineGmailSessions:
+    def build_bootstrap(self, **kwargs: Any) -> dict[str, Any]:
+        return _offline_gmail_bootstrap(**kwargs)
+
+    def build_shell_ready(self, **kwargs: Any) -> dict[str, Any]:
+        return _offline_gmail_bootstrap(**kwargs)
+
+
+class _OfflineLiveGmailBridge:
+    def __init__(self) -> None:
+        self._last_result = BrowserLiveBridgeSyncResult(
+            status="not_evaluated",
+            reason=_OFFLINE_SERVICE_REASON,
+            bridge_enabled=False,
+            bridge_port=None,
+            owner_kind="none",
+            browser_url="",
+            workspace_id="",
+            started=False,
+            registration_ok=False,
+            registration_reason="not_evaluated",
+        )
+
+    @property
+    def last_result(self) -> BrowserLiveBridgeSyncResult:
+        return self._last_result
+
+    def sync(self) -> BrowserLiveBridgeSyncResult:
+        return self._last_result
+
+    def stop(self) -> None:
+        return None
+
+
+def default_browser_app_services() -> BrowserAppServices:
+    """Return late-bound production services so existing monkeypatch contracts remain valid."""
+
+    return BrowserAppServices(
+        detect_build_identity=lambda **kwargs: detect_runtime_build_identity(**kwargs),
+        detect_runtime_paths=lambda **kwargs: detect_shadow_runtime_paths(**kwargs),
+        detect_data_paths=lambda **kwargs: detect_browser_data_paths(**kwargs),
+        classify_listener=lambda **kwargs: classify_shadow_listener(**kwargs),
+        automation_preflight=lambda **kwargs: run_browser_automation_preflight(**kwargs),
+        launch_session_status=lambda *args, **kwargs: latest_window_trace_status(*args, **kwargs),
+        translation_jobs_factory=lambda: TranslationJobManager(),
+        arabic_reviews_factory=lambda: ArabicDocxReviewManager(),
+        gmail_sessions_factory=lambda: GmailBrowserSessionManager(),
+        live_gmail_bridge_factory=lambda **kwargs: BrowserLiveGmailBridgeManager(**kwargs),
+        browser_bootstrap=lambda **kwargs: build_browser_bootstrap(**kwargs),
+        power_tools_bootstrap=lambda **kwargs: build_power_tools_bootstrap(**kwargs),
+        translation_bootstrap=lambda **kwargs: build_translation_bootstrap(**kwargs),
+        gmail_bootstrap=lambda *, manager, **kwargs: manager.build_bootstrap(**kwargs),
+        google_photos_status=lambda **kwargs: build_google_photos_status(**kwargs),
+        extension_summary=lambda **kwargs: build_extension_lab_summary(**kwargs),
+        browser_provider_state=lambda **kwargs: build_browser_provider_state(**kwargs),
+        browser_capability_snapshot=lambda **kwargs: build_browser_capability_snapshot(**kwargs),
+        shell_bridge_state=lambda **kwargs: _shell_bridge_mode_state(**kwargs),
+        shell_bridge_state_snapshot=lambda **kwargs: _shell_bridge_mode_state_snapshot(**kwargs),
+        document_runtime_state=lambda: document_runtime_state_payload(),
+        native_host_state=lambda **kwargs: inspect_edge_native_host(**kwargs),
+        source_reviews_factory=lambda jobs: BrowserSourceReviewManager(jobs),
+        formatting_reviews_factory=lambda jobs: BrowserFormattingReviewManager(jobs),
+    )
+
+
+def offline_browser_app_services(*, state_root: Path) -> BrowserAppServices:
+    """Isolate construction and tested bootstrap GETs in caller-owned state.
+
+    This is not authorization or a sandbox for other GET/POST actions, including
+    OAuth callbacks or explicit preflight/provider/native actions. Harnesses must
+    separately constrain their route allowlist and install hard tripwires.
+    """
+
+    isolated_root = state_root.expanduser().resolve()
+
+    def _runtime_paths(**_kwargs: Any) -> ShadowRuntimePaths:
+        runtime_root = isolated_root / "runtime"
+        return ShadowRuntimePaths(
+            app_data_dir=runtime_root,
+            settings_path=runtime_root / "settings.json",
+            job_log_db_path=runtime_root / "job_log.sqlite3",
+            outputs_dir=runtime_root / "outputs",
+            uploads_dir=runtime_root / "uploads",
+            runtime_metadata_path=runtime_root / "shadow_runtime.json",
+        )
+
+    def _data_paths(*, mode: str, **_kwargs: Any) -> BrowserDataPaths:
+        data_root = isolated_root / "data" / ("live-request" if mode == RUNTIME_MODE_LIVE else "shadow")
+        return BrowserDataPaths(
+            mode=mode,
+            label="Injected Offline Data",
+            app_data_dir=data_root,
+            settings_path=data_root / "settings.json",
+            job_log_db_path=data_root / "job_log.sqlite3",
+            outputs_dir=data_root / "outputs",
+            live_data=False,
+            banner_text="INJECTED OFFLINE SERVICES",
+        )
+
+    def _identity(*, repo: Path, labels: tuple[str, ...] = (), **_kwargs: Any) -> RuntimeBuildIdentity:
+        return RuntimeBuildIdentity(
+            worktree_path=str(repo.expanduser().resolve()),
+            branch="offline-injected",
+            head_sha="not-evaluated",
+            labels=tuple(labels) + ("offline-services",),
+            is_canonical=False,
+            is_lineage_valid=False,
+            canonical_worktree_path="",
+            canonical_branch="main",
+            approved_base_branch="main",
+            approved_base_head_floor="",
+            canonical_head_floor="",
+            reasons=(_OFFLINE_SERVICE_REASON,),
+        )
+
+    def _listener(*, port: int, **_kwargs: Any) -> ShadowListenerOwnership:
+        return ShadowListenerOwnership(
+            host=SHADOW_HOST,
+            port=int(port),
+            status="unavailable",
+            pid=None,
+            reason=_OFFLINE_SERVICE_REASON,
+        )
+
+    return BrowserAppServices(
+        detect_build_identity=_identity,
+        detect_runtime_paths=_runtime_paths,
+        detect_data_paths=_data_paths,
+        classify_listener=_listener,
+        automation_preflight=lambda **_kwargs: _not_evaluated_capability(preferred_host_status="not_evaluated"),
+        launch_session_status=lambda *_args, **_kwargs: _not_evaluated_capability(),
+        translation_jobs_factory=_OfflineTranslationJobs,
+        arabic_reviews_factory=_OfflineArabicReviews,
+        gmail_sessions_factory=_OfflineGmailSessions,
+        live_gmail_bridge_factory=lambda **_kwargs: _OfflineLiveGmailBridge(),
+        browser_bootstrap=_offline_browser_bootstrap,
+        power_tools_bootstrap=_offline_power_tools_bootstrap,
+        translation_bootstrap=_offline_translation_bootstrap,
+        gmail_bootstrap=lambda **kwargs: _offline_gmail_bootstrap(**kwargs),
+        google_photos_status=_offline_google_photos_status,
+        extension_summary=lambda **_kwargs: _offline_extension_summary(),
+        browser_provider_state=lambda **_kwargs: _offline_provider_state(),
+        browser_capability_snapshot=_offline_capability_snapshot,
+        shell_bridge_state=_offline_shell_bridge_state,
+        shell_bridge_state_snapshot=_offline_shell_bridge_state,
+        document_runtime_state=lambda: _offline_document_runtime_state(),
+        native_host_state=lambda **_kwargs: _offline_native_host_state(),
+        source_reviews_factory=DisabledSourceReviews,
+        formatting_reviews_factory=DisabledFormattingReviews,
+    )
+
+
 def create_shadow_app(
     *,
     repo_root: Path | None = None,
     port: int = SHADOW_DEFAULT_PORT,
     enable_live_gmail_bridge: bool = True,
+    services: BrowserAppServices | None = None,
 ) -> FastAPI:
     root = (repo_root or Path(__file__).resolve().parents[3]).expanduser().resolve()
-    build_identity = detect_runtime_build_identity(repo=root, labels=("shadow-web",))
-    server_runtime_paths = detect_shadow_runtime_paths(repo=root, identity=build_identity)
-    automation_preflight = run_browser_automation_preflight(repo=root)
+    resolved_services = services or default_browser_app_services()
+    build_identity = resolved_services.detect_build_identity(repo=root, labels=("shadow-web",))
+    server_runtime_paths = resolved_services.detect_runtime_paths(repo=root, identity=build_identity)
+    automation_preflight = resolved_services.automation_preflight(repo=root)
     templates_dir = Path(__file__).resolve().parent / "templates"
     static_dir = Path(__file__).resolve().parent / "static"
     asset_version = compute_browser_asset_version(static_dir)
     templates = Jinja2Templates(directory=str(templates_dir))
-    gmail_sessions = GmailBrowserSessionManager()
+    gmail_sessions = resolved_services.gmail_sessions_factory()
+    translation_jobs = resolved_services.translation_jobs_factory()
+    source_factory = resolved_services.source_reviews_factory or DisabledSourceReviews
+    formatting_factory = resolved_services.formatting_reviews_factory or DisabledFormattingReviews
 
     shadow_context = ShadowWebContext(
         repo_root=root,
@@ -1015,16 +1481,19 @@ def create_shadow_app(
         server_runtime_paths=server_runtime_paths,
         build_identity=build_identity,
         automation_preflight=automation_preflight,
-        translation_jobs=TranslationJobManager(),
-        arabic_reviews=ArabicDocxReviewManager(),
+        translation_jobs=translation_jobs,
+        arabic_reviews=resolved_services.arabic_reviews_factory(),
         gmail_sessions=gmail_sessions,
-        live_gmail_bridge=BrowserLiveGmailBridgeManager(
+        live_gmail_bridge=resolved_services.live_gmail_bridge_factory(
             repo_root=root,
             build_identity=build_identity,
             server_port=int(port),
             gmail_sessions=gmail_sessions,
         ),
         enable_live_gmail_bridge=bool(enable_live_gmail_bridge),
+        services=resolved_services,
+        source_reviews=source_factory(translation_jobs),
+        formatting_reviews=formatting_factory(translation_jobs),
     )
 
     @asynccontextmanager
@@ -1034,7 +1503,7 @@ def create_shadow_app(
             repo=context.repo_root,
             identity=context.build_identity,
             port=context.port,
-            listener=classify_shadow_listener(port=context.port, expected_pid=os.getpid()),
+            listener=context.services.classify_listener(port=context.port, expected_pid=os.getpid()),
             automation_preflight=context.automation_preflight,
         )
         write_shadow_runtime_metadata(context.server_runtime_paths.runtime_metadata_path, payload)
@@ -1050,6 +1519,8 @@ def create_shadow_app(
     app = FastAPI(title="LegalPDF Translate Browser Parity", version="0.2.0", lifespan=_lifespan)
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     app.state.shadow_context = shadow_context
+    app.state.source_review_routes = SourceReviewRoutes(app, context_for=_context, target_for=_active_target)
+    app.state.formatting_review_routes = FormattingReviewRoutes(app, context_for=_context, target_for=_active_target)
 
     @app.get("/static-build/{asset_version}/{asset_path:path}", name="static_build")
     async def versioned_static_asset(asset_version: str, asset_path: str) -> Response:
@@ -1104,25 +1575,26 @@ def create_shadow_app(
     async def api_bootstrap(request: Request) -> JSONResponse:
         context = _context(request)
         target = _active_target(request)
-        response = build_browser_bootstrap(
+        response = context.services.browser_bootstrap(
             data_paths=target.data_paths,
             history_limit=25,
         )
         response["normalized_payload"].update(
-            build_power_tools_bootstrap(
+            context.services.power_tools_bootstrap(
                 data_paths=target.data_paths,
                 runtime_metadata_path=context.server_runtime_paths.runtime_metadata_path,
             )
         )
-        translation_bootstrap = build_translation_bootstrap(
+        translation_bootstrap = context.services.translation_bootstrap(
             settings_path=target.data_paths.settings_path,
             job_log_db_path=target.data_paths.job_log_db_path,
             outputs_dir=target.data_paths.outputs_dir,
-            active_jobs=context.translation_jobs.list_jobs(runtime_mode=target.mode, limit=12),
+            active_jobs=context.translation_jobs.list_jobs(runtime_mode=target.mode, workspace_id=target.workspace_id, limit=12),
             history_limit=25,
         )
         response["normalized_payload"]["translation"] = translation_bootstrap["normalized_payload"]
-        gmail_bootstrap = context.gmail_sessions.build_bootstrap(
+        gmail_bootstrap = context.services.gmail_bootstrap(
+            manager=context.gmail_sessions,
             runtime_mode=target.mode,
             workspace_id=target.workspace_id,
             settings_path=target.data_paths.settings_path,
@@ -1132,7 +1604,7 @@ def create_shadow_app(
             asset_version=context.asset_version,
         )
         response["normalized_payload"]["gmail"] = gmail_bootstrap["normalized_payload"]
-        google_photos_bootstrap = build_google_photos_status(
+        google_photos_bootstrap = context.services.google_photos_status(
             settings_path=target.data_paths.settings_path,
             redirect_uri=_google_photos_redirect_uri(request),
             mode=target.mode,
@@ -1153,7 +1625,7 @@ def create_shadow_app(
             "extension_source_hash": _extension_background_source_hash(context.repo_root),
             "runtime_state_root": str(target.data_paths.app_data_dir),
             "build_identity": runtime_build_identity_payload(context.build_identity),
-            "launch_session": latest_window_trace_status(target.data_paths.app_data_dir),
+            "launch_session": context.services.launch_session_status(target.data_paths.app_data_dir),
         }
         response["normalized_payload"]["automation_preflight"] = context.automation_preflight
         payload = JSONResponse(_merge_response(context, target, response))
@@ -1196,7 +1668,8 @@ def create_shadow_app(
     async def api_bootstrap_shell(request: Request) -> JSONResponse:
         context = _context(request)
         target = _active_target(request)
-        gmail_bootstrap = context.gmail_sessions.build_bootstrap(
+        gmail_bootstrap = context.services.gmail_bootstrap(
+            manager=context.gmail_sessions,
             runtime_mode=target.mode,
             workspace_id=target.workspace_id,
             settings_path=target.data_paths.settings_path,
@@ -1205,9 +1678,12 @@ def create_shadow_app(
             build_sha=context.build_identity.head_sha,
             asset_version=context.asset_version,
         )
-        current_mode_bridge = _shell_bridge_mode_state(target=target, build_identity=context.build_identity)
-        document_runtime_state = document_runtime_state_payload()
-        native_host_state = inspect_edge_native_host(
+        current_mode_bridge = context.services.shell_bridge_state(
+            target=target,
+            build_identity=context.build_identity,
+        )
+        document_runtime_state = context.services.document_runtime_state()
+        native_host_state = context.services.native_host_state(
             base_dir=target.data_paths.app_data_dir,
             preferred_python_executable=Path(sys.executable),
             runtime_path=Path(sys.executable),
@@ -1257,7 +1733,7 @@ def create_shadow_app(
         context = _context(request)
         target = _active_target(request)
         bridge_sync = asdict(context.live_gmail_bridge.last_result)
-        current_mode_bridge = _shell_bridge_mode_state_snapshot(
+        current_mode_bridge = context.services.shell_bridge_state_snapshot(
             target=target,
             bridge_sync=bridge_sync,
             build_identity=context.build_identity,
@@ -1313,7 +1789,7 @@ def create_shadow_app(
     async def api_capabilities(request: Request) -> JSONResponse:
         context = _context(request)
         target = _active_target(request)
-        extension_payload = build_extension_lab_summary(data_paths=target.data_paths)
+        extension_payload = context.services.extension_summary(data_paths=target.data_paths)
         extension_payload["prepare_reason_catalog"] = extension_prepare_reason_catalog()
         capability_flags = _browser_capability_flags(
             context,
@@ -1459,7 +1935,7 @@ def create_shadow_app(
         target = _active_target(request)
         response = {
             "status": "ok",
-            "normalized_payload": build_power_tools_bootstrap(
+            "normalized_payload": context.services.power_tools_bootstrap(
                 data_paths=target.data_paths,
                 runtime_metadata_path=context.server_runtime_paths.runtime_metadata_path,
             )["settings_admin"],
@@ -1737,7 +2213,7 @@ def create_shadow_app(
     async def api_extension_diagnostics(request: Request) -> JSONResponse:
         context = _context(request)
         target = _active_target(request)
-        extension_payload = build_extension_lab_summary(data_paths=target.data_paths)
+        extension_payload = context.services.extension_summary(data_paths=target.data_paths)
         extension_payload["prepare_reason_catalog"] = extension_prepare_reason_catalog()
         response = {
             "status": "ok",
@@ -1811,7 +2287,7 @@ def create_shadow_app(
         response = {
             "status": "ok",
             "normalized_payload": {
-                "launch_session": latest_window_trace_status(target.data_paths.app_data_dir),
+                "launch_session": context.services.launch_session_status(target.data_paths.app_data_dir),
             },
             "diagnostics": {
                 "launch_session_updated": launch_session,
@@ -1825,7 +2301,7 @@ def create_shadow_app(
         target = _active_target(request)
         response = {
             "status": "ok",
-            "normalized_payload": build_power_tools_bootstrap(
+            "normalized_payload": context.services.power_tools_bootstrap(
                 data_paths=target.data_paths,
                 runtime_metadata_path=context.server_runtime_paths.runtime_metadata_path,
             )["power_tools"],
@@ -2030,7 +2506,8 @@ def create_shadow_app(
     async def api_gmail_bootstrap(request: Request) -> JSONResponse:
         context = _context(request)
         target = _active_target(request)
-        response = context.gmail_sessions.build_bootstrap(
+        response = context.services.gmail_bootstrap(
+            manager=context.gmail_sessions,
             runtime_mode=target.mode,
             workspace_id=target.workspace_id,
             settings_path=target.data_paths.settings_path,
@@ -2189,7 +2666,8 @@ def create_shadow_app(
             source_path_text = str(manifest_payload.get("source_path", "") or "").strip()
             if source_path_text == "":
                 raise ValueError("Browser PDF bundle source_path is required.")
-            source_path = Path(source_path_text).expanduser().resolve()
+            attachment_id = str(manifest_payload.get("attachment_id", "") or "").strip()
+            source_path = owned_browser_source(context, target, source_path_text, attachment_id=attachment_id)
             if source_path.suffix.lower() != ".pdf":
                 raise ValueError("Browser PDF bundles are only supported for PDF sources.")
             page_count = int(manifest_payload.get("page_count", 0) or 0)
@@ -2292,7 +2770,8 @@ def create_shadow_app(
     async def api_gmail_session_current(request: Request) -> JSONResponse:
         context = _context(request)
         target = _active_target(request)
-        response = context.gmail_sessions.build_bootstrap(
+        response = context.services.gmail_bootstrap(
+            manager=context.gmail_sessions,
             runtime_mode=target.mode,
             workspace_id=target.workspace_id,
             settings_path=target.data_paths.settings_path,
@@ -2315,7 +2794,9 @@ def create_shadow_app(
         job_id = str(payload.get("job_id", "") or "").strip()
         completion_key = str(payload.get("completion_key", "") or "").strip() or None
         if job_id:
-            job = context.translation_jobs.get_job(job_id)
+            job = _owned_translation_job(context, target, job_id)
+            if job is None:
+                return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
             if job_requires_arabic_review(job):
                 try:
                     context.arabic_reviews.require_resolved(
@@ -2434,7 +2915,8 @@ def create_shadow_app(
             workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
         )
         context.gmail_sessions.clear_workspace(runtime_mode=target.mode, workspace_id=target.workspace_id)
-        response = context.gmail_sessions.build_bootstrap(
+        response = context.services.gmail_bootstrap(
+            manager=context.gmail_sessions,
             runtime_mode=target.mode,
             workspace_id=target.workspace_id,
             settings_path=target.data_paths.settings_path,
@@ -2449,11 +2931,11 @@ def create_shadow_app(
     async def api_translation_bootstrap(request: Request) -> JSONResponse:
         context = _context(request)
         target = _active_target(request)
-        response = build_translation_bootstrap(
+        response = context.services.translation_bootstrap(
             settings_path=target.data_paths.settings_path,
             job_log_db_path=target.data_paths.job_log_db_path,
             outputs_dir=target.data_paths.outputs_dir,
-            active_jobs=context.translation_jobs.list_jobs(runtime_mode=target.mode, limit=12),
+            active_jobs=context.translation_jobs.list_jobs(runtime_mode=target.mode, workspace_id=target.workspace_id, limit=12),
             history_limit=50,
         )
         return JSONResponse(_merge_response(context, target, response))
@@ -2542,7 +3024,7 @@ def create_shadow_app(
     async def api_translation_job_status(request: Request, job_id: str) -> JSONResponse:
         context = _context(request)
         target = _active_target(request)
-        job = context.translation_jobs.get_job(job_id)
+        job = _owned_translation_job(context, target, job_id)
         if job is None:
             return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
         return JSONResponse(
@@ -2562,6 +3044,8 @@ def create_shadow_app(
     async def api_translation_job_cancel(request: Request, job_id: str) -> JSONResponse:
         context = _context(request)
         target = _active_target(request)
+        if _owned_translation_job(context, target, job_id) is None:
+            return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
         cancelled = context.translation_jobs.cancel_job(job_id=job_id)
         if not cancelled:
             return _validation_error_response(
@@ -2569,7 +3053,7 @@ def create_shadow_app(
                 target,
                 message="Translation job cannot be cancelled in its current state.",
             )
-        job = context.translation_jobs.get_job(job_id)
+        job = _owned_translation_job(context, target, job_id)
         return JSONResponse(
             _merge_response(
                 context,
@@ -2587,6 +3071,8 @@ def create_shadow_app(
     async def api_translation_job_resume(request: Request, job_id: str) -> JSONResponse:
         context = _context(request)
         target = _active_target(request)
+        if _owned_translation_job(context, target, job_id) is None:
+            return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
         try:
             job = context.translation_jobs.resume_job(
                 job_id=job_id,
@@ -2611,6 +3097,8 @@ def create_shadow_app(
     async def api_translation_job_rebuild(request: Request, job_id: str) -> JSONResponse:
         context = _context(request)
         target = _active_target(request)
+        if _owned_translation_job(context, target, job_id) is None:
+            return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
         try:
             job = context.translation_jobs.rebuild_job(
                 job_id=job_id,
@@ -2635,7 +3123,7 @@ def create_shadow_app(
     async def api_translation_job_review_export(request: Request, job_id: str) -> JSONResponse:
         context = _context(request)
         target = _active_target(request)
-        job = context.translation_jobs.get_job(job_id)
+        job = _owned_translation_job(context, target, job_id)
         if job is None:
             return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
         summary_path = str(job.get("artifacts", {}).get("run_summary_path", "") or "").strip()
@@ -2652,6 +3140,8 @@ def create_shadow_app(
     async def api_translation_job_run_report(request: Request, job_id: str) -> JSONResponse:
         context = _context(request)
         target = _active_target(request)
+        if _owned_translation_job(context, target, job_id) is None:
+            return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
         try:
             response = context.translation_jobs.generate_run_report(
                 job_id=job_id,
@@ -2665,7 +3155,9 @@ def create_shadow_app(
     @app.get("/api/translation/jobs/{job_id}/artifact/{artifact_kind}")
     async def api_translation_job_artifact(request: Request, job_id: str, artifact_kind: str):
         context = _context(request)
-        _target = _active_target(request)
+        target = _active_target(request)
+        if _owned_translation_job(context, target, job_id) is None:
+            return JSONResponse({"status": "failed", "diagnostics": {"error": "Translation job was not found."}}, status_code=404)
         try:
             path = context.translation_jobs.job_artifact_path(job_id=job_id, artifact_kind=artifact_kind)
         except ValueError as exc:
@@ -2694,8 +3186,10 @@ def create_shadow_app(
         job_id = str(payload.get("job_id", "") or "").strip()
         completion_key = str(payload.get("completion_key", "") or "").strip() or None
         row_id = payload.get("row_id")
+        job = _owned_translation_job(context, target, job_id) if job_id else None
+        if job_id and job is None:
+            return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
         if job_id and row_id in (None, ""):
-            job = context.translation_jobs.get_job(job_id)
             if job_requires_arabic_review(job):
                 try:
                     context.arabic_reviews.require_resolved(
@@ -2735,7 +3229,7 @@ def create_shadow_app(
         job_id = str(request.query_params.get("job_id", "") or "").strip()
         completion_key = str(request.query_params.get("completion_key", "") or "").strip() or None
         try:
-            job = _translation_job_or_error(context, job_id=job_id) if job_id else None
+            job = _translation_job_or_error(context, target, job_id=job_id) if job_id else None
         except ValueError as exc:
             return _validation_error_response(context, target, message=str(exc), status_code=404)
         try:
@@ -2770,7 +3264,7 @@ def create_shadow_app(
         )
         completion_key = str(payload.get("completion_key", "") or "").strip() or None
         try:
-            job = _translation_job_or_error(context, job_id=str(payload.get("job_id", "") or "").strip())
+            job = _translation_job_or_error(context, target, job_id=str(payload.get("job_id", "") or "").strip())
             arabic_review, diagnostics = context.arabic_reviews.open_review(
                 runtime_mode=target.mode,
                 workspace_id=target.workspace_id,
@@ -2802,7 +3296,7 @@ def create_shadow_app(
         )
         completion_key = str(payload.get("completion_key", "") or "").strip() or None
         try:
-            job = _translation_job_or_error(context, job_id=str(payload.get("job_id", "") or "").strip())
+            job = _translation_job_or_error(context, target, job_id=str(payload.get("job_id", "") or "").strip())
             arabic_review, diagnostics = context.arabic_reviews.align_right_and_save(
                 runtime_mode=target.mode,
                 workspace_id=target.workspace_id,
@@ -2834,7 +3328,7 @@ def create_shadow_app(
         )
         completion_key = str(payload.get("completion_key", "") or "").strip() or None
         try:
-            job = _translation_job_or_error(context, job_id=str(payload.get("job_id", "") or "").strip())
+            job = _translation_job_or_error(context, target, job_id=str(payload.get("job_id", "") or "").strip())
             arabic_review = context.arabic_reviews.continue_review(
                 runtime_mode=target.mode,
                 workspace_id=target.workspace_id,
@@ -2872,7 +3366,7 @@ def create_shadow_app(
                     db_path=target.data_paths.job_log_db_path,
                     limit=limit,
                 ),
-                "active_jobs": context.translation_jobs.list_jobs(runtime_mode=target.mode, limit=12),
+                "active_jobs": context.translation_jobs.list_jobs(runtime_mode=target.mode, workspace_id=target.workspace_id, limit=12),
             },
             "diagnostics": {},
             "capability_flags": build_translation_capability_flags(settings_path=target.data_paths.settings_path),
@@ -2923,7 +3417,7 @@ def create_shadow_app(
     async def api_google_photos_status(request: Request) -> JSONResponse:
         context = _context(request)
         target = _active_target(request)
-        response = build_google_photos_status(
+        response = context.services.google_photos_status(
             settings_path=target.data_paths.settings_path,
             redirect_uri=_google_photos_redirect_uri(request),
             mode=target.mode,

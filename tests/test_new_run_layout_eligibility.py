@@ -10,7 +10,9 @@ import pytest
 
 from legalpdf_translate import ocr_engine as oe, workflow as wf
 from legalpdf_translate.browser_pdf_bundle import write_browser_pdf_bundle
-from legalpdf_translate.document_structure import PageStructure
+from legalpdf_translate.document_structure import PageStructure, apply_reviewed_document_boundary
+from legalpdf_translate.new_translation_blocks import NewTranslationBlocks
+from legalpdf_translate.source_readiness import source_structure_digest, source_readiness_diagnostics
 from legalpdf_translate.docx_writer import assemble_docx
 from legalpdf_translate.layout_integration import prepare_layout_rebuild, load_layout_eligibility, derive_source_layout
 from legalpdf_translate.openai_client import ApiCallResult
@@ -58,10 +60,23 @@ def raster_page(index, *, table=False):
     return buffer.getvalue(), "\n".join(rows), "\n".join(text for text, _ in lines)
 
 
-def bundle_run(tmp_path, monkeypatch, *, table=False):
+def bundle_run(tmp_path, monkeypatch, *, table=False, reviewed_boundary=False):
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("Native process forbidden"))
     monkeypatch.setattr(oe, "which", lambda _: "fake-tesseract")
     monkeypatch.setattr(oe, "_text_quality_score", lambda _: .99)
+    if reviewed_boundary:
+        # A source-bound synthetic review at the actual winner boundary, not a
+        # pre-certified geometry injection or a claim of a review UI workflow.
+        bind = NewTranslationBlocks._bind_source
+        def reviewed_bind(self, source, *, number, text):
+            source = bind(self, source, number=number, text=text)
+            if number > 1:
+                source = apply_reviewed_document_boundary(source, {
+                    "source_structure_sha256": source_structure_digest(source), "decision": "continuation",
+                    "review_kind": "ai_test_review", "review_evidence_sha256": "d" * 64})
+                source.metadata["source_readiness"] = source_readiness_diagnostics(source)
+            return source
+        monkeypatch.setattr(NewTranslationBlocks, "_bind_source", reviewed_bind)
     source = tmp_path / "source.pdf"
     source.write_bytes(b"%PDF-1.4\n% synthetic bundle; native extraction forbidden")
     pages = [raster_page(i, table=table) for i in range(2)]
@@ -106,8 +121,8 @@ def bundle_run(tmp_path, monkeypatch, *, table=False):
     return workflow, config, result, calls, client
 
 
-def test_bundle_same_pass_evidence_admits_real_furniture_and_split_sentence(tmp_path, monkeypatch, offline):
-    workflow, config, result, calls, client = bundle_run(tmp_path, monkeypatch)
+def test_bundle_same_pass_and_explicit_reviewed_boundary_admit_furniture_and_split_sentence(tmp_path, monkeypatch, offline):
+    workflow, config, result, calls, client = bundle_run(tmp_path, monkeypatch, reviewed_boundary=True)
     pages = result.run_dir / "pages"
     assert len(calls) == len(client.calls) == 2
     assert len(list(pages.glob("*.layout_eligibility.json"))) == 2
@@ -122,6 +137,21 @@ def test_bundle_same_pass_evidence_admits_real_furniture_and_split_sentence(tmp_
     rebuilt = workflow.rebuild_docx(config)
     assert [p.text for p in Document(rebuilt).paragraphs if p.text.strip()] == [" ".join(TARGET)]
     assert page_hashes(pages) == before and len(calls) == len(client.calls) == 2
+
+
+def test_bundle_unreviewed_missing_title_blocks_furniture_and_split_sentence(tmp_path, monkeypatch, offline):
+    workflow, config, result, calls, client = bundle_run(tmp_path, monkeypatch)
+    source = json.loads((result.run_dir / "pages" / "page_0002.source_structure.json").read_bytes())
+    assert source["metadata"]["document_boundary_review_required"] is True
+    pages = mapping(result.output_docx)
+    assert not any(page.get("section_furniture_adopted") for page in pages)
+    assert not any("joined_to_block_id" in block for page in pages for block in page["blocks"])
+    body = [p.text for p in Document(result.output_docx).paragraphs if p.text.strip()]
+    assert body.count("Judicial Court") == 2 and all(text in " ".join(body) for text in TARGET + FOOTERS)
+    before = page_hashes(result.run_dir / "pages")
+    rebuilt = workflow.rebuild_docx(config)
+    assert [p.text for p in Document(rebuilt).paragraphs if p.text.strip()] == body
+    assert page_hashes(result.run_dir / "pages") == before and len(calls) == len(client.calls) == 2
 
 
 def test_bundle_unresolved_table_retains_all_body_text_for_review(tmp_path, monkeypatch, offline):

@@ -47,6 +47,7 @@ def make_adapter(monkeypatch):
         for key in ('input_tokens', 'output_tokens', 'reasoning_tokens', 'total_tokens'):
             metadata[key] = metadata.get(key, 0) + usage.get(key, 0)
     workflow = SimpleNamespace(_prompt_glossaries_by_lang={}, _enabled_glossary_tiers_by_lang={},
+        _dispatch_accounting=None,
         _prompt_addendum_by_lang={}, _last_state=SimpleNamespace(pages={}), _cancel_event=threading.Event(),
         _translation_request_timeout_seconds=lambda **_: 30, _utc_now=lambda: 'synthetic-time',
         _accumulate_usage_totals=accumulate, _is_usable_source_text=lambda text: bool(text.strip()))

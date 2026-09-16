@@ -173,6 +173,8 @@ def _build_app(tmp_path: Path, monkeypatch, *, build_identity: RuntimeBuildIdent
 def _completed_ar_job(docx_path: Path, *, job_id: str = "tx-ar-001") -> dict[str, object]:
     return {
         "job_id": job_id,
+        "runtime_mode": "live",
+        "workspace_id": "workspace-1",
         "job_kind": "translate",
         "status": "completed",
         "config": {
@@ -34152,6 +34154,9 @@ def test_shadow_web_gmail_finalize_routes_and_attachment_file(tmp_path: Path, mo
     recorded: dict[str, object] = {}
     attachment_file = tmp_path / "gmail-preview.pdf"
     attachment_file.write_bytes(b"%PDF-1.7\n")
+    monkeypatch.setattr(shadow_app_module.TranslationJobManager, "get_job", lambda self, job_id:
+        {"job_id": "tx-123", "runtime_mode": "live", "workspace_id": "workspace-1", "config": {"target_lang": "EN"}}
+        if job_id == "tx-123" else None)
 
     def _confirm_current(
         self,
@@ -34573,6 +34578,8 @@ def test_shadow_web_gmail_image_attachment_route_is_inline(tmp_path: Path, monke
 def test_shadow_web_browser_pdf_bundle_route_writes_bundle_and_updates_gmail_cache(tmp_path: Path, monkeypatch) -> None:
     source_pdf = tmp_path / "bundle-source.pdf"
     source_pdf.write_bytes(b"%PDF-1.7\n")
+    monkeypatch.setattr(shadow_app_module.GmailBrowserSessionManager, "current_attachment_file",
+        lambda self, **kwargs: source_pdf if kwargs == {"runtime_mode": "live", "workspace_id": "workspace-1", "attachment_id": "att-bundle"} else None)
     image = Image.new("RGB", (24, 18), color=(255, 255, 255))
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -36387,19 +36394,19 @@ def test_shadow_web_translation_job_routes_use_manager_methods(tmp_path: Path, m
         assert recorded["start_translate"]["workspace_id"] == "ws-live"
         assert recorded["start_translate"]["form_values"]["gmail_batch_context"]["attachment_id"] == "att-1"
 
-        cancel = client.post("/api/translation/jobs/tx-stage2/cancel", headers={"X-LegalPDF-Runtime-Mode": "live"})
+        cancel = client.post("/api/translation/jobs/tx-stage2/cancel", headers={"X-LegalPDF-Runtime-Mode": "live", "X-LegalPDF-Workspace-Id": "ws-live"})
         cancel_payload = cancel.json()
         assert cancel.status_code == 200
         assert cancel_payload["normalized_payload"]["job"]["status"] == "cancel_requested"
         assert recorded["cancel_job"] == {"job_id": "tx-stage2"}
 
-        resume = client.post("/api/translation/jobs/tx-stage2/resume", headers={"X-LegalPDF-Runtime-Mode": "live"})
+        resume = client.post("/api/translation/jobs/tx-stage2/resume", headers={"X-LegalPDF-Runtime-Mode": "live", "X-LegalPDF-Workspace-Id": "ws-live"})
         resume_payload = resume.json()
         assert resume.status_code == 200
         assert resume_payload["normalized_payload"]["job"]["status_text"] == "Resumed"
         assert recorded["resume_job"]["job_id"] == "tx-stage2"
 
-        rebuild = client.post("/api/translation/jobs/tx-stage2/rebuild", headers={"X-LegalPDF-Runtime-Mode": "live"})
+        rebuild = client.post("/api/translation/jobs/tx-stage2/rebuild", headers={"X-LegalPDF-Runtime-Mode": "live", "X-LegalPDF-Workspace-Id": "ws-live"})
         rebuild_payload = rebuild.json()
         assert rebuild.status_code == 200
         assert rebuild_payload["normalized_payload"]["job"]["job_kind"] == "rebuild"
@@ -36460,6 +36467,8 @@ def test_shadow_web_translation_route_surfaces_auth_failure_payload(tmp_path: Pa
 def test_shadow_web_translation_artifact_route_keeps_download_headers(tmp_path: Path, monkeypatch) -> None:
     artifact = tmp_path / "run_summary.json"
     artifact.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(shadow_app_module.TranslationJobManager, "get_job", lambda self, job_id:
+        {"job_id": "tx-artifact", "runtime_mode": "live", "workspace_id": "workspace-1"} if job_id == "tx-artifact" else None)
 
     monkeypatch.setattr(
         shadow_app_module.TranslationJobManager,
@@ -36476,6 +36485,8 @@ def test_shadow_web_translation_artifact_route_keeps_download_headers(tmp_path: 
 
 def test_shadow_web_translation_run_report_route_returns_updated_job(tmp_path: Path, monkeypatch) -> None:
     recorded: dict[str, object] = {}
+    monkeypatch.setattr(shadow_app_module.TranslationJobManager, "get_job", lambda self, job_id:
+        {"job_id": "tx-report", "runtime_mode": "live", "workspace_id": "workspace-1"} if job_id == "tx-report" else None)
 
     def _generate_run_report(self, *, job_id, settings_path):
         recorded["job_id"] = job_id
@@ -36487,6 +36498,8 @@ def test_shadow_web_translation_run_report_route_returns_updated_job(tmp_path: P
                     "job_id": job_id,
                     "job_kind": "translate",
                     "status": "completed",
+                    "runtime_mode": "live",
+                    "workspace_id": "workspace-1",
                     "artifacts": {"run_report_path": "C:/tmp/run_report.md"},
                     "actions": {"download_run_report": True},
                 },
@@ -36513,6 +36526,8 @@ def test_shadow_web_translation_run_report_route_returns_updated_job(tmp_path: P
 def test_shadow_web_translation_run_report_artifact_route_serves_markdown(tmp_path: Path, monkeypatch) -> None:
     artifact = tmp_path / "run_report.md"
     artifact.write_text("# Run Report\n", encoding="utf-8")
+    monkeypatch.setattr(shadow_app_module.TranslationJobManager, "get_job", lambda self, job_id:
+        {"job_id": "tx-artifact", "runtime_mode": "live", "workspace_id": "workspace-1"} if job_id == "tx-artifact" else None)
 
     monkeypatch.setattr(
         shadow_app_module.TranslationJobManager,

@@ -1,5 +1,9 @@
 # APP User Guide
 
+## Optional reviewed-source and DOCX workflow
+
+For **Review source before translating** and **Review DOCX formatting**, use the [reviewed-source and DOCX guide](REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md). It explains explicit decisions, supported source/settings, editable tables, reviewed derivatives and lost-response recovery. These controls belong to the current integration candidate; verify the build in [HANDOFF.md](../HANDOFF.md) rather than assuming they are already on canonical main. The normal translation workflow below remains available.
+
 ## Use This Guide When
 - You need a plain-language explanation of what the app does.
 - You are helping a non-coder run a translation safely.

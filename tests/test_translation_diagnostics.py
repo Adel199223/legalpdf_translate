@@ -57,9 +57,9 @@ def test_estimate_cost_env_rates() -> None:
         env_output_rate=12.0,
         env_reasoning_rate=12.0,
     )
-    # 2M * 3/1M + 1M * 12/1M + 0.5M * 12/1M = 6 + 12 + 6 = 24
+    # Responses output already includes its 0.5M reasoning-token breakdown.
     assert cost is not None
-    assert abs(cost - 24.0) < 0.001
+    assert abs(cost - 18.0) < 0.001
     assert "env rates" in expl
 
 

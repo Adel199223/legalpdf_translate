@@ -232,7 +232,8 @@ def test_test_ocr_provider_connection_uses_openai_minimum_output_tokens(
             return SimpleNamespace(output_text="OK")
 
     class _FakeOpenAI:
-        def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+        def __init__(self, *, api_key: str, base_url: str | None = None, max_retries: int = 99) -> None:
+            assert max_retries == 0
             captured["api_key"] = api_key
             captured["base_url"] = base_url
             self.responses = _FakeResponses()

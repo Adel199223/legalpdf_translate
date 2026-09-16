@@ -9,9 +9,13 @@ import re
 import shutil
 import threading
 import time
+import uuid
 from collections import Counter
+from collections.abc import Mapping
+from copy import deepcopy
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from statistics import median
@@ -112,6 +116,7 @@ from .types import (
     TargetLang,
 )
 from .user_settings import load_gui_settings
+from .translation_policy import resolve_translation_protocol
 from .workflow_components.contracts import (
     OutputEvaluation,
     SummarySignalInputs,
@@ -629,16 +634,42 @@ class TranslationWorkflow:
         log_callback: Callable[[str], None] | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
         translation_protocol: str | None = None,
+        gui_settings: Mapping[str, Any] | None = None,
+        accounting_factory: Callable[..., Any] | None = None,
+        accounting_policy: Any | None = None,
+        acceptance_continuation: Any | None = None,
+        environment_loader: Callable[[], None] | None = None,
+        ocr_engine_factory: Callable[..., OCREngine] | None = None,
+        reviewed_source_context: Any | None = None,
     ) -> None:
         # One internal opt-in reaches browser/CLI/queue/Qt without new payloads.
-        requested = translation_protocol or os.environ.get("LEGALPDF_TRANSLATION_PROTOCOL", "legacy_text_v1")
-        if requested not in {"legacy_text_v1", "legal_blocks_v2"}:
-            raise ValueError("Unsupported internal translation protocol.")
+        if reviewed_source_context is not None:
+            from .ordinary_reviewed_source import OrdinaryReviewedSourceContext, OrdinaryReviewedSourceError
+            if type(reviewed_source_context) is not OrdinaryReviewedSourceContext:
+                raise OrdinaryReviewedSourceError("ordinary_source_review_invalid_context")
+            if acceptance_continuation is not None or translation_protocol not in (None, "legal_blocks_v2"):
+                raise OrdinaryReviewedSourceError("ordinary_source_review_conflicting_context")
+            translation_protocol = "legal_blocks_v2"
+        requested = resolve_translation_protocol(translation_protocol)
+        self._reviewed_source_context = reviewed_source_context
+        self._gui_settings = None if gui_settings is None else deepcopy(dict(gui_settings))
+        self._effective_gui_settings: dict[str, Any] = {}
+        self._credential_source_payload: dict[str, str] = {"kind": "not_evaluated", "name": ""}
+        self._accounting_factory = accounting_factory
+        from .accounting_policy import OrdinaryAccountingPolicy, ordinary_accounting_policy
+        if accounting_policy is not None and not isinstance(accounting_policy, OrdinaryAccountingPolicy):
+            raise TypeError("accounting_policy must be an immutable OrdinaryAccountingPolicy.")
+        self._accounting_policy = accounting_policy or ordinary_accounting_policy()
+        self._acceptance_continuation = acceptance_continuation
+        self._environment_loader = environment_loader
+        self._ocr_engine_factory = ocr_engine_factory
+        self._dispatch_accounting = None
         self._explicit_translation_protocol = translation_protocol
         self._configured_translation_protocol = requested
         self._translation_protocol = requested
         self._structured_run = None
         self._provided_client = client
+        self._translation_model = client.model if isinstance(client, OpenAIResponsesClient) else OPENAI_MODEL
         self._log_callback = log_callback
         self._progress_callback = progress_callback
         self._cancel_event = threading.Event()
@@ -683,10 +714,45 @@ class TranslationWorkflow:
         self._cancel_event.set()
 
     def run(self, config: RunConfig) -> RunSummary:
+        config = self._normalize_config(config)
+        self._validate_config(config)
+        if self._reviewed_source_context is not None and not config.keep_intermediates:
+            from .ordinary_reviewed_source import OrdinaryReviewedSourceError
+            raise OrdinaryReviewedSourceError("ordinary_source_review_requires_retained_evidence")
+        if self._reviewed_source_context is not None:
+            from .source_document import source_has_browser_pdf_bundle
+            if not source_has_browser_pdf_bundle(config.pdf_path):
+                from .ordinary_reviewed_source import OrdinaryReviewedSourceError
+                raise OrdinaryReviewedSourceError("ordinary_source_review_full_browser_source_required")
+        paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang,
+                                gmail_batch_context=config.gmail_batch_context)
+        output_preprobed = config.resume is False and not os.path.lexists(paths.run_dir)
+        if output_preprobed:
+            # A denied fresh-run probe must not leave a run directory or lock.
+            # Existing runs, including source-review claims, keep their locked
+            # evidence-before-probe path below.
+            self._require_writable_run_output_dir(config.output_dir)
+        with self._run_workspace_scope(config, create=True) as (root, retained_state):
+            if output_preprobed and (retained_state is not None
+                    or {entry.name for entry in root.iterdir()} != {".run_workspace.lock"}):
+                raise ValueError("New run folder was populated during output preflight; preserve it and resume or choose another output folder.")
+            if retained_state is not None and config.resume:
+                ordinary_identity = (self._reviewed_source_context.identity
+                                     if self._reviewed_source_context is not None else None)
+                if retained_state.settings.get("ordinary_source_review") != ordinary_identity:
+                    from .ordinary_reviewed_source import OrdinaryReviewedSourceError
+                    raise OrdinaryReviewedSourceError("ordinary_source_review_resume_context_changed")
+            if output_preprobed:
+                return self._run_locked(config, output_preprobed=True)
+            return self._run_locked(config)
+
+    def _run_locked(self, config: RunConfig, *, output_preprobed: bool = False) -> RunSummary:
         run_started_perf = time.perf_counter()
         self._translation_protocol = self._configured_translation_protocol
         self._structured_run = None
         self._cancel_event.clear()
+        self._dispatch_accounting = None
+        self._credential_source_payload = {"kind": "not_evaluated", "name": ""}
         self._last_config = None
         self._last_paths = None
         self._last_state = None
@@ -710,8 +776,6 @@ class TranslationWorkflow:
         self._translation_timeout_text_seconds = float(DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS)
         self._translation_timeout_image_seconds = float(DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS)
 
-        config = self._normalize_config(config)
-        self._validate_config(config)
         self._cost_profile_id = normalize_cost_profile_id(config.cost_profile_id)
         self._budget_cap_usd = config.budget_cap_usd
         self._advisor_recommendation_applied = (
@@ -719,46 +783,15 @@ class TranslationWorkflow:
             if isinstance(config.advisor_recommendation_applied, bool)
             else None
         )
-        gui_settings = load_gui_settings()
-        personal_glossaries = normalize_glossaries(
-            gui_settings.get("personal_glossaries_by_lang", gui_settings.get("glossaries_by_lang")),
-            supported_target_langs(),
-        )
-        self._enabled_glossary_tiers_by_lang = normalize_enabled_tiers_by_target_lang(
-            gui_settings.get("enabled_glossary_tiers_by_target_lang"),
-            supported_target_langs(),
-        )
-        raw_addendum_map = gui_settings.get("prompt_addendum_by_lang")
-        if not isinstance(raw_addendum_map, dict):
-            raw_addendum_map = {}
-        self._prompt_addendum_by_lang = {
-            lang: str(raw_addendum_map.get(lang, "") or "").strip()
-            for lang in supported_target_langs()
-        }
-        self._translation_timeout_text_seconds = float(
-            gui_settings.get("perf_timeout_text_seconds", DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS)
-            or DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS
-        )
-        self._translation_timeout_image_seconds = float(
-            gui_settings.get("perf_timeout_image_seconds", DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS)
-            or DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS
-        )
-        project_glossaries = normalize_glossaries({}, supported_target_langs())
-        if config.glossary_file:
-            # Preserve fail-fast behavior for invalid custom glossary files.
-            project_glossaries = load_project_glossaries(config.glossary_file)
-        prompt_glossaries = merge_glossary_scopes(
-            project_glossaries,
-            personal_glossaries,
-            supported_langs=supported_target_langs(),
-        )
-        self._prompt_glossaries_by_lang = prompt_glossaries
+        gui_settings = load_gui_settings() if self._gui_settings is None else deepcopy(self._gui_settings)
+        self._hydrate_request_settings(config=config, gui_settings=gui_settings)
         self._last_config = config
         self._diagnostics_admin_mode = bool(config.diagnostics_admin_mode)
 
-        started = time.perf_counter()
-        load_environment()
-        self._run_stage_timings_ms["load_environment"] = round((time.perf_counter() - started) * 1000.0, 3)
+        if self._reviewed_source_context is None:
+            started = time.perf_counter()
+            (self._environment_loader if self._environment_loader is not None else load_environment)()
+            self._run_stage_timings_ms["load_environment"] = round((time.perf_counter() - started) * 1000.0, 3)
         if not config.keep_intermediates:
             self._log(
                 "keep_intermediates is OFF: pages/images will be deleted after successful export; "
@@ -786,6 +819,12 @@ class TranslationWorkflow:
 
         pdf_fingerprint = sha256_of_file(config.pdf_path)
         paths, existing_state = self._resolve_paths_for_run(config)
+        ordinary_source_identity = (self._reviewed_source_context.identity
+                                    if self._reviewed_source_context is not None else None)
+        if (existing_state is not None and config.resume
+                and existing_state.settings.get("ordinary_source_review") != ordinary_source_identity):
+            from .ordinary_reviewed_source import OrdinaryReviewedSourceError
+            raise OrdinaryReviewedSourceError("ordinary_source_review_resume_context_changed")
         if self._translation_protocol == "legal_blocks_v2":
             from .new_translation_blocks import NewTranslationBlocks
             self._structured_run = NewTranslationBlocks(self, config, selected_pages,
@@ -797,14 +836,21 @@ class TranslationWorkflow:
                     pdf_fingerprint=pdf_fingerprint, context_hash=context_hash,
                     selection_start_page=selection_start_page, selection_end_page=selection_end_page,
                     selection_page_count=selection_page_count, max_pages_effective=max_pages_effective,
-                    protocol_identity=self._structured_run.identity)
+                    protocol_identity=self._structured_run.identity,
+                    ordinary_source_review=ordinary_source_identity)
                 if reason:
                     raise ValueError(f"Structured checkpoint is incompatible: {reason}")
                 recovered = recover_structured_commits(existing_state, paths, protocol_identity=self._structured_run.identity)
                 self._require_writable_run_output_dir(config.output_dir)
                 if recovered:
                     save_run_state_atomic(paths.run_state_path, existing_state)
-        if self._structured_run is None or existing_state is None:
+        if self._reviewed_source_context is not None:
+            # Actual reviewed source and resume identity have passed before any
+            # credential loading, accountant construction or authentication.
+            started = time.perf_counter()
+            (self._environment_loader if self._environment_loader is not None else load_environment)()
+            self._run_stage_timings_ms["load_environment"] = round((time.perf_counter() - started) * 1000.0, 3)
+        if not output_preprobed and (self._structured_run is None or existing_state is None):
             self._require_writable_run_output_dir(config.output_dir)
         ensure_run_dirs(paths)
         self._last_paths = paths
@@ -842,6 +888,8 @@ class TranslationWorkflow:
             selection_page_count=selection_page_count,
             max_pages_effective=max_pages_effective,
         )
+        self._initialize_dispatch_accounting(config=config, paths=paths, run_state=run_state,
+            resuming_existing=bool(config.resume and existing_state is not None))
         run_state.run_status = "running"
         run_state.final_docx_path_abs = None
         run_state.failure_context = {}
@@ -880,7 +928,7 @@ class TranslationWorkflow:
             _gl_tiers = str(self._enabled_glossary_tiers_by_lang.get(config.target_lang.value, [1, 2]))
             emit_run_config_event(
                 self._event_collector,
-                model=OPENAI_MODEL,
+                model=self._translation_model,
                 system_instructions_hash=_si_hash(instructions),
                 image_mode=config.image_mode.value,
                 ocr_mode=config.ocr_mode.value,
@@ -904,6 +952,12 @@ class TranslationWorkflow:
 
         thread_local = threading.local()
         provided_client = self._provided_client
+        # Reviewed browser jobs defer client construction until source checks.
+        # Keep the same saved transport policy as the eager browser constructor.
+        ordinary_client_options = ({
+            "max_transport_retries": int(gui_settings.get("perf_max_transport_retries", 4) or 4),
+            "backoff_cap_seconds": float(gui_settings.get("perf_backoff_cap_seconds", 12.0) or 12.0),
+        } if self._reviewed_source_context is not None else {})
 
         def _get_thread_client() -> OpenAIResponsesClient | Any:
             cached = getattr(thread_local, "client", None)
@@ -912,14 +966,7 @@ class TranslationWorkflow:
             if provided_client is not None and not isinstance(provided_client, OpenAIResponsesClient):
                 return provided_client
             if isinstance(provided_client, OpenAIResponsesClient):
-                client_instance = OpenAIResponsesClient(
-                    max_transport_retries=provided_client._max_transport_retries,
-                    base_backoff_seconds=provided_client._base_backoff_seconds,
-                    backoff_cap_seconds=provided_client._backoff_cap_seconds,
-                    pre_call_jitter_seconds=provided_client._pre_call_jitter_seconds,
-                    request_timeout_seconds=provided_client._request_timeout_seconds,
-                    logger=self._log,
-                )
+                client_instance = provided_client.clone(logger=self._log)
             else:
                 client_instance = OpenAIResponsesClient(
                     request_timeout_seconds=max(
@@ -927,12 +974,16 @@ class TranslationWorkflow:
                         self._translation_timeout_image_seconds,
                     ),
                     logger=self._log,
+                    **ordinary_client_options,
                 )
             thread_local.client = client_instance
             return client_instance
 
         pending_pages: list[int] = []
         for page_number in selected_pages:
+            if (self._acceptance_continuation is not None
+                    and page_number not in self._acceptance_continuation.dispatch_pages):
+                continue
             page_state = run_state.pages.get(str(page_number))
             if config.resume and page_state and page_state.get("status") == PageStatus.DONE.value:
                 self._log(f"page={page_number} image_used=False retry_used=False status=skipped")
@@ -1038,14 +1089,25 @@ class TranslationWorkflow:
             self._structured_run.prepare_native_evidence()
         if pending_pages and not self._cancel_event.is_set():
             auth_result: TranslationAuthTestResult | None = None
-            if isinstance(provided_client, OpenAIResponsesClient):
-                auth_result = provided_client.run_translation_auth_test()
-            elif provided_client is None:
-                auth_result = run_translation_auth_test()
-            elif hasattr(provided_client, "run_translation_auth_test"):
-                maybe_result = provided_client.run_translation_auth_test()  # type: ignore[attr-defined]
+            if provided_client is None:
+                # Resolve once; worker clones must not re-read ambient credentials.
+                try:
+                    provided_client = OpenAIResponsesClient(
+                        request_timeout_seconds=max(self._translation_timeout_text_seconds,
+                                                    self._translation_timeout_image_seconds),
+                        logger=self._log,
+                        **ordinary_client_options,
+                    )
+                except ValueError:
+                    auth_result = TranslationAuthTestResult(ok=False, status="missing",
+                        message="OpenAI translation credentials are not configured.", credential_source=None)
+            if provided_client is not None and hasattr(provided_client, "local_credential_preflight"):
+                maybe_result = provided_client.local_credential_preflight()
                 if isinstance(maybe_result, TranslationAuthTestResult):
                     auth_result = maybe_result
+            if auth_result is not None:
+                self._credential_source_payload = (auth_result.credential_source.to_payload()
+                    if auth_result.credential_source is not None else {"kind": "missing", "name": ""})
             if auth_result is not None and not auth_result.ok and auth_result.status in {"missing", "unauthorized"}:
                 authentication_failure = True
                 failure_context = _translation_auth_failure_context_from_result(auth_result)
@@ -1111,16 +1173,18 @@ class TranslationWorkflow:
                     page_index=page_number,
                 )
                 try:
-                    return self._process_page(
-                        client=local_client,
-                        config=config,
-                        paths=paths,
-                        instructions=instructions,
-                        context_text=context_text,
-                        page_number=page_number,
-                        total_pages=total_pages,
-                        ocr_engine=None,
-                    )
+                    from .usage_accounting import accounting_context
+                    with accounting_context(self._dispatch_accounting, purpose="translation", page_number=page_number):
+                        return self._process_page(
+                            client=local_client,
+                            config=config,
+                            paths=paths,
+                            instructions=instructions,
+                            context_text=context_text,
+                            page_number=page_number,
+                            total_pages=total_pages,
+                            ocr_engine=None,
+                        )
                 except Exception as exc:  # noqa: BLE001
                     exception_class = type(exc).__name__
                     status_code = getattr(exc, "status_code", None)
@@ -1329,7 +1393,7 @@ class TranslationWorkflow:
             _env_out = float(os.environ["LEGALPDF_COST_OUTPUT_PER_1M"]) if os.environ.get("LEGALPDF_COST_OUTPUT_PER_1M") else None
             _env_reas = float(os.environ["LEGALPDF_COST_REASONING_PER_1M"]) if os.environ.get("LEGALPDF_COST_REASONING_PER_1M") else None
             _cost, _cost_expl = estimate_cost(
-                model=OPENAI_MODEL,
+                model=self._translation_model,
                 input_tokens=_total_in,
                 output_tokens=_total_out,
                 reasoning_tokens=_total_reas,
@@ -1339,7 +1403,7 @@ class TranslationWorkflow:
             )
             emit_cost_estimate_event(
                 self._event_collector,
-                model=OPENAI_MODEL,
+                model=self._translation_model,
                 input_tokens=_total_in,
                 output_tokens=_total_out,
                 reasoning_tokens=_total_reas,
@@ -1347,7 +1411,8 @@ class TranslationWorkflow:
                 cost_explanation=_cost_expl,
             )
 
-        if failed_page is None and not self._cancel_event.is_set() and run_state.failed_count == 0:
+        if (failed_page is None and not self._cancel_event.is_set() and run_state.failed_count == 0
+                and completed_pages == selection_page_count):
             try:
                 docx_started = time.perf_counter()
                 _docx_stats: dict[str, int] = {}
@@ -1457,6 +1522,19 @@ class TranslationWorkflow:
                 # Preserve the failure report and all evidence even if a corrupt
                 # completed page prevents safe partial assembly.
                 self._log("Partial document unavailable: saved structured evidence needs review.")
+
+        if (self._acceptance_continuation is not None and failed_page is None
+                and not self._cancel_event.is_set() and run_state.failed_count == 0
+                and completed_pages < selection_page_count):
+            with state_lock:
+                run_state.run_status = "paused"
+                run_state.finished_at = self._utc_now()
+                run_state.halt_reason = "acceptance_phase_complete"
+                save_run_state_atomic(paths.run_state_path, run_state)
+            run_summary_path = self._write_run_summary(config=config, paths=paths, run_state=run_state)
+            return RunSummary(success=False, exit_code=2, output_docx=None,
+                partial_docx=partial_docx, run_dir=paths.run_dir, completed_pages=completed_pages,
+                failed_page=None, error="acceptance_phase_complete", run_summary_path=run_summary_path)
 
         if self._cancel_event.is_set():
             self._run_stage_timings_ms["run_total"] = round((time.perf_counter() - run_started_perf) * 1000.0, 3)
@@ -1648,17 +1726,88 @@ class TranslationWorkflow:
             pages_would_attach_images=pages_would_attach_images,
         )
 
-    def rebuild_docx(self, config: RunConfig) -> Path:
+    @contextmanager
+    def _run_workspace_scope(self, config: RunConfig, *, create=False, reviewed=False):
+        from .run_workspace_lock import run_workspace_slot
+
+        paths = build_run_paths(config.output_dir, config.pdf_path, config.target_lang,
+                               gmail_batch_context=config.gmail_batch_context)
+        with ExitStack() as stack:
+            root = stack.enter_context(run_workspace_slot(paths.run_dir, create=create))
+            state = load_run_state(paths.run_state_path)
+            if state is not None and state.run_dir_abs:
+                retained_root = Path(state.run_dir_abs).expanduser().resolve()
+                if retained_root != root:
+                    # Normal translation already requires its checkpoint to
+                    # match this deterministic run target. Offline rebuild can
+                    # follow the retained owner, but must lock both namespaces.
+                    if create:
+                        raise ValueError("Checkpoint run directory mismatch.")
+                    root = stack.enter_context(run_workspace_slot(retained_root))
+                    retained_path = root / "run_state.json"
+                    if retained_path.exists():
+                        retained_state = load_run_state(retained_path)
+                        if (retained_state is None
+                                or Path(retained_state.run_dir_abs).expanduser().resolve() != root
+                                or Path(retained_state.pdf_path).expanduser().resolve() != config.pdf_path
+                                or retained_state.lang != config.target_lang.value
+                                or retained_state.pdf_fingerprint != state.pdf_fingerprint
+                                or retained_state.protocol_identity != state.protocol_identity):
+                            raise ValueError("Retained run checkpoint identity differs from its redirect.")
+                        state = retained_state
+            if reviewed:
+                if state is None:
+                    raise ValueError("Reviewed formatting requires a readable retained checkpoint.")
+                if str(state.run_status or "").strip().lower() == "running":
+                    raise ValueError("Retained run is marked running; resolve it before reviewed formatting.")
+            yield root, state
+
+    def begin_docx_formatting_review(self, config: RunConfig, *, reviewer_kind: str,
+            review_profile: str = "strict_ai_test_v1") -> dict:
+        """Acquire a run-bound draft under the same lock used by translation."""
+        from .run_docx_formatting import begin_run_formatting_review
+
         config = self._normalize_config(config)
         self._validate_config(config)
+        with self._run_workspace_scope(config, reviewed=True) as (root, state):
+            return begin_run_formatting_review(root, config, state, reviewer_kind=reviewer_kind,
+                                               review_profile=review_profile)
 
+    def submit_docx_formatting_review(self, config: RunConfig, *, reviewer_kind: str,
+            source_review: bytes, source_evidence, source_review_evidence: bytes,
+            formatting_manifest: bytes, review_evidence: bytes,
+            review_profile: str = "strict_ai_test_v1") -> str:
+        """Publish an explicit review revision while holding the run lock."""
+        from .run_docx_formatting import submit_run_formatting_review
+
+        config = self._normalize_config(config)
+        self._validate_config(config)
+        with self._run_workspace_scope(config, reviewed=True) as (root, state):
+            return submit_run_formatting_review(root, config, state, reviewer_kind=reviewer_kind,
+                source_review=source_review, source_evidence=source_evidence,
+                source_review_evidence=source_review_evidence, formatting_manifest=formatting_manifest,
+                review_evidence=review_evidence, review_profile=review_profile)
+
+    def rebuild_docx(self, config: RunConfig, *, formatting_revision_id: str | None = None,
+                     formatting_review_profile: str = "strict_ai_test_v1") -> Path:
+        config = self._normalize_config(config)
+        self._validate_config(config)
+        if formatting_revision_id is None and formatting_review_profile != "strict_ai_test_v1":
+            raise ValueError("An explicit formatting revision is required for the selected review profile.")
+        with self._run_workspace_scope(config, reviewed=formatting_revision_id is not None) as (_, state):
+            return self._rebuild_docx_locked(config, retained_state=state,
+                formatting_revision_id=formatting_revision_id, formatting_review_profile=formatting_review_profile)
+
+    def _rebuild_docx_locked(self, config: RunConfig, *, retained_state: RunState | None,
+                             formatting_revision_id: str | None = None,
+                             formatting_review_profile: str = "strict_ai_test_v1") -> Path:
         base_paths = build_run_paths(
             config.output_dir,
             config.pdf_path,
             config.target_lang,
             gmail_batch_context=config.gmail_batch_context,
         )
-        run_state = load_run_state(base_paths.run_state_path)
+        run_state = retained_state
         self._require_rebuild_checkpoint(base_paths.pages_dir, run_state)
 
         effective_outdir = base_paths.frozen_outdir
@@ -1688,6 +1837,8 @@ class TranslationWorkflow:
             run_started_at=run_started_at,
             gmail_batch_context=config.gmail_batch_context,
         )
+        final_paths = replace(final_paths, run_dir=run_dir, pages_dir=pages_dir,
+                              images_dir=run_dir / "images", run_state_path=run_state_path)
 
         page_files = sorted(pages_dir.glob("page_*.txt"))
         if not page_files:
@@ -1712,16 +1863,10 @@ class TranslationWorkflow:
                                 "partial_output": len(completed) < run_state.selection_page_count,
                                 "derive_source_continuations": True}
         self._require_writable_run_output_dir(effective_outdir)
-        layout_preparation = self._prepare_docx_layout(config, pages_dir, effective_outdir)
-        output_docx = assemble_docx(
-            pages_dir,
-            final_paths.final_docx_path,
-            lang=config.target_lang,
-            page_breaks=config.page_breaks,
-            strip_bidi_controls=config.strip_bidi_controls,
-            **assembly_options,
-        )
-        layout_records = self._record_docx_layout_review(output_docx, pages_dir, run_state, layout_preparation)
+        output_docx, layout_records = self._assemble_run_docx(config, pages_dir=pages_dir,
+            output_path=final_paths.final_docx_path, output_dir=effective_outdir, run_dir=run_dir,
+            run_state=run_state, assembly_options=assembly_options,
+            formatting_revision_id=formatting_revision_id, formatting_review_profile=formatting_review_profile)
 
         if run_state is not None:
             run_state.frozen_outdir_abs = str(effective_outdir)
@@ -1753,6 +1898,12 @@ class TranslationWorkflow:
     def export_partial_docx(self) -> Path | None:
         if self._last_config is None or self._last_paths is None or self._last_state is None:
             return None
+        from .run_workspace_lock import run_workspace_slot
+
+        with run_workspace_slot(self._last_paths.run_dir):
+            return self._export_partial_docx_locked()
+
+    def _export_partial_docx_locked(self) -> Path | None:
         completed = list_completed_pages(self._last_state)
         if not completed:
             return None
@@ -1773,6 +1924,34 @@ class TranslationWorkflow:
         )
         self._refresh_formatting_summary(self._last_paths.run_dir / "run_summary.json", layout_records)
         return output_docx
+
+    def _assemble_run_docx(self, config: RunConfig, *, pages_dir: Path, output_path: Path,
+            output_dir: Path, run_dir: Path, run_state: RunState | None,
+            assembly_options: dict, formatting_revision_id: str | None = None,
+            formatting_review_profile: str = "strict_ai_test_v1") -> tuple[Path, dict]:
+        """Common offline assembly seam; caller holds the run workspace lock."""
+        reviewed = None
+        declined = ()
+        if formatting_revision_id is not None:
+            from .run_docx_formatting import prepare_run_docx_formatting, build_run_reviewed_docx
+            reviewed = prepare_run_docx_formatting(run_dir, config, run_state,
+                revision_id=formatting_revision_id, page_numbers=assembly_options.get("page_numbers"),
+                partial_output=assembly_options.get("partial_output", False), review_profile=formatting_review_profile)
+            if reviewed.status == "ready":
+                output = build_run_reviewed_docx(reviewed, config=config, state=run_state, output_path=output_path)
+                records = self._record_docx_layout_review(output, pages_dir, run_state, {},
+                    page_numbers=reviewed.selected_pages, reviewed_projection=reviewed.projection,
+                    expected_reviewer_kind=reviewed.expected_reviewer_kind)
+                return output, records
+            declined = reviewed.notice_codes
+            self._log("Reviewed formatting was declined: " + ", ".join(declined) + ". Using ordinary DOCX formatting.")
+        preparation = self._prepare_docx_layout(config, pages_dir, output_dir)
+        output = assemble_docx(pages_dir, output_path, lang=config.target_lang,
+            page_breaks=config.page_breaks, strip_bidi_controls=config.strip_bidi_controls,
+            **assembly_options)
+        records = self._record_docx_layout_review(output, pages_dir, run_state, preparation,
+            page_numbers=assembly_options.get("page_numbers"), extra_notice_codes=declined)
+        return output, records
 
     def _structured_assembly_options(self, state: RunState, pages_dir: Path, *, partial: bool = False) -> dict:
         if not state.protocol_identity:
@@ -1805,10 +1984,18 @@ class TranslationWorkflow:
 
     def _record_docx_layout_review(
         self, output_docx: Path, pages_dir: Path, run_state: RunState | None, preparation: dict,
+        *, page_numbers=None, reviewed_projection=None, expected_reviewer_kind="ai_test_review", extra_notice_codes=(),
     ) -> dict:
         from .layout_integration import collect_docx_layout_review
 
-        notices = collect_docx_layout_review(output_docx, pages_dir, preparation)
+        notices = collect_docx_layout_review(output_docx, pages_dir, preparation,
+            page_numbers=page_numbers, reviewed_projection=reviewed_projection,
+            expected_reviewer_kind=expected_reviewer_kind)
+        if extra_notice_codes:
+            from .layout_integration import REVIEWED_PROFILE_NOTICE_CODES
+            extra = sorted(set(extra_notice_codes) & REVIEWED_PROFILE_NOTICE_CODES)
+            for number in page_numbers or ():
+                notices[number] = sorted(set(notices.get(number, ())) | set(extra))
         records = run_state.pages if run_state is not None else {}
         for number, codes in notices.items():
             page = records.setdefault(str(number), {})
@@ -1874,7 +2061,8 @@ class TranslationWorkflow:
                     else local_only_ocr_engine_config_from_run_config(config)
                 )
                 try:
-                    engine = build_ocr_engine(engine_config)
+                    factory = self._ocr_engine_factory if self._ocr_engine_factory is not None else build_ocr_engine
+                    engine = factory(engine_config)
                     configured = True
                     self._ocr_provider_configured = True
                 except Exception:
@@ -1982,6 +2170,10 @@ class TranslationWorkflow:
         _ = ocr_engine
         started_monotonic = time.perf_counter()
         started_at_iso = self._utc_now()
+        if self._structured_run is not None and self._structured_run.reviewed_evidence is not None:
+            return self._structured_run.translate_reviewed(client=client, paths=paths,
+                page_number=page_number, total_pages=total_pages, context_text=context_text,
+                started=started_monotonic)
         extract_started = time.perf_counter()
         ordered = (self._structured_run.ordered_pages[page_number] if self._structured_run is not None
                    else extract_ordered_page_text(config.pdf_path, page_number - 1))
@@ -2638,7 +2830,7 @@ class TranslationWorkflow:
                 "transport_retries_count": int(initial.transport_retries_count),
                 "backoff_wait_seconds_total": float(initial.total_backoff_seconds),
                 "rate_limit_hit": bool(initial.rate_limit_hit),
-                "model": OPENAI_MODEL,
+                "model": self._translation_model,
                 "effort_used": attempt1_effort.value,
             },
         )
@@ -2766,13 +2958,15 @@ class TranslationWorkflow:
             )
         attempt2_started = time.perf_counter()
         try:
-            retry = client.create_page_response(
-                instructions=instructions,
-                prompt_text=retry_prompt,
-                effort=retry_effort.value,
-                image_data_url=None,
-                timeout_seconds=remaining_retry_budget,
-            )
+            from .usage_accounting import accounting_context
+            with accounting_context(self._dispatch_accounting, purpose="correction", page_number=page_number):
+                retry = client.create_page_response(
+                    instructions=instructions,
+                    prompt_text=retry_prompt,
+                    effort=retry_effort.value,
+                    image_data_url=None,
+                    timeout_seconds=remaining_retry_budget,
+                )
             page_metadata["attempt2_seconds"] = round(time.perf_counter() - attempt2_started, 3)
             api_calls_count += 1
         except ApiCallError as exc:
@@ -2861,7 +3055,7 @@ class TranslationWorkflow:
                 "transport_retries_count": int(retry.transport_retries_count),
                 "backoff_wait_seconds_total": float(retry.total_backoff_seconds),
                 "rate_limit_hit": bool(retry.rate_limit_hit),
-                "model": OPENAI_MODEL,
+                "model": self._translation_model,
                 "effort_used": retry_effort.value,
             },
         )
@@ -3046,6 +3240,79 @@ class TranslationWorkflow:
             fallback_reason=fallback_reason,
         )
 
+    def _initialize_dispatch_accounting(self, *, config: RunConfig, paths: RunPaths, run_state: RunState,
+                                        resuming_existing: bool = False) -> None:
+        """Bind each run generation to one durable journal without resetting history."""
+        if self._reviewed_source_context is not None:
+            self._structured_run.check_source()
+        from .usage_accounting import DispatchAccounting
+
+        reference = run_state.dispatch_accounting
+        if not isinstance(reference, dict):
+            raise ValueError("Invalid saved dispatch accounting identity; preserve this run for recovery.")
+        if reference:
+            identifier = reference.get("id")
+            if not isinstance(identifier, str) or re.fullmatch(r"[a-f0-9]{32}", identifier) is None:
+                raise ValueError("Invalid saved dispatch accounting identity; preserve this run for recovery.")
+            journal_dir = paths.run_dir / "accounting" / identifier
+            if not (journal_dir / "dispatch_accounting.json").is_file():
+                raise ValueError("Saved dispatch accounting journal is missing; explicit recovery is required.")
+        else:
+            identifier = uuid.uuid4().hex
+            # Old RUNNING/PENDING pages can have an unrecorded paid attempt after
+            # a crash. Only a genuinely fresh generation proves no prior calls.
+            historical = resuming_existing or any(
+                page.get("usage") or page.get("api_calls_count")
+                or page.get("status") in {PageStatus.DONE.value, PageStatus.FAILED.value}
+                for page in run_state.pages.values() if isinstance(page, dict)
+            )
+            reference = {"id": identifier, "historical_incomplete": historical}
+            journal_dir = paths.run_dir / "accounting" / identifier
+        identity = {"accounting_id": identifier, "source_sha256": run_state.pdf_fingerprint,
+                    "context_hash": run_state.context_hash, "language": run_state.lang,
+                    "protocol": self._translation_protocol,
+                    "model": self._translation_model,
+                    "protocol_identity": dict(run_state.protocol_identity),
+                    "selection": [run_state.selection_start_page, run_state.selection_end_page],
+                    "run_started_at": run_state.run_started_at}
+        arguments = dict(run_dir=journal_dir, run_identity=identity,
+                         historical_incomplete=bool(reference.get("historical_incomplete", False)))
+        if self._accounting_factory is not None:
+            accountant = self._accounting_factory(**arguments)
+        else:
+            budget = None
+            if config.budget_cap_usd is not None and config.budget_on_exceed == BudgetExceedPolicy.BLOCK:
+                from .budget_reservations import ReservationBudget
+                budget = ReservationBudget(journal_dir / "budget.json", cap_usd=str(config.budget_cap_usd),
+                                           identity=identity, create=not bool(run_state.dispatch_accounting))
+            accountant = DispatchAccounting(**arguments, budget_context=budget,
+                                            **self._accounting_policy.accounting_arguments())
+        if config.budget_cap_usd is not None and config.budget_on_exceed == BudgetExceedPolicy.BLOCK:
+            from .budget_reservations import money
+            bound_budget = getattr(accountant, "budget_context", None)
+            if (not getattr(accountant, "hard_budget", False) or bound_budget is None
+                    or money(getattr(bound_budget, "cap_usd", None)) > money(config.budget_cap_usd)):
+                raise ValueError("Injected accounting does not enforce the selected BLOCK budget cap.")
+        self._dispatch_accounting = accountant
+        budget = getattr(accountant, "budget_context", None)
+        if self._reviewed_source_context is not None:
+            if budget is not None:
+                from .budget_reservations import ReservationBudget
+                if not isinstance(budget, ReservationBudget):
+                    from .ordinary_reviewed_source import OrdinaryReviewedSourceError
+                    raise OrdinaryReviewedSourceError("ordinary_source_review_requires_ordinary_accounting")
+        else:
+            from .acceptance_budget import LegacyAcceptanceBudget
+            if isinstance(budget, LegacyAcceptanceBudget):
+                from .acceptance_provenance import canonical_run_config
+                budget.bind_runtime_context(config=lambda: canonical_run_config(config),
+                    preferences=lambda: self._effective_gui_settings)
+            if self._acceptance_continuation is not None:
+                if (not isinstance(budget, LegacyAcceptanceBudget) or not budget.dispatch_enabled
+                        or budget.continuation_identity != self._acceptance_continuation.campaign_identity):
+                    raise ValueError("Acceptance continuation requires its matching approved campaign budget.")
+        run_state.dispatch_accounting = reference
+
     def _write_run_summary(
         self,
         *,
@@ -3217,8 +3484,8 @@ class TranslationWorkflow:
             )
 
         effort_policy = self._resolve_effort_policy_label(config)
-        auth_source = resolve_openai_key_with_source()[1]
-        auth_source_payload = auth_source.to_payload() if auth_source is not None else {"kind": "missing", "name": ""}
+        # Reporting/rebuild is read-only and must never resolve ambient credentials.
+        auth_source_payload = dict(self._credential_source_payload)
         if str(run_state.run_status or "").strip().lower() == "authentication_failure":
             suspected_cause = "authentication_failure"
             evidence = ["authentication failure classified from run_status"]
@@ -3261,7 +3528,34 @@ class TranslationWorkflow:
         )
         post_status = str(self._budget_post_run_packet.get("estimation_status", "unavailable") or "unavailable")
         cost_estimation_status = str(self._cost_estimation_status or "").strip() or post_status
-        if run_state.protocol_identity:
+        dispatch_summary = (self._dispatch_accounting.summary()
+                            if self._dispatch_accounting is not None else None)
+        if dispatch_summary is not None and dispatch_summary.get("call_count", 0):
+            complete = dispatch_summary.get("coverage_status") == "complete"
+            total_cost_estimate = float(dispatch_summary["cost_usd"]) if complete else None
+            cost_estimation_status = "measured_all_calls" if complete else "incomplete_all_calls"
+            dispatch_totals = dispatch_summary.get("totals", {})
+            price_metadata = dispatch_summary.get("pricing_snapshot")
+            self._budget_post_run_packet.update(
+                estimation_status=cost_estimation_status,
+                estimation_reason="Durable provider-dispatch accounting; unavailable usage or prices remain unknown.",
+                estimated_cost_usd=total_cost_estimate, cap_exceeded=(
+                    total_cost_estimate > config.budget_cap_usd
+                    if total_cost_estimate is not None and config.budget_cap_usd is not None else None),
+                reasoning_tokens_included_in_output=True,
+                input_tokens=dispatch_totals.get("input_tokens", 0),
+                output_tokens=dispatch_totals.get("output_tokens", 0),
+                reasoning_tokens=dispatch_totals.get("reasoning_tokens", 0),
+                cached_input_tokens=dispatch_totals.get("cached_input_tokens", 0),
+                cache_write_tokens=dispatch_totals.get("cache_write_tokens", 0),
+                total_tokens=dispatch_totals.get("total_tokens", 0),
+                token_coverage="observed_dispatches_only" if not complete else "all_dispatches",
+                pricing_snapshot=price_metadata,
+                pricing_source="verified_snapshot" if price_metadata else "unavailable",
+                pricing_explanation=("Frozen provider/model price snapshot; see pricing_snapshot."
+                                     if price_metadata else "No verified price snapshot; complete cost is unknown."),
+            )
+        elif run_state.protocol_identity or (dispatch_summary and dispatch_summary.get("historical_incomplete")):
             # Existing aggregate pricing cannot certify all-call cost for this
             # candidate: OCR/auth/cache/uncertain failures are not all metered.
             # Retain provider token evidence, but do not claim measured savings.
@@ -3384,6 +3678,8 @@ class TranslationWorkflow:
             "review_queue_count": quality_risk_payload.get("review_queue_count", 0),
             "review_queue": quality_risk_payload.get("review_queue", []),
         }
+        if dispatch_summary is not None:
+            payload["dispatch_accounting"] = dispatch_summary
         if isinstance(config.gmail_batch_context, dict) and config.gmail_batch_context:
             payload["gmail_batch_context"] = {
                 "source": str(config.gmail_batch_context.get("source", "") or ""),
@@ -3594,7 +3890,7 @@ class TranslationWorkflow:
         total_output_tokens: int,
         total_reasoning_tokens: int,
     ) -> float | None:
-        pricing = resolve_pricing(OPENAI_MODEL)
+        pricing = resolve_pricing(self._translation_model)
         if pricing.status != "available" or pricing.rates is None:
             return None
         return estimate_cost_usd(
@@ -3614,8 +3910,15 @@ class TranslationWorkflow:
         sample_pages = deterministic_sample_pages(selected_pages, max_samples=3)
         sampled_char_counts: list[int] = []
         sample_failures: list[str] = []
+        reviewed_lane = self._structured_run is not None and self._structured_run.reviewed_evidence is not None
+        if reviewed_lane:
+            self._structured_run.check_source()
         for page_number in sample_pages:
             try:
+                if reviewed_lane:
+                    blocks = self._structured_run.reviewed_sources[page_number]["source_structure"]["blocks"]
+                    sampled_char_counts.append(len("\n".join(b["text"] for b in blocks).strip()))
+                    continue
                 ordered = extract_ordered_page_text(config.pdf_path, page_number - 1)
                 sampled_char_counts.append(len((ordered.text or "").strip()))
             except Exception as exc:  # noqa: BLE001
@@ -3626,10 +3929,10 @@ class TranslationWorkflow:
             sampled_page_char_counts=sampled_char_counts,
             target_lang=config.target_lang,
             effort_policy=config.effort_policy,
-            image_mode=config.image_mode,
-            ocr_mode=config.ocr_mode,
+            image_mode=ImageMode.OFF if reviewed_lane else config.image_mode,
+            ocr_mode=OcrMode.OFF if reviewed_lane else config.ocr_mode,
         )
-        pricing = resolve_pricing(OPENAI_MODEL)
+        pricing = resolve_pricing(self._translation_model)
         estimated_cost: float | None = None
         estimation_status = "unavailable"
         estimation_reason = "sample_extraction_failed"
@@ -3665,7 +3968,7 @@ class TranslationWorkflow:
             )
 
         packet: dict[str, Any] = {
-            "model": OPENAI_MODEL,
+            "model": self._translation_model,
             "cost_profile_id": self._cost_profile_id,
             "selected_pages_count": int(selected_pages_count),
             "sample_pages": list(sample_pages),
@@ -3704,7 +4007,7 @@ class TranslationWorkflow:
         total_output_tokens: int,
         total_reasoning_tokens: int,
     ) -> dict[str, Any]:
-        pricing = resolve_pricing(OPENAI_MODEL)
+        pricing = resolve_pricing(self._translation_model)
         estimated_cost: float | None = None
         pricing_source = ""
         pricing_explanation = ""
@@ -3719,7 +4022,7 @@ class TranslationWorkflow:
                 rates=pricing.rates,
             )
         return {
-            "model": OPENAI_MODEL,
+            "model": self._translation_model,
             "cost_profile_id": self._cost_profile_id,
             "estimation_status": pricing.status,
             "estimation_reason": pricing.reason,
@@ -3734,7 +4037,8 @@ class TranslationWorkflow:
             "input_tokens": int(total_input_tokens),
             "output_tokens": int(total_output_tokens),
             "reasoning_tokens": int(total_reasoning_tokens),
-            "total_tokens": int(total_input_tokens + total_output_tokens + total_reasoning_tokens),
+            "total_tokens": int(total_input_tokens + total_output_tokens),
+            "reasoning_tokens_included_in_output": True,
             "estimated_cost_usd": estimated_cost,
         }
 
@@ -3858,6 +4162,14 @@ class TranslationWorkflow:
             gmail_batch_context=config.gmail_batch_context,
         )
         existing = load_run_state(paths.run_state_path)
+        accounting_dir = paths.run_dir / "accounting"
+        protected_accounting = bool(config.resume and (
+            (existing is not None and existing.dispatch_accounting)
+            or (accounting_dir.is_dir() and any(accounting_dir.iterdir()))))
+        if protected_accounting and existing is None:
+            raise ValueError("Accounting evidence lacks a readable checkpoint; explicit recovery is required.")
+        if protected_accounting and existing is not None and not existing.dispatch_accounting:
+            raise ValueError("Accounting evidence lacks its saved identity; explicit recovery is required.")
         if config.resume and existing is not None and self._explicit_translation_protocol is None:
             # An environment opt-in affects fresh runs, not saved protocol identity.
             self._translation_protocol = existing.protocol_identity.get("protocol", "legacy_text_v1")
@@ -3920,8 +4232,8 @@ class TranslationWorkflow:
             gmail_batch_context=config.gmail_batch_context,
         )
         missing_page_outputs = self._missing_checkpoint_page_outputs(existing, run_dir=resolved_paths.run_dir)
-        if protected_run and missing_page_outputs:
-            raise ValueError("Structured checkpoint output is missing; preserve evidence and recover explicitly.")
+        if (protected_run or protected_accounting) and missing_page_outputs:
+            raise ValueError("Checkpoint output is missing; preserve accounting/structured evidence and recover explicitly.")
         if missing_page_outputs:
             self._log(
                 "Checkpoint references completed pages whose saved page files are missing; "
@@ -4002,6 +4314,8 @@ class TranslationWorkflow:
                 selection_page_count=selection_page_count,
                 max_pages_effective=max_pages_effective,
                 protocol_identity=self._structured_run.identity if self._structured_run else None,
+                ordinary_source_review=(self._reviewed_source_context.identity
+                    if self._reviewed_source_context is not None else None),
             )
             if mismatch_reason is None:
                 existing.frozen_outdir_abs = str(paths.frozen_outdir)
@@ -4039,6 +4353,8 @@ class TranslationWorkflow:
             total_pages=total_pages,
             selected_pages=selected_pages,
             protocol_identity=self._structured_run.identity if self._structured_run else None,
+            ordinary_source_review=(self._reviewed_source_context.identity
+                if self._reviewed_source_context is not None else None),
         )
         save_run_state_atomic(paths.run_state_path, state)
         return state
@@ -4155,6 +4471,48 @@ class TranslationWorkflow:
             raise FileNotFoundError(f"Glossary file not found: {config.glossary_file}")
         if config.glossary_file and not config.glossary_file.is_file():
             raise ValueError(f"Glossary path must be a file: {config.glossary_file}")
+
+    def _hydrate_request_settings(self, *, config: RunConfig, gui_settings: Mapping[str, Any]) -> None:
+        """Share explicit prompt settings with no-dispatch request preparation.
+
+        No ambient settings/environment lookup, client construction or config mutation.
+        Project glossary errors deliberately retain run's existing fail-fast behavior.
+        """
+        gui_settings = deepcopy(dict(gui_settings))
+        self._effective_gui_settings = deepcopy(gui_settings)
+        personal_glossaries = normalize_glossaries(
+            gui_settings.get("personal_glossaries_by_lang", gui_settings.get("glossaries_by_lang")),
+            supported_target_langs(),
+        )
+        self._enabled_glossary_tiers_by_lang = normalize_enabled_tiers_by_target_lang(
+            gui_settings.get("enabled_glossary_tiers_by_target_lang"),
+            supported_target_langs(),
+        )
+        raw_addendum_map = gui_settings.get("prompt_addendum_by_lang")
+        if not isinstance(raw_addendum_map, dict):
+            raw_addendum_map = {}
+        self._prompt_addendum_by_lang = {
+            lang: str(raw_addendum_map.get(lang, "") or "").strip()
+            for lang in supported_target_langs()
+        }
+        self._translation_timeout_text_seconds = float(
+            gui_settings.get("perf_timeout_text_seconds", DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS)
+            or DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS
+        )
+        self._translation_timeout_image_seconds = float(
+            gui_settings.get("perf_timeout_image_seconds", DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS)
+            or DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS
+        )
+        project_glossaries = normalize_glossaries({}, supported_target_langs())
+        if config.glossary_file:
+            # Preserve fail-fast behavior for invalid custom glossary files.
+            project_glossaries = load_project_glossaries(config.glossary_file)
+        prompt_glossaries = merge_glossary_scopes(
+            project_glossaries,
+            personal_glossaries,
+            supported_langs=supported_target_langs(),
+        )
+        self._prompt_glossaries_by_lang = prompt_glossaries
 
     def _resolve_context(self, config: RunConfig) -> tuple[str | None, str]:
         if config.context_file:

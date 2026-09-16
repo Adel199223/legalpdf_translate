@@ -6,6 +6,7 @@ extraction, block translation, publication, checkpoint and DOCX assembly are rea
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 import socket
 import subprocess
@@ -54,6 +55,12 @@ class OfflineProvider:
 
 @pytest.fixture
 def offline(tmp_path, monkeypatch):
+    import legalpdf_translate.accounting_policy as policy_module
+    class VerifiedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 9, 10)
+    monkeypatch.setattr(policy_module, "date", VerifiedDate)
     assert Path(workflow_module.__file__).resolve().is_relative_to(Path(__file__).resolve().parents[1] / "src")
     def forbidden(*args, **kwargs):
         pytest.fail("Unexpected credential, authentication, OCR, network or native operation")
@@ -75,8 +82,9 @@ def offline(tmp_path, monkeypatch):
         forbidden()
     monkeypatch.setattr(socket, "socketpair", local_pair)
     monkeypatch.setattr(socket.socket, "connect", guarded_connect)
-    monkeypatch.setattr(workflow_module, "load_environment", lambda: None)
-    monkeypatch.setattr(workflow_module, "load_gui_settings", lambda: {})
+    monkeypatch.setattr(workflow_module, "load_environment", forbidden)
+    monkeypatch.setattr(workflow_module, "load_gui_settings", forbidden)
+    monkeypatch.setattr(workflow_module, "build_ocr_engine", forbidden)
     monkeypatch.setattr(cli, "load_gui_settings", lambda: {})
     monkeypatch.setattr(workflow_module, "run_translation_auth_test", forbidden)
     monkeypatch.setattr(workflow_module, "ocr_pdf_page_text", forbidden)
@@ -103,6 +111,9 @@ def offline(tmp_path, monkeypatch):
     class InjectedWorkflow(real_workflow):
         def __init__(self, **kwargs):
             kwargs["client"] = provider
+            kwargs.setdefault("gui_settings", {})
+            kwargs["environment_loader"] = lambda: None
+            kwargs["ocr_engine_factory"] = forbidden
             super().__init__(**kwargs)
             workflows.append(self)
 
@@ -129,6 +140,11 @@ def config(fixture):
 def assert_completed(fixture, structured):
     assert len(fixture.workflows) == 1
     workflow = fixture.workflows[0]
+    # Actual caller defaults must wire the shared immutable accounting policy;
+    # this fixture substitutes provider/environment only, never accounting_factory.
+    assert workflow._accounting_factory is None
+    assert workflow._dispatch_accounting.pricing_snapshot.snapshot_id == "openai_public_standard_2026_09_10"
+    assert workflow._dispatch_accounting.request_limits("openai", "translation", "gpt-5.2")["billing_scope"] == "openai_public_api"
     state = load_run_state(workflow._last_paths.run_state_path)
     assert state.run_status == "completed", state.to_dict()
     assert state.pages["1"]["status"] == "done"
@@ -161,6 +177,17 @@ def await_job(manager, job_id):
             return job
         time.sleep(.01)
     pytest.fail("Offline translation job did not finish")
+
+
+def use_source_pages(fixture, *, count):
+    source = fixture.source.with_name(f"notice-{count}-pages.pdf")
+    with fitz.open() as document:
+        for _ in range(count):
+            page = document.new_page()
+            page.insert_textbox(fitz.Rect(40, 160, 550, 400), SOURCE, fontsize=11)
+        document.save(source)
+    fixture.source = source
+    return source
 
 
 @pytest.mark.parametrize("structured", [False, True])
@@ -253,3 +280,143 @@ def test_actual_browser_route_dispatches_unchanged_payload_to_real_service(offli
     assert job["config"]["target_lang"] == "EN" and job["config"]["effort"] == "high"
     assert_completed(offline, True)
     client.close()
+
+
+@pytest.mark.parametrize("structured", [False, True], ids=["legacy", "structured"])
+def test_browser_manager_failed_run_resume_sets_resume_and_does_not_redispatch_done_page(
+    offline,
+    monkeypatch,
+    structured,
+):
+    policy(monkeypatch, structured)
+    use_source_pages(offline, count=2)
+    original_dispatch = offline.provider.create_page_response
+    dispatch_count = 0
+
+    def fail_second_dispatch(**kwargs):
+        nonlocal dispatch_count
+        dispatch_count += 1
+        if dispatch_count == 2:
+            offline.calls.append(kwargs)
+            raise RuntimeError("synthetic second-page failure")
+        return original_dispatch(**kwargs)
+
+    monkeypatch.setattr(offline.provider, "create_page_response", fail_second_dispatch)
+    manager = service.TranslationJobManager()
+    started = manager.start_translate(
+        runtime_mode="shadow",
+        workspace_id="resume-failure",
+        form_values=form(offline),
+        settings_path=offline.settings,
+    )
+    first = await_job(manager, started["job_id"])
+    assert first["status"] == "failed", first
+    assert first["config"]["resume"] is False
+    first_state = load_run_state(offline.workflows[0]._last_paths.run_state_path)
+    assert first_state.pages["1"]["status"] == "done"
+    assert first_state.pages["2"]["status"] == "failed"
+    completed_page_before = json.loads(json.dumps(first_state.pages["1"]))
+    page_text_before = (offline.workflows[0]._last_paths.pages_dir / "page_0001.txt").read_bytes()
+    assert len(offline.calls) == 2
+
+    monkeypatch.setattr(offline.provider, "create_page_response", original_dispatch)
+    resumed = manager.resume_job(job_id=started["job_id"], settings_path=offline.settings)
+    second = await_job(manager, resumed["job_id"])
+    assert second["status"] == "completed", second
+    assert second["config"]["resume"] is True
+    assert len(offline.calls) == 3
+    final_state = load_run_state(offline.workflows[-1]._last_paths.run_state_path)
+    assert final_state.done_count == 2
+    assert final_state.pages["1"] == completed_page_before
+    assert final_state.pages["2"]["status"] == "done"
+    assert (offline.workflows[-1]._last_paths.pages_dir / "page_0001.txt").read_bytes() == page_text_before
+
+
+@pytest.mark.parametrize("structured", [False, True], ids=["legacy", "structured"])
+def test_browser_manager_cancelled_run_resume_does_not_redispatch_done_page(
+    offline,
+    monkeypatch,
+    structured,
+):
+    policy(monkeypatch, structured)
+    use_source_pages(offline, count=2)
+    manager = service.TranslationJobManager()
+    original_update = manager._update_progress
+    cancelled_jobs = []
+
+    def cancel_after_first_page(job_id, selected_index, selected_total, status):
+        original_update(job_id, selected_index, selected_total, status)
+        if status == "Page 1 finished":
+            assert manager.cancel_job(job_id=job_id)
+            cancelled_jobs.append(job_id)
+
+    monkeypatch.setattr(manager, "_update_progress", cancel_after_first_page)
+    started = manager.start_translate(
+        runtime_mode="shadow",
+        workspace_id="resume-cancelled",
+        form_values=form(offline),
+        settings_path=offline.settings,
+    )
+    first = await_job(manager, started["job_id"])
+    assert first["status"] == "cancelled", first
+    assert first["config"]["resume"] is False
+    assert cancelled_jobs == [started["job_id"]]
+    assert len(offline.calls) == 1
+    first_state = load_run_state(offline.workflows[0]._last_paths.run_state_path)
+    completed_page_before = json.loads(json.dumps(first_state.pages["1"]))
+    page_text_before = (offline.workflows[0]._last_paths.pages_dir / "page_0001.txt").read_bytes()
+
+    resumed = manager.resume_job(job_id=started["job_id"], settings_path=offline.settings)
+    second = await_job(manager, resumed["job_id"])
+    assert second["status"] == "completed", second
+    assert second["config"]["resume"] is True
+    assert len(offline.calls) == 2
+    final_state = load_run_state(offline.workflows[-1]._last_paths.run_state_path)
+    assert final_state.done_count == 2
+    assert final_state.pages["1"] == completed_page_before
+    assert (offline.workflows[-1]._last_paths.pages_dir / "page_0001.txt").read_bytes() == page_text_before
+
+
+def test_browser_manager_structured_commit_before_done_resume_is_provider_free(
+    offline,
+    monkeypatch,
+):
+    policy(monkeypatch, True)
+    original_mark_page_done = workflow_module.mark_page_done
+    crashed = False
+
+    def crash_once(*args, **kwargs):
+        nonlocal crashed
+        if not crashed:
+            crashed = True
+            raise RuntimeError("synthetic crash between structured commit and DONE")
+        return original_mark_page_done(*args, **kwargs)
+
+    monkeypatch.setattr(workflow_module, "mark_page_done", crash_once)
+    manager = service.TranslationJobManager()
+    started = manager.start_translate(
+        runtime_mode="shadow",
+        workspace_id="resume-commit-recovery",
+        form_values=form(offline),
+        settings_path=offline.settings,
+    )
+    first = await_job(manager, started["job_id"])
+    assert first["status"] == "failed", first
+    assert first["config"]["resume"] is False
+    assert len(offline.calls) == 1
+    first_paths = offline.workflows[0]._last_paths
+    commit_path = first_paths.pages_dir / "page_0001.commit.json"
+    assert commit_path.is_file()
+    commit_before = json.loads(commit_path.read_text(encoding="utf-8"))
+    assert load_run_state(first_paths.run_state_path).pages["1"]["status"] == "pending"
+
+    resumed = manager.resume_job(job_id=started["job_id"], settings_path=offline.settings)
+    second = await_job(manager, resumed["job_id"])
+    assert second["status"] == "completed", second
+    assert second["config"]["resume"] is True
+    assert len(offline.calls) == 1
+    final_state = load_run_state(offline.workflows[-1]._last_paths.run_state_path)
+    assert final_state.pages["1"]["status"] == "done"
+    assert final_state.pages["1"]["recovered_commit_before_done"] is True
+    assert final_state.pages["1"]["structured_commit"] == commit_before
+    assert final_state.pages["1"]["usage"] == commit_before["page_result"]["usage"]

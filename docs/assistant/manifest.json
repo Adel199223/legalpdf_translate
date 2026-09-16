@@ -1,5 +1,14 @@
 {
   "version": "2.0.0",
+  "docs_sync": {
+    "mode": "autonomous",
+    "authorization": {
+      "kind": "standing_user_authorization",
+      "granted_on": "2026-09-16",
+      "scope": "project_docs_sync",
+      "instruction": "Run useful Docs Sync without renewed approval; keep current project docs accurate and preserve historical evidence."
+    }
+  },
   "module_flags": {
     "core_contract": true,
     "beginner_layer": true,
@@ -40,6 +49,7 @@
     "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md",
     "docs/assistant/features/PRIMARY_FEATURE_USER_GUIDE.md",
     "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+    "docs/assistant/features/REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md",
     "docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md"
   ],
   "workflows": [
@@ -304,6 +314,9 @@
       "primary_files": [
         "APP_KNOWLEDGE.md",
         "docs/assistant/APP_KNOWLEDGE.md",
+        "docs/assistant/FRESH_CHAT_BRIEF.md",
+        "docs/assistant/SESSION_RESUME.md",
+        "docs/assistant/HANDOFF.md",
         "docs/assistant/INDEX.md",
         "docs/assistant/features/GOOGLE_PHOTOS_INTERPRETATION_RUNBOOK.md",
         "docs/assistant/manifest.json",
@@ -409,7 +422,7 @@
     "localization_glossary_source_of_truth": "docs/assistant/LOCALIZATION_GLOSSARY.md",
     "workspace_performance_source_of_truth": "docs/assistant/PERFORMANCE_BASELINES.md",
     "environment_outside_workspace_default_policy": "Keep heavyweight environments/artifacts outside workspace root when feasible.",
-    "post_change_docs_sync_prompt_policy": "After significant implementation changes keep the exact prompt available: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary. If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass. If the relevant docs sync already ran during the same task/pass, do not ask again.",
+    "post_change_docs_sync_prompt_policy": "Standing user authorization (2026-09-16): perform useful Docs Sync autonomously. Do not ask again. Update only touched-scope docs; no blanket rewrites. Preserve history and exact beforeimages when replacing current guidance. Publication, destructive operations and live Gmail remain separately gated.",
     "inspiration_reference_discovery_policy": "Named parity/inspiration requests must run REFERENCE_DISCOVERY_WORKFLOW before implementation decisions.",
     "golden_principles_source_of_truth": "docs/assistant/GOLDEN_PRINCIPLES.md",
     "execplan_policy": "Major/multi-file work requires ExecPlans in docs/assistant/exec_plans/active/.",
@@ -434,8 +447,8 @@
     "test_live_state_isolation_policy": "Tests must default to temporary filesystem/environment state, explicit opt-in live machine state, and non-live or ephemeral ports for host-bound features.",
     "multi_surface_diagnostics_packet_policy": "For multi-surface workflows keep per-run artifacts primary, add workflow_context when a run belongs to a larger session, and use one durable app-owned session artifact instead of separate browser-only report files.",
     "canonical_precedence_policy": "Source code is final truth; APP_KNOWLEDGE.md is canonical; bridge/user guides defer to canonical.",
-    "docs_sync_prompt_policy": "After significant implementation changes keep the exact prompt available: Would you like me to run Assistant Docs Sync for this change now? Ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary. If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass. If the relevant docs sync already ran during the same task/pass, do not ask again.",
-    "stage_gate_policy": "For risk-triggered complex work stop at each stage and require exact continuation token format NEXT_STAGE_X.",
+    "docs_sync_prompt_policy": "Standing user authorization (2026-09-16): perform useful Docs Sync autonomously. Do not ask again. Update only touched-scope docs; no blanket rewrites. Preserve history and exact beforeimages when replacing current guidance. Publication, destructive operations and live Gmail remain separately gated.",
+    "stage_gate_policy": "For risk-triggered complex work use staged execution and exact continuation token format NEXT_STAGE_X where applicable. Current explicit user authorization takes precedence; do not renew satisfied gates or apply historical continuation tokens as new restrictions.",
     "reference_discovery_policy": "Parity/inspiration requests against named products/sites/apps require REFERENCE_DISCOVERY_WORKFLOW first.",
     "openai_docs_citation_freshness_policy": "OpenAI/external unstable claims must use official primary sources with explicit verification date in EXTERNAL_SOURCE_REGISTRY.md.",
     "browser_automation_reliability_policy": "Browser automation tasks require preflight capability checks, machine-first validation, and artifact packet output.",

@@ -644,6 +644,8 @@ def build_run_report_payload(
         "budget_decision_reason": str(run_summary.get("budget_decision_reason", "") or ""),
         "budget_pre_run": budget_pre_obj,
         "budget_post_run": budget_post_obj,
+        "dispatch_accounting": (dict(run_summary["dispatch_accounting"])
+                                if isinstance(run_summary.get("dispatch_accounting"), dict) else {}),
     }
     quality_obj: dict[str, Any] = {
         "quality_risk_score": run_summary.get("quality_risk_score"),
@@ -1215,7 +1217,7 @@ def _render_translation_diagnostics_markdown(
             lines.append(f"- Pages with retries: {_retry_list}")
         lines.append("")
         lines.append(
-            "| Page | Status | Route | Why | Chars | Lines | Effort | OCR | Image | API | In Tok | Out Tok"
+            "| Page | Status | Route | Why | Chars | Lines | Effort | OCR | Image | Attempts | In Tok | Out Tok"
             " | Extract ms | API ms | Total ms | Cost |"
         )
         lines.append(
@@ -1465,9 +1467,10 @@ def build_run_report_markdown(
         f"{token_summary}, estimated cost `{totals_obj.get('estimated_cost')}`."
     )
     lines.append(
-        f"- API calls `{totals_obj.get('api_calls_total', 0)}`, retries `{totals_obj.get('transport_retries_total', 0)}`, "
+        f"- Translation attempts `{totals_obj.get('api_calls_total', 0)}`, transport retries `{totals_obj.get('transport_retries_total', 0)}`, "
         f"rate-limit hits `{totals_obj.get('rate_limit_hits', 0)}`."
     )
+    lines.append("- Translation attempts can stop before sending. Provider accounting reports actual dispatches and costs when available.")
     budget_decision = str(budget_obj.get("budget_decision", "") or "")
     budget_reason = str(budget_obj.get("budget_decision_reason", "") or "")
     cost_status = str(budget_obj.get("cost_estimation_status", "") or "")
@@ -1490,6 +1493,18 @@ def build_run_report_markdown(
         )
         if budget_reason:
             lines.append(f"- Budget decision reason: `{budget_reason}`.")
+    dispatch_accounting = budget_obj.get("dispatch_accounting")
+    if isinstance(dispatch_accounting, dict) and dispatch_accounting:
+        lines.append(
+            f"- Provider accounting: `{dispatch_accounting.get('coverage_status', 'unavailable')}`, "
+            f"`{dispatch_accounting.get('provider_dispatch_count', 0)}` dispatches, "
+            f"known cost `{dispatch_accounting.get('known_cost_usd')}`, "
+            f"complete cost `{dispatch_accounting.get('cost_usd')}`."
+        )
+        if dispatch_accounting.get("budget_incomplete_count", 0):
+            lines.append("- Hard-budget reconciliation is blocked or uncertain; retained holds require explicit recovery and acceptance is blocked.")
+        elif dispatch_accounting.get("coverage_status") != "complete":
+            lines.append("- Some provider usage, pricing or historical evidence is unavailable; complete cost is unknown.")
     quality_risk_score = quality_obj.get("quality_risk_score")
     review_queue_count = int(quality_obj.get("review_queue_count", 0) or 0)
     if quality_risk_score is not None or review_queue_count > 0:
@@ -1610,8 +1625,8 @@ def build_run_report_markdown(
     _total_tokens = int(totals_obj.get("total_tokens", 0) or 0)
     if _api_calls > 0 and _total_tokens == 0:
         _sanity_warnings.append(
-            f"WARNING: {_api_calls} API calls recorded but total_tokens is 0. "
-            "Token tracking may be broken."
+            f"WARNING: {_api_calls} translation attempts recorded but total_tokens is 0. "
+            "Requests may have stopped before sending, or usage may not have been recorded."
         )
     # Check status=completed but timeline empty
     _run_status = str(run_obj.get("status", "") or "")

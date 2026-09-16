@@ -8,7 +8,7 @@ Operational runbook for coding agents in `legalpdf_translate`.
 3. Source code is final truth when docs conflict.
 
 ## Daily Flow
-1. Route task via `docs/assistant/INDEX.md` and `docs/assistant/manifest.json`.
+1. Read `docs/assistant/HANDOFF.md` for current work; route the task via `docs/assistant/INDEX.md` and `docs/assistant/manifest.json`.
 2. Choose the correct workflow document in `docs/assistant/workflows/`.
 3. Run targeted tests first, then full regression if required by workflow.
 4. Keep changes scoped; avoid unrelated edits.
@@ -38,6 +38,7 @@ Ask before executing any of the following:
   - base SHA
   - worktree path
 - If multiple worktrees or visible app windows can exist, use `tooling/launch_qt_build.py` instead of an ad hoc Qt launch command.
+- That launcher rule applies to Qt. For browser work, verify the actual server/worktree, mode/workspace and served asset version through the available session tools; do not require a Qt launcher for the primary browser app.
 - The canonical runnable build is defined by `docs/assistant/runtime/CANONICAL_BUILD.json`; default GUI handoffs must target that canonical build.
 - GUI handoffs must identify the exact build under test:
   - repo/worktree path
@@ -45,9 +46,9 @@ Ask before executing any of the following:
   - HEAD SHA
   - canonical vs noncanonical status
   - distinguishing feature set
-- Treat "the app is open" as incomplete unless it is tied to the emitted build identity packet from `tooling/launch_qt_build.py`.
-- Once a feature is accepted in testing, merge it into the approved base immediately before starting the next unrelated feature branch.
-- Treat "accepted feature still living only on a side branch" as a workflow violation until it is promoted into the approved base.
+- For Qt, treat "the app is open" as incomplete unless it is tied to the emitted build identity packet from `tooling/launch_qt_build.py`. For the browser app, identify the actual server/worktree, mode/workspace and served asset version.
+- Within the current authorized publication scope, once a feature is accepted in testing, merge it into the approved base immediately before starting the next unrelated feature branch.
+- Treat an accepted feature left only on a side branch despite authorized promotion as a workflow violation; testing acceptance alone does not authorize publication.
 - Apply worktree guidance in CI/repo, commit/publish, and docs-maintenance workflows.
 
 ## Support Routing
@@ -109,16 +110,17 @@ If a task depends on OpenAI products/APIs, date-sensitive external facts, or uns
 - Cloud-heavy machine evaluation tasks -> `docs/assistant/workflows/CLOUD_MACHINE_EVALUATION_WORKFLOW.md`
 
 ## Stage-Gate Protocol
+Current user authorization and an explicitly approved operation scope take precedence over dated continuation text. Do not request a consumed token again or treat an old stage/credit stop as active authority. This does not waive publication, destructive-operation or live-service gates.
+
 For risk-triggered complex work:
 1. Follow `docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md`.
 2. Stop at each stage and publish the required stage packet schema.
 3. Require exact continuation token format: `NEXT_STAGE_X`.
 
 ## Docs Sync Policy
-After significant implementation changes, ask exactly:
-"Would you like me to run Assistant Docs Sync for this change now?"
+Standing user authorization (2026-09-16): perform useful Docs Sync autonomously. Do not ask again. Update only touched-scope docs; no blanket rewrites. Preserve history and exact beforeimages when replacing current guidance. Publication, destructive operations and live Gmail remain separately gated.
 
-Ask it only when relevant touched-scope docs still remain unsynced and immediate same-task synchronization is necessary.
-If immediate same-task synchronization is not necessary, defer it to a later docs-maintenance pass.
-If the relevant docs sync already ran during the same task/pass, do not ask again.
-If approved, update only the relevant docs for touched scope.
+Follow `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`, keeping current entry points and relevant user guides aligned. Record deferred gaps rather than repeatedly asking for permission. Do not apply templates or UCBS unless explicitly requested.
+
+## Assistant model and available tools
+Keep the user's assistant/Codex model preference separate from the app's translation-provider settings and evidence. Use tools available in the current session; inspect their documentation and actual app/build ownership. A static capability inventory or old screenshot does not establish current tool availability, model quality, credentials or live state.

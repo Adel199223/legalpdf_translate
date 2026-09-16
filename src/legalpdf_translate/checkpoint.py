@@ -88,8 +88,8 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def settings_fingerprint(config: RunConfig) -> dict[str, Any]:
-    return {
+def settings_fingerprint(config: RunConfig, *, ordinary_source_review: dict | None = None) -> dict[str, Any]:
+    result = {
         "effort": config.effort.value,
         "effort_policy": config.effort_policy.value,
         "allow_xhigh_escalation": bool(config.allow_xhigh_escalation),
@@ -107,6 +107,9 @@ def settings_fingerprint(config: RunConfig) -> dict[str, Any]:
         "max_pages": config.max_pages,
         "workers": config.workers,
     }
+    if ordinary_source_review is not None:
+        result["ordinary_source_review"] = deepcopy(ordinary_source_review)
+    return result
 
 
 def _default_page_record(*, status: str = PageStatus.PENDING.value) -> dict[str, Any]:
@@ -186,6 +189,7 @@ def new_run_state(
     total_pages: int,
     selected_pages: list[int],
     protocol_identity: dict[str, Any] | None = None,
+    ordinary_source_review: dict | None = None,
 ) -> RunState:
     from .structured_artifacts import normalize_protocol_identity
 
@@ -213,7 +217,7 @@ def new_run_state(
         selection_start_page=selection_start_page,
         selection_end_page=selection_end_page,
         selection_page_count=selection_page_count,
-        settings=settings_fingerprint(config),
+        settings=settings_fingerprint(config, ordinary_source_review=ordinary_source_review),
         context_hash=context_hash,
         created_at=now,
         updated_at=now,
@@ -359,6 +363,7 @@ def load_run_state(path: Path) -> RunState | None:
             pending_count=int(data.get("pending_count", pending_count)),
             failure_context=failure_context,
             protocol_identity=protocol_identity,
+            dispatch_accounting=data.get("dispatch_accounting", {}),
         )
     except (TypeError, ValueError, KeyError):
         return None
@@ -387,6 +392,7 @@ def resume_incompatibility_reason(
     selection_page_count: int,
     max_pages_effective: int,
     protocol_identity: dict[str, Any] | None = None,
+    ordinary_source_review: dict | None = None,
 ) -> str | None:
     from .structured_artifacts import StructuredArtifactError, normalize_protocol_identity
 
@@ -407,8 +413,10 @@ def resume_incompatibility_reason(
         return f"target language mismatch: checkpoint={state.lang}, expected={config.target_lang.value}"
     if state.context_hash != context_hash:
         return "context mismatch."
-    expected_settings = settings_fingerprint(config)
+    expected_settings = settings_fingerprint(config, ordinary_source_review=ordinary_source_review)
     checkpoint_settings = dict(state.settings)
+    if checkpoint_settings.get("ordinary_source_review") != ordinary_source_review:
+        return "ordinary source review identity mismatch."
     if "strip_bidi_controls" not in checkpoint_settings:
         checkpoint_settings["strip_bidi_controls"] = True
     if "glossary_file_path" not in checkpoint_settings:
@@ -477,6 +485,7 @@ def is_resume_compatible(
     selection_page_count: int,
     max_pages_effective: int,
     protocol_identity: dict[str, Any] | None = None,
+    ordinary_source_review: dict | None = None,
 ) -> bool:
     return (
         resume_incompatibility_reason(
@@ -490,6 +499,7 @@ def is_resume_compatible(
             selection_page_count=selection_page_count,
             max_pages_effective=max_pages_effective,
             protocol_identity=protocol_identity,
+            ordinary_source_review=ordinary_source_review,
         )
         is None
     )

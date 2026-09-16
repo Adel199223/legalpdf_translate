@@ -1,7 +1,132 @@
 {
   "version": 1,
-  "last_updated": "2026-09-07T17:10:25Z",
+  "last_updated": "2026-09-16T20:01:02Z",
   "issues": [
+    {
+      "id": "windows-private-launch-guard-preflight-fidelity",
+      "title": "Private Windows guards missed actual launch, import, temporary-file and held-lock semantics",
+      "first_seen_timestamp": "2026-09-10T17:57:00Z",
+      "last_seen_timestamp": "2026-09-16T20:01:02Z",
+      "repeat_count": 5,
+      "status": "mitigated",
+      "trigger_source": "operational",
+      "symptoms": [
+        "Serialized argv mismatch",
+        "Popen function replacement broke subclass import",
+        "Implicit executable=None caused prelaunch guard TypeError",
+        "NamedTemporaryFile directory-label open rejected before actual exclusive accounting temporary file creation.",
+        "A private formatter opened a second handle to its owned byte-range lock, then Windows rejected the read with PermissionError errno 13 before formatting publication."
+      ],
+      "likely_root_cause": "Synthetic platform assumptions omitted actual Windows caller, import, file-opener and held-lock read semantics.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-09-10T17:57:00Z",
+          "summary": "Validate exact Windows serialized argv alongside list form.",
+          "outcome": "earlier_capture_continuation_completed"
+        },
+        {
+          "timestamp": "2026-09-10T19:58:56Z",
+          "summary": "Retain Popen class and avoid SDK import through explicit inert source-only transport seam.",
+          "outcome": "cache_only_validation_completed"
+        },
+        {
+          "timestamp": "2026-09-10T20:09:10Z",
+          "summary": "Require explicit pinned executable; test actual Popen with CreateProcess suppressed.",
+          "outcome": "one_positive_two_negative_checks_passed_no_native_launch"
+        },
+        {
+          "timestamp": "2026-09-10T20:40:43Z",
+          "summary": "Corrected v2 executor passed nine negative, two shape and six actual-Popen no-launch checks, then completed all six separately authorized OCR passes with no retry or guard violation.",
+          "outcome": "mitigation_verified_in_bounded_pilot_no_new_incident"
+        },
+        {
+          "timestamp": "2026-09-16T18:28:48Z",
+          "summary": "Preserved failed FR01 and its unresolved local reservation; exercised real NamedTemporaryFile on fictional data with positive and direct-directory/wrong-prefix/wrong-suffix negatives, then used an exact callsite-bound fix in fresh FR02. Binary formatting mode was separately observed as audit w+ before any formatter execution.",
+          "outcome": "disposable_diagnostic_and_actual_FR02_tempfile_path_passed_zero_denials_translation_failed_separately"
+        },
+        {
+          "timestamp": "2026-09-16T20:01:02Z",
+          "summary": "Preserved FF01; a disposable same-process msvcrt diagnostic confirmed second-handle open followed by denied read, unchanged identity and equal post-release bytes. Fresh FF02 checks stable identity while held and exact physical bytes before/after, without changing application locking.",
+          "outcome": "disposable_diagnostic_confirmed_and_fresh_FF02_formatting_passed_34_unchanged_fragments_zero_provider_native_audit_denials"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-09-16T20:01:02Z",
+        "summary": "Retain exact executable/argv/class and pinned temporary-file opener handling; for stable lock files compare bytes before/after ownership and identity while held. Fresh FF02 built all 34 unchanged fragments with zero audit/provider/native calls; native and visual QA remain pending.",
+        "expected_result": "Exercise changed platform assumptions on disposable real standard-library calls, preserve failed operations and exact authority; no weakening of application locks, blanket audit exemption, replay or hold release."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "docs/assistant/VALIDATION.md",
+        "docs/assistant/exec_plans/active/2026-09-10_structured_translation_ordinary_use.md",
+        "docs/assistant/exec_plans/completed/2026-09-16_ordinary_browser_integration.md"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "Actual-platform no-launch dispatch tests",
+          "Exact executable and serialized argv freezing",
+          "Preserve class interfaces and consumed-authority evidence",
+          "Actual standard-library temporary-file opener audit shapes",
+          "Keep attempted corrections separate from actual provider dispatch and settlement",
+          "Stable lock bytes before/after ownership, identity while held, and sanitized error sites/errno"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "private_artifact",
+          "ref": "structured_activation_source_capture_2026_09_10/failure.json"
+        },
+        {
+          "type": "private_artifact",
+          "ref": "structured_activation_source_readiness_stage3_2026_09_10/import_preflight_diagnostic.json"
+        },
+        {
+          "type": "private_artifact",
+          "ref": "structured_activation_source_repair_pilot_2026_09_10/incident_review.json"
+        },
+        {
+          "type": "private_artifact",
+          "ref": "structured_activation_source_repair_pilot_2026_09_10/launch_guard_repair_preflight.json"
+        },
+        {
+          "type": "private_artifact",
+          "ref": "structured_activation_source_repair_pilot_v2_2026_09_10/executor_manifest.json"
+        },
+        {
+          "type": "private_artifact",
+          "ref": "structured_activation_source_repair_pilot_v2_2026_09_10/pilot_result.json"
+        },
+        {
+          "type": "execplan",
+          "ref": "docs/assistant/exec_plans/active/2026-09-10_structured_translation_ordinary_use.md"
+        },
+        {
+          "type": "private_artifact",
+          "ref": "application_ordinary_real_fr_20260916_01/tempfile_diagnostic_v1/runtime_v1/result.json"
+        },
+        {
+          "type": "private_artifact",
+          "ref": "application_ordinary_real_fr_20260916_02/run_v1/result.json"
+        },
+        {
+          "type": "private_artifact",
+          "ref": "application_ordinary_fr_formatting_20260916_01/binary_tempfile_diagnostic_01/result.json"
+        },
+        {
+          "type": "private_artifact",
+          "ref": "application_ordinary_fr_formatting_review_20260916_01/windows_lock_diagnostic_01/result.json"
+        },
+        {
+          "type": "private_artifact",
+          "ref": "application_ordinary_fr_formatting_20260916_02/formatting_v1/result.json"
+        }
+      ]
+    },
     {
       "id": "google-photos-oauth-picker-validation-hygiene",
       "title": "Google Photos OAuth and Picker validation repeatedly stalled on env, popup, secret, and selection-completion evidence",
@@ -290,13 +415,13 @@
         "targets": [
           "worktree/build identity governance",
           "approved-base promotion rules",
-        "canonical launch/default test target guidance",
-        "canonical-path cleanup after side-branch validation",
-        "plain-language local workspace entry guidance",
-        "validated runtime repair and whole-graph browser asset provenance",
-        "clean integration-branch publish rules for overlapping accepted side work",
-        "single-path canonical launcher/native-host routing back to the primary repo on main"
-      ]
+          "canonical launch/default test target guidance",
+          "canonical-path cleanup after side-branch validation",
+          "plain-language local workspace entry guidance",
+          "validated runtime repair and whole-graph browser asset provenance",
+          "clean integration-branch publish rules for overlapping accepted side work",
+          "single-path canonical launcher/native-host routing back to the primary repo on main"
+        ]
       },
       "evidence_refs": [
         {

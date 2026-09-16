@@ -49,6 +49,7 @@ _CLOCK_RUN_RE = re.compile(
     r"(?<![\w:\[\]])(?:[01][0-9]|2[0-3]):[0-5][0-9]"
     r"(?::[0-5][0-9])?(?![\w:\[\]])"
 )
+_NUMERIC_SLASH_RUN_RE = re.compile(r"(?<![\w/\[\]+\\@#-])[0-9]+/[0-9]+(?![\w/\[\]+\\@#-])")
 
 
 @dataclass(frozen=True)
@@ -247,6 +248,99 @@ def _keep_clock_separators_ltr(segments: list[tuple[str, str]]) -> list[tuple[st
     return _merge_directional_runs(relabeled)
 
 
+def _numeric_slash_scope_is_ltr(text: str, start: int, end: int) -> bool:
+    """Decline conflicting or incomplete retained scopes around a candidate.
+
+    Inspect the complete paragraph, including earlier explicit lines. A nearby
+    LRI does not cancel an enclosing conflicting scope for this conservative
+    inference. Balanced saved LRI/PDI wrappers and LRM remain compatible.
+    """
+    isolates = "\u2066\u2067\u2068"
+    embeddings = "\u202a\u202b\u202d\u202e"
+    stack: list[tuple[str, int]] = []
+    for index, char in enumerate(text):
+        inside = start <= index < end
+        if inside and (any(opener != "\u2066" for opener, _ in stack) or
+                       ord(char) in _BIDI_CONTROL_CODEPOINTS and char not in "\u200e\u2066\u2069"):
+            return False
+        if char in isolates + embeddings:
+            stack.append((char, index))
+        elif char == "\u2069":
+            isolate_index = next((i for i in range(len(stack) - 1, -1, -1)
+                                  if stack[i][0] in isolates), None)
+            if isolate_index is None:
+                if inside:
+                    return False
+            else:
+                del stack[isolate_index:]
+        elif char == "\u202c":
+            if stack and stack[-1][0] in embeddings:
+                stack.pop()
+            elif inside:
+                return False
+    # An unclosed LRI is not proof of an independently owned saved-token scope.
+    return not any(index < end for _, index in stack)
+
+
+def _keep_numeric_slash_separators_ltr(segments: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Keep only closed ASCII n/n references coherent across saved tokens.
+
+    In [[2]]/[[98]], the isolated slash otherwise defaults to RTL and Word can
+    display 98/2. Only the original slash receives LTR direction. No character
+    is changed, removed or reordered, including explicitly retained controls.
+    """
+    text = "".join(chunk for _, chunk in segments)
+    if "/" not in text:
+        return segments
+    positions = [index for index, char in enumerate(text) if ord(char) not in _BIDI_CONTROL_CODEPOINTS]
+    visible = "".join(text[index] for index in positions)
+    slashes: set[int] = set()
+    for match in _NUMERIC_SLASH_RUN_RE.finditer(visible):
+        start, end = match.span()
+        if any(unicodedata.category(char).startswith("M") or unicodedata.category(char) == "Cf"
+               for char in (visible[start - 1:start] if start else "") + visible[end:end + 1]):
+            continue
+        # Decline parts of identifiers or longer numeric expressions, while
+        # permitting ordinary surrounding parentheses and terminal punctuation.
+        connectors = ".,/:;-\\@#+"
+        left, right = start, end
+        while left and visible[left - 1] in connectors:
+            left -= 1
+        while right < len(visible) and visible[right] in connectors:
+            right += 1
+        if ((left < start and left and
+             (visible[left - 1].isalnum() or visible[left - 1] == "_" or
+              unicodedata.category(visible[left - 1]).startswith("M") or
+              unicodedata.category(visible[left - 1]) == "Cf")) or
+            (right > end and right < len(visible) and
+             (visible[right].isalnum() or visible[right] == "_" or
+              unicodedata.category(visible[right]).startswith("M") or
+              unicodedata.category(visible[right]) == "Cf"))):
+            continue
+        raw_start, raw_end = positions[start], positions[end - 1] + 1
+        while raw_start and ord(text[raw_start - 1]) in _BIDI_CONTROL_CODEPOINTS:
+            raw_start -= 1
+        while raw_end < len(text) and ord(text[raw_end]) in _BIDI_CONTROL_CODEPOINTS:
+            raw_end += 1
+        if not _numeric_slash_scope_is_ltr(text, raw_start, raw_end):
+            continue
+        slashes.add(positions[visible.index("/", start, end)])
+    if not slashes:
+        return segments
+    result: list[tuple[str, str]] = []
+    offset = 0
+    line_breaks = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+    for kind, chunk in segments:
+        for index, char in enumerate(chunk):
+            direction = "ltr" if offset + index in slashes else kind
+            if result and result[-1][0] == direction and result[-1][1][-1] not in line_breaks:
+                result[-1] = (direction, result[-1][1] + char)
+            else:
+                result.append((direction, char))
+        offset += len(chunk)
+    return result
+
+
 def _segment_rtl_placeholder_aware_line(
     text: str,
     *,
@@ -307,7 +401,10 @@ def _segment_rtl_placeholder_aware_runs(
     # delimiters while making the normal, single-line address decision below.
     if any("\n" in match.group("token") or "\r" in match.group("token")
            for match in _PLACEHOLDER_TOKEN_SPAN_RE.finditer(text)):
-        return _segment_rtl_placeholder_aware_line(text, strip_bidi_controls=strip_bidi_controls)
+        line_runs, _ = _segment_rtl_placeholder_aware_line(text, strip_bidi_controls=strip_bidi_controls)
+        pieces = _keep_numeric_slash_separators_ltr(line_runs)
+        kinds = {kind for kind, _ in pieces}
+        return pieces, "rtl" in kinds and "ltr" in kinds
     pieces: list[tuple[str, str]] = []
     for line in text.splitlines(keepends=True):
         visible = sanitize_bidi_controls(unwrap_internal_placeholders(line))
@@ -322,6 +419,7 @@ def _segment_rtl_placeholder_aware_runs(
                 line, strip_bidi_controls=strip_bidi_controls,
             )
             pieces.extend(line_runs)
+    pieces = _keep_numeric_slash_separators_ltr(pieces)
     kinds = {kind for kind, _ in pieces}
     return pieces, "rtl" in kinds and "ltr" in kinds
 
