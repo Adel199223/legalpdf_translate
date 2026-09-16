@@ -2,6 +2,17 @@
 
 Purpose: record official primary sources used for material external behavior/capability decisions.
 
+## OpenAI Python SDK transport compatibility — 2026-09-16
+
+The versioned official SDK sources below were checked on 2026-09-16 after PR #296's fresh-install CI exposed an undeclared legacy HTTPX test dependency. This is dependency compatibility evidence, not provider dispatch or a model/default change.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://github.com/openai/openai-python/blob/v3.14.1/pyproject.toml | Publication dependency/CI correction | SDK 3.14.1 declares HTTPX2 as its default dependency rather than legacy HTTPX. Code/tests importing legacy HTTPX must declare that dependency themselves. | 2026-09-16 |
+| https://github.com/openai/openai-python/blob/v3.14.1/httpx2.md | SDK transport, TLS and compatibility review | HTTPX2 becomes the default client family and uses the OS certificate store instead of the prior certifi bundle. The guide documents explicit legacy-HTTPX client injection as a temporary runtime-only migration option, with typing limitations; that option is not adopted here. | 2026-09-16 |
+
+Repository decision: retain the locally validated SDK 2.36.0 transport family by declaring `openai>=2.36.0,<3`; explicitly declare development `httpx>=0.28.1,<0.29` and install `.[dev]` in CI. A future SDK 3 migration requires a separate review of transport types, mocking and TLS behavior. The dependency correction has its own validation and exact-head CI evidence; it does not extend the earlier 6,477-test receipt to a changed environment.
+
 ## Current ordinary FR proposal reference — 2026-09-16
 
 The parent task rechecked the official pages below on 2026-09-16. These public facts inform a provisional, test-instrumented two-call proposal; they do not prove account access, authorize dispatch or promote a default. Earlier dated records remain historical evidence.

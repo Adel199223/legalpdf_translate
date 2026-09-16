@@ -206,6 +206,15 @@ void _writeJson(String root, String relPath, Map<String, dynamic> value) {
   file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(value));
 }
 
+void _writeExternalSourceRegistry(String root, String sourceUrl) {
+  File(_resolve(root, 'docs/assistant/EXTERNAL_SOURCE_REGISTRY.md'))
+      .writeAsStringSync(
+        '| source_url | contract_or_workflow | fact_summary | verification_date |\n'
+        '| --- | --- | --- | --- |\n'
+        '| $sourceUrl | SDK contract | Official source fixture | 2026-09-16 |\n',
+      );
+}
+
 bool _hasRule(List<validator.ValidationIssue> issues, String ruleId) {
   return issues.any(
     (validator.ValidationIssue issue) => issue.ruleId == ruleId,
@@ -947,6 +956,79 @@ void main() {
       rootPath: root,
     );
     _expect(_hasRule(issues, 'AD035'), 'Expected AD035');
+  }, failures);
+
+  _runCase('accepts official SDK GitHub file URLs', () {
+    final String root = _fixtureRoot();
+    for (final String url in <String>[
+      'https://github.com/openai/openai-python/blob/v3.14.1/pyproject.toml',
+      'https://github.com/openai/openai-python/blob/v3.14.1/httpx2.md',
+      'https://github.com/openai/openai-python/blob/v2.36.0/src/openai/_client.py',
+    ]) {
+      _writeExternalSourceRegistry(root, url);
+      final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+        rootPath: root,
+      );
+      _expect(
+        !_hasRule(issues, 'AD034') && !_hasRule(issues, 'AD035'),
+        'Expected official SDK file URL to pass: $url; got: $issues',
+      );
+    }
+  }, failures);
+
+  _runCase('rejects SDK GitHub URL lookalikes and non-file paths', () {
+    final String root = _fixtureRoot();
+    for (final String url in <String>[
+      'http://github.com/openai/openai-python/blob/v3.14.1/httpx2.md',
+      'https://github.com/other/openai-python/blob/v3.14.1/httpx2.md',
+      'https://github.com/openai/other/blob/v3.14.1/httpx2.md',
+      'https://github.com/openai/openai-python-fork/blob/v3.14.1/httpx2.md',
+      'https://github.com/openai/openai-python/issues/1',
+      'https://github.com/openai/openai-python/tree/v3.14.1/src',
+      'https://github.com/openai/openai-python/blob/v3.14.1',
+      'https://github.com/openai/openai-python/blob//httpx2.md',
+      'https://github.com.example.invalid/openai/openai-python/blob/v3.14.1/httpx2.md',
+      'https://github.com@example.invalid/openai/openai-python/blob/v3.14.1/httpx2.md',
+      'https://user@github.com/openai/openai-python/blob/v3.14.1/httpx2.md',
+      'https://github.com:443/openai/openai-python/blob/v3.14.1/httpx2.md',
+      'https://github.com/openai/openai-python/blob/v3.14.1/httpx2.md?raw=1',
+      'https://github.com/openai/openai-python/issues/1?next=/blob/v3.14.1/httpx2.md',
+      'https://github.com/openai/openai-python/blob/v3.14.1/httpx2.md#L1',
+      'https://github.com/openai/openai-python/blob/v3.14.1/../httpx2.md',
+      'https://github.com/openai/openai-python/blob/v3.14.1/%2e%2e/httpx2.md',
+      'https://github.com/%6fpenai/openai-python/blob/v3.14.1/httpx2.md',
+      'https://github.com/openai/openai-python/blob/v3.14.1%2fsuffix/httpx2.md',
+      'https://github.com/openai/openai-python/blob/v3.14.1//httpx2.md',
+      'https://github.com/openai/openai-python/blob/v3.14.1/httpx2.md/',
+    ]) {
+      _writeExternalSourceRegistry(root, url);
+      final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+        rootPath: root,
+      );
+      _expect(_hasRule(issues, 'AD035'), 'Expected AD035 for $url; got: $issues');
+    }
+  }, failures);
+
+  _runCase('preserves existing external source host rules', () {
+    final String root = _fixtureRoot();
+    for (final String url in <String>[
+      'https://developers.openai.com/api/docs/models',
+      'https://platform.openai.com/docs',
+      'https://playwright.dev/docs/intro',
+      'https://developer.chrome.com/docs/extensions',
+      'https://docs.github.com/en/actions',
+      'https://learn.microsoft.com/en-us/windows',
+      'http://developers.openai.com/api/docs/models',
+    ]) {
+      _writeExternalSourceRegistry(root, url);
+      final List<validator.ValidationIssue> issues = validator.validateAgentDocs(
+        rootPath: root,
+      );
+      _expect(
+        !_hasRule(issues, 'AD034') && !_hasRule(issues, 'AD035'),
+        'Expected existing host rule to remain valid: $url; got: $issues',
+      );
+    }
   }, failures);
 
   _runCase('fails localization scope when glossary contract missing', () {

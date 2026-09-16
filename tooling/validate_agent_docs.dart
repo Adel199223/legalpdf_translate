@@ -3312,12 +3312,20 @@ void _validateExternalSourceRegistry(
     'docs.github.com',
     'learn.microsoft.com',
   ];
+  // GitHub is allowed only for file views in the official SDK repository.
+  // Match the raw URL so queries, encoded paths and authority lookalikes fail.
+  final RegExp officialOpenAiSdkFile = RegExp(
+    r'^https://github\.com/openai/openai-python/blob/'
+    r'[A-Za-z0-9][A-Za-z0-9._-]*/'
+    r'(?:[A-Za-z0-9_][A-Za-z0-9._-]*/)*'
+    r'[A-Za-z0-9_][A-Za-z0-9._-]*$',
+  );
   final List<String> badHosts = <String>[];
   for (final RegExpMatch match in rows) {
     final String url = (match.group(1) ?? '').trim();
     final Uri? parsed = Uri.tryParse(url);
     final String host = (parsed?.host ?? '').toLowerCase();
-    if (!allowedHosts.contains(host)) {
+    if (!allowedHosts.contains(host) && !officialOpenAiSdkFile.hasMatch(url)) {
       badHosts.add(url);
     }
   }
@@ -3325,7 +3333,7 @@ void _validateExternalSourceRegistry(
     issues.add(
       ValidationIssue(
         'AD035',
-        'External source registry includes non-official domains: ${badHosts.join(', ')}',
+        'External source registry includes non-official source URLs: ${badHosts.join(', ')}',
       ),
     );
   }

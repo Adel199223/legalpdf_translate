@@ -4,11 +4,11 @@ This file is canonical for app-level architecture and status. Source code is fin
 
 ## Current build and status
 
-- **Daily-use build:** canonical `C:/Users/FA507/.codex/legalpdf_translate`, branch `main`. PR #295 is already merged at `4780a2e16c32adf7af7479656f0b5fafdff83224`; recheck actual Git state before work.
-- **Unpublished integration candidate:** `C:/Users/FA507/.codex/legalpdf_translate_structured_activation`, branch `feat/structured-translation-activation`, based on that merge. Its reviewed-source, accounting, formatting and browser changes are not yet a claim about canonical main.
+- **Daily-use build:** canonical `C:/Users/FA507/.codex/legalpdf_translate`, branch `main`. PR #296 merged at `068e4312269106e26677185ae33bc1b556e3c073`; canonical verification confirmed `068e4312269106e26677185ae33bc1b556e3c073` on `2026-09-16T22:23:49.151967+00:00`. Recheck actual Git/process state before work.
+- **Reviewed implementation:** reviewed-source, accounting, formatting and browser changes are available in builds containing that merge. See the [publication closeout](docs/assistant/exec_plans/completed/2026-09-16_reviewed_candidate_publication.md) for exact CI and canonical-build evidence. Integration-worktree disposition: retained for scoped documentation closeout from the merged main revision; the fully merged feature branch was removed locally and remotely. Recheck actual Git state before new work; retained private/ignored evidence is not disposable.
 - **Authoring worktree:** `C:/Users/FA507/.codex/legalpdf_translate_reviewed_regions`, branch `codex/reviewed-regions`. Harvest exact reviewed scopes; never overwrite a newer integration snapshot wholesale.
 - Current acceptance and validation results live in the [ordinary browser integration plan](docs/assistant/exec_plans/completed/2026-09-16_ordinary_browser_integration.md) and [Arabic rendered-correction plan](docs/assistant/exec_plans/completed/2026-09-16_arabic_render_corrections.md). Completed private derivatives, synthetic browser evidence and real ordinary-workflow acceptance are distinct.
-- No global translation model/protocol promotion or publication is implied. The user's Astra Ultra preference concerns the assistant's Codex task. Terra evaluation concerns the app's translation provider. Saved app preferences and explicit per-run selections remain authoritative.
+- No global translation model/protocol promotion is implied. The user's Astra Ultra preference concerns the assistant's Codex task. Terra evaluation concerns the app's translation provider. Saved app preferences and explicit per-run selections remain authoritative.
 
 ## Product surfaces
 
