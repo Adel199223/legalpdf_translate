@@ -194,7 +194,7 @@ def test_tsv_word_evidence_binds_raw_pixels_and_final_joined_block_ids() -> None
         assert [word["text"] for word in packet["words"] if word["block_id"] == block.id] == block.text.split()
     assert packet["words"][5]["block_id"] == "p0005_b0001"
     assert packet["words"][-1]["block_id"] == "p0005_b0002"
-    assert structure.metadata["extraction_version"] == "new_run_source_v2"
+    assert structure.metadata["extraction_version"] == "new_run_source_v3"
 
 
 def test_rebind_updates_word_block_ids_without_scaling_raw_pixel_evidence() -> None:

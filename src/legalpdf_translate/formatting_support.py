@@ -13,7 +13,7 @@ import re
 import unicodedata
 from typing import Any, Mapping, Sequence
 
-LAYOUT_PROFILE_VERSION = "compact_legal_v11_atomic_clock_runs"
+LAYOUT_PROFILE_VERSION = "compact_legal_v12_atomic_numeric_slash_runs"
 
 
 def _row(block: Any) -> dict[str, Any]:

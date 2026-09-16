@@ -1,4 +1,6 @@
 import { fetchJson } from "./api.js";
+import { mountSourceReview } from "./source_review_ui.js";
+import { mountFormattingReview } from "./formatting_review_ui.js";
 import { applyActionFailureFeedbackToUi } from "./action_feedback_presentation.js";
 import { appState, setActiveView } from "./state.js";
 import { ensureBrowserPdfBundleFromFile } from "./browser_pdf.js";
@@ -81,6 +83,8 @@ const translationState = {
 };
 
 let lastTranslationUiSnapshotKey = "";
+let sourceReviewUi = null;
+let formattingReviewUi = null;
 
 function applyActionFailureFeedback(
   error,
@@ -1008,6 +1012,8 @@ function syncTranslationPrimaryActionState() {
     resumeButton: qs("translation-resume-btn"),
     rebuildButton: qs("translation-rebuild"),
   }, actionState);
+  sourceReviewUi?.sync();
+  formattingReviewUi?.sync();
 }
 
 export function deriveTranslationRunStatusView(
@@ -2325,6 +2331,33 @@ function sourceCardClickIsInteractive(target) {
 }
 
 export function initializeTranslationUi() {
+  formattingReviewUi = mountFormattingReview({
+    root: qs("translation-formatting-review-panel"),
+    prepareButton: qs("translation-formatting-review-prepare"),
+    getScope: () => ({ runtimeMode: appState.runtimeMode, workspaceId: appState.workspaceId }),
+    getJob: () => translationState.currentJob,
+  });
+  window.addEventListener("legalpdf:route-state-changed", () => formattingReviewUi?.sync());
+  sourceReviewUi = mountSourceReview({
+    root: qs("translation-source-review-panel"),
+    prepareButton: qs("translation-source-review-prepare"),
+    getScope: () => ({ runtimeMode: appState.runtimeMode, workspaceId: appState.workspaceId }),
+    getSetup: collectTranslationSetupValues,
+    manualReady: () => hasManualSourceSelection() && isPdfFile(currentManualSourceFile())
+      && !translationState.currentGmailBatchContext && !currentPreparedTranslationLaunch(),
+    beforePrepare: ensureUploadedSource,
+    onJob: (job) => {
+      clearTranslationCompletionSeed();
+      renderTranslationJob(job);
+      setPanelStatus("translation", "ok", "Reviewed-source translation started or recovered.");
+      // The source review view contains private text; only normal job rendering
+      // receives the job. Do not place source evidence in diagnostics.
+      refreshTranslationHistory().catch(() => {});
+    },
+  });
+  qs("translation-setup-form")?.addEventListener("input", () => sourceReviewUi?.sync());
+  qs("translation-setup-form")?.addEventListener("change", () => sourceReviewUi?.sync());
+  window.addEventListener("legalpdf:route-state-changed", () => sourceReviewUi?.sync());
   setDiagnostics("translation", { status: "idle", message: "No translation request has been sent yet." }, {
     hint: "Run requests, source-upload details, and backend validation appear here.",
     open: false,

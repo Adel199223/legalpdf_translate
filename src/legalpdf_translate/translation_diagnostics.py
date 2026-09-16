@@ -48,9 +48,8 @@ def estimate_cost(
         cost = (
             (input_tokens / 1_000_000.0) * env_input_rate
             + (output_tokens / 1_000_000.0) * env_output_rate
-            + (reasoning_tokens / 1_000_000.0) * env_reasoning_rate
         )
-        return round(cost, 6), f"env rates ({env_input_rate}/{env_output_rate}/{env_reasoning_rate} per 1M)"
+        return round(cost, 6), f"env rates ({env_input_rate}/{env_output_rate} per 1M; output includes reasoning)"
 
     prices = _MODEL_PRICES.get(model)
     if prices is None:
@@ -59,9 +58,8 @@ def estimate_cost(
     cost = (
         (input_tokens / 1_000_000.0) * prices["input"]
         + (output_tokens / 1_000_000.0) * prices["output"]
-        + (reasoning_tokens / 1_000_000.0) * prices["reasoning"]
     )
-    return round(cost, 6), f"built-in table for {model}"
+    return round(cost, 6), f"built-in table for {model}; output includes reasoning; estimate only"
 
 
 # ---------------------------------------------------------------------------
@@ -390,7 +388,7 @@ def emit_cost_estimate_event(
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "reasoning_tokens": reasoning_tokens,
-            "total_tokens": input_tokens + output_tokens + reasoning_tokens,
+            "total_tokens": input_tokens + output_tokens,
         },
         details={
             "model": model,

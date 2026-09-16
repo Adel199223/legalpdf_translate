@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from contextlib import closing
-from dataclasses import asdict, dataclass, field
+from copy import deepcopy
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
+import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import stat
 import threading
 import uuid
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from .checkpoint import (
     bool_from_text,
@@ -46,8 +50,9 @@ from .openai_client import OpenAIResponsesClient, resolve_openai_key_with_source
 from .output_paths import require_writable_output_dir
 from .review_export import export_review_queue
 from .run_report import build_run_report_markdown
+from .run_workspace_lock import RunWorkspaceBusy
 from .source_document import get_source_page_count, is_pdf_source, is_supported_source_file
-from .types import AnalyzeSummary, RunConfig, RunSummary, TargetLang
+from .types import AnalyzeSummary, OcrMode, RunConfig, RunSummary, TargetLang
 from .user_settings import (
     load_gui_settings_from_path,
     load_joblog_settings_from_path,
@@ -62,6 +67,62 @@ _PAGE_LOG_RE = re.compile(
 )
 _PAGE_STATUS_RE = re.compile(r"Page\s+(?P<page>\d+)\s+(?P<status>finished|failed)", re.IGNORECASE)
 _MAX_JOB_LOG_LINES = 240
+
+
+def _formatting_json(value):
+    def default(item):
+        if isinstance(item, Path):
+            return str(item)
+        raise TypeError("Unsupported saved config value.")
+    return json.dumps(value, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, allow_nan=False, default=default)
+
+
+def read_reviewed_formatting_file(path: Path, *, maximum=64 * 1024 * 1024) -> bytes:
+    """Read exact direct owned artifact bytes; never follow a download path link."""
+    try:
+        path = Path(path)
+        if not path.is_absolute() or ".." in path.parts or str(path).startswith(("\\\\", "//")):
+            raise ValueError
+        for item in (path, *path.parents):
+            info = item.lstat()
+            if (item.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400
+                    or item != path and not stat.S_ISDIR(info.st_mode)):
+                raise ValueError
+        info = path.stat()
+        if not stat.S_ISREG(info.st_mode) or getattr(info, "st_nlink", 1) != 1:
+            raise ValueError
+        with path.open("rb") as stream:
+            before = os.fstat(stream.fileno())
+            if not 0 < before.st_size <= maximum:
+                raise ValueError
+            raw = stream.read(maximum + 1)
+            after = os.fstat(stream.fileno())
+        current = path.stat()
+        if (len(raw) != before.st_size or before.st_size != after.st_size
+                or before.st_mtime_ns != after.st_mtime_ns
+                or (info.st_dev, info.st_ino) != (before.st_dev, before.st_ino)
+                or (before.st_dev, before.st_ino) != (current.st_dev, current.st_ino)):
+            raise ValueError
+        for item in (path, *path.parents):
+            current_info = item.lstat()
+            if (item.is_symlink() or getattr(current_info, "st_file_attributes", 0) & 0x400
+                    or item == path and (not stat.S_ISREG(current_info.st_mode) or getattr(current_info, "st_nlink", 1) != 1)
+                    or item != path and not stat.S_ISDIR(current_info.st_mode)):
+                raise ValueError
+        return raw
+    except Exception:
+        raise ValueError("formatting_job_artifact_unavailable") from None
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedFormattingJob:
+    """Backend-only snapshot. Config/context must never be serialized to a route."""
+    config: RunConfig
+    source_context: Any
+    settings_path: Path
+    run_dir: Path
+    owner_json: str
 
 
 def _utc_now_iso() -> str:
@@ -516,6 +577,11 @@ def _build_config_from_form(
     )
 
 
+def build_translation_config(*, form_values: Mapping[str, Any], settings_path: Path) -> RunConfig:
+    """Public backend form normalization; preserves all existing saved defaults."""
+    return _build_config_from_form(form_values=form_values, settings_path=settings_path)
+
+
 def _load_run_summary_metrics(summary_path: Path | None) -> dict[str, object]:
     payload = _load_json_object(summary_path)
     if not payload:
@@ -676,10 +742,16 @@ def _build_translation_seed_from_run_summary(
             metadata_config_from_settings,
         )
 
+        metadata_config = replace(
+            metadata_config_from_settings(settings),
+            ocr_mode=OcrMode.OFF,
+            metadata_ai_enabled=False,
+            metadata_allow_header_ocr_even_if_ocr_off=False,
+        )
         suggestion = extract_pdf_header_metadata_priority_pages(
             seed.pdf_path,
             vocab_cities=list(settings["vocab_cities"]),
-            config=metadata_config_from_settings(settings),
+            config=metadata_config,
         )
     except Exception:
         suggestion = None
@@ -1050,6 +1122,10 @@ class _ManagedTranslationJob:
     _workflow: "TranslationWorkflow | None" = field(default=None, repr=False)
     _reservation_key: str = field(default="", repr=False)
     _page_flags: dict[int, tuple[bool, bool]] = field(default_factory=dict, repr=False)
+    _reviewed_source_context: Any = field(default=None, repr=False)
+    _reviewed_source_loader: Callable[[], Any] | None = field(default=None, repr=False)
+    _reviewed_settings_path: Path | None = field(default=None, repr=False)
+    _reviewed_formatting_records: dict[str, str] = field(default_factory=dict, repr=False)
 
 
 class TranslationJobManager:
@@ -1073,6 +1149,8 @@ class TranslationJobManager:
             "download_partial_docx": bool(job.artifacts_payload.get("partial_docx")),
             "download_run_summary": bool(job.artifacts_payload.get("run_summary_path")),
             "download_analyze_report": bool(job.artifacts_payload.get("analyze_report_path")),
+            "formatting_review": status == "completed" and job.job_kind in {"translate", "rebuild"}
+                and job._reviewed_source_context is not None and job._reviewed_source_loader is not None,
         }
 
     def _snapshot(self, job: _ManagedTranslationJob) -> dict[str, Any]:
@@ -1089,16 +1167,19 @@ class TranslationJobManager:
             "progress": dict(job.progress_payload),
             "diagnostics": dict(job.diagnostics_payload),
             "logs": list(job.log_tail),
-            "artifacts": dict(job.artifacts_payload),
+            "artifacts": deepcopy(job.artifacts_payload),
             "result": dict(job.result_payload),
             "actions": self._job_actions(job),
         }
 
-    def list_jobs(self, *, runtime_mode: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    def list_jobs(self, *, runtime_mode: str | None = None, workspace_id: str | None = None,
+                  limit: int = 20) -> list[dict[str, Any]]:
         with self._lock:
             jobs = list(self._jobs.values())
         if runtime_mode is not None:
             jobs = [job for job in jobs if job.runtime_mode == runtime_mode]
+        if workspace_id is not None:
+            jobs = [job for job in jobs if job.workspace_id == workspace_id]
         jobs.sort(key=lambda job: job.updated_at, reverse=True)
         return [self._snapshot(job) for job in jobs[: max(1, int(limit))]]
 
@@ -1232,7 +1313,14 @@ class TranslationJobManager:
         workspace_id: str,
         config: RunConfig,
         settings_path: Path,
+        reviewed_source_context: Any = None,
+        reviewed_source_loader: Callable[[], Any] | None = None,
     ) -> dict[str, Any]:
+        if reviewed_source_context is not None:
+            from .ordinary_reviewed_source import OrdinaryReviewedSourceContext
+            if (job_kind not in {"translate", "rebuild"} or type(reviewed_source_context) is not OrdinaryReviewedSourceContext
+                    or not callable(reviewed_source_loader)):
+                raise ValueError("ordinary_source_review_job_context_invalid")
         reservation_key = _run_dir_key(
             build_run_paths(
                 config.output_dir,
@@ -1265,6 +1353,9 @@ class TranslationJobManager:
             diagnostics_payload={},
             _config=config,
             _reservation_key=reservation_key,
+            _reviewed_source_context=reviewed_source_context,
+            _reviewed_source_loader=reviewed_source_loader,
+            _reviewed_settings_path=settings_path.expanduser().resolve() if reviewed_source_context is not None else None,
         )
         with self._lock:
             self._jobs[job_id] = record
@@ -1272,11 +1363,18 @@ class TranslationJobManager:
 
         def _run_job() -> None:
             try:
+                selected_context = None
+                if reviewed_source_context is not None:
+                    from .ordinary_reviewed_source import OrdinaryReviewedSourceContext
+                    selected_context = reviewed_source_loader()
+                    if (type(selected_context) is not OrdinaryReviewedSourceContext
+                            or selected_context.identity != reviewed_source_context.identity):
+                        raise ValueError("ordinary_source_review_job_context_changed")
+                gui_settings = load_gui_settings_from_path(settings_path)
                 if job_kind == "translate":
-                    gui_settings = load_gui_settings_from_path(settings_path)
                     max_retries = int(gui_settings.get("perf_max_transport_retries", 4) or 4)
                     backoff_cap = float(gui_settings.get("perf_backoff_cap_seconds", 12.0) or 12.0)
-                    client = OpenAIResponsesClient(
+                    client = None if selected_context is not None else OpenAIResponsesClient(
                         max_transport_retries=max_retries,
                         backoff_cap_seconds=backoff_cap,
                         logger=lambda message: self._append_log(job_id, message),
@@ -1287,6 +1385,8 @@ class TranslationJobManager:
                         client=client,
                         log_callback=lambda message: self._append_log(job_id, message),
                         progress_callback=lambda idx, total, status: self._update_progress(job_id, idx, total, status),
+                        gui_settings=gui_settings,
+                        **({"reviewed_source_context": selected_context} if selected_context is not None else {}),
                     )
                     self._mark_running(job_id, workflow, "Translating...")
                     summary = workflow.run(config)
@@ -1316,7 +1416,10 @@ class TranslationJobManager:
                 if job_kind == "analyze":
                     from .workflow import TranslationWorkflow
 
-                    workflow = TranslationWorkflow(log_callback=lambda message: self._append_log(job_id, message))
+                    workflow = TranslationWorkflow(
+                        log_callback=lambda message: self._append_log(job_id, message),
+                        gui_settings=gui_settings,
+                    )
                     self._mark_running(job_id, workflow, "Analyzing...")
                     summary = workflow.analyze(config)
                     analysis = _analysis_payload(summary)
@@ -1338,7 +1441,11 @@ class TranslationJobManager:
 
                 from .workflow import TranslationWorkflow
 
-                workflow = TranslationWorkflow(log_callback=lambda message: self._append_log(job_id, message))
+                workflow = TranslationWorkflow(
+                    log_callback=lambda message: self._append_log(job_id, message),
+                    gui_settings=gui_settings,
+                    **({"reviewed_source_context": selected_context} if selected_context is not None else {}),
+                )
                 self._mark_running(job_id, workflow, "Rebuilding DOCX...")
                 output_docx = workflow.rebuild_docx(config)
                 run_dir = build_run_paths(
@@ -1365,7 +1472,8 @@ class TranslationJobManager:
                     job_id=job_id,
                     status="failed",
                     status_text=f"{job_kind.title()} failed",
-                    diagnostics={"error": str(exc), "kind": job_kind},
+                    diagnostics={"error": ("ordinary_source_review_job_failed" if reviewed_source_context is not None
+                                           else str(exc)), "kind": job_kind},
                     result={},
                     artifacts={},
                 )
@@ -1408,6 +1516,24 @@ class TranslationJobManager:
             settings_path=settings_path,
         )
 
+    def start_reviewed_translate(self, *, runtime_mode: str, workspace_id: str, config: RunConfig,
+            settings_path: Path, reviewed_source_context: Any,
+            reviewed_source_loader: Callable[[], Any]) -> dict[str, Any]:
+        """Explicit backend-only selection; existing form payloads stay unchanged.
+
+        The browser bridge owns scope/config and an exact revision loader. The
+        loader is called again in the background before any client construction.
+        Workflow revalidates source/resume under its run lock before auth/send.
+        """
+        if runtime_mode not in {"live", "shadow"} or not isinstance(workspace_id, str) or not workspace_id.strip():
+            raise ValueError("ordinary_source_review_job_owner_invalid")
+        if (type(config) is not RunConfig or not isinstance(settings_path, Path)
+                or reviewed_source_context is None or not callable(reviewed_source_loader)):
+            raise ValueError("ordinary_source_review_job_context_invalid")
+        return self._start_job(job_kind="translate", runtime_mode=runtime_mode, workspace_id=workspace_id,
+            config=deepcopy(config), settings_path=settings_path,
+            reviewed_source_context=reviewed_source_context, reviewed_source_loader=reviewed_source_loader)
+
     def resume_job(self, *, job_id: str, settings_path: Path) -> dict[str, Any]:
         with self._lock:
             existing = self._jobs.get(job_id)
@@ -1415,15 +1541,22 @@ class TranslationJobManager:
                 raise ValueError("Translation job is unavailable for resume.")
             if existing.job_kind != "translate" or existing.status not in {"failed", "cancelled"}:
                 raise ValueError("Only failed or cancelled translation jobs can be resumed.")
-            config = existing._config
+            config = replace(existing._config, resume=True)
             runtime_mode = existing.runtime_mode
             workspace_id = existing.workspace_id
+            reviewed_options = {}
+            if existing._reviewed_source_context is not None:
+                if settings_path.expanduser().resolve() != existing._reviewed_settings_path:
+                    raise ValueError("ordinary_source_review_job_owner_changed")
+                reviewed_options = {"reviewed_source_context": existing._reviewed_source_context,
+                                    "reviewed_source_loader": existing._reviewed_source_loader}
         return self._start_job(
             job_kind="translate",
             runtime_mode=runtime_mode,
             workspace_id=workspace_id,
             config=config,
             settings_path=settings_path,
+            **reviewed_options,
         )
 
     def rebuild_job(self, *, job_id: str, settings_path: Path) -> dict[str, Any]:
@@ -1434,12 +1567,19 @@ class TranslationJobManager:
             config = existing._config
             runtime_mode = existing.runtime_mode
             workspace_id = existing.workspace_id
+            reviewed_options = {}
+            if existing._reviewed_source_context is not None:
+                if settings_path.expanduser().resolve() != existing._reviewed_settings_path:
+                    raise ValueError("ordinary_source_review_job_owner_changed")
+                reviewed_options = {"reviewed_source_context": existing._reviewed_source_context,
+                                    "reviewed_source_loader": existing._reviewed_source_loader}
         return self._start_job(
             job_kind="rebuild",
             runtime_mode=runtime_mode,
             workspace_id=workspace_id,
             config=config,
             settings_path=settings_path,
+            **reviewed_options,
         )
 
     def generate_run_report(self, *, job_id: str, settings_path: Path) -> dict[str, Any]:
@@ -1505,6 +1645,113 @@ class TranslationJobManager:
         if not resolved.exists() or not resolved.is_file():
             raise ValueError(f"Artifact path is unavailable: {resolved}")
         return resolved
+
+    def trusted_formatting_job(self, *, job_id, runtime_mode, workspace_id, settings_path):
+        """Resolve a completed job and reload its exact retained source review."""
+        from .ordinary_reviewed_source import OrdinaryReviewedSourceContext
+        try:
+            if (type(job_id) is not str or re.fullmatch(r"tx-[a-f0-9]{12}", job_id) is None
+                    or runtime_mode not in {"live", "shadow"}
+                    or type(workspace_id) is not str or not workspace_id
+                    or not isinstance(settings_path, Path)):
+                raise ValueError
+            path = settings_path.expanduser().resolve(strict=True)
+            with self._lock:
+                job = self._jobs.get(job_id)
+                if (job is None or job.job_id != job_id or job.runtime_mode != runtime_mode
+                        or job.workspace_id != workspace_id or job.status != "completed"
+                        or job.job_kind not in {"translate", "rebuild"}
+                        or type(job._config) is not RunConfig
+                        or type(job._reviewed_source_context) is not OrdinaryReviewedSourceContext
+                        or not callable(job._reviewed_source_loader)
+                        or job._reviewed_settings_path != path):
+                    raise ValueError
+                config = deepcopy(job._config)
+                config_json = _formatting_json(asdict(config))
+                identity = job._reviewed_source_context.identity
+                loader = job._reviewed_source_loader
+                run_dir = build_run_paths(config.output_dir, config.pdf_path, config.target_lang,
+                    gmail_batch_context=config.gmail_batch_context).run_dir.resolve(strict=True)
+                if Path(job.artifacts_payload.get("run_dir", "")).resolve() != run_dir:
+                    raise ValueError
+            # Storage checks may be expensive; never run them while holding the job mutex.
+            fresh = loader()
+            if type(fresh) is not OrdinaryReviewedSourceContext or fresh.identity != identity:
+                raise ValueError
+            fresh.source_guard()
+            with self._lock:
+                if (self._jobs.get(job_id) is not job or job.job_id != job_id or job.status != "completed"
+                        or job.job_kind not in {"translate", "rebuild"}
+                        or job.runtime_mode != runtime_mode or job.workspace_id != workspace_id
+                        or job._reviewed_settings_path != path or job._reviewed_source_loader is not loader
+                        or _formatting_json(asdict(job._config)) != config_json
+                        or job._reviewed_source_context.identity != identity
+                        or Path(job.artifacts_payload.get("run_dir", "")).resolve() != run_dir):
+                    raise ValueError
+            owner = {"job_id": job_id, "runtime_mode": runtime_mode, "workspace_id": workspace_id,
+                "settings_path": str(path), "run_dir": str(run_dir), "source_context": identity,
+                "config_sha256": hashlib.sha256(config_json.encode("utf-8")).hexdigest()}
+            return TrustedFormattingJob(config, fresh, path, run_dir, _formatting_json(owner))
+        except RunWorkspaceBusy:
+            raise
+        except Exception:
+            raise ValueError("formatting_job_unavailable") from None
+
+    def register_reviewed_formatting_artifact(self, *, trusted, record):
+        """Register a separate exact reviewed derivative without selecting it."""
+        try:
+            if type(trusted) is not TrustedFormattingJob:
+                raise ValueError
+            owner = json.loads(trusted.owner_json)
+            fresh = self.trusted_formatting_job(job_id=owner["job_id"], runtime_mode=owner["runtime_mode"],
+                workspace_id=owner["workspace_id"], settings_path=trusted.settings_path)
+            if fresh.owner_json != trusted.owner_json:
+                raise ValueError
+            if (type(record) is not dict or set(record) != {"artifact_id", "review_id", "revision_id", "files"}
+                    or any(type(record[k]) is not str or re.fullmatch(r"[a-f0-9]{32}", record[k]) is None
+                           for k in ("artifact_id", "review_id", "revision_id"))
+                    or set(record["files"]) != {"output_docx", "source_map", "assembly_receipt"}):
+                raise ValueError
+            docx = Path(record["files"]["output_docx"]["path"])
+            expected = {"output_docx": docx, "source_map": docx.with_suffix(".source_map.json"),
+                        "assembly_receipt": docx.with_suffix(".formatting_assembly.json")}
+            if docx.suffix != ".docx" or docx.parent != fresh.config.output_dir.resolve(strict=True):
+                raise ValueError
+            for kind, row in record["files"].items():
+                if set(row) != {"path", "sha256", "size"} or Path(row["path"]) != expected[kind]:
+                    raise ValueError
+                maximum = {"output_docx": 32, "source_map": 128, "assembly_receipt": 8}[kind] * 1024 * 1024
+                raw = read_reviewed_formatting_file(expected[kind], maximum=maximum)
+                if (type(row["size"]) is not int or row["size"] != len(raw)
+                        or row["sha256"] != hashlib.sha256(raw).hexdigest()):
+                    raise ValueError
+            public = {k: record[k] for k in ("artifact_id", "review_id", "revision_id")}
+            public["kinds"] = ["output_docx", "source_map", "assembly_receipt"]
+            with self._lock:
+                job = self._jobs[owner["job_id"]]
+                if (job.job_id != owner["job_id"] or job.status != "completed" or job.runtime_mode != owner["runtime_mode"]
+                        or job.workspace_id != owner["workspace_id"]
+                        or job._reviewed_settings_path != trusted.settings_path
+                        or hashlib.sha256(_formatting_json(asdict(job._config)).encode("utf-8")).hexdigest()
+                            != owner["config_sha256"]
+                        or job._reviewed_source_context.identity != owner["source_context"]):
+                    raise ValueError
+                rows = job.artifacts_payload.setdefault("reviewed_formatting", [])
+                record_json = _formatting_json(record)
+                retained = job._reviewed_formatting_records.get(record["artifact_id"])
+                if retained is not None and retained != record_json:
+                    raise ValueError
+                matching = [r for r in rows if r.get("artifact_id") == record["artifact_id"]]
+                if matching and (len(matching) != 1 or _formatting_json(matching[0]) != _formatting_json(public)):
+                    raise ValueError
+                if not matching:
+                    if len(rows) >= 256:
+                        raise ValueError
+                    rows.append(deepcopy(public))
+                job._reviewed_formatting_records[record["artifact_id"]] = record_json
+                return deepcopy(public)
+        except Exception:
+            raise ValueError("formatting_job_artifact_unavailable") from None
 
 
 __all__ = [

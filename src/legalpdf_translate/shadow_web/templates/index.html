@@ -523,10 +523,14 @@
             </details>
           </div>
 
+          <section class="panel workspace-panel source-review-panel" id="translation-source-review-panel" hidden aria-label="Explicit source review"></section>
+          <section class="panel workspace-panel formatting-review-panel" id="translation-formatting-review-panel" hidden aria-label="Explicit formatting review"></section>
+
           <div class="panel workspace-panel workspace-action-rail">
             <p class="workspace-action-helper" id="translation-action-helper">Choose a PDF or image to enable Start Translate.</p>
             <div class="workspace-action-buttons simple-action-buttons">
               <button type="button" class="primary-button" id="translation-start">Start Translate</button>
+              <button type="button" id="translation-source-review-prepare" disabled>Review source before translating</button>
               <button type="button" id="translation-cancel">Cancel</button>
               <details class="action-overflow-menu">
                 <summary id="translation-overflow-toggle">...</summary>
@@ -534,6 +538,7 @@
                   <button type="button" id="translation-analyze">Analyze Only</button>
                   <button type="button" id="translation-resume-btn">Resume Translation</button>
                   <button type="button" id="translation-rebuild">Rebuild DOCX</button>
+                  <button type="button" id="translation-formatting-review-prepare" disabled>Review DOCX formatting</button>
                 </div>
               </details>
             </div>

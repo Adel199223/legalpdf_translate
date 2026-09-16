@@ -178,6 +178,21 @@ $fullExtraCommands = @(
     @{
         Executable = $venvPython
         Arguments = @("-m", "pytest", "-q", "tests/test_gmail_intake.py", "-k", "browser_pdf or runtime_guard or review")
+    },
+    @{
+        Executable = $venvPython
+        Arguments = @("-m", "pytest", "-q",
+            "tests/test_source_review_candidate.py", "tests/test_ordinary_reviewed_source.py",
+            "tests/test_ordinary_source_review_service.py", "tests/test_ordinary_source_bounded_reads.py",
+            "tests/test_browser_source_review.py", "tests/test_shadow_web_source_review_api.py",
+            "tests/test_source_review_browser_state.py")
+    },
+    @{
+        Executable = $venvPython
+        Arguments = @("-m", "pytest", "-q",
+            "tests/test_ordinary_formatting_review_service.py", "tests/test_ordinary_formatting_options.py",
+            "tests/test_browser_formatting_review.py", "tests/test_shadow_web_formatting_review_api.py",
+            "tests/test_formatting_review_browser_state.py", "tests/test_formatting_review_cli.py")
     }
 )
 

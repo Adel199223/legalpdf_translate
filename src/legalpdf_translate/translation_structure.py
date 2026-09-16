@@ -31,7 +31,8 @@ _COMMON = (
     "dates, times and legal references with their original associations. Do not summarise, "
     "invent content, resolve contradictions or substitute another jurisdiction's law. "
     "Neighboring fragments are context only, not assigned translation. Return only the requested "
-    "JSON with unchanged IDs and translated text; no notes, new headings or page numbers. "
+    "JSON with unchanged IDs and translated text; no translator notes or invented headings or page numbers. "
+    "Preserve headings and page-number text present in the assigned source. "
     "Keep meaningful paragraph and list boundaries within each assigned block. "
 )
 _LANGUAGE = {

@@ -21,7 +21,9 @@ def forbidden(*args, **kwargs):
 
 @pytest.fixture
 def case(tmp_path, monkeypatch):
-    for name in ("OpenAIResponsesClient", "extract_ordered_page_text", "build_ocr_engine",
+    # Preserve the class for Workflow's isinstance check while forbidding creation.
+    monkeypatch.setattr(workflow_module.OpenAIResponsesClient, "__init__", forbidden)
+    for name in ("extract_ordered_page_text", "build_ocr_engine",
                  "run_translation_auth_test", "resolve_openai_key_with_source", "load_environment"):
         monkeypatch.setattr(workflow_module, name, forbidden)
     monkeypatch.setattr(integration, "_render_source", forbidden)

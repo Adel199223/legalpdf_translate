@@ -28,12 +28,12 @@ def test_format_identity_uses_only_format_controls_and_does_not_mutate_config():
     assert formatting_fingerprint(config) != original
 
 
-@pytest.mark.parametrize("previous_profile", ["compact_legal_v9_source_folio_spacing", "compact_legal_v10_isolated_contact_footer"])
-def test_clock_profile_invalidates_format_only(monkeypatch, previous_profile):
+@pytest.mark.parametrize("previous_profile", ["compact_legal_v9_source_folio_spacing", "compact_legal_v10_isolated_contact_footer", "compact_legal_v11_atomic_clock_runs"])
+def test_numeric_slash_profile_invalidates_format_only(monkeypatch, previous_profile):
     import legalpdf_translate.formatting_support as support
     config = SimpleNamespace(target_lang=TargetLang.AR, page_breaks=False, strip_bidi_controls=True,
                              model="retained-model", effort="high")
-    assert support.LAYOUT_PROFILE_VERSION == "compact_legal_v11_atomic_clock_runs"
+    assert support.LAYOUT_PROFILE_VERSION == "compact_legal_v12_atomic_numeric_slash_runs"
     fresh = support.formatting_fingerprint(config)
     before = vars(config).copy()
     monkeypatch.setattr(support, "LAYOUT_PROFILE_VERSION", previous_profile)

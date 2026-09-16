@@ -131,7 +131,7 @@ def test_derivation_version_invalidates_old_layout_without_retranslation(tmp_pat
     pdf, source, pages, txt, target = _case(tmp_path)
     originals = {p: p.read_bytes() for p in pages.iterdir()}
     current = integration.LAYOUT_DERIVATION_VERSION
-    assert current == "source_regions_v4"
+    assert current == "source_regions_v5"
     monkeypatch.setattr(integration, "LAYOUT_DERIVATION_VERSION", "source_regions_v2")
     prepare_layout_rebuild(pages, pdf, cache_dir=tmp_path / "cache")
     monkeypatch.setattr(integration, "LAYOUT_DERIVATION_VERSION", current)

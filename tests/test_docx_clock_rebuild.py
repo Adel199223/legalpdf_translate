@@ -42,7 +42,8 @@ def no_external_work(monkeypatch):
                      "ocr_source_page_crop_text", "render_page_png", "render_image_png"):
             if hasattr(module, name):
                 monkeypatch.setattr(module, name, forbidden)
-    monkeypatch.setattr(workflow_module, "OpenAIResponsesClient", forbidden)
+    # Keep the class identity used by Workflow's isinstance check; construction
+    # itself remains forbidden through the original class below.
     monkeypatch.setattr(openai_client.OpenAIResponsesClient, "__init__", forbidden)
     for name in ("LocalTesseractEngine", "ApiOcrEngine", "GeminiApiOcrEngine"):
         monkeypatch.setattr(getattr(ocr_engine, name), "__init__", forbidden)
@@ -171,10 +172,10 @@ def test_clock_profile_change_does_not_invalidate_translation_identity(
                    glossary=[], tiers=[1], addendum="", context_hash="retained-context",
                    structured=structured, extraction_identity={"retained": "extraction"},
                    evaluation_identity={"retained": "evaluation"})
-    assert formatting_support.LAYOUT_PROFILE_VERSION == "compact_legal_v11_atomic_clock_runs"
+    assert formatting_support.LAYOUT_PROFILE_VERSION == "compact_legal_v12_atomic_numeric_slash_runs"
     current_format = formatting_support.formatting_fingerprint(config)
     current_translation = translation_fingerprint(**request)
-    monkeypatch.setattr(formatting_support, "LAYOUT_PROFILE_VERSION", "compact_legal_v10_isolated_contact_footer")
+    monkeypatch.setattr(formatting_support, "LAYOUT_PROFILE_VERSION", "compact_legal_v11_atomic_clock_runs")
     assert formatting_support.formatting_fingerprint(config) != current_format
     assert translation_fingerprint(**request) == current_translation
     assert not config.pdf_path.exists() and not config.output_dir.exists()

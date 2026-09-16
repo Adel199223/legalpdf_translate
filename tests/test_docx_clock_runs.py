@@ -83,7 +83,8 @@ def test_no_numeric_grouping_across_whitespace_only_boundary():
     runs, _ = _segment_rtl_placeholder_aware_runs("الموعد [[09]] [[30]] ثم [[14]]/[[2]]", strip_bidi_controls=True)
     assert ("ltr", "09 30") not in runs
     assert ("rtl", " ") in runs
-    assert any(kind == "rtl" and "/" in chunk for kind, chunk in runs)
+    # Closed numeric references have their own independent slash rule.
+    assert ("ltr", "14/2") in runs
 
 
 @pytest.mark.parametrize("value", ["[[09]]:[[30]", "[[09]]:30]]"])

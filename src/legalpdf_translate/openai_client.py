@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import math
+import hashlib
+import json
 import os
 import random
 import time
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from email.utils import parsedate_to_datetime
@@ -23,6 +25,10 @@ from openai import (
 
 from .config import OPENAI_MODEL, OPENAI_STORE
 from .secrets_store import get_ocr_key, get_openai_key
+from .usage_accounting import MemoryDispatchAccounting, current_accounting_binding
+
+_AUTH_TEST_ACCOUNTING = MemoryDispatchAccounting()
+_TRANSLATION_MODELS = frozenset({"gpt-5.2", "gpt-5.6-terra", "gpt-5.6-sol"})
 
 
 @dataclass(slots=True)
@@ -156,31 +162,82 @@ class OpenAIResponsesClient:
         self,
         api_key: str | None = None,
         *,
+        model: str = OPENAI_MODEL,
         max_transport_retries: int = 4,
         base_backoff_seconds: float = 1.0,
         backoff_cap_seconds: float = 12.0,
         pre_call_jitter_seconds: float = 0.8,
         request_timeout_seconds: float = 180.0,
         logger: Callable[[str], None] | None = None,
+        sdk_client: Any | None = None,
     ) -> None:
-        resolved_api_key, credential_source = resolve_openai_key_with_source(api_key)
-        if not resolved_api_key:
-            raise ValueError("OpenAI API key is not configured.")
-        self._client = OpenAI(api_key=resolved_api_key, max_retries=0)
-        self._credential_source = credential_source
+        # Explicit selection is per client; ordinary callers retain their default.
+        # Reject aliases/typos rather than silently choosing a different model.
+        if not isinstance(model, str) or model not in _TRANSLATION_MODELS:
+            raise ValueError("An explicitly supported translation model is required.")
+        self._model = model
+        if sdk_client is None:
+            resolved_api_key, credential_source = resolve_openai_key_with_source(api_key)
+            if not resolved_api_key:
+                raise ValueError("OpenAI API key is not configured.")
+            self._client = OpenAI(api_key=resolved_api_key, max_retries=0)
+            self._credential_source = credential_source
+        else:
+            # Injected transports are already configured. Never consult ambient
+            # credentials while constructing an isolated caller or its workers.
+            with_options = getattr(sdk_client, "with_options", None)
+            self._client = with_options(max_retries=0) if callable(with_options) else sdk_client
+            self._credential_source = OpenAICredentialSourceInfo(kind="injected")
         self._max_transport_retries = max(0, int(max_transport_retries))
         self._base_backoff_seconds = base_backoff_seconds
         self._backoff_cap_seconds = max(1.0, backoff_cap_seconds)
         self._pre_call_jitter_seconds = max(0.0, pre_call_jitter_seconds)
         self._request_timeout_seconds = max(5.0, request_timeout_seconds)
         self._logger = logger
+        self._dispatch_accounting = MemoryDispatchAccounting()
+
+    @property
+    def model(self) -> str:
+        """The requested translation model, independent of returned snapshots."""
+        return self._model
+
+    def clone(self, *, logger: Callable[[str], None] | None = None) -> OpenAIResponsesClient:
+        """Keep the exact configured transport and retry policy in worker clients."""
+        cloned = copy(self)
+        if logger is not None:
+            cloned._logger = logger
+        return cloned
+
+    def local_credential_preflight(self) -> TranslationAuthTestResult:
+        """Check local configuration only; the first work request proves auth."""
+        return TranslationAuthTestResult(
+            ok=True,
+            status="ok",
+            message="OpenAI credentials are configured locally; provider authorization is not yet tested.",
+            credential_source=self._credential_source,
+        )
 
     def run_translation_auth_test(self, *, timeout_seconds: float = 20.0) -> TranslationAuthTestResult:
         return _run_translation_auth_test_request(
             client=self._client,
             credential_source=self._credential_source,
             timeout_seconds=timeout_seconds,
+            accountant=self._dispatch_accounting,
         )
+
+    def prepare_page_request(
+        self, *, instructions: str, prompt_text: str, effort: str,
+        image_data_url: str | None = None, image_detail: str = "low",
+        response_format: dict[str, Any] | None = None, max_output_tokens: int | None = None,
+        timeout_seconds: float | None = None, cancel_check: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        """Pure preparation of the exact bounded request; never dispatch/approve it."""
+        request = _build_page_request(instructions=instructions, prompt_text=prompt_text,
+            effort=effort, image_data_url=image_data_url, image_detail=image_detail,
+            response_format=response_format, max_output_tokens=max_output_tokens, model=self.model)
+        active = _active_accountant(self._dispatch_accounting)
+        _, limits = _dispatch_limits(active, provider="openai", purpose=None, model=request["model"])
+        return _apply_openai_dispatch_limits(request, active, limits)
 
     def create_page_response(
         self,
@@ -211,21 +268,9 @@ class OpenAIResponsesClient:
             or not isinstance(response_format.get("name"), str) or not response_format["name"]
         ):
             raise ValueError("A strict named JSON-schema response format is required.")
-        request_options: dict[str, Any] = {}
-        if response_format is not None:
-            request_options["text"] = {"format": deepcopy(response_format)}
-        if max_output_tokens is not None:
-            request_options["max_output_tokens"] = max_output_tokens
-        content: list[dict[str, Any]] = [{"type": "input_text", "text": prompt_text}]
-        if image_data_url:
-            content.append(
-                {
-                    "type": "input_image",
-                    "image_url": image_data_url,
-                    "detail": image_detail,
-                }
-            )
-        user_input = [{"role": "user", "content": content}]
+        page_request = _build_page_request(instructions=instructions, prompt_text=prompt_text,
+            effort=effort, image_data_url=image_data_url, image_detail=image_detail,
+            response_format=response_format, max_output_tokens=max_output_tokens, model=self.model)
 
         last_error: Exception | None = None
         transport_retries_count = 0
@@ -238,7 +283,7 @@ class OpenAIResponsesClient:
         response_status = ""
         refused = False
         incomplete_reason: str | None = None
-        actual_model = OPENAI_MODEL
+        actual_model = self.model
         overall_timeout_seconds = (
             float(timeout_seconds)
             if timeout_seconds is not None
@@ -292,7 +337,7 @@ class OpenAIResponsesClient:
             dispatched = False
             recorded = False
             usage, response_id, response_status = {}, None, ""
-            refused, incomplete_reason, actual_model = False, None, OPENAI_MODEL
+            refused, incomplete_reason, actual_model = False, None, self.model
             try:
                 if self._pre_call_jitter_seconds > 0:
                     jitter_seconds = min(random.uniform(0.0, self._pre_call_jitter_seconds), remaining_budget)
@@ -300,18 +345,16 @@ class OpenAIResponsesClient:
                         _sleep(jitter_seconds)
                 remaining_budget = _check_deadline()
                 dispatched = True
-                response = self._client.responses.create(
-                    model=OPENAI_MODEL,
-                    instructions=instructions,
-                    input=user_input,
-                    reasoning={"effort": effort},
-                    store=OPENAI_STORE,
+                response = _accounted_openai_create(
+                    client=self._client, accountant=self._dispatch_accounting,
+                    attempt=attempt + 1,
+                    before_dispatch=_check_deadline,
                     timeout=max(0.1, remaining_budget),
-                    **request_options,
+                    **page_request,
                 )
                 usage = _extract_usage(response)
                 response_id = _field(response, "id")
-                actual_model = _field(response, "model") or OPENAI_MODEL
+                actual_model = _field(response, "model") or self.model
                 response_status = _field(response, "status") or ("" if response_format is not None else "completed")
                 reason = _field(_field(response, "incomplete_details"), "reason")
                 # Preserve only documented content-free status detail, not an arbitrary provider string.
@@ -348,11 +391,13 @@ class OpenAIResponsesClient:
             except Exception as exc:  # noqa: BLE001
                 if isinstance(exc, ApiCallError):
                     raise
-                if dispatched and not recorded:
-                    error_response = getattr(exc, "response", None)
+                if dispatched and not recorded and not getattr(exc, "_legalpdf_not_dispatched", False):
+                    error_response = _error_response(exc)
                     usage = _extract_usage(error_response) if error_response is not None else {}
-                    attempt_usage.append({"attempt": attempt + 1, "usage": dict(usage), "response_id": None,
-                                          "model": OPENAI_MODEL, "effort": effort, "status": "transport_failed"})
+                    response_id = _field(error_response, "id")
+                    actual_model = _field(error_response, "model") or self.model
+                    attempt_usage.append({"attempt": attempt + 1, "usage": dict(usage), "response_id": response_id,
+                                          "model": actual_model, "effort": effort, "status": "transport_failed"})
                 last_error = exc
                 status_code = _status_code_from_exception(exc)
                 if status_code == 429 or isinstance(exc, RateLimitError):
@@ -365,6 +410,8 @@ class OpenAIResponsesClient:
                 # without a response. It must not silently authorize another call.
                 if response_format is not None and status_code != 429:
                     raise _failure(type(exc).__name__, "Structured response transport failed with uncertain completion; no retry dispatched.", status_code) from exc
+                if not _active_accountant(self._dispatch_accounting).can_retry:
+                    raise _failure(type(exc).__name__, "Provider completion is uncertain; the hard-budget hold prevents another attempt.", status_code) from exc
                 _check_cancel()
                 retry_after = _retry_after_seconds(exc)
                 sleep_seconds = _compute_sleep_seconds(
@@ -416,6 +463,10 @@ class OpenAIResponsesClient:
         last_backoff_seconds = 0.0
         total_backoff_seconds = 0.0
         rate_limit_hit = False
+        attempt_usage: list[dict[str, Any]] = []
+        usage: dict[str, Any] = {}
+        response_id: str | None = None
+        actual_model = self.model
         overall_timeout_seconds = (
             float(timeout_seconds)
             if timeout_seconds is not None
@@ -427,8 +478,22 @@ class OpenAIResponsesClient:
         def _remaining_budget_seconds() -> float:
             return max(0.0, overall_timeout_seconds - (time.perf_counter() - started_at))
 
+        def _before_dispatch() -> float:
+            remaining = _remaining_budget_seconds()
+            if remaining <= 0.0:
+                raise _budget_exhausted_error(
+                    transport_retries_count=transport_retries_count,
+                    last_backoff_seconds=last_backoff_seconds,
+                    total_backoff_seconds=total_backoff_seconds,
+                    rate_limit_hit=rate_limit_hit, budget_seconds=overall_timeout_seconds,
+                    attempt_usage=attempt_usage, model=self.model, effort=effort,
+                )
+            return remaining
+
         # max_transport_retries is "retries after the first call"; always attempt at least once.
         for attempt in range(self._max_transport_retries + 1):
+            response = None
+            dispatched = False
             remaining_budget = _remaining_budget_seconds()
             if remaining_budget <= 0.0:
                 raise _budget_exhausted_error(
@@ -437,6 +502,7 @@ class OpenAIResponsesClient:
                     total_backoff_seconds=total_backoff_seconds,
                     rate_limit_hit=rate_limit_hit,
                     budget_seconds=overall_timeout_seconds,
+                    attempt_usage=attempt_usage, model=self.model, effort=effort,
                 )
             try:
                 if self._pre_call_jitter_seconds > 0:
@@ -451,25 +517,44 @@ class OpenAIResponsesClient:
                             total_backoff_seconds=total_backoff_seconds,
                             rate_limit_hit=rate_limit_hit,
                             budget_seconds=overall_timeout_seconds,
+                            attempt_usage=attempt_usage, model=self.model, effort=effort,
                         )
-                response = self._client.responses.create(
-                    model=OPENAI_MODEL,
+                dispatched = True
+                response = _accounted_openai_create(
+                    client=self._client, accountant=self._dispatch_accounting,
+                    attempt=attempt + 1,
+                    before_dispatch=_before_dispatch,
+                    model=self.model,
                     instructions=instructions,
                     input=user_input,
                     reasoning={"effort": effort},
                     store=OPENAI_STORE,
                     timeout=max(0.1, remaining_budget),
                 )
+                usage = _extract_usage(response)
+                response_id = _field(response, "id")
+                actual_model = _field(response, "model") or self.model
+                output = _extract_output_text(response)
+                attempt_usage.append({"attempt": attempt + 1, "usage": dict(usage), "response_id": response_id,
+                                      "model": actual_model, "effort": effort, "status": "completed"})
                 return ApiCallResult(
-                    raw_output=_extract_output_text(response),
-                    usage=_extract_usage(response),
-                    response_id=getattr(response, "id", None),
+                    raw_output=output,
+                    usage=usage,
+                    response_id=response_id,
                     transport_retries_count=transport_retries_count,
                     last_backoff_seconds=last_backoff_seconds,
                     total_backoff_seconds=total_backoff_seconds,
                     rate_limit_hit=rate_limit_hit,
+                    model=actual_model, effort=effort, attempt_usage=deepcopy(attempt_usage),
                 )
             except Exception as exc:  # noqa: BLE001
+                if dispatched and not getattr(exc, "_legalpdf_not_dispatched", False):
+                    evidence = response if response is not None else _error_response(exc)
+                    usage = _extract_usage(evidence)
+                    response_id = _field(evidence, "id")
+                    actual_model = _field(evidence, "model") or self.model
+                    attempt_usage.append({"attempt": attempt + 1, "usage": dict(usage), "response_id": response_id,
+                                          "model": actual_model, "effort": effort, "status": "transport_failed"})
                 last_error = exc
                 status_code = _status_code_from_exception(exc)
                 if status_code == 429 or isinstance(exc, RateLimitError):
@@ -483,6 +568,18 @@ class OpenAIResponsesClient:
                         last_backoff_seconds=last_backoff_seconds,
                         total_backoff_seconds=total_backoff_seconds,
                         rate_limit_hit=rate_limit_hit,
+                        usage=usage, response_id=response_id, model=actual_model, effort=effort,
+                        attempt_usage=deepcopy(attempt_usage),
+                    ) from exc
+                if not _active_accountant(self._dispatch_accounting).can_retry:
+                    raise ApiCallError(
+                        message="Provider completion is uncertain; the hard-budget hold prevents another attempt.",
+                        status_code=status_code, exception_class=type(exc).__name__,
+                        transport_retries_count=transport_retries_count,
+                        last_backoff_seconds=last_backoff_seconds,
+                        total_backoff_seconds=total_backoff_seconds, rate_limit_hit=rate_limit_hit,
+                        usage=usage, response_id=response_id, model=actual_model, effort=effort,
+                        attempt_usage=deepcopy(attempt_usage),
                     ) from exc
                 retry_after = _retry_after_seconds(exc)
                 sleep_seconds = _compute_sleep_seconds(
@@ -500,6 +597,7 @@ class OpenAIResponsesClient:
                         total_backoff_seconds=total_backoff_seconds,
                         rate_limit_hit=rate_limit_hit,
                         budget_seconds=overall_timeout_seconds,
+                        attempt_usage=attempt_usage, model=self.model, effort=effort,
                     ) from exc
                 if self._logger:
                     self._logger(
@@ -522,6 +620,9 @@ def _budget_exhausted_error(
     total_backoff_seconds: float,
     rate_limit_hit: bool,
     budget_seconds: float,
+    attempt_usage: list[dict[str, Any]] | None = None,
+    model: str = "",
+    effort: str = "",
 ) -> ApiCallError:
     return ApiCallError(
         message=(
@@ -534,6 +635,8 @@ def _budget_exhausted_error(
         last_backoff_seconds=last_backoff_seconds,
         total_backoff_seconds=total_backoff_seconds,
         rate_limit_hit=rate_limit_hit,
+        attempt_usage=deepcopy(attempt_usage or []),
+        model=model, effort=effort,
     )
 
 
@@ -542,10 +645,12 @@ def _run_translation_auth_test_request(
     client: OpenAI,
     credential_source: OpenAICredentialSourceInfo | None,
     timeout_seconds: float,
+    accountant: Any | None = None,
 ) -> TranslationAuthTestResult:
     started = time.perf_counter()
     try:
-        client.responses.create(
+        _accounted_openai_create(
+            client=client, accountant=accountant or _AUTH_TEST_ACCOUNTING, purpose="auth",
             model=OPENAI_MODEL,
             input=[{"role": "user", "content": [{"type": "input_text", "text": "Reply exactly with OK."}]}],
             max_output_tokens=16,
@@ -581,6 +686,214 @@ def _run_translation_auth_test_request(
         credential_source=credential_source,
         latency_ms=latency_ms,
     )
+
+
+def _build_page_request(*, instructions: str, prompt_text: str, effort: str,
+                        image_data_url: str | None = None, image_detail: str = "low",
+                        response_format: dict[str, Any] | None = None,
+                        max_output_tokens: int | None = None,
+                        model: str = OPENAI_MODEL) -> dict[str, Any]:
+    if max_output_tokens is not None and (type(max_output_tokens) is not int or max_output_tokens <= 0):
+        raise ValueError("max_output_tokens must be a positive integer.")
+    if response_format is not None and (
+        not isinstance(response_format, dict) or response_format.get("type") != "json_schema"
+        or response_format.get("strict") is not True or not isinstance(response_format.get("schema"), dict)
+        or not isinstance(response_format.get("name"), str) or not response_format["name"]
+    ):
+        raise ValueError("A strict named JSON-schema response format is required.")
+    content = [{"type": "input_text", "text": prompt_text}]
+    if image_data_url:
+        content.append({"type": "input_image", "image_url": image_data_url, "detail": image_detail})
+    request = {"model": model, "instructions": instructions,
+               "input": [{"role": "user", "content": content}],
+               "reasoning": {"effort": effort}, "store": OPENAI_STORE}
+    if response_format is not None:
+        request["text"] = {"format": deepcopy(response_format)}
+    if max_output_tokens is not None:
+        request["max_output_tokens"] = max_output_tokens
+    return request
+
+
+def _apply_openai_dispatch_limits(request: dict[str, Any], accountant: Any,
+                                  limits: dict[str, Any]) -> dict[str, Any]:
+    request = deepcopy(request)
+    maximum = limits.get("max_output_tokens")
+    if maximum is not None and (accountant.hard_budget or not limits.get("apply_output_bound_only_when_hard")):
+        if type(maximum) is not int or maximum <= 0:
+            raise ValueError("Dispatch output token bound must be a positive integer.")
+        request["max_output_tokens"] = min(maximum, request.get("max_output_tokens", maximum))
+    tier = limits.get("requested_service_tier")
+    if tier is not None and tier != "auto":
+        if request.get("service_tier", tier) != tier:
+            raise ValueError("Request service tier conflicts with its approved policy.")
+        request["service_tier"] = tier
+    return request
+
+
+def _trusted_billing_scope(client: Any, limits: dict[str, Any]) -> str | None:
+    scope = limits.get("billing_scope")
+    allowed = limits.get("allowed_base_urls")
+    actual = str(getattr(client, "base_url", "")).rstrip("/")
+    if not isinstance(scope, str) or not isinstance(allowed, (list, tuple)):
+        return None
+    return scope if actual in [str(value).rstrip("/") for value in allowed] else None
+
+
+def _request_accounting_details(request: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Retain request identity and size limits, never request content."""
+    stable = {key: value for key, value in request.items() if key != "timeout"}
+    encoded = json.dumps(stable, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    image_count = sum(
+        1 for message in request.get("input", []) if isinstance(message, dict)
+        for part in message.get("content", []) if isinstance(part, dict) and part.get("type") == "input_image"
+    )
+    text_request = deepcopy(stable)
+    for message in text_request.get("input", []):
+        if isinstance(message, dict):
+            for part in message.get("content", []):
+                if isinstance(part, dict) and part.get("type") == "input_image":
+                    part.pop("image_url", None)
+    # A UTF-8 byte upper bound avoids assuming a tokenizer version. Framing
+    # allowance is deliberately explicit and is included in the reserved bound.
+    input_bytes = len(json.dumps(text_request, sort_keys=True, ensure_ascii=False).encode("utf-8")) + 64
+    bounds = {"input_bytes": input_bytes, "image_count": image_count}
+    if request.get("max_output_tokens") is not None:
+        bounds["max_output_tokens"] = request["max_output_tokens"]
+    return hashlib.sha256(encoded).hexdigest(), bounds
+
+
+def _active_accountant(fallback: Any) -> Any:
+    binding = current_accounting_binding()
+    return binding.accountant if binding is not None else fallback
+
+
+def _dispatch_limits(accountant: Any, *, provider: str, purpose: str | None, model: str) -> tuple[str, dict[str, Any]]:
+    binding = current_accounting_binding()
+    resolved_purpose = purpose or (binding.purpose if binding is not None else None) or "translation"
+    limits = dict(accountant.request_limits(provider, resolved_purpose, model))
+    return resolved_purpose, limits
+
+
+def _validate_dispatch_input_bound(accountant: Any, limits: dict[str, Any], observed: dict[str, Any]) -> None:
+    if not accountant.hard_budget:
+        return
+    maximum = limits.get("max_input_tokens")
+    if type(maximum) is not int or maximum <= 0:
+        raise ValueError("Hard-budget dispatch requires a positive input token bound.")
+    input_bound = observed["input_bytes"]
+    if observed["image_count"]:
+        image_bound = limits.get("max_image_input_tokens")
+        maximum_images = limits.get("max_image_count")
+        if (limits.get("image_bound_verified") is not True or type(image_bound) is not int or image_bound <= 0
+                or type(maximum_images) is not int or maximum_images < observed["image_count"]):
+            raise ValueError("Hard-budget image dispatch requires a verified image token upper bound.")
+        input_bound += image_bound
+    if input_bound > maximum:
+        raise ValueError("Request exceeds its reserved input token upper bound.")
+
+
+def _error_response(exc: BaseException) -> Any:
+    """SDK status errors expose parsed API evidence in body, not HTTP headers."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        return body
+    response = getattr(exc, "response", None)
+    if response is not None and _field(response, "usage") is not None:
+        return response
+    return None
+
+
+def _finish_openai_attempt(accountant: Any, ticket: Any, *, response: Any, outcome: str,
+                           error_code: str | None = None, billing_scope: str | None = None,
+                           currency: str = "USD") -> None:
+    usage = _extract_usage(response)
+    response_id, actual_model = _field(response, "id"), _field(response, "model")
+    try:
+        accountant.finish(ticket, outcome=outcome, usage=usage, response_id=response_id,
+                          actual_model=actual_model, error_code=error_code,
+                          actual_service_tier=_field(response, "service_tier"),
+                          actual_billing_scope=billing_scope, currency=currency)
+    except Exception as exc:
+        # Accounting storage failure must not discard the response's billed
+        # usage from the app error. Retain only content-free response evidence.
+        exc.body = {"usage": usage, "id": response_id, "model": actual_model,
+                    "service_tier": _field(response, "service_tier")}  # type: ignore[attr-defined]
+        raise
+
+
+def _accounted_openai_create(
+    *, client: Any, accountant: Any, purpose: str | None = None, attempt: int = 1,
+    before_dispatch: Callable[[], float] | None = None,
+    **request: Any,
+) -> Any:
+    """One begin/finish pair surrounds exactly one SDK transport attempt."""
+    try:
+        active = _active_accountant(accountant)
+        purpose, limits = _dispatch_limits(active, provider="openai", purpose=purpose, model=request["model"])
+        request = _apply_openai_dispatch_limits(request, active, limits)
+        billing_scope = _trusted_billing_scope(client, limits)
+        currency = limits.get("currency", "USD")
+        if active.hard_budget and billing_scope is None:
+            raise ValueError("Hard-budget dispatch requires a verified billing endpoint and scope.")
+        request_hash, observed = _request_accounting_details(request)
+        _validate_dispatch_input_bound(active, limits, observed)
+        bounds = {**limits, **observed}
+        verifier = getattr(active, "verify_dispatch", None)
+        verification = dict(request=request, route="responses.create", provider="openai",
+            purpose=purpose, attempt=attempt, requested_service_tier=request.get("service_tier", "auto"),
+            base_url=str(getattr(client, "base_url", "")).rstrip("/"),
+            billing_scope=billing_scope, currency=currency)
+        if callable(verifier):
+            verifier(**verification)
+        ticket = active.begin(
+            provider="openai", requested_model=request["model"],
+            effort=request.get("reasoning", {}).get("effort", ""), purpose=purpose,
+            request_hash=request_hash, bounds=bounds, attempt=attempt,
+            requested_service_tier=request.get("service_tier", "auto"),
+            billing_scope=billing_scope, currency=currency, route="responses.create",
+            base_url=verification["base_url"],
+        )
+    except Exception as exc:
+        exc._legalpdf_not_dispatched = True  # type: ignore[attr-defined]
+        raise
+    if before_dispatch is not None:
+        try:
+            request["timeout"] = max(0.1, before_dispatch())
+        except BaseException as exc:
+            active.finish(ticket, outcome="not_dispatched",
+                          usage={"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                          response_id=None, actual_model=request["model"], error_code=type(exc).__name__)
+            exc._legalpdf_not_dispatched = True  # type: ignore[attr-defined]
+            raise
+    try:
+        # Recheck physical provenance after the deadline/cancellation callback;
+        # no user-controlled hook may alter approved bytes between check and send.
+        rechecker = getattr(active, "recheck_dispatch", None)
+        try:
+            if (str(getattr(client, "base_url", "")).rstrip("/") != verification["base_url"]
+                    or _trusted_billing_scope(client, limits) != billing_scope):
+                raise ValueError("Provider endpoint changed after reservation.")
+            if callable(rechecker):
+                rechecker(reservation_id=getattr(ticket, "reservation_id", None), **verification)
+        except BaseException as exc:
+            active.finish(ticket, outcome="not_dispatched",
+                usage={"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                actual_model=request["model"], response_id=None, error_code=type(exc).__name__)
+            exc._legalpdf_not_dispatched = True  # type: ignore[attr-defined]
+            raise
+        response = client.responses.create(**request)
+    except BaseException as exc:
+        if getattr(exc, "_legalpdf_not_dispatched", False):
+            raise
+        evidence = _error_response(exc)
+        _finish_openai_attempt(active, ticket, response=evidence,
+            outcome="timeout" if isinstance(exc, APITimeoutError) else "failed", error_code=type(exc).__name__,
+            billing_scope=billing_scope, currency=currency)
+        raise
+    _finish_openai_attempt(active, ticket, response=response,
+                          outcome="refused" if _has_refusal(response) else "succeeded",
+                          billing_scope=billing_scope, currency=currency)
+    return response
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -627,7 +940,7 @@ def _extract_usage(response: Any) -> dict[str, Any]:
     if usage_obj is None:
         return {}
     usage: dict[str, Any] = {}
-    for key in ("input_tokens", "output_tokens", "total_tokens", "reasoning_tokens"):
+    for key in ("input_tokens", "output_tokens", "total_tokens", "reasoning_tokens", "cached_input_tokens", "cache_write_tokens"):
         value = getattr(usage_obj, key, None)
         if value is None and isinstance(usage_obj, dict):
             value = usage_obj.get(key)
@@ -642,8 +955,11 @@ def _extract_usage(response: Any) -> dict[str, Any]:
             usage[key] = value
     input_details = _field(usage_obj, "input_tokens_details")
     cached = _field(input_details, "cached_tokens")
-    if cached is not None:
+    if cached is not None and "cached_input_tokens" not in usage:
         usage["cached_input_tokens"] = cached
+    cache_write = _field(input_details, "cache_write_tokens")
+    if cache_write is not None and "cache_write_tokens" not in usage:
+        usage["cache_write_tokens"] = cache_write
     return usage
 
 

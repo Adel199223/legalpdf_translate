@@ -234,7 +234,8 @@ def test_rebuild_docx_from_pages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     def _forbid_api_client(*args, **kwargs):  # type: ignore[no-untyped-def]
         raise AssertionError("API client must not be used in rebuild mode")
 
-    monkeypatch.setattr(workflow_module, "OpenAIResponsesClient", _forbid_api_client)
+    # Preserve the class for Workflow's isinstance check while forbidding creation.
+    monkeypatch.setattr(workflow_module.OpenAIResponsesClient, "__init__", _forbid_api_client)
 
     workflow = TranslationWorkflow()
     rebuilt_path = workflow.rebuild_docx(config)

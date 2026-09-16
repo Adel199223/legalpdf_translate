@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
+import hashlib
+import json
 import os
 from dataclasses import dataclass
+from datetime import date
+import math
 from statistics import median
-from typing import Mapping, Sequence
+from types import MappingProxyType
+from typing import Any, Mapping, Sequence
 
 from .types import BudgetExceedPolicy, EffortPolicy, ImageMode, OcrMode, TargetLang
 
@@ -59,6 +65,16 @@ class CostRates:
     reasoning_per_1m: float
     source: str
     explanation: str
+    cached_input_per_1m: float | None = None
+    cache_write_per_1m: float | None = None
+    verified_at: str | None = None
+    source_url: str | None = None
+    pricing_version: str = "legacy_unverified"
+    pricing_model: str | None = None
+    provider: str = "openai"
+    service_tier: str | None = None
+    billing_scope: str | None = None
+    currency: str = "USD"
 
 
 @dataclass(slots=True, frozen=True)
@@ -66,6 +82,209 @@ class PricingResolution:
     status: str
     reason: str
     rates: CostRates | None
+
+
+@dataclass(slots=True, frozen=True)
+class PricingSnapshot:
+    """A caller-supplied, dated price table suitable for measured accounting.
+
+    The application deliberately does not turn its legacy forecast table into
+    billing evidence.  Acceptance code must inject a snapshot whose identity,
+    verification date and source were frozen before dispatch.
+    """
+
+    snapshot_id: str
+    verified_at: str
+    source: str
+    models: Mapping[str, CostRates]
+
+    def __post_init__(self) -> None:
+        if not _safe_identifier(self.snapshot_id):
+            raise ValueError("Pricing snapshot_id must be a concise identifier.")
+        raw_verified_at = str(self.verified_at or "")
+        try:
+            parsed_verified_at = date.fromisoformat(raw_verified_at)
+        except ValueError as exc:
+            raise ValueError("Pricing snapshot requires an ISO YYYY-MM-DD verification date.") from exc
+        if parsed_verified_at.isoformat() != raw_verified_at:
+            raise ValueError("Pricing snapshot requires an ISO YYYY-MM-DD verification date.")
+        if not str(self.source or "").strip():
+            raise ValueError("Pricing snapshot requires a source description.")
+        normalized: dict[str, CostRates] = {}
+        for key, rates in dict(self.models).items():
+            provider_model = str(key or "").strip()
+            if ":" not in provider_model or not isinstance(rates, CostRates):
+                raise ValueError("Pricing keys must use provider:model and CostRates values.")
+            _validate_rates(rates)
+            if rates.pricing_version in {"", "legacy_unverified"}:
+                raise ValueError("Snapshot rates must have a verified pricing version.")
+            if not rates.verified_at:
+                raise ValueError("Snapshot rates must record their verification date.")
+            identity, *billing = provider_model.split("|")
+            provider, model = identity.split(":", 1)
+            if billing and (
+                len(billing) != 3
+                or billing != [rates.service_tier, rates.billing_scope, rates.currency]
+            ):
+                raise ValueError("Pricing key and billing identity differ.")
+            if (rates.service_tier is None) != (rates.billing_scope is None):
+                raise ValueError("Verified billing identity requires both tier and scope.")
+            if rates.service_tier is not None and (
+                not _safe_identifier(rates.service_tier)
+                or rates.service_tier == "auto"
+                or not _safe_identifier(rates.billing_scope or "")
+            ):
+                raise ValueError("Rates require an explicit actual service tier and billing scope.")
+            if rates.currency != "USD":
+                raise ValueError("Only USD rates are supported; no currency conversion is inferred.")
+            if (
+                rates.verified_at != self.verified_at
+                or rates.provider.lower() != provider.lower()
+                or rates.pricing_model != model
+            ):
+                raise ValueError("Snapshot rate identity/date does not match its provider:model key.")
+            normalized[provider_model] = rates
+        object.__setattr__(self, "models", MappingProxyType(normalized))
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "PricingSnapshot":
+        raw_models = value.get("models")
+        if not isinstance(raw_models, Mapping):
+            raise ValueError("Pricing snapshot models must be a mapping.")
+        snapshot_id = str(value.get("snapshot_id") or "").strip()
+        verified_at = str(value.get("verified_at") or "").strip()
+        source = str(value.get("source") or "").strip()
+        models: dict[str, CostRates] = {}
+        for key, raw in raw_models.items():
+            if not isinstance(raw, Mapping):
+                raise ValueError("Each pricing model entry must be a mapping.")
+            identity, *billing = str(key or "").split("|")
+            provider, separator, model = identity.partition(":")
+            if not separator or not provider or not model:
+                raise ValueError("Pricing keys must use provider:model.")
+            models[str(key)] = CostRates(
+                input_per_1m=_finite_rate(raw.get("input_per_1m")),
+                output_per_1m=_finite_rate(raw.get("output_per_1m")),
+                # Kept for serialized compatibility; output totals are inclusive.
+                reasoning_per_1m=_finite_rate(
+                    raw.get("reasoning_per_1m", raw.get("output_per_1m"))
+                ),
+                cached_input_per_1m=_optional_finite_rate(raw.get("cached_input_per_1m")),
+                cache_write_per_1m=_optional_finite_rate(raw.get("cache_write_per_1m")),
+                source=str(raw.get("source") or source),
+                explanation=str(raw.get("explanation") or f"{snapshot_id}:{key}"),
+                verified_at=str(raw.get("verified_at") or verified_at),
+                source_url=(str(raw.get("source_url")) if raw.get("source_url") else None),
+                pricing_version=str(raw.get("pricing_version") or snapshot_id),
+                pricing_model=str(raw.get("pricing_model") or model),
+                provider=str(raw.get("provider") or provider),
+                service_tier=(str(raw["service_tier"]) if raw.get("service_tier") else None),
+                billing_scope=(str(raw["billing_scope"]) if raw.get("billing_scope") else None),
+                currency=str(raw.get("currency", "USD")),
+            )
+        return cls(
+            snapshot_id=snapshot_id,
+            verified_at=verified_at,
+            source=source,
+            models=models,
+        )
+
+    def resolve(
+        self, provider: str, model: str, *, service_tier: str | None = None,
+        billing_scope: str | None = None, currency: str = "USD",
+    ) -> PricingResolution:
+        provider_key = str(provider or "").strip().lower()
+        model_key = str(model or "").strip()
+        key = f"{provider_key}:{model_key}"
+        explicit = service_tier is not None or billing_scope is not None
+        if explicit:
+            if not service_tier or not billing_scope or service_tier == "auto" or currency != "USD":
+                return PricingResolution("unavailable", "billing_identity_unavailable", None)
+            rates = self.models.get(f"{key}|{service_tier}|{billing_scope}|{currency}")
+            if rates is None:
+                # A single explicitly scoped row may retain the old key shape.
+                # An unscoped historical row never supplies missing billing evidence.
+                rates = self.models.get(key)
+            if rates is not None and (
+                rates.service_tier != service_tier or rates.billing_scope != billing_scope
+                or rates.currency != currency
+            ):
+                rates = None
+        else:
+            rates = self.models.get(key)
+        if rates is None:
+            return PricingResolution(
+                status="unavailable",
+                reason="model_not_in_pricing_snapshot",
+                rates=None,
+            )
+        if rates.provider.lower() != provider_key or rates.pricing_model != model_key:
+            return PricingResolution(
+                status="failed",
+                reason="pricing_identity_mismatch",
+                rates=None,
+            )
+        return PricingResolution(status="available", reason="verified_snapshot", rates=rates)
+
+    def metadata(self) -> dict[str, str]:
+        serialized_rates = {
+            key: {
+                # Normalize numeric representation so a snapshot assembled in
+                # memory and the same snapshot loaded from JSON have one rate
+                # identity (JSON loading commonly turns fixture integers into
+                # floats through ``from_mapping``).
+                "input_per_1m": float(rates.input_per_1m),
+                "output_per_1m": float(rates.output_per_1m),
+                "reasoning_per_1m": float(rates.reasoning_per_1m),
+                "cached_input_per_1m": (
+                    None
+                    if rates.cached_input_per_1m is None
+                    else float(rates.cached_input_per_1m)
+                ),
+                "cache_write_per_1m": (
+                    None
+                    if rates.cache_write_per_1m is None
+                    else float(rates.cache_write_per_1m)
+                ),
+                "verified_at": rates.verified_at,
+                "source_url": rates.source_url,
+                "pricing_version": rates.pricing_version,
+                "pricing_model": rates.pricing_model,
+                "provider": rates.provider,
+                **({
+                    "service_tier": rates.service_tier,
+                    "billing_scope": rates.billing_scope,
+                    "currency": rates.currency,
+                } if rates.service_tier is not None else {}),
+            }
+            for key, rates in sorted(self.models.items())
+        }
+        rates_sha256 = hashlib.sha256(
+            json.dumps(
+                serialized_rates,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        return {
+            "snapshot_id": self.snapshot_id,
+            "verified_at": self.verified_at,
+            "source": self.source,
+            "rates_sha256": rates_sha256,
+        }
+
+    def to_mapping(self) -> dict[str, Any]:
+        """Complete immutable rate context; metadata alone cannot restore prices."""
+        from dataclasses import asdict
+
+        return {
+            "snapshot_id": self.snapshot_id,
+            "verified_at": self.verified_at,
+            "source": self.source,
+            "models": {key: asdict(rates) for key, rates in self.models.items()},
+        }
 
 
 @dataclass(slots=True, frozen=True)
@@ -221,9 +440,14 @@ def estimate_pre_run_tokens(
     effective_reasoning_per_page = int(round(effective_output_per_page * reasoning_ratio))
 
     estimated_input_tokens = max(0, effective_input_per_page * int(selected_pages_count))
-    estimated_output_tokens = max(0, effective_output_per_page * int(selected_pages_count))
     estimated_reasoning_tokens = max(0, effective_reasoning_per_page * int(selected_pages_count))
-    estimated_total_tokens = estimated_input_tokens + estimated_output_tokens + estimated_reasoning_tokens
+    # Responses-style output totals already include reasoning tokens.  Keep the
+    # reasoning estimate as a breakdown, not a second billed/output quantity.
+    estimated_output_tokens = (
+        max(0, effective_output_per_page * int(selected_pages_count))
+        + estimated_reasoning_tokens
+    )
+    estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
 
     return PreRunTokenEstimate(
         source_tokens_per_page=source_tokens_per_page,
@@ -245,13 +469,65 @@ def estimate_cost_usd(
     output_tokens: int,
     reasoning_tokens: int,
     rates: CostRates,
+    cached_input_tokens: int = 0,
+    cache_write_tokens: int = 0,
 ) -> float:
-    estimate = (
-        (max(0, int(input_tokens)) / 1_000_000.0) * rates.input_per_1m
-        + (max(0, int(output_tokens)) / 1_000_000.0) * rates.output_per_1m
-        + (max(0, int(reasoning_tokens)) / 1_000_000.0) * rates.reasoning_per_1m
+    """Price inclusive totals without adding reasoning a second time.
+
+    ``reasoning_per_1m`` remains on ``CostRates`` for saved/configuration
+    compatibility.  Provider output totals include that reasoning, so it is a
+    validated breakdown only.  Cache categories likewise replace regular input
+    tokens instead of being added to the inclusive input total.
+    """
+
+    estimate = estimate_cost_decimal(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        reasoning_tokens=reasoning_tokens,
+        cached_input_tokens=cached_input_tokens,
+        cache_write_tokens=cache_write_tokens,
+        rates=rates,
     )
-    return round(float(estimate), 6)
+    return round(float(estimate), 9)
+
+
+def estimate_cost_decimal(
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    reasoning_tokens: int,
+    rates: CostRates,
+    cached_input_tokens: int = 0,
+    cache_write_tokens: int = 0,
+) -> Decimal:
+    counts = (
+        input_tokens,
+        output_tokens,
+        reasoning_tokens,
+        cached_input_tokens,
+        cache_write_tokens,
+    )
+    if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in counts):
+        raise ValueError("Token counts must be nonnegative integers.")
+    if reasoning_tokens > output_tokens:
+        raise ValueError("Reasoning tokens exceed the inclusive output total.")
+    if cached_input_tokens + cache_write_tokens > input_tokens:
+        raise ValueError("Cache token breakdown exceeds the inclusive input total.")
+    _validate_rates(rates)
+    if cached_input_tokens and rates.cached_input_per_1m is None:
+        raise ValueError("Cached-input pricing is unavailable.")
+    if cache_write_tokens and rates.cache_write_per_1m is None:
+        raise ValueError("Cache-write pricing is unavailable.")
+
+    regular_input = input_tokens - cached_input_tokens - cache_write_tokens
+    million = Decimal(1_000_000)
+    total = (
+        Decimal(regular_input) * _decimal_rate(rates.input_per_1m)
+        + Decimal(cached_input_tokens) * _decimal_rate(rates.cached_input_per_1m or 0)
+        + Decimal(cache_write_tokens) * _decimal_rate(rates.cache_write_per_1m or 0)
+        + Decimal(output_tokens) * _decimal_rate(rates.output_per_1m)
+    ) / million
+    return total.quantize(Decimal("0.000000000001"), rounding=ROUND_CEILING)
 
 
 def evaluate_budget_decision(
@@ -343,3 +619,47 @@ def _normalize_budget_policy(value: str | BudgetExceedPolicy) -> str:
         return BudgetExceedPolicy.BLOCK.value
     return BudgetExceedPolicy.WARN.value
 
+
+def _safe_identifier(value: str) -> bool:
+    candidate = str(value or "").strip()
+    return bool(candidate) and len(candidate) <= 200 and all(
+        character.isalnum() or character in "._:-" for character in candidate
+    )
+
+
+def _finite_rate(value: Any) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Pricing rates must be finite nonnegative numbers.") from exc
+    if not math.isfinite(result) or result < 0:
+        raise ValueError("Pricing rates must be finite nonnegative numbers.")
+    return result
+
+
+def _optional_finite_rate(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    return _finite_rate(value)
+
+
+def _decimal_rate(value: float | int) -> Decimal:
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError("Pricing rates must be decimal-compatible.") from exc
+    if not result.is_finite() or result < 0:
+        raise ValueError("Pricing rates must be finite nonnegative numbers.")
+    return result
+
+
+def _validate_rates(rates: CostRates) -> None:
+    for value in (
+        rates.input_per_1m,
+        rates.output_per_1m,
+        rates.reasoning_per_1m,
+        rates.cached_input_per_1m,
+        rates.cache_write_per_1m,
+    ):
+        if value is not None:
+            _finite_rate(value)

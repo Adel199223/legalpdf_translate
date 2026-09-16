@@ -129,7 +129,7 @@ def test_actual_page_processing_keeps_one_legacy_request_without_review_or_ocr(
             )
 
     client = RecordingClient()
-    workflow = workflow_module.TranslationWorkflow(client=client)
+    workflow = workflow_module.TranslationWorkflow(translation_protocol="legacy_text_v1", client=client)
     monkeypatch.setattr(workflow, "_remaining_request_budget_seconds", lambda **kwargs: 480.0)
     result = workflow._process_page(
         client=client, config=config, paths=paths, instructions=load_system_instructions(lang),
@@ -155,13 +155,12 @@ def test_native_request_contract_has_no_new_model_tools_or_output_policy(monkeyp
         calls.append(deepcopy(kwargs))
         return SimpleNamespace(output_text="synthetic response", usage=None, id="synthetic-only")
 
-    # Bypass the credential-bearing constructor entirely, with an in-memory SDK.
-    client = object.__new__(client_module.OpenAIResponsesClient)
-    client._client = SimpleNamespace(responses=SimpleNamespace(create=create))
-    client._max_transport_retries = 0
-    client._pre_call_jitter_seconds = 0
-    client._request_timeout_seconds = 480.0
-    client._logger = None
+    # The injected SDK creates a complete wrapper without credential lookup.
+    client = client_module.OpenAIResponsesClient(
+        sdk_client=SimpleNamespace(responses=SimpleNamespace(create=create)),
+        max_transport_retries=0, pre_call_jitter_seconds=0,
+        request_timeout_seconds=480.0,
+    )
     monkeypatch.setattr(client_module.time, "perf_counter", lambda: 100.0)
     prompt = build_page_prompt(lang, 1, 1, _SOURCE)
     client.create_page_response(instructions=load_system_instructions(lang), prompt_text=prompt, effort="high")
@@ -236,9 +235,10 @@ def test_legacy_rebuild_never_creates_clients_or_changes_saved_translation_costs
     review_path.write_text(json.dumps(review), encoding="utf-8")
     original_page_bytes = page_path.read_bytes()
     original_state_page = deepcopy(state.pages["1"])
-    monkeypatch.setattr(workflow_module, "OpenAIResponsesClient", _forbidden)
+    # Preserve the class for Workflow's isinstance check while forbidding creation.
+    monkeypatch.setattr(workflow_module.OpenAIResponsesClient, "__init__", _forbidden)
     monkeypatch.setattr(workflow_module, "extract_ordered_page_text", _forbidden)
-    workflow = workflow_module.TranslationWorkflow()
+    workflow = workflow_module.TranslationWorkflow(translation_protocol="legacy_text_v1")
     output = workflow.rebuild_docx(config)
     assert output.is_file() and output.suffix == ".docx"
     assert page_path.read_bytes() == original_page_bytes
