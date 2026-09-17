@@ -182,7 +182,7 @@ export function mountFormattingReview({root, prepareButton, getScope, getJob, re
       accept = false; render();
     }, s.busy));
     const pages = s.view?.pages || [];
-    if (pages.length && s.verified && !s.operationNonce) {
+    if (pages.length && s.verified && !s.operationNonce && !s.busy) {
       if (!pages.some((p) => p.page_number === pageNumber)) pageNumber = pages[0].page_number;
       root.append(field(doc, "Source page", select(doc, pages.map((p) => [p.page_number, `Page ${p.page_number}${formattingPageComplete(p) ? " — reviewed" : ""}`]),
         pageNumber, (value) => { pageNumber = Number(value); render(); }, s.busy)));
@@ -407,7 +407,11 @@ export function mountFormattingReview({root, prepareButton, getScope, getJob, re
   let sessionStorage = storage;
   if (sessionStorage === undefined) { try { sessionStorage = globalThis.sessionStorage; } catch { sessionStorage = null; } }
   controller = createFormattingReviewController({getScope, getJob, request, storage: sessionStorage, createNonce, onChange: render});
-  prepareButton.addEventListener("click", () => { opened = true; render(); root.scrollIntoView?.({block: "start"}); });
+  prepareButton.addEventListener("click", () => {
+    const menu = prepareButton.closest?.("details.action-overflow-menu");
+    if (menu) menu.open = false;
+    opened = true; render(); root.scrollIntoView?.({block: "start"});
+  });
   render(); return {controller, sync: () => { controller.sync(); prepareButton.disabled = !controller.snapshot().owner
     || getJob()?.status !== "completed" || !getJob()?.actions?.formatting_review || controller.snapshot().busy; update(); }};
 }

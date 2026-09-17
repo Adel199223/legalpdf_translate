@@ -451,3 +451,118 @@ def test_actual_dom_to_owned_formatting_api_build_and_download_preserves_origina
         latest_job = client.get(f"/api/translation/jobs/{job['job_id']}", headers=HEADERS).json()["normalized_payload"]["job"]
         assert latest_job["artifacts"]["output_docx"] == str(original)
     assert len(c.clients) == len(c.sdk_calls) == len(c.local_calls) == 1
+
+
+def test_opening_formatting_review_dismisses_only_its_originating_overflow_menu():
+    result = probe(DOM + r"""
+const menu = {open: true}, otherMenu = {open: true}, scrollStates = [];
+prepareButton.closest = (selector) => selector === "details.action-overflow-menu" ? menu : null;
+root.scrollIntoView = () => scrollStates.push({originMenuOpen: menu.open, otherMenuOpen: otherMenu.open});
+let requests = 0;
+const mounted = ui.mountFormattingReview({root, prepareButton, getScope: () => scope, getJob: () => job,
+  storage: memory(), request: async () => { requests += 1; throw new Error("No request from opening panel"); }});
+await prepareButton.fire("click");
+const first = {menuOpen: menu.open, otherOpen: otherMenu.open, panelVisible: !root.hidden};
+menu.open = true;
+await prepareButton.fire("click");
+prepareButton.closest = () => null;
+await prepareButton.fire("click");
+console.log(JSON.stringify({first, menuOpen: menu.open, otherOpen: otherMenu.open, scrollStates,
+  requests, unsafeWrites, state: mounted.controller.snapshot()}));
+""")
+    assert result["first"] == {"menuOpen": False, "otherOpen": True, "panelVisible": True}
+    assert not result["menuOpen"] and result["otherOpen"]
+    assert len(result["scrollStates"]) == 3
+    assert all(not row["originMenuOpen"] and row["otherMenuOpen"] for row in result["scrollStates"])
+    assert result["requests"] == result["unsafeWrites"] == 0
+    assert not result["state"]["reviewId"] and not result["state"]["operationNonce"]
+
+
+def test_busy_formatting_operations_do_not_request_images_and_preserve_exact_recovery():
+    result = probe(DOM + r"""
+const imageRequests = [];
+doc.createElement = (tag) => {
+  const node = make(tag);
+  if (node.tagName === "IMG") {
+    let src = "";
+    Object.defineProperty(node, "src", {get: () => src, set: (value) => {
+      src = value; imageRequests.push(value);
+    }});
+  }
+  return node;
+};
+const revision = {...draft, status: "submitted", revision_id: "b".repeat(32)};
+const storage = memory(), requests = [], phases = [];
+let pending, nonceCount = 0;
+const mounted = ui.mountFormattingReview({root, prepareButton, getScope: () => scope, getJob: () => job, storage,
+  createNonce: () => { nonceCount += 1; return "c".repeat(32); },
+  request: async (url, owner, options) => {
+    requests.push({url, body: options.body ? JSON.parse(options.body) : null});
+    if (url.endsWith("/prepare")) return envelope(draft);
+    if (url.endsWith("/submit")) return envelope(revision);
+    return new Promise((resolve, reject) => { pending = {resolve, reject}; });
+  }});
+const imageCount = () => walk(root).filter((node) => node.tagName === "IMG").length;
+function capture(name, before) {
+  phases.push({name, beforeRequests: before, pendingRequests: imageRequests.length,
+    pendingImages: imageCount(), busy: mounted.controller.snapshot().busy,
+    footerPresent: walk(root).some((node) => node.className === "formatting-review-submit"),
+    readDisabled: findButton("Read current formatting review").disabled});
+}
+await prepareButton.fire("click");
+await fill("Page layout for this review", "matched", "SELECT", "change");
+await findButton("Prepare formatting review").fire("click");
+await fill("Formatting acceptance reviewer", "Fictional operator");
+await check("I accept these complete formatting decisions for this exact translation");
+await findButton("Accept formatting revision").fire("click");
+let before = imageRequests.length;
+let task = findButton("Read current formatting review").fire("click");
+capture("read", before);
+pending.resolve(envelope(revision)); await task;
+const successfulRead = {requests: imageRequests.length - before, images: imageCount(), verified: mounted.controller.snapshot().verified};
+before = imageRequests.length;
+task = findButton("Check this exact revision").fire("click");
+capture("inspect", before);
+pending.reject(new Error("Fictional inspect transport failure")); await task;
+const failedInspect = {images: imageCount(), verified: mounted.controller.snapshot().verified, busy: mounted.controller.snapshot().busy};
+task = findButton("Read current formatting review").fire("click");
+pending.resolve(envelope(revision)); await task;
+const recoveredInspect = {images: imageCount(), verified: mounted.controller.snapshot().verified};
+before = imageRequests.length;
+task = findButton("Build DOCX from this revision").fire("click");
+capture("rebuild", before);
+const pendingBuild = mounted.controller.snapshot();
+pending.reject(new Error("browser_formatting_review_run_busy")); await task;
+const failedBuild = mounted.controller.snapshot();
+task = findButton("Read current formatting review").fire("click");
+pending.resolve(envelope({...revision, rebuild_operations: [], artifacts: []})); await task;
+const recoveredBuild = mounted.controller.snapshot();
+task = findButton("Recover this exact DOCX build").fire("click");
+const artifact = {artifact_id: "d".repeat(32), revision_id: revision.revision_id,
+  kinds: ["output_docx", "source_map", "assembly_receipt"]};
+pending.resolve(envelope({...revision, status: "built", artifacts: [artifact], rebuild_operations: [{
+  operation_nonce: "c".repeat(32), revision_id: revision.revision_id, artifact_id: artifact.artifact_id}]}));
+await task;
+console.log(JSON.stringify({phases, successfulRead, failedInspect, recoveredInspect, pendingBuild, failedBuild,
+  recoveredBuild, final: mounted.controller.snapshot(), nonceCount,
+  rebuildRequests: requests.filter((row) => row.url.endsWith("/rebuild")), unsafeWrites}));
+""")
+    for phase in result["phases"]:
+        assert phase["pendingRequests"] == phase["beforeRequests"], phase["name"]
+        assert phase["pendingImages"] == 0, phase["name"]
+        assert phase["busy"] and phase["footerPresent"] and phase["readDisabled"]
+    assert result["successfulRead"] == {"requests": 1, "images": 1, "verified": True}
+    assert result["failedInspect"] == {"images": 0, "verified": False, "busy": False}
+    assert result["recoveredInspect"] == {"images": 1, "verified": True}
+    assert result["pendingBuild"]["busy"] and result["pendingBuild"]["operationNonce"] == "c" * 32
+    assert result["failedBuild"]["errorCode"] == "browser_formatting_review_run_busy"
+    assert not result["failedBuild"]["busy"] and not result["failedBuild"]["verified"]
+    assert result["failedBuild"]["operationNonce"] == result["recoveredBuild"]["operationNonce"] == "c" * 32
+    assert result["recoveredBuild"]["verified"] and not result["recoveredBuild"]["associated"]
+    requests = result["rebuildRequests"]
+    assert len(requests) == 2
+    assert requests[0]["body"] == requests[1]["body"] == {
+        "revision_id": "b" * 32, "operation_nonce": "c" * 32,
+    }
+    assert result["nonceCount"] == 1 and result["unsafeWrites"] == 0
+    assert result["final"]["associated"] and result["final"]["artifactId"] == "d" * 32

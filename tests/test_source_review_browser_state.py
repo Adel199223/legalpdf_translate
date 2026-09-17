@@ -592,6 +592,87 @@ console.log(JSON.stringify({checks, dirty, unfinished, unsafeWrites, before, dis
     assert not result["after"]["pendingKind"] and not result["after"]["dirty"]
 
 
+def test_busy_dom_does_not_request_page_images_and_failed_read_restores_review():
+    result = probe(DOM + r"""
+// An IMG src assignment is the browser request boundary. Keep every assignment,
+// including images detached again by a later render during the same operation.
+const imageRequests = [];
+doc.createElement = (tag) => {
+  const node = make(tag);
+  if (node.tagName === "IMG") {
+    let src = "";
+    Object.defineProperty(node, "src", {get: () => src, set: (value) => {
+      src = value; imageRequests.push(value);
+    }});
+  }
+  return node;
+};
+const decision = {...ui.blankSourcePageDecision(), reviewer: "Fictional operator",
+  boundary_decision: "start", boundary_rationale: "Reviewed complete page",
+  full_page_review_completed: true, reading_order_reviewed: true,
+  actions: [{id: "a1", kind: "retain", baseline_block_ids: ["b1"], after_text: "Fictional text",
+    region_px: [10,10,100,30], rationale: "Compared"}], reading_order: ["a1"]};
+const page = {page_number: 1, image_size_px: [200,300], baseline_text: "Fictional text",
+  baseline_blocks: [{id: "b1", text: "Fictional text"}], word_evidence: {words: []}, decision};
+const draft = {status: "draft", review_id: "a".repeat(32), reviewer_kind: "operator_review",
+  generation: 1, pages: [page]};
+const storage = memory(), requests = [];
+let rejectRead, rejectTranslate;
+const mounted = ui.mountSourceReview({root, prepareButton, getScope: () => scope,
+  getSetup: () => ({source_path: "fictional.pdf"}), manualReady: () => true, storage,
+  createNonce: () => "c".repeat(32), request: async (url, owner, options) => {
+    requests.push(url);
+    if (url.endsWith("/prepare")) return envelope(draft);
+    if (url.endsWith("/submit")) return envelope({...draft, revision_id: "b".repeat(32)});
+    if (url.endsWith("/translate")) return new Promise((resolve, reject) => { rejectTranslate = reject; });
+    return new Promise((resolve, reject) => { rejectRead = reject; });
+  }});
+const imageCount = () => walk(root).filter((node) => node.tagName === "IMG").length;
+await prepareButton.fire("click");
+const initial = {requests: imageRequests.length, images: imageCount()};
+const reading = findButton("Read current review / recover response").fire("click");
+const readingState = {requests: imageRequests.length, images: imageCount(), busy: mounted.controller.snapshot().busy,
+  readDisabled: findButton("Read current review / recover response").disabled,
+  footerDisabled: fieldControl("Whole-source reviewer").disabled};
+rejectRead(new Error("Fictional read failed before any translation dispatch"));
+await reading;
+const readFailed = {requests: imageRequests.length, images: imageCount(), state: mounted.controller.snapshot(),
+  readDisabled: findButton("Read current review / recover response").disabled};
+await fill("Whole-source reviewer", "Fictional operator");
+await check("I accept the complete reviewed source for this translation");
+await findButton("Accept reviewed source").fire("click");
+const beforeTranslate = imageRequests.length;
+const translating = findButton("Translate reviewed source").fire("click");
+const translatingState = {requests: imageRequests.length, images: imageCount(), state: mounted.controller.snapshot(),
+  startDisabled: findButton("Translate reviewed source").disabled,
+  nonceStored: storage.values().some((value) => value.includes("c".repeat(32)))};
+rejectTranslate(new Error("Fictional translation response lost"));
+await translating;
+const translateFailed = {requests: imageRequests.length, images: imageCount(), state: mounted.controller.snapshot(),
+  recoveryDisabled: findButton("Recover this exact translation start").disabled,
+  readDisabled: findButton("Read current review / recover response").disabled};
+console.log(JSON.stringify({initial, readingState, readFailed, beforeTranslate, translatingState, translateFailed,
+  translateRequests: requests.filter((url) => url.endsWith("/translate")).length, unsafeWrites}));
+""")
+    assert result["initial"] == {"requests": 1, "images": 1}
+    reading = result["readingState"]
+    assert reading == {"requests": 1, "images": 0, "busy": True,
+                       "readDisabled": True, "footerDisabled": True}
+    restored = result["readFailed"]
+    assert restored["requests"] == 2 and restored["images"] == 1
+    assert not restored["state"]["busy"] and not restored["state"]["operationNonce"]
+    assert restored["state"]["errorCode"] == "source_review_operation_failed"
+    assert not restored["readDisabled"]
+    translating = result["translatingState"]
+    assert translating["requests"] == result["beforeTranslate"] and translating["images"] == 0
+    assert translating["state"]["busy"] and translating["startDisabled"] and translating["nonceStored"]
+    failed = result["translateFailed"]
+    assert failed["requests"] == result["beforeTranslate"] and failed["images"] == 0
+    assert failed["state"]["operationNonce"] == translating["state"]["operationNonce"] == "c" * 32
+    assert not failed["state"]["busy"] and not failed["recoveryDisabled"] and not failed["readDisabled"]
+    assert result["translateRequests"] == 1 and result["unsafeWrites"] == 0
+
+
 def test_ordinary_translate_contract_and_new_panel_are_separate_static_hooks():
     root = Path(__file__).resolve().parents[1] / "src/legalpdf_translate/shadow_web"
     translation = (root / "static/translation.js").read_text(encoding="utf-8")
