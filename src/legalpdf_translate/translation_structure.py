@@ -40,9 +40,16 @@ _LANGUAGE = {
     "FR": "Use formal legal French; preserve Portuguese legal concepts and accented proper names verbatim.",
     "AR": (
         "Use Modern Standard Arabic. Preserve personal names and postal addresses in their exact Latin "
-        "spelling, including accents, as coherent spans. Preserve supplied [[...]] tokens unchanged. "
-        "Protect Latin text and digits inside [[...]]; retain digits 0-9. Translate generic legal labels "
-        "and Portuguese month names into Arabic; do not invent expansions of abbreviations."
+        "spelling, including accents, as coherent spans. Preserve supplied [[...]] tokens unchanged, "
+        "with exact occurrence counts and order within each block; do not omit, duplicate, translate "
+        "or expand their contents, including protected abbreviations. Retain digits 0-9. "
+        "Translate all remaining ordinary words and labels into Arabic, including borrowed words, "
+        "quoted text and Portuguese month names. Quotation marks or capitalization do not make "
+        "ordinary words protected literals: do not wrap them in new Latin tokens. "
+        "Preserve each clause's tense, mood and legal effect: commands and requests must remain "
+        "actions to perform, not statements that they were completed. Keep completed, proposed, "
+        "future and conditional acts distinct, with their conditions and responsible parties. "
+        "Do not invent expansions of abbreviations."
     ),
 }
 

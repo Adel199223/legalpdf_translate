@@ -18,7 +18,7 @@ from .arabic_pre_tokenize import (
     URL_RE, is_portuguese_month_date_token,
 )
 
-STRUCTURED_ARABIC_LITERALS_VERSION = 'structured_arabic_literals_v13_optional_signature_abbreviation'
+STRUCTURED_ARABIC_LITERALS_VERSION = 'structured_arabic_literals_v15_bounded_review_spacing'
 _LIMIT = 120_000
 _LRI, _PDI = '\u2066', '\u2069'
 _BIDI = re.compile('[\u200e\u200f\u202a-\u202e\u2066-\u2069]')
@@ -228,21 +228,24 @@ def source_person_name_for_field(field_text: str, value_text: str) -> str | None
 
 
 def _witness_list_name_spans(text: str) -> list[_Span]:
-    """Attribute only contiguous source entries under an explicit witness heading.
+    """Attribute marked source entries under an explicit witness heading.
 
-    A list marker alone is not evidence of a person. Blank/non-item lines end
-    the heading's scope; names cannot cross lines/cells or consume trailing
-    prose. The target never contributes attribution or spelling evidence.
+    A list marker alone is not evidence of a person. At most one empty line
+    may separate the heading and valid entries. Other boundaries end the
+    heading's scope; names cannot cross lines/cells or consume trailing prose.
+    The target never contributes attribution or spelling evidence.
     """
-    spans, offset, active = [], 0, False
+    spans, offset, active, blank_seen = [], 0, False, False
     for raw in text.splitlines(keepends=True):
-        if any(char in raw for char in '\v\f\x1c\x1d\x1e\x85\u2028\u2029'):
-            active = False  # Page/paragraph controls do not prove adjacency.
+        if '|' in raw or any(char in raw for char in _HARD_LINE_BREAKS):
+            active = False  # Hard and table boundaries do not prove adjacency.
             offset += len(raw)
             continue
         line = raw.rstrip('\r\n')
         if _WITNESS_HEADING.fullmatch(line.strip()):
-            active = True
+            active, blank_seen = True, False
+        elif active and not line.strip(' \t'):
+            active, blank_seen = not blank_seen, True
         elif active:
             marker = _WITNESS_ITEM.match(line)
             words = _name_word_spans(line[marker.end():]) if marker else []
@@ -268,6 +271,7 @@ def _witness_list_name_spans(text: str) -> list[_Span]:
                 else:
                     start = offset + marker.end()
                     spans.append(_Span(start, start + end))
+                    blank_seen = False
         offset += len(raw)
     return spans
 

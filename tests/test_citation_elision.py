@@ -143,6 +143,62 @@ def test_arabic_unrecognised_subdivision_words_do_not_borrow_article_head():
     assert blocks._citation_heads(text) == Counter({"24": 1})
 
 
+@pytest.mark.parametrize("delimiter", [",", "،", ";", "؛"])
+def test_arabic_closing_punctuation_keeps_each_repeated_article_pair(delimiter):
+    source = "Artigos 24º e 35º do Código. Nos termos dos artigos 24º e 35º, suspende-se o processo."
+    target = ("المادتين 24º و35º من القانون. "
+              f"بموجب المادتين 24º و35º{delimiter} يُقرر تعليق الإجراءات.")
+    assert blocks._citation_heads(source) == blocks._citation_heads(target) == Counter({"24": 2, "35": 2})
+    check(source, target, TargetLang.AR)
+
+
+@pytest.mark.parametrize("target", [
+    "المواد 24، 35 و46.", "المواد 24،35، و46؛", "المواد 24 و35، و46، وفق القانون.",
+])
+def test_arabic_comma_joins_explicitly_coordinated_article_numbers(target):
+    assert blocks._citation_heads(target) == Counter({"24": 1, "35": 1, "46": 1})
+    check("Artigos 24, 35 e 46.", target, TargetLang.AR)
+
+
+@pytest.mark.parametrize("text", [
+    "المادة 24؛ و35º.", "المادة 24، مرجع 35º.",
+    "المادة 24، 10 أيام.", "المادة 24، 10 مايو 2030.",
+    "المادة 24، 10/05/2030.", "المادة 24، 10.05.2030.",
+    "المادة 24، 10-05-2030.", "المادة 24، 35A.",
+    "المادة 24، 35/ABC.", "المادة 24، 35.50 قيمة.",
+    "المادة 24، الفقرة 1 و35º.",
+    *(f"المادة 24،{boundary}و35º." for boundary in ('\n', '\r\n', '\v', '\f', '\u2028', '\u2029')),
+])
+def test_arabic_punctuation_cannot_cross_clauses_prose_values_or_lines(text):
+    assert blocks._citation_heads(text) == Counter({"24": 1})
+
+
+def test_arabic_semicolon_closes_the_pair_without_borrowing_the_next_number():
+    assert blocks._citation_heads("المادتين 24 و35؛ و46º.") == Counter({"24": 1, "35": 1})
+
+
+@pytest.mark.parametrize("source,target", [
+    ("Artigos 24º e 35º. Referência 46.", "المادتين 24º و46º، والمرجع 35."),
+    ("Artigos 24º e 35º.", "المادة 24º؛ والمرجع 35º."),
+    ("Artigo 24º. Referência 35º.", "المادتين 24º و35º، وفق القانون."),
+    ("Artigos 24º e 24º.", "المادة 24º، والمرجع 24º."),
+])
+def test_arabic_punctuation_keeps_strict_citation_counts_with_same_numbers(source, target):
+    assert Counter(blocks._NUMBER.findall(source)) == Counter(blocks._NUMBER.findall(target))
+    assert blocks._citation_heads(source) != blocks._citation_heads(target)
+    # A reordered literal may be rejected before the citation check; neither
+    # that stronger guard nor the citation counter may be bypassed.
+    with pytest.raises(BlockCoverageError):
+        check(source, target, TargetLang.AR)
+
+
+def test_arabic_punctuation_keeps_character_and_step_limits():
+    assert blocks._citation_heads("المادة 24، " + " " * 512 + "35.") == Counter({"24": 1})
+    heads = blocks._citation_heads("المادة 24" + "، 1º" * 100)
+    assert heads["24"] == 1
+    assert 0 < heads["1"] <= blocks._MAX_CITATION_TAIL_STEPS < 100
+
+
 def test_continuation_is_bounded_without_partial_token_admission():
     assert blocks._citation_heads("Article 24 and " + " " * 512 + "35.") == Counter({"24": 1})
     assert blocks._citation_heads("Article 24 and " + " " * 495 + "35A.") == Counter({"24": 1})
@@ -158,8 +214,8 @@ def test_citation_policy_changes_real_translation_identity_only_through_evaluati
     config = SimpleNamespace(target_lang=TargetLang.FR, pdf_path=tmp_path / "fictional.pdf")
     monkeypatch.setattr(blocks, "source_page_identity", lambda _path, page: {"page": page, "source": "fictional"})
     current = blocks.NewTranslationBlocks(workflow, config, [1], source_hash="fictional", context_hash="fictional")
-    assert blocks.CITATION_POLICY_VERSION == "article_heads_v3_bounded_coordinated_elision"
-    monkeypatch.setattr(blocks, "CITATION_POLICY_VERSION", "article_heads_v2_arabic_number_inflections")
+    assert blocks.CITATION_POLICY_VERSION == "article_heads_v4_arabic_punctuation"
+    monkeypatch.setattr(blocks, "CITATION_POLICY_VERSION", "article_heads_v3_bounded_coordinated_elision")
     previous = blocks.NewTranslationBlocks(workflow, config, [1], source_hash="fictional", context_hash="fictional")
     assert current.identity["fingerprint"] != previous.identity["fingerprint"]
     assert current.instructions == previous.instructions

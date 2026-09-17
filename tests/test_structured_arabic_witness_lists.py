@@ -81,7 +81,7 @@ def test_changed_missing_reordered_duplicated_names_and_prose_stay_rejected(targ
     'Foi oferecida prova testemunhal:\na) Ana Matos',
     'Prova testemunhal:\nDescrição:\na) Ana Matos',
     'Prova testemunhal:\n*\na) Ana Matos',
-    'Prova testemunhal:\n\na) Ana Matos',
+    'Prova testemunhal:\n\n\na) Ana Matos',
     'Prova testemunhal:\nAna Matos',
     'Prova testemunhal:\na) Deve Pagar',
     'Prova testemunhal:\na) Ministério Público',
@@ -124,6 +124,42 @@ def test_paragraph_and_page_control_boundaries_end_heading_association(separator
     assert 'Ana Matos' not in extract_locked_tokens(prepare(f'Testemunhas:{separator}a) Ana Matos'))
 
 
+@pytest.mark.parametrize('newline', ['\n', '\r\n'])
+@pytest.mark.parametrize('blank', ['', ' \t'])
+def test_one_blank_after_heading_and_each_entry_preserves_exact_spans(newline, blank):
+    source = SOURCE.replace('\n', newline + blank + newline)
+    prepared = prepare(source)
+    assert extract_locked_tokens(prepared) == TOKENS
+    assert prepared.replace('[[', '').replace(']]', '') == source
+    assert prepare(prepared) == prepared
+    normalized = normalize(prepared, TARGET)
+    assert extract_locked_tokens(normalized) == TOKENS
+    assert normalize(prepared, normalized) == normalized
+
+
+@pytest.mark.parametrize('prefix', ['Testemunhas:', 'Testemunhas:\na) Ana Matos;'])
+@pytest.mark.parametrize('barrier', [
+    '\n\n\n', '\r\n \t\r\n\t\r\n', '\n\nDescrição:\n',
+    '\n\n|\n', '\n\na) Ana Matos, | outra célula\n',
+    '\n\na) Deve Pagar;\n', '\n\nAna Matos\n',
+    *('\n\n' + separator + '\n' for separator in '\v\f\x1c\x1d\x1e\x85\u2028\u2029'),
+])
+def test_blank_scope_cannot_cross_boundary_or_restart_without_heading(prefix, barrier):
+    source = prefix + barrier + 'b) Luís Correia;\n\nc) Ana de Matos;'
+    tokens = extract_locked_tokens(prepare(source))
+    assert 'Luís Correia' not in tokens and 'Ana de Matos' not in tokens
+
+
+@pytest.mark.parametrize('target', [
+    TARGET.replace('Ana Matos', ''), TARGET + '\nAna Matos',
+    TARGET.replace('Ana Matos', 'Luís Correia'),
+    TARGET.replace('Ana Matos', 'TEMP').replace('Luís Correia', 'Ana Matos').replace('TEMP', 'Luís Correia'),
+])
+def test_blank_spacing_does_not_relax_literal_counts_or_associations(target):
+    with pytest.raises(StructuredArabicLiteralError):
+        normalize(prepare(SOURCE.replace('\n', '\n\n')), target)
+
+
 @pytest.mark.parametrize('target', [TARGET,
     TARGET.replace('Ana Matos', '[[Ana Matos]]').replace('Luís Correia', '[[Luís Correia]]'),
     TARGET.replace('Ana Matos', '[[Ana]] [[Matos]]').replace('Luís Correia', '[[Luís]] [[Correia]]')])
@@ -135,13 +171,15 @@ def test_wrapper_normalization_is_idempotent(target):
     assert extract_locked_tokens(normalized) == TOKENS
 
 
-def test_real_adapter_accepts_list_in_one_call_without_mutating_source(tmp_path, monkeypatch):
+@pytest.mark.parametrize('gap', ['\n', '\n\n'])
+def test_real_adapter_accepts_list_in_one_call_without_mutating_source(tmp_path, monkeypatch, gap):
     adapter = make_adapter(monkeypatch)
     # Reviewed-source blocks may contain a whole list. Ordinary extraction can
     # split this into three blocks; that is not same-block name attribution.
-    source = PageStructure(page_number=1, source_sha256=text_sha256(SOURCE),
-        source_text_sha256=text_sha256(SOURCE), source_file_sha256='1' * 64,
-        blocks=[StructureBlock(id='p0001_b0001', text=SOURCE)])
+    text = SOURCE.replace('\n', gap)
+    source = PageStructure(page_number=1, source_sha256=text_sha256(text),
+        source_text_sha256=text_sha256(text), source_file_sha256='1' * 64,
+        blocks=[StructureBlock(id='p0001_b0001', text=text)])
     original = deepcopy(source.to_dict())
     assert len(source.blocks) == 1
     calls = []
@@ -151,6 +189,8 @@ def test_real_adapter_accepts_list_in_one_call_without_mutating_source(tmp_path,
         assert len(calls) == 1, 'Exact witness names must not cause a correction call.'
         payload, _ = json.JSONDecoder().raw_decode(kwargs['prompt_text'])
         assert extract_locked_tokens(payload['blocks'][0]['text']) == TOKENS
+        assert 'exact occurrence counts and order within each block' in kwargs['instructions']
+        assert 'borrowed words, quoted text' in kwargs['instructions']
         return ApiCallResult(raw_output=json.dumps({'blocks': [
             {'id': source.blocks[0].id, 'text': TARGET}]}),
             usage={'input_tokens': 10, 'output_tokens': 15, 'total_tokens': 25},
