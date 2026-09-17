@@ -237,7 +237,7 @@ export function mountSourceReview({ root, prepareButton, getScope, getSetup, man
     root.append(toolbar);
     root.append(element(doc, "p", "Review handles are available only while this server session retains them. Browser reload offers recovery only; a server restart cannot restore the review here.", "source-review-note"));
     const pages = next.view?.pages || [];
-    if (pages.length && !next.operationNonce) {
+    if (pages.length && !next.operationNonce && !next.busy) {
       if (!pages.some((p) => p.page_number === selectedPage)) selectedPage = pages[0].page_number;
       toolbar.append(select(doc, pages.map((p) => [String(p.page_number), `Page ${p.page_number}${pageReviewComplete(p) ? " — saved and reviewed" : " — needs review"}`]),
         String(selectedPage), (value) => { selectedPage = Number(value); render(); }, next.busy));

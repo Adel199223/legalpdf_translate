@@ -77,6 +77,28 @@ def _lines(text):
     return result
 
 
+def _next_signature_line(lines, index):
+    """Skip at most one explicit blank, never a hard/table boundary or prose."""
+    following = index + 1
+    if following < len(lines) and lines[following][0] == '':
+        following += 1
+    if following < len(lines) and lines[following][0] not in (None, ''):
+        return following
+    return None
+
+
+def _signature_name(lines, title_index, valid_name):
+    title = lines[title_index][0]
+    if title is None or not _SIGNATURE_TITLE.fullmatch(title):
+        return None
+    name_index = _next_signature_line(lines, title_index)
+    if name_index is not None:
+        name, start = lines[name_index]
+        if valid_name(name):
+            return start, start + len(name)
+    return None
+
+
 def _field(text, match, group):
     start, end = match.span(group)
     raw = text[start:end]
@@ -126,18 +148,13 @@ def extract_source_entities(text: str, *, valid_name: Callable[[str], bool],
             if valid_name(name):
                 start = offset + digital.start('name')
                 persons.append((start, start + len(name)))
-        if _SIGNATURE_TITLE.fullmatch(line) and index + 1 < len(lines):
-            name, start = lines[index + 1]
-            if name is not None and valid_name(name):
-                persons.append((start, start + len(name)))
+        signature_name = _signature_name(lines, index, valid_name)
+        if signature_name is not None:
+            persons.append(signature_name)
         place_match = _SIGNATURE_PLACE.fullmatch(line)
         if place_match and valid_place(place_match['place']):
-            following = index + 1
-            if following < len(lines) and lines[following][0] == '':
-                following += 1  # Only one explicit blank before the heading.
-            if (following + 1 < len(lines) and lines[following][0] is not None
-                    and _SIGNATURE_TITLE.fullmatch(lines[following][0])
-                    and lines[following + 1][0] is not None and valid_name(lines[following + 1][0])):
+            following = _next_signature_line(lines, index)
+            if following is not None and _signature_name(lines, following, valid_name) is not None:
                 start = offset + place_match.start('place')
                 literals.append((start, start + len(place_match['place'])))
                 abbreviations.append((offset + place_match.start('abbreviation'),

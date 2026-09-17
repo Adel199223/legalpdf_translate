@@ -363,3 +363,156 @@ def test_reviewed_translate_requires_bounded_explicit_nonce(tmp_path, monkeypatc
         c.bridge.start_translate(**c.owner, review_id=c.view["review_id"], revision_id=revision["revision_id"],
             operation_nonce=nonce)
     assert targets == [] and c.jobs.list_jobs() == []
+
+
+def test_same_review_image_read_does_not_fail_queued_context_loader(tmp_path, monkeypatch):
+    c = bridge_case(tmp_path, monkeypatch)
+    revision = submit(c)
+    targets = capture_jobs(monkeypatch)
+    entry = c.bridge._entry("shadow", "workspace-1", c.view["review_id"])
+    slot_held, image_release, loader_stage = (threading.Event() for _ in range(3))
+    trace, image_results, workflow_contexts = [], [], []
+    image_name, worker_name = "synthetic-image-request", "synthetic-job-loader"
+    original_lock = entry.lock
+
+    class ObservedLock:
+        def __enter__(self):
+            if threading.current_thread().name == worker_name:
+                trace.append("background_loader_waiting_for_same_review_lock")
+                loader_stage.set()
+            return original_lock.__enter__()
+
+        def __exit__(self, *args):
+            return original_lock.__exit__(*args)
+
+    entry.lock = ObservedLock()
+    original_draft = entry.service._draft
+
+    def held_image_draft(*args, **kwargs):
+        # Production service.read() has already acquired its genuine run slot.
+        if threading.current_thread().name == image_name:
+            trace.append("image_service_read_holds_real_run_slot")
+            slot_held.set()
+            assert image_release.wait(10), "Coordinator did not release synthetic image read"
+        return original_draft(*args, **kwargs)
+
+    monkeypatch.setattr(entry.service, "_draft", held_image_draft)
+    original_load = entry.service.load_context
+
+    def observed_load(*args, **kwargs):
+        try:
+            return original_load(*args, **kwargs)
+        except Exception as exc:
+            if threading.current_thread().name == worker_name:
+                trace.append({"background_exception_type": type(exc).__name__, "message": str(exc)})
+            raise
+        finally:
+            if threading.current_thread().name == worker_name:
+                loader_stage.set()
+
+    monkeypatch.setattr(entry.service, "load_context", observed_load)
+
+    def image_request():
+        try:
+            image_results.append(c.bridge.image(**c.owner, review_id=c.view["review_id"], page_number=1))
+        except BaseException as exc:
+            image_results.append(exc)
+
+    original_start = c.jobs.start_reviewed_translate
+    image_thread = threading.Thread(target=image_request, name=image_name)
+
+    def queue_and_schedule_image(**kwargs):
+        job = original_start(**kwargs)
+        # start_translate still holds entry.lock. Image waits until it releases.
+        assert original_lock._is_owned()
+        trace.append("image_scheduled_while_start_owns_review_lock")
+        image_thread.start()
+        return job
+
+    monkeypatch.setattr(c.jobs, "start_reviewed_translate", queue_and_schedule_image)
+
+    class NoProviderWorkflow:
+        def __init__(self, **kwargs):
+            assert kwargs["client"] is None
+            assert kwargs["reviewed_source_context"].revision_id == revision["revision_id"]
+            workflow_contexts.append(kwargs["reviewed_source_context"].identity)
+
+        def run(self, config):
+            return SimpleNamespace(success=True, error=None)
+
+    monkeypatch.setattr(workflow_module, "TranslationWorkflow", NoProviderWorkflow)
+    monkeypatch.setattr(jobs_module, "_translation_result_payload", lambda **kwargs: {})
+    arguments = {**c.owner, "review_id": c.view["review_id"], "revision_id": revision["revision_id"], "operation_nonce": "a" * 32}
+    job = c.bridge.start_translate(**arguments)
+    worker = threading.Thread(target=targets.pop(0), name=worker_name)
+    try:
+        assert slot_held.wait(10), "Image did not acquire real source-read slot"
+        worker.start()
+        assert loader_stage.wait(10), "Loader neither contended nor reached the source loader"
+    finally:
+        image_release.set()
+        image_thread.join(10)
+        if worker.ident is not None:
+            worker.join(10)
+    assert not image_thread.is_alive() and not worker.is_alive()
+    assert len(image_results) == 1 and isinstance(image_results[0], bytes)
+    observed = c.jobs.get_job(job["job_id"])
+    assert observed["status"] == "completed", (trace, observed["diagnostics"])
+    assert len(workflow_contexts) == 1
+    assert c.bridge.start_translate(**arguments)["job_id"] == job["job_id"]
+    assert len(c.jobs.list_jobs()) == 1 and not targets
+
+
+def test_queued_context_loader_still_rejects_external_run_slot_without_retry(tmp_path, monkeypatch):
+    from legalpdf_translate.run_workspace_lock import run_workspace_slot
+
+    c = bridge_case(tmp_path, monkeypatch)
+    revision = submit(c)
+    targets = capture_jobs(monkeypatch)
+    entry = c.bridge._entry("shadow", "workspace-1", c.view["review_id"])
+    arguments = {**c.owner, "review_id": c.view["review_id"], "revision_id": revision["revision_id"],
+                 "operation_nonce": "b" * 32}
+    job = c.bridge.start_translate(**arguments)
+    original_load = entry.service.load_context
+    attempts = []
+
+    def observed_load(selected):
+        attempts.append(selected)
+        return original_load(selected)
+
+    monkeypatch.setattr(entry.service, "load_context", observed_load)
+    monkeypatch.setattr(workflow_module, "TranslationWorkflow",
+                        lambda **_: pytest.fail("External run-slot conflict must fail before Workflow"))
+    held, release, finished = (threading.Event() for _ in range(3))
+
+    def external_operation():
+        with run_workspace_slot(entry.service.run_dir):
+            held.set()
+            assert release.wait(10), "Coordinator did not release external synthetic owner"
+
+    def queued_job():
+        try:
+            targets.pop(0)()
+        finally:
+            finished.set()
+
+    external = threading.Thread(target=external_operation)
+    worker = threading.Thread(target=queued_job)
+    external.start()
+    try:
+        assert held.wait(10)
+        worker.start()
+        # The unrelated owner's slot remains held. No retry or wait is added.
+        assert finished.wait(5), "Loader waited for an unrelated run-slot owner"
+        failed = c.jobs.get_job(job["job_id"])
+        assert failed["status"] == "failed"
+        assert failed["diagnostics"] == {"error": "ordinary_source_review_job_failed", "kind": "translate"}
+        assert attempts == [revision["revision_id"]]
+        assert c.bridge.start_translate(**arguments)["job_id"] == job["job_id"]
+        assert attempts == [revision["revision_id"]] and not targets
+    finally:
+        release.set()
+        external.join(10)
+        if worker.ident is not None:
+            worker.join(10)
+    assert not external.is_alive() and not worker.is_alive()

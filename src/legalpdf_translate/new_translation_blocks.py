@@ -41,14 +41,14 @@ from .validators import validate_ar, validate_enfr
 
 INTEGRATION_VERSION = "new_runs_v1"
 CONTEXT_POLICY_VERSION = "direct_winner_neighbors_v1"
-CITATION_POLICY_VERSION = "article_heads_v3_bounded_coordinated_elision"
+CITATION_POLICY_VERSION = "article_heads_v4_arabic_punctuation"
 MAX_OUTPUT_TOKENS = 24000
 MAX_SOURCE_CHARS = 120000
 _NUMBER = re.compile(r"\d[\d.,]*\d|\d")
 _ARTICLE = re.compile(r"(?:\bart(?:igo|icle)?s?\.?\s*|(?:المادة|المادتان|المادتين|المواد)\s*)(\d+(?:[º°.]|\s*[-–]\s*[A-Z])?)", re.I)
 # Continue only a closed citation grammar. Horizontal whitespace is deliberate:
 # a new source/target line or sentence never borrows the previous article head.
-_CITATION_JOIN = re.compile(r"[ \t]*(?:(?:,[ \t]*)?(?:\b(?:e|et|and)\b[ \t]*|و[ \t]*)|,[ \t]*)", re.I)
+_CITATION_JOIN = re.compile(r"[ \t]*(?:(?:[,،][ \t]*)?(?:\b(?:e|et|and)\b[ \t]*|و[ \t]*)|[,،][ \t]*)", re.I)
 _CITATION_SUBDIVISION = re.compile(
     r"[ \t]*,[ \t]*(?:(?P<number>n(?:\.[º°]|[º°]|\.)s?|nos?\.?|paragraphs?|paragraphes?|§{1,2})"
     r"|(?P<letter>al[íi]n[ée]as?|subparagraphs?|points?))[ \t]+", re.I)
@@ -128,7 +128,9 @@ def _citation_heads(text):
                 tail += 1
             # A cap is not a document end, and a number before a word such as
             # 'days' or 'May' is not accepted merely because it follows 'and'.
-            closed = (tail == len(text) or tail < end and text[tail] in ".,;:)]"
+            # Arabic comma joins the same bounded lists as ASCII comma;
+            # either semicolon closes a head but never continues its list.
+            closed = (tail == len(text) or tail < end and text[tail] in ".,،;؛:)]"
                       or _CITATION_JOIN.match(text, value.end(), end) is not None
                       or _CITATION_LEGAL_TAIL.match(text, value.end(), end) is not None)
             if not closed:

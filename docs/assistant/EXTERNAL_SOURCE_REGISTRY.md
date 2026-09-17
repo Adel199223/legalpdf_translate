@@ -2,6 +2,10 @@
 
 Purpose: record official primary sources used for material external behavior/capability decisions.
 
+## Normal-browser Arabic acceptance reference — 2026-09-17
+
+The official GPT-5.2 model page was searched and opened on 2026-09-17 for the scoped Arabic acceptance. Standard USD per million tokens remains 1.75 input, 0.175 cached input and 14 output: https://developers.openai.com/api/docs/models/gpt-5.2. The run explicitly uses high effort and the default service tier. Request reservations and actual usage settlement are recorded in the [Arabic browser acceptance plan](exec_plans/completed/2026-09-17_arabic_normal_browser_acceptance.md); this verification does not change saved defaults or expand the original USD10 lifetime budget. Earlier dated receipts remain historical evidence.
+
 ## OpenAI Python SDK transport compatibility — 2026-09-16
 
 The versioned official SDK sources below were checked on 2026-09-16 after PR #296's fresh-install CI exposed an undeclared legacy HTTPX test dependency. This is dependency compatibility evidence, not provider dispatch or a model/default change.

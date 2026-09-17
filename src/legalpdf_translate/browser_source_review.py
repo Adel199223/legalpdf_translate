@@ -241,10 +241,19 @@ class BrowserSourceReviewManager:
                 # An exception cannot make the same logical operation dispatch again.
                 operation = {"revision_id": revision_id, "status": "starting", "job_id": None}
                 entry.operations[operation_nonce] = operation
+
+                def load_reviewed_source():
+                    # An image/read queued during this start can hold the run
+                    # slot after the request releases entry.lock. Serialize the
+                    # background reload with this review's own reads, while
+                    # retaining prompt failure for unrelated run-slot owners.
+                    with entry.lock:
+                        return entry.service.load_context(revision_id)
+
                 try:
                     job = self._jobs.start_reviewed_translate(runtime_mode=runtime_mode, workspace_id=workspace_id,
                         config=deepcopy(entry.config), settings_path=entry.settings_path, reviewed_source_context=context,
-                        reviewed_source_loader=lambda: entry.service.load_context(revision_id))
+                        reviewed_source_loader=load_reviewed_source)
                     if (not isinstance(job, dict) or not isinstance(job.get("job_id"), str) or not job["job_id"]
                             or job.get("runtime_mode") != runtime_mode or job.get("workspace_id") != workspace_id):
                         _fail("job_unavailable")

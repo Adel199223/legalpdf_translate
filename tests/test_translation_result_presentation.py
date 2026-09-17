@@ -259,7 +259,7 @@ console.log(JSON.stringify({
         "Recommended rerun settings: OCR auto / Images always. Change the setup, then use Start Translate for a new run.",
         "Resume Translation reruns the same config against the same source.",
         "Change OCR or image settings first, then use Start Translate for a new run.",
-        "Rebuild DOCX only assembles completed pages and does not make this Gmail item confirmable.",
+        "Rebuild DOCX only assembles completed pages and does not complete a failed translation.",
     ]
     assert results["cases"]["cancelledRecovery"]["title"] == (
         "Cancelled <img src=x onerror=alert(1)><script>bad()</script>"

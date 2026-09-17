@@ -9,7 +9,7 @@ from legalpdf_translate.structured_arabic_literals import (
 
 
 PAIRS = [
-    ('Assinado em 12-03-2027, por\nAna Maria Matos, Juiz de Direito\n\nLisboa, d.s.\nA Juiz de Direito\nAna Maria Matos',
+    ('Assinado em 12-03-2027, por\nAna Maria Matos, Juiz de Direito\n\nLisboa, d.s.\n\nA Juiz de Direito\n\nAna Maria Matos',
      'تم التوقيع في 12-03-2027، من قبل\nAna Maria Matos، القاضي\n\nLisboa، التاريخ أعلاه\nالقاضي\nAna Maria Matos',
      ['12-03-2027', 'Ana Maria Matos', 'Lisboa', 'Ana Maria Matos']),
     ('Assinado em 12-03-2027, por\nAna Maria Matos, Procurador da República',
@@ -64,7 +64,7 @@ def test_missing_or_duplicated_source_fields_never_pass(source, target, expected
     ('Lisboa, d.s.\nOutro assunto\nA Juiz de Direito\nAna Matos', 'Lisboa'),
     ('Lisboa, d.s.\n\n\nA Juiz de Direito\nAna Matos', 'Lisboa'),
     ('Lisboa, d.s.\fA Juiz de Direito\nAna Matos', 'Lisboa'),
-    ('A Magistrada do Ministério Público,\n\nAna Matos', 'Ana Matos'),
+    ('A Magistrada do Ministério Público,\n\n\nAna Matos', 'Ana Matos'),
     ('Indiciam suficientemente que Ana Matos, filha de João Matos e de Maria Alves, outra informação.', 'Ana Matos'),
     ('Indiciam suficientemente que Ana Matos, filha de João Matos | Outra Pessoa e de Maria Alves, nascida em 2000.', 'Ana Matos'),
     ('marca desconhecida, modelo Corsa 1.2.', 'Corsa 1.2'),

@@ -83,7 +83,7 @@ def test_translation_recovery_state_surfaces_failed_arabic_guidance() -> None:
     assert failed["guidanceLines"] == [
         "Resume Translation reruns the same config against the same source.",
         "Change OCR or image settings first, then use Start Translate for a new run.",
-        "Rebuild DOCX only assembles completed pages and does not make this Gmail item confirmable.",
+        "Rebuild DOCX only assembles completed pages and does not complete a failed translation.",
     ]
     assert failed["advisorMessage"] == (
         "Recommended rerun settings: OCR auto / Images always. "

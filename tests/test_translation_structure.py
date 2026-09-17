@@ -130,6 +130,19 @@ def test_instructions_keep_source_as_data_and_do_not_request_fences(lang):
     assert "JSON" in instructions and "code block" not in instructions
 
 
+def test_arabic_instructions_distinguish_protected_tokens_from_ordinary_latin_words():
+    instructions = structured_system_instructions(TargetLang.AR)
+    assert "supplied [[...]] tokens unchanged" in instructions
+    assert "exact occurrence counts and order within each block" in instructions
+    assert "do not omit, duplicate, translate or expand their contents" in instructions
+    assert "including protected abbreviations" in instructions
+    assert "all remaining ordinary words and labels into Arabic" in instructions
+    assert "borrowed words, quoted text and Portuguese month names" in instructions
+    assert "do not wrap them in new Latin tokens" in instructions
+    for lang in (TargetLang.EN, TargetLang.FR):
+        assert "[[...]]" not in structured_system_instructions(lang)
+
+
 def test_per_block_validator_is_source_owned_and_keeps_boundaries(source):
     rows = [{"id": b["id"], "text": "  Name  " if b["text"] else ""} for b in source]
     visited = []

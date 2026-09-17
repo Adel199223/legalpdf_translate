@@ -187,11 +187,11 @@ export function deriveTranslationRecoveryState(job) {
   const guidanceLines = [
     "Resume Translation reruns the same config against the same source.",
     "Change OCR or image settings first, then use Start Translate for a new run.",
-    "Rebuild DOCX only assembles completed pages and does not make this Gmail item confirmable.",
+    "Rebuild DOCX only assembles completed pages and does not complete a failed translation.",
   ];
   const statusMessage = job.status === "cancelled"
-    ? "Translation stopped before this Gmail attachment could be confirmed. Resume reruns the same config, and Start Translate is the path for changed OCR/image settings."
-    : "Translation needs recovery before this Gmail attachment can continue. Resume reruns the same config, and Start Translate is the path for changed OCR/image settings.";
+    ? "Translation stopped before completion. Resume reruns the same config, and Start Translate is the path for changed OCR/image settings."
+    : "Translation needs recovery before it can continue. Resume reruns the same config, and Start Translate is the path for changed OCR/image settings.";
   const diagnosticsHint = advisor.message || `${guidanceLines[0]} ${guidanceLines[1]} ${guidanceLines[2]}`;
   return {
     visible: true,
