@@ -76,6 +76,14 @@ Normal full bootstrap, first PDF bundle responses and some generic error respons
 
 The September24 qualified intake check loaded one message, previewed two PDFs and prepared one session without starting it. Its first setup refusal caused an unexpected fourth readiness pair beyond the original three-pair plan; all four reported cleanup and the corrected request succeeded without another assessment. The [completed check](exec_plans/completed/2026-09-24_live_gmail_connection_recovery.md) retains the failure, scope deviation, recovery and limitations.
 
+## Translation saved versus later finalization
+
+Normal **Save this Gmail attachment** / Confirm can save the job and output before a subsequent Word-readiness check fails. Inspect the genuine session report and exact job/run/output join before repeating a save or starting another translation. A saved translation is separate from honorários generation, Gmail draft creation and sending. The qualified Gmail03 check on merged PR303 saved one actual output as row 90; all 63 earlier rows remained unchanged. Its later readiness failure, separate owned cleanup and fresh preflight are preserved, not erased by the saved-job result. Current status belongs in [HANDOFF.md](HANDOFF.md).
+
+Review scan output against the actual image: OCR or image input can still produce stray fragments, altered characters or omitted text. If a fresh rerun is justified, record explicit per-run OCR/image choices and choose a fresh existing output folder so the prior run remains intact. Do not promote those choices to defaults from one successful document. The ordinary image-only path is separate from reviewed-source mode, which requires local OCR evidence. Preserve any required original attachment bytes while the genuine intake is active; downloaded intake files can belong to a temporary directory removed when its owning session/runtime ends.
+
+Full bootstrap and some session/error responses may invoke native readiness; a GET is not automatically side-effect-free. A successful standalone preflight does not update another process's cached readiness. Preserve unknown cleanup and exact process ownership, use a fresh reviewed recovery scope where necessary, and never manually restore an older Word journal or replay a consumed helper to obtain a green status.
+
 ## If The Bridge Is Not Ready
 - If `8877` is listening but `8765` is not, stop random fixes and run a focused live-bridge diagnosis.
 - Check whether the canonical browser server is running from `main`.

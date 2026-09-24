@@ -1,5 +1,11 @@
 # Bounded Word startup readiness deadline
 
+## Current checkpoint
+
+The shared 45-second startup default and three caller corrections are implemented in source commit `58a2df5c939f753f603b4df3f69f3d8d283985d3`, with 91 passing targeted no-provider tests and independent source review. The chronological preparation statements below describe earlier states. Actual Full results are retained at private `gmail_formatting_readiness_20260924_01/validation/word_startup_full_01/result.json`; exact-head CI, canonical integration and the separate default-readiness native result belong to `word_startup_publication_01/final_application_receipt.json`. Absent or unsuccessful receipts leave their corresponding gates incomplete. Keep this plan active until the required canonical acceptance is recorded, then archive it through the scoped docs lifecycle.
+
+Both Gmail live03 and shadow06 are now stopped; shadow06 made no AR02 provider request before the browser local-file restriction. Its helper is consumed. Those runtime changes did not alter this frozen product/test snapshot or supply acceptance for the new default.
+
 ## Goal and non-goals
 
 Conditionally fix the demonstrated inconsistency between ordinary browser Word readiness callers and the shared startup deadline. A genuine Gmail Confirm saved its case successfully, then automatic finalization preflight stopped its owned helper after an eight-second deadline before Word ownership was established. Preserve that failed operation and determine whether a fresh, supported 45-second canonical preflight succeeds with confirmed cleanup before changing product code.

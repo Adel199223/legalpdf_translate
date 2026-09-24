@@ -200,6 +200,8 @@ This recovery does not require weakening Word security settings or repairing/rei
 18. If the current Gmail attachment was already run and you want to do it again from the same live workspace, use `Redo Current Attachment` instead of `Reset Gmail Workspace`. `Redo` keeps the Gmail batch session and only resets the translation side for that attachment.
 19. If `Generate Run Report` appears to do nothing, it should now download the detailed `run_report.md` immediately and leave `Download Run Report` available afterward. Look for that file in the run folder next to `run_summary.json`.
 
+If a Word/PDF check fails after you saved the Gmail attachment, the translated Word file and saved case can still be complete. Check the saved result before translating or saving it again. Let the Word check finish; PDF creation and the Gmail reply are later steps, and a failure there does not by itself mean you need another translation.
+
 ## Warning Dialogs
 - `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.
 - `Apply safe OCR profile`: Use this when the app warns that the document appears OCR-heavy and local OCR is unavailable. It changes only the current run to:

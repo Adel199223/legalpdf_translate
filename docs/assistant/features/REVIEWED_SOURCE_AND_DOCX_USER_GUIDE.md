@@ -12,7 +12,7 @@ Use the normal manual PDF upload. This source-review workflow needs browser-rend
 
 Check your saved settings first. If you deliberately change them after acquiring source evidence, start a fresh review context. The review controls do not silently change your saved settings or global model choices.
 
-In builds containing the fresh-profile fix, you can use the initial settings before saving preferences. Source and formatting review do not create a settings file just to continue. Local OCR and the other prerequisites above still apply; see the current handoff for the installed build.
+You can use the initial settings before saving preferences in the current published build. Source and formatting review do not create a settings file just to continue. Local OCR and the other prerequisites above still apply; see the current handoff for the installed build.
 
 ## Quick Start (No Technical Background)
 
