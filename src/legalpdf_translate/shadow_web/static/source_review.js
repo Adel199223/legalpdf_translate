@@ -21,6 +21,7 @@ const messages = {
   source_review_run_owner_conflict: "Settings changed after source review began. Prepare a new source review for the changed settings using a new upload or run.",
   source_review_saved_run_owner_unavailable: "This run already has saved work without a browser review owner. Choose a new upload or run.",
   browser_source_review_unavailable: "This review handle is unavailable. Browser review handles cannot be restored after a server restart.",
+  source_review_independent_workspace: "Keep this tab for the existing review and its recovery details. To review another document, duplicate this tab, change workspace= in its address to a different name, and upload the document there. Keep mode= unchanged. This opens independent work and does not recover the existing run.",
   browser_source_review_operation_outcome_unknown: "The translation start outcome is unknown. Check the exact operation again; a replacement start will not be sent.",
   source_review_storage_unavailable: "Browser session recovery storage is unavailable. This attempt cannot send a translation request; retain the existing operation for recovery.",
   source_review_setup_changed: "The source or setup changed. This review cannot start a new translation with the changed setup.",

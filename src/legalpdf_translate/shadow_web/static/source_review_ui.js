@@ -222,6 +222,9 @@ export function mountSourceReview({ root, prepareButton, getScope, getSetup, man
     root.append(status);
     if (next.recoveryOnly) root.append(element(doc, "p", sourceReviewMessage("source_review_recovery_only"), "source-review-warning"));
     if (next.invalidated) root.append(element(doc, "p", sourceReviewMessage("source_review_setup_changed"), "source-review-warning"));
+    if (next.operationNonce || next.errorCode === "browser_source_review_unavailable") {
+      root.append(element(doc, "p", sourceReviewMessage("source_review_independent_workspace"), "source-review-note"));
+    }
     if (next.view?.status === "declined") {
       for (const code of next.view.notice_codes || []) root.append(element(doc, "p", sourceReviewMessage(code)));
     }
