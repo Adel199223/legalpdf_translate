@@ -943,3 +943,110 @@ console.log(JSON.stringify({phases, successfulRead, failedInspect, recoveredInsp
     }
     assert result["nonceCount"] == 1 and result["unsafeWrites"] == 0
     assert result["final"]["associated"] and result["final"]["artifactId"] == "d" * 32
+
+
+@pytest.mark.parametrize("reject_corrected_save", [False, True])
+def test_corrected_local_table_warning_clears_without_hiding_server_error_or_skipping_recovery(reject_corrected_save):
+    result = probe(DOM + r"""
+const calls = [], storage = memory(); let reject = data.reject, nonces = 0;
+const fragments = Array.from({length: 4}, (_, index) => ({...fragment, parent_number: index + 1,
+  bbox_px: [10 + (index % 3) * 60, 10 + Math.floor(index / 3) * 50, 50 + (index % 3) * 60, 30 + Math.floor(index / 3) * 50]}));
+let saved = {...copy(draft), document_decision: null, pages: [{...copy(draft.pages[0]),
+  parents: fragments.map((item) => ({parent_number: item.parent_number, source_text: "Case", target_text: "Case"})),
+  decision: {...copy(pageDecision), fragments, body: [
+    {column_widths: [34, 33, 33], rows: [[[1], [2], [3]]], column_gaps_px: [12, 12]},
+    {column_widths: [100], rows: [[[4]]]}]}}]};
+const mounted = ui.mountFormattingReview({root, prepareButton, getScope: () => scope, getJob: () => job, storage,
+  createNonce: () => { nonces += 1; return "c".repeat(32); }, request: async (url, owner, options) => {
+    const body = options.body ? JSON.parse(options.body) : null; calls.push({url, body});
+    if (url.includes("/pages/")) {
+      if (reject) throw new Error("browser_formatting_review_run_busy");
+      saved = {...saved, generation: saved.generation + 1, document_decision: null,
+        pages: [{...saved.pages[0], decision: copy(body.decision)}]};
+    } else if (url.endsWith("/document")) {
+      saved = {...saved, generation: saved.generation + 1, document_decision: copy(body.decision)};
+    } else if (url.endsWith("/submit")) {
+      saved = {...saved, status: "submitted", revision_id: "b".repeat(32)};
+    } else if (url.endsWith("/rebuild")) {
+      if (![...storage.data.values()].some((raw) => raw.includes(body.operation_nonce))) throw new Error("Nonce not persisted");
+      saved = {...saved, status: "built", rebuild_operations: [{operation_nonce: body.operation_nonce,
+        revision_id: saved.revision_id, status: "built", artifact_id: "d".repeat(32)}],
+        artifacts: [{artifact_id: "d".repeat(32), revision_id: saved.revision_id, kinds: ["output_docx"]}]};
+    }
+    return envelope(saved);
+  }});
+const statusText = () => walk(root).find((node) => node.className === "formatting-review-status")?.textContent;
+const checkboxInput = (label) => walk(root).find((node) => node.tagName === "LABEL" && node.children[1]?.textContent === label).querySelector("input");
+const pagePosts = () => calls.filter((row) => row.url.includes("/pages/"));
+await prepareButton.fire("click"); await mounted.controller.prepare(true);
+await findButton("Save page formatting").fire("click");
+const firstWarning = statusText(), firstPagePosts = pagePosts().length;
+await findButton("Save page formatting").fire("click");
+const repeatedWarning = statusText(), repeatedPagePosts = pagePosts().length;
+const spacing = walk(root).filter((node) => node.tagName === "LABEL"
+  && node.children[1]?.textContent === "I want to preserve measured spaces between these columns")[1].querySelector("input");
+spacing.checked = true; await spacing.fire("change");
+const checksInvalidated = !checkboxInput("I reviewed the complete page image and its formatting").checked
+  && !checkboxInput("I checked every source-to-translation text selection").checked;
+await check("I reviewed the complete page image and its formatting");
+await check("I checked every source-to-translation text selection");
+await findButton("Save page formatting").fire("click");
+const correctedAttemptStatus = statusText(); let recovery = null;
+if (data.reject) {
+  const failed = mounted.controller.snapshot(), beforeReadDiscard = mounted.controller.discardUnsaved();
+  const locked = fieldControl("Page formatting reviewer").disabled;
+  await findButton("Read current formatting review").fire("click");
+  const afterRead = mounted.controller.snapshot(), beforeDiscard = calls.length;
+  await findButton("Discard the unsaved request and continue editing").fire("click");
+  recovery = {failed, beforeReadDiscard, locked, afterRead, discardRequests: calls.length - beforeDiscard,
+    afterDiscard: mounted.controller.snapshot(), stillReviewed: checkboxInput("I reviewed the complete page image and its formatting").checked};
+  reject = false; await findButton("Save page formatting").fire("click");
+}
+const afterPage = statusText();
+await findButton("Add document group").fire("click");
+await fill("Group 1 first page", "1"); await fill("Group 1 last page", "1");
+await fill("Text separators inside reviewed table cells", "no", "SELECT", "change");
+await fill("Vertical spacing between source regions", "no", "SELECT", "change");
+await fill("Document formatting reviewer", "Operator"); await fill("Document review explanation", "All fictional pages checked");
+await check("I reviewed every page, its text mappings and the document groups");
+await findButton("Save document review").fire("click"); const afterDocument = statusText();
+await fill("Formatting acceptance reviewer", "Operator");
+await check("I accept these complete formatting decisions for this exact translation");
+await findButton("Accept formatting revision").fire("click"); const afterSubmit = statusText();
+await findButton("Build DOCX from this revision").fire("click"); const afterBuild = statusText();
+const link = walk(root).find((node) => node.tagName === "A" && node.textContent === "Download this reviewed DOCX");
+console.log(JSON.stringify({firstWarning, firstPagePosts, repeatedWarning, repeatedPagePosts, checksInvalidated, correctedAttemptStatus, recovery,
+  statuses: [afterPage, afterDocument, afterSubmit, afterBuild], pagePosts: pagePosts(),
+  documents: calls.filter((row) => row.url.endsWith("/document")), submits: calls.filter((row) => row.url.endsWith("/submit")),
+  builds: calls.filter((row) => row.url.endsWith("/rebuild")), nonces, href: link?.href, unsafeWrites,
+  final: mounted.controller.snapshot(), expectedServerMessage: core.formattingReviewMessage("browser_formatting_review_run_busy")}));
+""", data={"reject": reject_corrected_save})
+    warning = "When using measured column spacing, review and enter it for every table on this page."
+    assert result["firstWarning"] == warning and result["firstPagePosts"] == 0
+    assert result["repeatedWarning"] == warning and result["repeatedPagePosts"] == 0
+    assert result["checksInvalidated"]
+    assert all(status and warning not in status for status in result["statuses"])
+    if reject_corrected_save:
+        assert result["correctedAttemptStatus"] == result["expectedServerMessage"]
+        recovery = result["recovery"]
+        assert recovery["failed"]["errorCode"] == "browser_formatting_review_run_busy"
+        assert recovery["failed"]["pendingKind"] == "page" and recovery["locked"]
+        assert recovery["beforeReadDiscard"] is None
+        assert recovery["afterRead"]["pendingKind"] == "page" and recovery["afterRead"]["canDiscardSave"]
+        assert recovery["discardRequests"] == 0 and not recovery["afterDiscard"]["pendingKind"]
+        assert recovery["afterDiscard"]["dirty"] and recovery["stillReviewed"]
+    else:
+        assert result["correctedAttemptStatus"] != warning and result["recovery"] is None
+    assert len(result["pagePosts"]) == (2 if reject_corrected_save else 1)
+    decisions = [row["body"]["decision"] for row in result["pagePosts"]]
+    assert all(decision == decisions[0] for decision in decisions)
+    assert decisions[0]["body"] == [
+        {"column_widths": [34, 33, 33], "rows": [[[1], [2], [3]]], "column_gaps_px": [12, 12]},
+        {"column_widths": [100], "rows": [[[4]]], "column_gaps_px": []},
+    ]
+    assert decisions[0]["full_page_review_completed"] and decisions[0]["source_target_mapping_reviewed"]
+    assert len(result["documents"]) == len(result["submits"]) == len(result["builds"]) == result["nonces"] == 1
+    assert result["builds"][0]["body"] == {"revision_id": "b" * 32, "operation_nonce": "c" * 32}
+    assert "/" + "d" * 32 + "/output_docx?" in result["href"]
+    assert result["final"]["verified"] and result["final"]["associated"] and not result["final"]["pendingKind"]
+    assert result["unsafeWrites"] == 0

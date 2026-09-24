@@ -135,7 +135,7 @@ export function mountFormattingReview({root, prepareButton, getScope, getJob, re
     if (documentEditor.check) documentEditor.check.checked = documentEditor.decision.all_pages_reviewed;
     update();
   }
-  const safely = (fn) => async () => { try { await fn(); } catch (error) { localMessage = error.message; render(); } };
+  const safely = (fn) => async () => { localMessage = ""; try { await fn(); } catch (error) { localMessage = error.message; render(); } };
   function render(s = controller.snapshot()) {
     const ownerKey = JSON.stringify(s.owner);
     if (ownerKey !== seenOwner) { seenOwner = ownerKey; choice = ""; opened = false; }
