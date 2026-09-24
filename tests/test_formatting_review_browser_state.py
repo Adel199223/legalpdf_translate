@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+import pytest
 
 from .browser_esm_probe import run_browser_esm_json_probe
 from .test_source_review_browser_state import DOM
@@ -34,6 +35,7 @@ const pageDecision = {...ui.blankFormattingPage(), fragments: [fragment], body: 
 const documentDecision = {...ui.blankFormattingDocument(), groups: [{start_page: 1, end_page: 1}],
   all_pages_reviewed: true, reviewer: "Operator", review_note: "All pages checked"};
 const draft = {status: "draft", review_id: "a".repeat(32), job_id: job.job_id, generation: 1, page_matched_derivative: true,
+  rebuild_operations: [], artifacts: [],
   reviewer_kind: "operator_review", source_revision_id: "e".repeat(32), offset_unit: "unicode_codepoint",
   geometry_status: "not_verified", rendered_layout_acceptance: "not_evaluated", layout_review_required: true, notice_codes: [],
   pages: [{page_number: 1, image_size_px: [200, 300], source_provenance: "ocr", source_uncertain: true, image_available: true,
@@ -237,6 +239,157 @@ console.log(JSON.stringify({failed, beforeReadDiscard, confirmed, buttonFound: B
     assert result["confirmed"]["pendingKind"] == "submit", "Read alone must not abandon the request"
     assert result["discardRequests"] == 0 and not result["final"]["pendingKind"]
     assert not result["editDisabled"] and not result["accepted"] and result["unsafeWrites"] == 0
+
+
+@pytest.mark.parametrize("kind", ["page", "document"])
+def test_rejected_save_needs_fresh_read_and_explicit_discard_without_losing_local_edits(kind):
+    result = probe(DOM + r"""
+const calls = [], storage = memory(); let reject = true;
+const saved = {...copy(draft), rebuild_operations: [], artifacts: []};
+const mounted = ui.mountFormattingReview({root, prepareButton, getScope: () => scope, getJob: () => job, storage,
+  request: async (url, owner, options) => {
+    const body = options.body ? JSON.parse(options.body) : null; calls.push({url, body});
+    if (url.includes("/pages/") || url.endsWith("/document")) {
+      if (reject) throw new Error("browser_formatting_review_operation_failed");
+      saved.generation += 1;
+      if (data.kind === "page") saved.pages[0].decision = body.decision;
+      else saved.document_decision = body.decision;
+    }
+    return envelope(saved);
+  }});
+await prepareButton.fire("click"); await mounted.controller.prepare(true);
+const label = data.kind === "page" ? "Page formatting reviewer" : "Document formatting reviewer";
+const saveLabel = data.kind === "page" ? "Save page formatting" : "Save document review";
+const local = "Local reviewer <img src=x onerror=alert(1)>";
+await fill(label, local); await findButton(saveLabel).fire("click");
+const failed = mounted.controller.snapshot(), beforeRead = mounted.controller.discardUnsaved?.() || null;
+await findButton("Read current formatting review").fire("click");
+const confirmed = mounted.controller.snapshot(), stillLocked = fieldControl(label, "INPUT").disabled;
+const beforeDiscard = calls.length;
+const discard = walk(root).find((node) => node.tagName === "BUTTON" && node.textContent === "Discard the unsaved request and continue editing");
+if (discard) await discard.fire("click");
+const afterDiscard = mounted.controller.snapshot(), editable = !fieldControl(label, "INPUT").disabled;
+const retainedReviewer = fieldControl(label, "INPUT").value, discardRequests = calls.length - beforeDiscard;
+if (discard) { reject = false; await fill(label, local + " corrected"); await findButton(saveLabel).fire("click"); }
+console.log(JSON.stringify({failed, beforeRead, confirmed, stillLocked, discardFound: Boolean(discard),
+  afterDiscard, editable, retainedReviewer, discardRequests, unsafeWrites, final: mounted.controller.snapshot(),
+  saves: calls.filter((row) => row.url.includes("/pages/") || row.url.endsWith("/document"))}));
+""", data={"kind": kind})
+    assert result["failed"]["pendingKind"] == kind and result["beforeRead"] is None
+    assert result["confirmed"].get("canDiscardSave") and result["discardFound"]
+    assert result["confirmed"]["pendingKind"] == kind and result["stillLocked"], "A read alone must not discard the request"
+    assert not result["afterDiscard"]["pendingKind"] and result["afterDiscard"]["dirty"]
+    assert result["editable"] and result["discardRequests"] == 0 and result["unsafeWrites"] == 0
+    assert result["retainedReviewer"] == "Local reviewer <img src=x onerror=alert(1)>"
+    assert len(result["saves"]) == 2 and not result["final"]["pendingKind"]
+    original, corrected = (row["body"] for row in result["saves"])
+    assert original["expected_generation"] == corrected["expected_generation"] == 1
+    assert corrected["decision"] == {**original["decision"], "reviewer": original["decision"]["reviewer"] + " corrected"}
+
+
+def test_pending_save_discard_refuses_unproven_changed_or_published_drafts():
+    result = probe(r"""
+const outcomes = [];
+for (const kind of ["page", "document"]) for (const scenario of ["read_failed", "changed_generation", "pending", "published", "build_present", "artifact_present", "operations_missing", "artifacts_missing"]) {
+  let calls = 0;
+  const c = core.createFormattingReviewController({getScope: () => scope, getJob: () => job, storage: memory(), request: async (url, owner, options) => {
+    calls += 1;
+    if (url.endsWith("/prepare")) return envelope(draft);
+    if (options.method === "POST" || scenario === "read_failed") throw new Error("Fictional failure");
+    const view = {...copy(draft), rebuild_operations: [], artifacts: []};
+    if (scenario === "changed_generation") view.generation += 2;
+    if (scenario === "pending") view.status = "submission_pending";
+    if (scenario === "published") Object.assign(view, {status: "submitted", revision_id: "b".repeat(32)});
+    if (scenario === "build_present") view.rebuild_operations = [{operation_nonce: "c".repeat(32)}];
+    if (scenario === "artifact_present") view.artifacts = [{artifact_id: "d".repeat(32)}];
+    if (scenario === "operations_missing") delete view.rebuild_operations;
+    if (scenario === "artifacts_missing") delete view.artifacts;
+    return envelope(view);
+  }});
+  await c.prepare(true); c.markDirty(kind === "page" ? 1 : null);
+  if (kind === "page") await c.savePage(1, pageDecision); else await c.saveDocument(documentDecision);
+  await c.read(); const before = calls, discarded = c.discardUnsaved?.() || null;
+  outcomes.push({kind, scenario, discarded, state: c.snapshot(), discardRequests: calls - before});
+}
+console.log(JSON.stringify(outcomes));
+""")
+    for row in result:
+        assert row["discarded"] is None and not row["state"].get("canDiscardSave"), row["scenario"]
+        assert row["state"]["pendingKind"] == row["kind"] and row["state"]["dirty"]
+        assert row["discardRequests"] == 0
+
+
+def test_pending_save_discard_proof_is_invalidated_and_cannot_forget_observed_changes():
+    result = probe(r"""
+const outcomes = [];
+for (const action of ["busy", "failed_read", "retry", "inspect", "owner", "published_then_draft", "changed_then_draft"]) {
+  let activeJob = {...job}, calls = 0, reading = "draft", resolveRead;
+  const c = core.createFormattingReviewController({getScope: () => scope, getJob: () => activeJob, storage: memory(), request: async (url, owner, options) => {
+    calls += 1;
+    if (url.endsWith("/prepare")) return envelope(draft);
+    if (options.method === "POST" || reading === "failed") throw new Error("Fictional failure");
+    const view = {...copy(draft), rebuild_operations: [], artifacts: []};
+    if (reading === "busy") return new Promise((resolve) => { resolveRead = resolve; });
+    if (reading === "published") view.status = "submission_pending";
+    if (reading === "changed") view.generation += 2;
+    return envelope(view);
+  }});
+  await c.prepare(true); c.markDirty(1); await c.savePage(1, pageDecision); await c.read();
+  const confirmed = c.snapshot(); let task;
+  if (action === "busy") { reading = "busy"; task = c.read(); }
+  if (action === "failed_read") { reading = "failed"; await c.read(); }
+  if (action === "retry") await c.savePage(1, pageDecision);
+  if (action === "inspect") await c.inspect();
+  if (action === "owner") activeJob = {...job, job_id: "tx-other"};
+  if (action.endsWith("_then_draft")) {
+    reading = action.startsWith("published") ? "published" : "changed"; await c.read();
+    reading = "draft"; await c.read();
+  }
+  const before = calls, discarded = c.discardUnsaved?.() || null, state = c.snapshot();
+  if (task) { resolveRead(envelope({...draft, rebuild_operations: [], artifacts: []})); await task; }
+  outcomes.push({action, confirmed, discarded, state, discardRequests: calls - before});
+}
+console.log(JSON.stringify(outcomes));
+""")
+    for row in result:
+        assert row["confirmed"].get("canDiscardSave"), row["action"]
+        assert row["discarded"] is None and not row["state"].get("canDiscardSave"), row["action"]
+        assert row["discardRequests"] == 0
+
+
+def test_matching_saved_decision_cannot_acknowledge_observed_changes_or_publication():
+    result = probe(r"""
+const outcomes = [];
+for (const kind of ["page", "document"]) for (const scenario of ["earlier_generation", "earlier_publication", "same_pending", "same_revision", "same_build", "same_artifact", "missing_operations", "missing_artifacts"]) {
+  let reads = 0, saves = 0;
+  const decision = {...(kind === "page" ? pageDecision : documentDecision), reviewer: "Exact pending reviewer"};
+  const c = core.createFormattingReviewController({getScope: () => scope, getJob: () => job, storage: memory(), request: async (url, owner, options) => {
+    if (url.endsWith("/prepare")) return envelope(draft);
+    if (options.method === "POST") { saves += 1; throw new Error("Fictional lost save response"); }
+    reads += 1;
+    const view = {...copy(draft), generation: 2};
+    if (kind === "page") view.pages[0].decision = copy(decision); else view.document_decision = copy(decision);
+    if (scenario === "earlier_generation" && reads === 1) view.generation = 3;
+    if (scenario === "earlier_publication" && reads === 1) { view.generation = 1; view.status = "submission_pending"; }
+    if (scenario === "same_pending") view.status = "submission_pending";
+    if (scenario === "same_revision") Object.assign(view, {status: "submitted", revision_id: "b".repeat(32)});
+    if (scenario === "same_build") view.rebuild_operations = [{operation_nonce: "c".repeat(32)}];
+    if (scenario === "same_artifact") view.artifacts = [{artifact_id: "d".repeat(32)}];
+    if (scenario === "missing_operations") delete view.rebuild_operations;
+    if (scenario === "missing_artifacts") delete view.artifacts;
+    return envelope(view);
+  }});
+  await c.prepare(true); c.markDirty(kind === "page" ? 1 : null);
+  if (kind === "page") await c.savePage(1, decision); else await c.saveDocument(decision);
+  await c.read(); if (scenario.startsWith("earlier_")) await c.read();
+  outcomes.push({kind, scenario, state: c.snapshot(), discarded: c.discardUnsaved(), saves});
+}
+console.log(JSON.stringify(outcomes));
+""")
+    for row in result:
+        assert row["state"]["pendingKind"] == row["kind"] and row["state"]["dirty"], row["scenario"]
+        assert not row["state"]["canDiscardSave"] and row["discarded"] is None
+        assert row["saves"] == 1
 
 
 def test_uncertain_submission_reads_cannot_discard_or_grant_new_build_authority():

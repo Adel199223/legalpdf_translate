@@ -184,6 +184,9 @@ export function mountFormattingReview({root, prepareButton, getScope, getJob, re
     if (s.canDiscardSubmission) root.append(button(doc, "Discard the unsubmitted request and continue editing", () => {
       if (controller.discardUnsubmitted()) { accept = false; render(); }
     }, s.busy));
+    if (s.canDiscardSave) root.append(button(doc, "Discard the unsaved request and continue editing", () => {
+      if (controller.discardUnsaved()) { accept = false; render(); }
+    }, s.busy));
     const pages = s.view?.pages || [];
     if (pages.length && s.verified && !s.operationNonce && !s.busy) {
       if (!pages.some((p) => p.page_number === pageNumber)) pageNumber = pages[0].page_number;
