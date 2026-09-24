@@ -1,6 +1,6 @@
 # Validation guide
 
-Use the smallest meaningful check first. Do not claim a test passed until its process and terminal result are known. [HANDOFF.md](HANDOFF.md), the [active multilingual plan](exec_plans/completed/2026-09-17_multilingual_gmail_acceptance.md) and its [September24 recovery](exec_plans/completed/2026-09-24_acceptance_interruption_recovery.md) identify current work. The [completed Arabic acceptance plan](exec_plans/completed/2026-09-17_arabic_normal_browser_acceptance.md) and [ordinary integration plan](exec_plans/completed/2026-09-16_ordinary_browser_integration.md) retain earlier qualified results. This page defines the validation tiers.
+Use the smallest meaningful check first. Do not claim a test passed until its process and terminal result are known. [HANDOFF.md](HANDOFF.md), the [completed multilingual plan](exec_plans/completed/2026-09-17_multilingual_gmail_acceptance.md) and its [September24 recovery](exec_plans/completed/2026-09-24_acceptance_interruption_recovery.md) identify current evidence. The [completed Arabic acceptance plan](exec_plans/completed/2026-09-17_arabic_normal_browser_acceptance.md) and [ordinary integration plan](exec_plans/completed/2026-09-16_ordinary_browser_integration.md) retain earlier qualified results. This page defines the validation tiers.
 
 ## Interpreter and isolation
 
