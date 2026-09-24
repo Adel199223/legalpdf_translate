@@ -61,7 +61,7 @@ Saving formatting decisions does not change the original DOCX. If review stops b
 
 ## Recovering a lost response
 
-The separate-workspace guidance below is available in the daily-use app containing PR #302. Check [the current handoff](../HANDOFF.md) for the installed build and current verification scope.
+The separate-workspace guidance below is currently in the isolated test build. Check [the current handoff](../HANDOFF.md) for availability of the review and recovery controls in the daily-use app.
 
 | What happened | What to do |
 | --- | --- |
