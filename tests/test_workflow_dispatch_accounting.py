@@ -307,3 +307,121 @@ def test_injected_accounting_cannot_bypass_product_block_cap(tmp_path):
         TranslationWorkflow(client=client_for(sdk), gui_settings={},
             accounting_factory=lambda **kwargs: DispatchAccounting(**kwargs)).run(config)
     assert not sdk.requests
+
+
+def diagnostic_cost_event(result):
+    events = [json.loads(line) for line in (result.run_dir / "run_events.jsonl").read_text(encoding="utf-8").splitlines()]
+    return [event for event in events if event["event_type"] == "cost_estimate_summary"][-1]
+
+
+def test_diagnostic_cost_matches_two_call_measured_summary(tmp_path):
+    config = replace(config_for(tmp_path), diagnostics_admin_mode=True)
+    source = tmp_path / "two-pages.pdf"
+    with fitz.open(config.pdf_path) as original, fitz.open() as document:
+        document.insert_pdf(original)
+        document.insert_pdf(original)
+        document.save(source)
+
+    class UsageSDK(FakeSDK):
+        def create(self, **request):
+            result = super().create(**request)
+            inp, out, reasoning = [(1072, 1151, 569), (596, 669, 489)][len(self.requests) - 1]
+            result.usage = {"input_tokens": inp, "output_tokens": out, "total_tokens": inp + out,
+                "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": reasoning}}
+            return result
+
+    result = TranslationWorkflow(client=client_for(UsageSDK()), gui_settings={},
+        translation_protocol="legal_blocks_v2").run(replace(config, pdf_path=source))
+    assert result.success, result.error
+    summary = json.loads(result.run_summary_path.read_text(encoding="utf-8"))
+    event = diagnostic_cost_event(result)
+    assert event["details"]["estimated_cost"] == pytest.approx(0.028399)
+    assert event["details"]["estimated_cost"] == summary["dispatch_accounting"]["cost_usd"]
+    assert event["details"]["cost_estimation_status"] == "measured_all_calls"
+    assert event["details"]["pricing_snapshot"] == summary["dispatch_accounting"]["pricing_snapshot"]
+    assert event["counters"] == summary["dispatch_accounting"]["totals"]
+
+
+@pytest.mark.parametrize("env_rate", ["1", "not-a-rate"])
+def test_diagnostic_cost_uses_all_correction_calls_and_cached_snapshot_not_env(tmp_path, monkeypatch, env_rate):
+    for key in ("INPUT", "OUTPUT", "REASONING"):
+        monkeypatch.setenv(f"LEGALPDF_COST_{key}_PER_1M", env_rate)
+    sdk = FakeSDK(correction=True)
+    result = TranslationWorkflow(client=client_for(sdk), gui_settings={},
+        translation_protocol="legal_blocks_v2", accounting_factory=priced_factory([])).run(
+            replace(config_for(tmp_path), diagnostics_admin_mode=True))
+    assert result.success, result.error
+    accounting = json.loads(result.run_summary_path.read_text(encoding="utf-8"))["dispatch_accounting"]
+    event = diagnostic_cost_event(result)
+    assert accounting["call_count"] == 2
+    assert event["details"]["estimated_cost"] == accounting["cost_usd"] == pytest.approx(.00132)
+    assert event["counters"] == accounting["totals"]
+    assert event["counters"]["cached_input_tokens"] == 40
+    assert event["counters"]["output_tokens"] == 120
+    assert event["counters"]["reasoning_tokens"] == 60
+    assert event["details"]["pricing_snapshot"]["snapshot_id"] == "offline-workflow-fixture"
+
+
+@pytest.mark.parametrize("unknown", ["usage", "model", "tier"])
+def test_diagnostic_partial_accounting_keeps_total_unknown(tmp_path, unknown):
+    class PartialSDK(FakeSDK):
+        def create(self, **request):
+            result = super().create(**request)
+            if len(self.requests) == 2:
+                if unknown == "usage":
+                    result.usage = None
+                elif unknown == "model":
+                    result.model = "unpriced-test-model"
+                else:
+                    result.service_tier = "unpriced-test-tier"
+            return result
+
+    result = TranslationWorkflow(client=client_for(PartialSDK(correction=True)), gui_settings={},
+        translation_protocol="legal_blocks_v2").run(replace(config_for(tmp_path), diagnostics_admin_mode=True))
+    assert result.success, result.error
+    summary = json.loads(result.run_summary_path.read_text(encoding="utf-8"))
+    accounting = summary["dispatch_accounting"]
+    event = diagnostic_cost_event(result)
+    assert accounting["coverage_status"] == "incomplete"
+    assert event["details"]["estimated_cost"] is accounting["cost_usd"] is None
+    assert event["details"]["known_cost_usd"] == accounting["known_cost_usd"] == pytest.approx(.0009835)
+    assert event["details"]["cost_estimation_status"] == summary["cost_estimation_status"] == "incomplete_all_calls"
+    assert event["details"]["coverage_status"] == "incomplete"
+    assert event["counters"] == accounting["totals"]
+
+
+def test_diagnostic_historical_unknown_cost_cannot_fall_back_to_page_estimate(tmp_path):
+    config = replace(config_for(tmp_path), diagnostics_admin_mode=True)
+    sdk = FakeSDK()
+    workflow = TranslationWorkflow(client=client_for(sdk), gui_settings={})
+    assert workflow.run(config).success
+    old_accounting = workflow._last_paths.run_dir / "accounting"
+    old_accounting.rename(old_accounting.with_name("fixture-retained-accounting"))
+    state = load_run_state(workflow._last_paths.run_state_path)
+    state.dispatch_accounting = {}
+    save_run_state_atomic(workflow._last_paths.run_state_path, state)
+    result = workflow.run(replace(config, resume=True))
+    assert result.success
+    summary = json.loads(result.run_summary_path.read_text(encoding="utf-8"))
+    event = diagnostic_cost_event(result)
+    assert summary["dispatch_accounting"]["historical_incomplete"]
+    assert event["details"]["estimated_cost"] is None
+    assert event["details"]["cost_estimation_status"] == summary["cost_estimation_status"] == "not_evaluated_all_calls"
+    assert event["details"]["coverage_status"] == "incomplete"
+    assert len(sdk.requests) == 1
+
+
+def test_diagnostic_measured_cost_survives_docx_write_failure(tmp_path, monkeypatch):
+    def failed_assembly(*args, **kwargs):
+        raise OSError("Fictional DOCX write failure")
+
+    monkeypatch.setattr(module, "assemble_docx", failed_assembly)
+    sdk = FakeSDK()
+    result = TranslationWorkflow(client=client_for(sdk), gui_settings={}).run(
+        replace(config_for(tmp_path), diagnostics_admin_mode=True))
+    assert not result.success and result.error == "docx_write_failed"
+    summary = json.loads(result.run_summary_path.read_text(encoding="utf-8"))
+    event = diagnostic_cost_event(result)
+    assert event["details"]["estimated_cost"] == summary["dispatch_accounting"]["cost_usd"] == pytest.approx(.0009835)
+    assert event["details"]["cost_estimation_status"] == "measured_all_calls"
+    assert len(sdk.requests) == 1

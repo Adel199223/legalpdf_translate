@@ -1380,37 +1380,6 @@ class TranslationWorkflow:
             from .glossary_diagnostics import emit_diagnostics_events
             emit_diagnostics_events(self._glossary_diagnostics, self._event_collector)
 
-        if self._diagnostics_admin_mode:
-            from .translation_diagnostics import estimate_cost, emit_cost_estimate_event
-            _page_rows = []
-            for _k, _pg in run_state.pages.items():
-                if isinstance(_pg, dict):
-                    _page_rows.append(_pg)
-            _total_in = sum(int(p.get("input_tokens", 0) or 0) for p in _page_rows)
-            _total_out = sum(int(p.get("output_tokens", 0) or 0) for p in _page_rows)
-            _total_reas = sum(int(p.get("reasoning_tokens", 0) or 0) for p in _page_rows)
-            _env_in = float(os.environ["LEGALPDF_COST_INPUT_PER_1M"]) if os.environ.get("LEGALPDF_COST_INPUT_PER_1M") else None
-            _env_out = float(os.environ["LEGALPDF_COST_OUTPUT_PER_1M"]) if os.environ.get("LEGALPDF_COST_OUTPUT_PER_1M") else None
-            _env_reas = float(os.environ["LEGALPDF_COST_REASONING_PER_1M"]) if os.environ.get("LEGALPDF_COST_REASONING_PER_1M") else None
-            _cost, _cost_expl = estimate_cost(
-                model=self._translation_model,
-                input_tokens=_total_in,
-                output_tokens=_total_out,
-                reasoning_tokens=_total_reas,
-                env_input_rate=_env_in,
-                env_output_rate=_env_out,
-                env_reasoning_rate=_env_reas,
-            )
-            emit_cost_estimate_event(
-                self._event_collector,
-                model=self._translation_model,
-                input_tokens=_total_in,
-                output_tokens=_total_out,
-                reasoning_tokens=_total_reas,
-                estimated_cost=_cost,
-                cost_explanation=_cost_expl,
-            )
-
         if (failed_page is None and not self._cancel_event.is_set() and run_state.failed_count == 0
                 and completed_pages == selection_page_count):
             try:
@@ -3327,6 +3296,22 @@ class TranslationWorkflow:
         tmp_path = summary_path.with_suffix(".tmp")
         tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp_path.replace(summary_path)
+        if self._diagnostics_admin_mode:
+            from .translation_diagnostics import emit_cost_estimate_event
+            # The persisted summary already resolves durable all-call coverage
+            # and legacy fallback policy. Diagnostics must not reprice it.
+            cost = payload["budget_post_run"]
+            emit_cost_estimate_event(
+                self._event_collector,
+                model=self._translation_model,
+                input_tokens=cost.get("input_tokens", 0),
+                output_tokens=cost.get("output_tokens", 0),
+                reasoning_tokens=cost.get("reasoning_tokens", 0),
+                estimated_cost=cost.get("estimated_cost_usd"),
+                cost_explanation=cost.get("pricing_explanation", ""),
+                cost_estimation_status=payload["cost_estimation_status"],
+                dispatch_accounting=payload.get("dispatch_accounting"),
+            )
         return summary_path
 
     def _build_run_summary_payload(
