@@ -1997,3 +1997,12 @@ Verification commands/results:
   - `src/legalpdf_translate/shadow_web/static/gmail.js`
   - `tests/test_shadow_web_api.py`
 - Follow-up docs refresh should mention that Gmail review, preview, session, and batch-finalize drawer hidden/`aria-hidden`/body dataset writes now render through `renderGmailDrawerChromeInto(...)` while `gmail.js` still owns drawer eligibility, state transitions, restore-bar coordination, and Gmail side effects.
+
+
+## 2026-09-24 — qualified English formatting and pending warning-fix validation
+
+- Scoped updates: current handoff/resume, root architecture, validation, active Gmail/formatting plan and reviewed-source/DOCX guide, plus this notes entry. Exact seven-file beforeimages are private `gmail_formatting_readiness_20260924_01/docs_sync_applied_01/beforeimages/`; dated history and the root's latest plan bullets remain intact.
+- Recorded Full_03's 653 selected tests, 25 focused recovery tests and four CI jobs only for `5285b1c`. The later stale client-warning fix at local commit `957cdb6` passed 27 targeted tests and independent review; Full_04/new-head CI remain pending. Historical suites remain separate evidence.
+- Recorded preserved EN02 line-partition failure, actual EN03 accepted/built derivative and qualified three-page native visual pass, followed by owned runtime/Word cleanup. Blocked/unconfirmed browser downloads remain qualified. No Arabic or fresh Gmail pass, saved-default promotion or historical hold disposition is claimed.
+- Added narrow user guidance for supported line/pipe boundaries, full source-gap spacing and explicit safe discard of an unsaved formatting page/document request. The AR proposal remains preparation only within the unchanged shared budget.
+- This is operation-specific status and user-flow clarification; no new issue-memory governance recurrence, template maintenance or route/manifest change is introduced. Docs/hygiene validation is recorded separately in `docs_sync_applied_01/`; no product test or live operation is launched by this Docs Sync.
