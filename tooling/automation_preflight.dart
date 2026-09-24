@@ -120,6 +120,20 @@ _ToolCheck _checkPlaywrightTool(CommandRunner runner) {
   return _ToolCheck(available: false, version: '', source: '');
 }
 
+String _readBrowserVersion(
+  String executable,
+  CommandRunner runner, {
+  required bool windowsHost,
+}) {
+  // Windows Chromium executables can open a normal browser session and keep
+  // running for --version. Read file metadata without starting the browser.
+  if (windowsHost || executable.toLowerCase().endsWith('.exe')) {
+    final String version = _readWindowsFileVersion(executable, runner);
+    return _looksLikeVersionLine(version) ? version : '';
+  }
+  return _checkToolVersion(executable, <String>['--version'], runner).version;
+}
+
 String _resolveExistingPath(List<String> candidates) {
   for (final String candidate in candidates) {
     if (candidate.trim().isEmpty) {
@@ -157,11 +171,9 @@ Map<String, dynamic> runAutomationPreflight({
   final String envBinary = (env['AUTOMATION_BROWSER_BINARY'] ?? '').trim();
   if (envBinary.isNotEmpty) {
     browserBinary = envBinary;
-    final _ToolCheck bin = _checkToolVersion(envBinary, <String>['--version'], run);
-    browserVersion = bin.version;
-    if (!_looksLikeVersionLine(browserVersion) && windowsFallbackAllowed) {
-      browserVersion = _readWindowsFileVersion(envBinary, run);
-    }
+    browserVersion = _readBrowserVersion(
+      envBinary, run, windowsHost: windowsFallbackAllowed,
+    );
     browserSource = 'system';
   } else {
     const List<String> candidates = <String>[
@@ -180,11 +192,9 @@ Map<String, dynamic> runAutomationPreflight({
         continue;
       }
       browserBinary = resolved;
-      final _ToolCheck bin = _checkToolVersion(resolved, <String>['--version'], run);
-      browserVersion = bin.version;
-      if (!_looksLikeVersionLine(browserVersion) && windowsFallbackAllowed) {
-        browserVersion = _readWindowsFileVersion(resolved, run);
-      }
+      browserVersion = _readBrowserVersion(
+        resolved, run, windowsHost: windowsFallbackAllowed,
+      );
       browserSource = 'system';
       break;
     }
@@ -206,11 +216,9 @@ Map<String, dynamic> runAutomationPreflight({
             )
           : _resolveExistingPath(windowsCandidates);
       if (browserBinary.isNotEmpty) {
-        final _ToolCheck bin = _checkToolVersion(browserBinary, <String>['--version'], run);
-        browserVersion = bin.version;
-        if (!_looksLikeVersionLine(browserVersion)) {
-          browserVersion = _readWindowsFileVersion(browserBinary, run);
-        }
+        browserVersion = _readBrowserVersion(
+          browserBinary, run, windowsHost: true,
+        );
         browserSource = 'system';
       }
     }
