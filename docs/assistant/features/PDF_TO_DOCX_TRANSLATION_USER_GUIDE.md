@@ -330,7 +330,7 @@ Use this when the source files already arrived in Gmail and you want one reply d
 - The app fetches only the exact intake message, not the whole thread.
 - The review list hides inline/signature/media junk and shows only supported source attachments from that exact message.
 - PDF preview uses a lazy continuous-scroll viewer so large documents can be inspected before translation without rendering every page up front.
-- If the current output folder is stale or missing, Gmail batch startup recovers automatically by preferring the current valid folder, then a valid default output folder, then `Downloads`.
+- Before clicking **Prepare selected** or **Continue** in the browser app, choose an existing writable output folder; create a new folder first if needed. An explicitly entered missing folder is rejected before a session is created. If you leave the field blank, the app uses a valid saved output folder or its workspace Gmail-output folder.
 - Fresh Gmail translation starts use Gmail attachment-scoped run folders and checkpoints. Legacy generic folders such as `Auto_FR_run` are not valid fresh-start resume targets for a new Gmail attachment.
 - For Arabic Gmail items, the DOCX saved after the Word review gate is the reviewed artifact used downstream for that batch item.
 - Every confirmed item in the batch must end with the same `case_number`, `case_entity`, `case_city`, and `court_email`.
@@ -437,4 +437,4 @@ suggestion uses local text; explicit autofill is a separate user action.
 
 ## Opening an incomplete run
 
-In the current acceptance build, open **Recent Work**, expand **Translation Runs**, and choose **Open run**. The app takes you to that run. If a failed or cancelled run has a partial Word file, **Download partial DOCX** appears beside its status. It contains only the completed source-page translations and is clearly marked incomplete. Opening it does not restart translation. These fixes are currently unpublished; check the [current handoff](../HANDOFF.md) for availability in the normal app.
+Open **Recent Work**, expand **Translation Runs**, and choose **Open run**. The app takes you to that run. If a failed or cancelled run has a partial Word file, **Download partial DOCX** appears beside its status. It contains only the completed source-page translations and is clearly marked incomplete. Opening it does not restart translation. These fixes are available in canonical builds containing PR #300; check the [current handoff](../HANDOFF.md) for the verified build and testing limits.

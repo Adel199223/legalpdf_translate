@@ -253,4 +253,4 @@ Use this fix:
 
 ## Opening an incomplete run
 
-In the current acceptance build, open **Recent Work**, expand **Translation Runs**, and choose **Open run**. The app takes you to that run. If a failed or cancelled run has a partial Word file, **Download partial DOCX** appears beside its status. It contains only the completed source-page translations and is clearly marked incomplete. Opening it does not restart translation. These fixes are currently unpublished; check the [current handoff](../HANDOFF.md) for availability in the normal app.
+Open **Recent Work**, expand **Translation Runs**, and choose **Open run**. The app takes you to that run. If a failed or cancelled run has a partial Word file, **Download partial DOCX** appears beside its status. It contains only the completed source-page translations and is clearly marked incomplete. Opening it does not restart translation. These fixes are available in canonical builds containing PR #300; check the [current handoff](../HANDOFF.md) for the verified build and testing limits.
