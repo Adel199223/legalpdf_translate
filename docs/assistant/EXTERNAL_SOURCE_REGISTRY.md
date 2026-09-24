@@ -1,5 +1,18 @@
 # External Source Registry
 
+## French uncertain-charge diagnosis and conditional retry — 2026-09-24
+
+Official pages below were opened on2026-09-24 for the isolated FRlong01 reconciliation. They explain API behavior and proposal bounds; none supplies account-specific billing or proves the historical transport cause. Installed SDK2.36.0 source remains the local runtime evidence; current Python docs may describe a newer SDK.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/reference/python | Transport diagnostics | SDK exceptions retain an underlying cause; returned request IDs aid support correlation. Local structured handling now retains only allowlisted class labels, never raw exception messages. | 2026-09-24 |
+| https://developers.openai.com/api/docs/guides/error-codes | Failure classification | APIConnectionError is a connection-error category. The label alone is insufficient to choose DNS, TLS, proxy, local network or provider outage as this case's cause. | 2026-09-24 |
+| https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage | Billing evidence | Usage/cost resources contain aggregated bucket results. A bucket total without a complete attribution bridge is not proof of one request's charge or refund. | 2026-09-24 |
+| https://developers.openai.com/api/docs/models/gpt-5.2 | Conditional bounded retry only | Published text rates per million are USD1.75 input,0.175 cached input and14 output. The retained20,000 input/6,000 inclusive-output bound is USD0.119 per call; a proposed13-call ceiling is USD1.547, subject to fresh approval-time verification and existing budget gates. | 2026-09-24 |
+
+No model, effort, protocol, endpoint or saved-default promotion follows. Missing usage stays unknown; the current hold/block remains in force. Original ledger rows and retained price snapshots are not rewritten by this public-source check.
+
 Purpose: record official primary sources used for material external behavior/capability decisions.
 
 ## Normal-browser Arabic acceptance reference — 2026-09-17

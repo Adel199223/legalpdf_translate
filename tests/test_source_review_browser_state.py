@@ -673,6 +673,121 @@ console.log(JSON.stringify({initial, readingState, readFailed, beforeTranslate, 
     assert result["translateRequests"] == 1 and result["unsafeWrites"] == 0
 
 
+def test_saved_translation_start_explains_separate_workspace_without_losing_exact_recovery():
+    result = probe(DOM + r"""
+const originalScope = {...scope};
+let owner = {...originalScope}, originalAvailable = false;
+const storage = memory(), calls = [];
+const reviewId = "a".repeat(32), revisionId = "b".repeat(32), nonce = "c".repeat(32);
+const jobId = "tx-<img src=x onerror=alert(1)>";
+const originalKey = "legalpdf:source-review:v1:shadow:workspace-1";
+const originalBytes = JSON.stringify({version: 1, ...originalScope, reviewId, revisionId,
+  operationNonce: nonce, jobId});
+storage.setItem(originalKey, originalBytes);
+const mounted = ui.mountSourceReview({root, prepareButton, storage,
+  getScope: () => owner, getSetup: () => ({source_path: "fictional-independent-upload.pdf"}),
+  manualReady: () => true, createNonce: () => { throw new Error("No replacement nonce"); },
+  request: async (url, requestScope, options) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({url, scope: {...requestScope}, method: options.method || "GET", body});
+    if (requestScope.workspaceId === "workspace-2" && url.endsWith("/prepare")) {
+      return envelope({review_id: "d".repeat(32), reviewer_kind: "operator_review", status: "draft",
+        generation: 1, pages: []});
+    }
+    if (requestScope.workspaceId !== originalScope.workspaceId) throw new Error("Wrong owner");
+    if (url.endsWith("/translate")) {
+      if (!originalAvailable || body.operation_nonce !== nonce || body.revision_id !== revisionId) {
+        throw new Error("Unassociated or replacement start");
+      }
+      return {normalized_payload: {job: {job_id: jobId, runtime_mode: owner.runtimeMode,
+        workspace_id: owner.workspaceId, status: "failed"}}};
+    }
+    if (!originalAvailable) {
+      const error = new Error("browser_source_review_unavailable");
+      error.payload = {diagnostics: {error: "browser_source_review_unavailable"}};
+      throw error;
+    }
+    return envelope({review_id: reviewId, status: "submitted", revision_ids: [revisionId],
+      translation_operations: [{operation_nonce: nonce, revision_id: revisionId, job_id: jobId,
+        status: "started"}]});
+  },
+});
+const initialText = root.textContent;
+await mounted.controller.read();
+const unavailableText = root.textContent;
+const discardAllowed = mounted.controller.discardLocalReview();
+const oldPrepareDisabled = prepareButton.disabled;
+await mounted.controller.prepare(); await mounted.controller.translate();
+const blockedCallCount = calls.length;
+owner = {...originalScope, workspaceId: "workspace-2"}; mounted.sync();
+const newPrepareEnabled = !prepareButton.disabled;
+await prepareButton.fire("click");
+const newReview = mounted.controller.snapshot();
+const originalUnchangedAfterPrepare = storage.getItem(originalKey) === originalBytes;
+owner = {...originalScope}; mounted.sync();
+const restored = mounted.controller.snapshot();
+await mounted.controller.translate();
+const callsBeforeFreshAssociation = calls.length;
+originalAvailable = true; await mounted.controller.read(); await mounted.controller.translate();
+console.log(JSON.stringify({initialText, unavailableText, discardAllowed, oldPrepareDisabled,
+  blockedCallCount, newPrepareEnabled, newReview, originalUnchangedAfterPrepare, restored,
+  callsBeforeFreshAssociation, calls, final: mounted.controller.snapshot(),
+  originalUnchangedAfterRecovery: storage.getItem(originalKey) === originalBytes,
+  tags: walk(root).map((node) => node.tagName), unsafeWrites}));
+""")
+    for text in (result["initialText"], result["unavailableText"]):
+        assert "duplicate this tab" in text
+        assert "workspace=" in text and "mode=" in text
+        assert "does not recover" in text
+    assert "server restart" in result["unavailableText"]
+    assert not result["discardAllowed"] and result["oldPrepareDisabled"]
+    assert result["blockedCallCount"] == 1
+    assert result["newPrepareEnabled"]
+    assert result["newReview"]["reviewId"] == "d" * 32
+    assert not result["newReview"]["operationNonce"]
+    assert result["originalUnchangedAfterPrepare"] and result["originalUnchangedAfterRecovery"]
+    assert result["restored"]["recoveryOnly"]
+    assert result["restored"]["reviewId"] == "a" * 32
+    assert result["restored"]["operationNonce"] == "c" * 32
+    assert result["callsBeforeFreshAssociation"] == 2
+    posts = [row for row in result["calls"] if row["method"] == "POST"]
+    assert len(posts) == 2
+    assert posts[0]["url"].endswith("/prepare") and posts[0]["scope"]["workspaceId"] == "workspace-2"
+    assert posts[1]["url"].endswith("/" + "a" * 32 + "/translate")
+    assert posts[1]["body"] == {"revision_id": "b" * 32, "operation_nonce": "c" * 32}
+    assert posts[1]["scope"] == {"runtimeMode": "shadow", "workspaceId": "workspace-1"}
+    assert result["final"]["operationAssociated"]
+    assert not {"IMG", "SCRIPT", "A"}.intersection(result["tags"])
+    assert result["unsafeWrites"] == 0
+
+
+def test_unavailable_review_without_translation_start_shows_workspace_guidance_and_can_close():
+    result = probe(DOM + r"""
+const storage = memory(), calls = [];
+storage.setItem("legalpdf:source-review:v1:shadow:workspace-1", JSON.stringify({version: 1, ...scope,
+  reviewId: "a".repeat(32), revisionId: "", operationNonce: "", jobId: ""}));
+const mounted = ui.mountSourceReview({root, prepareButton, storage, getScope: () => scope,
+  getSetup: () => ({source_path: "fictional-new-upload.pdf"}), manualReady: () => true,
+  request: async (url, _owner, options) => {
+    calls.push({url, method: options.method || "GET"});
+    throw new Error("browser_source_review_unavailable");
+  }});
+const before = root.textContent;
+await mounted.controller.read();
+const after = root.textContent;
+await findButton("Close this local review").fire("click");
+console.log(JSON.stringify({before, after, final: mounted.controller.snapshot(),
+  prepareEnabled: !prepareButton.disabled, calls, stored: storage.values(), unsafeWrites}));
+""")
+    assert "duplicate this tab" not in result["before"]
+    assert "server restart" in result["after"] and "duplicate this tab" in result["after"]
+    assert "workspace=" in result["after"] and "mode=" in result["after"]
+    assert result["prepareEnabled"] and not result["final"]["reviewId"]
+    assert result["stored"] == []
+    assert len(result["calls"]) == 1 and result["calls"][0]["method"] == "GET"
+    assert result["unsafeWrites"] == 0
+
+
 def test_ordinary_translate_contract_and_new_panel_are_separate_static_hooks():
     root = Path(__file__).resolve().parents[1] / "src/legalpdf_translate/shadow_web"
     translation = (root / "static/translation.js").read_text(encoding="utf-8")

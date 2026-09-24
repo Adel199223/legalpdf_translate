@@ -61,7 +61,7 @@ Saving formatting decisions does not change the original DOCX. If review stops b
 
 ## Recovering a lost response
 
-The rejected-submission and reopened-draft improvements below are currently in the isolated test build. Check [the current handoff](../HANDOFF.md) before expecting them in the daily-use app.
+The separate-workspace guidance below is currently in the isolated test build. Check [the current handoff](../HANDOFF.md) for availability of the review and recovery controls in the daily-use app.
 
 | What happened | What to do |
 | --- | --- |
@@ -75,6 +75,8 @@ The rejected-submission and reopened-draft improvements below are currently in t
 | Source, settings or saved target text changed | Expect a stale-review or conflict notice. Obtain a fresh valid context or review; do not repair checkpoints or hashes manually. |
 
 After a confirmed translation start, the upload widget may clear normally. That cleanup does not mean your settings changed.
+
+Keep the original tab for that translation and its exact recovery details. To review another document, duplicate the tab, change only the `workspace=` value in its address to a different name, and upload the document there. Keep `mode=` unchanged. The original review and translation-start record remain in their workspace. This opens independent work; it does not recover the old run, restore a review after a server restart, or authorize another translation. A new upload in the original tab does not replace its retained translation-start record.
 
 ## Advanced local use
 
