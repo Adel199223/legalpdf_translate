@@ -1671,7 +1671,10 @@ class TranslationJobManager:
                     or type(workspace_id) is not str or not workspace_id
                     or not isinstance(settings_path, Path)):
                 raise ValueError
-            path = settings_path.expanduser().resolve(strict=True)
+            candidate = settings_path.expanduser()
+            path = candidate.resolve()
+            if os.path.lexists(candidate) and not path.is_file():
+                raise ValueError
             with self._lock:
                 job = self._jobs.get(job_id)
                 if (job is None or job.job_id != job_id or job.runtime_mode != runtime_mode

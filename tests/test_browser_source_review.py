@@ -7,7 +7,7 @@ import threading
 
 import pytest
 
-from legalpdf_translate import translation_service as jobs_module, workflow as workflow_module
+from legalpdf_translate import browser_source_review as bridge_module, translation_service as jobs_module, workflow as workflow_module
 from legalpdf_translate.browser_source_review import BrowserSourceReviewManager, BrowserSourceReviewError
 from legalpdf_translate.openai_client import OpenAIResponsesClient
 from legalpdf_translate.translation_service import TranslationJobManager, build_translation_config
@@ -17,11 +17,12 @@ from tests.test_ordinary_source_review_service import (
 )
 
 
-def bridge_case(tmp_path, monkeypatch, **options):
+def bridge_case(tmp_path, monkeypatch, *, settings_present=True, **options):
     local_pass(monkeypatch)
     config = config_case(tmp_path)
     settings = tmp_path / "settings.json"
-    settings.write_text('{"page_breaks":false,"ocr_mode":"auto","ocr_engine":"local_then_api"}', encoding="utf-8")
+    if settings_present:
+        settings.write_text('{"page_breaks":false,"ocr_mode":"auto","ocr_engine":"local_then_api"}', encoding="utf-8")
     jobs = TranslationJobManager()
     bridge = BrowserSourceReviewManager(jobs)
     owner = {"runtime_mode": "shadow", "workspace_id": "workspace-1"}
@@ -61,6 +62,27 @@ def test_public_form_wrapper_keeps_saved_policy_and_existing_parser(tmp_path):
     config = build_translation_config(form_values=form, settings_path=settings)
     assert config == jobs_module._build_config_from_form(form_values=form, settings_path=settings)
     assert config.page_breaks is False and config.ocr_mode == OcrMode.OFF and config.ocr_engine.value == "api"
+
+
+@pytest.mark.parametrize("kind", ["directory", "dangling_link"])
+def test_existing_invalid_settings_are_not_treated_as_fresh_defaults(tmp_path, monkeypatch, kind):
+    config = config_case(tmp_path)
+    settings = tmp_path / "settings.json"
+    if kind == "directory":
+        settings.mkdir()
+    else:
+        try:
+            settings.symlink_to(tmp_path / "missing-target.json")
+        except OSError:
+            pytest.skip("This environment cannot create symbolic links.")
+    monkeypatch.setattr(bridge_module, "OrdinarySourceReviewService",
+        lambda *_: pytest.fail("Invalid settings must fail before source acquisition."))
+    jobs = TranslationJobManager()
+    bridge = BrowserSourceReviewManager(jobs)
+    with pytest.raises(BrowserSourceReviewError, match="settings_unavailable"):
+        bridge.prepare(runtime_mode="shadow", workspace_id="workspace-1", config=config, settings_path=settings)
+    assert not bridge._reviews and not jobs.list_jobs()
+    assert settings.is_dir() if kind == "directory" else settings.is_symlink()
 
 
 def test_views_are_json_safe_without_evidence_paths_or_bytes_and_images_are_owned(tmp_path, monkeypatch):

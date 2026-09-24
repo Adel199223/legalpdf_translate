@@ -25,8 +25,8 @@ from tests.test_browser_source_review import bridge_case, submit as source_submi
 from tests.test_ordinary_source_review_service import local_only
 
 
-def formatting_case(tmp_path, monkeypatch):
-    c = bridge_case(tmp_path, monkeypatch)
+def formatting_case(tmp_path, monkeypatch, *, settings_present=True):
+    c = bridge_case(tmp_path, monkeypatch, settings_present=settings_present)
     source = source_submit(c)
     queued = capture_jobs(monkeypatch)
     c.clients, c.calls = capture_lazy_client(monkeypatch)
@@ -86,7 +86,9 @@ def reviewed(c, *, table=False, gap=None):
 
 def originals(c):
     paths = [p for p in c.run_dir.rglob("*") if p.is_file()]
-    paths += [c.settings, Path(c.job["artifacts"]["output_docx"])]
+    paths.append(Path(c.job["artifacts"]["output_docx"]))
+    if c.settings.exists():
+        paths.append(c.settings)
     return {p: p.read_bytes() for p in paths}
 
 
@@ -98,8 +100,10 @@ def request(c, view, nonce="b" * 32):
     return {**c.scope, "review_id": view["review_id"], "revision_id": view["revision_id"], "operation_nonce": nonce}
 
 
-def test_real_job_derivative_build_download_and_restart_preserve_originals(tmp_path, monkeypatch):
-    c = formatting_case(tmp_path, monkeypatch)
+@pytest.mark.parametrize("settings_present", [True, False])
+def test_real_job_derivative_build_download_and_restart_preserve_originals(tmp_path, monkeypatch, settings_present):
+    c = formatting_case(tmp_path, monkeypatch, settings_present=settings_present)
+    assert c.settings.exists() is settings_present
     before = originals(c)
     assert c.job["actions"]["formatting_review"]
     declined = c.manager.prepare(**c.scope, page_matched_derivative=False)
@@ -133,6 +137,23 @@ def test_real_job_derivative_build_download_and_restart_preserve_originals(tmp_p
     unchanged(before)
     assert len(c.clients) == len(c.calls) == 1
     assert str(tmp_path) not in json.dumps(read) and "draft_id" not in read
+    assert c.settings.exists() is settings_present
+
+
+@pytest.mark.parametrize("kind", ["directory", "dangling_link"])
+def test_formatting_rejects_existing_nonfile_settings_after_fresh_profile_job(tmp_path, monkeypatch, kind):
+    c = formatting_case(tmp_path, monkeypatch, settings_present=False)
+    if kind == "directory":
+        c.settings.mkdir()
+    else:
+        try:
+            c.settings.symlink_to(tmp_path / "missing-target.json")
+        except OSError:
+            pytest.skip("This environment cannot create symbolic links.")
+    with pytest.raises(BrowserFormattingReviewError):
+        c.manager.prepare(**c.scope, page_matched_derivative=True)
+    assert not (c.run_dir / "browser_formatting_reviews").exists()
+    assert len(c.clients) == len(c.calls) == 1
 
 
 @pytest.mark.parametrize("choice", [None, 0, 1, "true"])
@@ -143,7 +164,7 @@ def test_choice_is_strict_boolean_before_any_draft(tmp_path, monkeypatch, choice
     assert not (c.run_dir / "browser_formatting_reviews").exists()
 
 
-@pytest.mark.parametrize("changed", ["mode", "workspace", "job", "settings", "status", "context", "config"])
+@pytest.mark.parametrize("changed", ["mode", "workspace", "job", "settings", "missing_settings", "status", "context", "config"])
 def test_exact_trusted_job_owner_required_on_every_read(tmp_path, monkeypatch, changed):
     c = formatting_case(tmp_path, monkeypatch)
     view = c.manager.prepare(**c.scope, page_matched_derivative=True)
@@ -155,6 +176,8 @@ def test_exact_trusted_job_owner_required_on_every_read(tmp_path, monkeypatch, c
     if changed == "settings":
         scope["settings_path"] = tmp_path / "other.json"
         scope["settings_path"].write_text("{}", encoding="utf-8")
+    if changed == "missing_settings":
+        scope["settings_path"] = tmp_path / "never-saved-other-settings.json"
     if changed == "status": job.status = "running"
     if changed == "context": job._reviewed_source_loader = lambda: None
     if changed == "config": job._config = replace(job._config, page_breaks=True)

@@ -32,7 +32,7 @@ PREFIX = "/api/translation/source-reviews"
 HEADERS = {"X-LegalPDF-Runtime-Mode": "shadow", "X-LegalPDF-Workspace-Id": "workspace-1"}
 
 
-def api_case(tmp_path, monkeypatch, *, saved=None):
+def api_case(tmp_path, monkeypatch, *, saved=None, settings_present=True):
     local_calls = local_pass(monkeypatch)
     queued = capture_jobs(monkeypatch)
     clients, sdk_calls = capture_lazy_client(monkeypatch)
@@ -44,9 +44,10 @@ def api_case(tmp_path, monkeypatch, *, saved=None):
     context = app.state.shadow_context
     settings = services.detect_data_paths(mode="shadow").settings_path
     settings.parent.mkdir(parents=True, exist_ok=True)
-    settings.write_text(json.dumps({"page_breaks": False, "ocr_mode": "auto", "ocr_engine": "local_then_api",
-        "keep_intermediates": True, "perf_max_transport_retries": 2, "perf_backoff_cap_seconds": 3.5,
-        **(saved or {})}), encoding="utf-8")
+    if settings_present:
+        settings.write_text(json.dumps({"page_breaks": False, "ocr_mode": "auto", "ocr_engine": "local_then_api",
+            "keep_intermediates": True, "perf_max_transport_retries": 2, "perf_backoff_cap_seconds": 3.5,
+            **(saved or {})}), encoding="utf-8")
     # The original upload route still saves the real bytes under the owned root.
     # Avoid its unrelated native PDF page-count and capability probes.
     monkeypatch.setattr(jobs_module, "get_source_page_count", lambda _: 1)
@@ -104,6 +105,18 @@ def save_and_submit(client, draft):
     return view(client.post(f"{PREFIX}/{review_id}/submit", headers=HEADERS,
         json={"expected_generation": current["generation"], "reviewer": "Fictional operator",
               "accept_source": True}))
+
+
+def test_fresh_profile_can_prepare_source_review_without_writing_defaults(tmp_path, monkeypatch):
+    c = api_case(tmp_path, monkeypatch, settings_present=False)
+    assert not c.settings.exists()
+    with TestClient(c.app) as client:
+        source = upload(client)
+        draft = prepare(client, c, source)
+        assert draft["status"] == "draft" and draft["pages"][0]["decision"] is None
+        assert view(client.get(f"{PREFIX}/{draft['review_id']}", headers=HEADERS))["review_id"] == draft["review_id"]
+    assert len(c.local_calls) == 1 and not c.clients and not c.sdk_calls and not c.queued
+    assert not c.settings.exists()  # Neither normal defaults nor preparation persist preferences.
 
 
 def test_public_routes_create_genuine_reviewed_commits_and_recover_exact_operation(tmp_path, monkeypatch):
