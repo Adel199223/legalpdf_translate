@@ -58,9 +58,15 @@ export function buildGmailMessageResultPresentation({
 
   const message = loadResult.message || {};
   const attachmentCount = (message.attachments || []).length;
+  const failed = loadResult.ok === false;
+  const retainedSubject = failed
+    ? loadResult.intake_context?.subject || defaults.subject || pendingContext.subject || ""
+    : "";
+  const failureMessage = String(loadResult.status_message || "").trim()
+    || "Gmail message could not be loaded. Open Advanced message details to review the message and try again.";
   return {
     title: loadResult.ok ? "Gmail message ready to review." : "Gmail message needs attention.",
-    message: message.subject || "No subject",
+    message: message.subject || retainedSubject || "No subject",
     label: loadResult.ok ? "Ready" : "Needs attention",
     tone: loadResult.ok
       ? "ok"
@@ -87,6 +93,7 @@ export function buildGmailMessageResultPresentation({
         label: "Workflow",
         value: workflow.label,
       },
+      ...(failed ? [{ label: "Load issue", value: failureMessage }] : []),
     ],
   };
 }

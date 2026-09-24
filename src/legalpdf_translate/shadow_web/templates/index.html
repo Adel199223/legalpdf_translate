@@ -514,6 +514,13 @@
             </div>
             <div id="translation-numeric-warning" class="result-card quality-warning hidden" aria-live="polite"></div>
             <div id="translation-result" class="result-card subtle-result-card empty-state">No translation job has run in this workspace yet.</div>
+            <div id="translation-run-partial-artifact" class="result-card hidden">
+              <strong>Partial translation available</strong>
+              <p>This file contains only the completed pages. It is not a complete translation.</p>
+              <div class="panel-actions">
+                <a id="translation-run-download-partial" class="ghost-button hidden" href="#" download>Download partial DOCX</a>
+              </div>
+            </div>
             <details class="details-panel operator-only" id="translation-job-details">
               <summary>
                 <span>Translation job state</span>

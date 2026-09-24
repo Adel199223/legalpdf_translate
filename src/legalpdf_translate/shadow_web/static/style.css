@@ -2521,7 +2521,8 @@ body[data-ui-variant="qt"][data-shell-mode="gmail-focus"] [data-view="gmail-inta
 .formatting-review-panel textarea { min-height: 120px; white-space: pre-wrap; resize: vertical; unicode-bidi: plaintext; }
 .formatting-review-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; }
 .formatting-review-check { display: flex; align-items: flex-start; gap: 8px; margin-block: 10px; }
-.formatting-review-check input { flex: 0 0 auto; margin-top: 4px; }
+.formatting-review-check input[type="checkbox"] { flex: 0 0 auto; width: auto; margin: 4px 0 0; padding: 0; }
+.formatting-review-check span { min-width: 0; overflow-wrap: anywhere; }
 .formatting-review-fragment, .formatting-review-body-block, .formatting-review-owner { border: 1px solid #b8c4cb; border-radius: 6px; padding: 10px; margin-block: 10px; min-width: 0; }
 .formatting-review-table-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .formatting-review-table-row > .formatting-review-owner { flex: 1 1 150px; }
