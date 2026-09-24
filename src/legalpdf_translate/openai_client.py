@@ -14,6 +14,7 @@ from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable
 
+import httpx
 from openai import (
     APIConnectionError,
     APIStatusError,
@@ -68,6 +69,43 @@ class ApiCallError(RuntimeError):
 
     def __str__(self) -> str:
         return self.message
+
+
+def transport_failure_diagnostic(exc: ApiCallError) -> str | None:
+    """Describe known transport classes, never arbitrary exception content.
+
+    This is diagnostic evidence only: even a connection failure does not prove
+    that the provider did not receive or bill the request.
+    """
+    if exc.exception_class not in {"APIConnectionError", "APITimeoutError"}:
+        return None
+    labels = {
+        httpx.ConnectError: "httpx.ConnectError",
+        httpx.ReadError: "httpx.ReadError",
+        httpx.WriteError: "httpx.WriteError",
+        httpx.CloseError: "httpx.CloseError",
+        httpx.ProxyError: "httpx.ProxyError",
+        httpx.RemoteProtocolError: "httpx.RemoteProtocolError",
+        httpx.LocalProtocolError: "httpx.LocalProtocolError",
+        httpx.UnsupportedProtocol: "httpx.UnsupportedProtocol",
+        httpx.ConnectTimeout: "httpx.ConnectTimeout",
+        httpx.ReadTimeout: "httpx.ReadTimeout",
+        httpx.WriteTimeout: "httpx.WriteTimeout",
+        httpx.PoolTimeout: "httpx.PoolTimeout",
+    }
+    cause = exc.__cause__
+    seen: set[int] = set()
+    for _ in range(8):
+        if cause is None or id(cause) in seen:
+            break
+        seen.add(id(cause))
+        label = labels.get(type(cause))
+        if label is not None:
+            return f"{exc.exception_class}: transport cause class={label}"
+        # Explicit causes preserve the SDK's transport relationship. An implicit
+        # context may be an unrelated exception handled while making the request.
+        cause = cause.__cause__
+    return f"{exc.exception_class}: transport cause unavailable"
 
 
 @dataclass(slots=True, frozen=True)

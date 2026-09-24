@@ -18,7 +18,7 @@ from .document_structure import (PageStructure, SOURCE_STRUCTURE_VERSION, STRUCT
     apply_reviewed_document_boundary,
     rebind_page_structure, structure_from_ordered, structure_from_text)
 from .formatting_support import digest_text, fingerprint, flatten_blocks, confirmed_source_continuation
-from .openai_client import ApiCallError, is_openai_auth_failure
+from .openai_client import ApiCallError, is_openai_auth_failure, transport_failure_diagnostic
 from .output_normalize import normalize_output_text_with_stats
 from .pdf_text_order import NATIVE_EXTRACTION_VERSION
 from .source_document import source_page_dimensions, source_page_identity
@@ -577,6 +577,10 @@ class NewTranslationBlocks:
                         "retry_used": retry, "metadata": deepcopy(metadata)})
                 return outcome(PageStatus.DONE)
         except ApiCallError as exc:
+            diagnostic = transport_failure_diagnostic(exc)
+            if diagnostic is not None:
+                self.workflow._record_event(event_type="api_call_failed", stage="translate",
+                    page_index=page_number, error=diagnostic)
             charged = getattr(exc, "usage", None) or {}
             usage["failed_attempt"] = charged
             self.workflow._accumulate_usage_totals(metadata, charged)

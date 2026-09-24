@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 import legalpdf_translate.openai_client as module
@@ -111,6 +112,55 @@ def test_structured_uncertain_billing_never_uses_remaining_transport_retries(mon
     with pytest.raises(ApiCallError) as error:
         call(client, response_format={"type": "json_schema", "strict": True, "name": "test", "schema": {}})
     assert len(calls) == 1 and error.value.attempt_usage[0]["status"] == "transport_failed"
+
+
+@pytest.mark.parametrize("cause_class", [
+    httpx.ConnectError, httpx.ReadError, httpx.WriteError, httpx.CloseError, httpx.ProxyError,
+    httpx.RemoteProtocolError, httpx.LocalProtocolError, httpx.UnsupportedProtocol,
+    httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout,
+])
+def test_transport_diagnostic_keeps_only_allowlisted_cause_class(monkeypatch, cause_class):
+    secret = "private message https://private.invalid/token SECRET"
+    def create(**kwargs):
+        try:
+            raise cause_class(secret)
+        except cause_class as cause:
+            raise module.APIConnectionError(message=secret, request=None) from cause
+    client = client_for(monkeypatch, create)
+    with pytest.raises(ApiCallError) as error:
+        call(client)
+    assert module.transport_failure_diagnostic(error.value) == (
+        f"APIConnectionError: transport cause class=httpx.{cause_class.__name__}")
+    assert secret not in str(error.value)
+    assert error.value.usage == {} and error.value.response_id is None
+
+
+@pytest.mark.parametrize("kind", ["missing", "unknown", "cycle", "deep", "implicit", "subclass"])
+def test_transport_diagnostic_does_not_guess_or_expose_unknown_causes(kind):
+    error = ApiCallError("private wrapper message", None, "APITimeoutError", 0, 0.0, 0.0, False)
+    private_type = type("PrivateSecretException", (RuntimeError,), {})
+    if kind == "unknown":
+        error.__cause__ = private_type("private cause message")
+    elif kind == "cycle":
+        error.__cause__ = private_type("private cycle")
+        error.__cause__.__cause__ = error
+    elif kind == "deep":
+        current = error
+        for _ in range(8):
+            current.__cause__ = RuntimeError("private deep chain")
+            current = current.__cause__
+        current.__cause__ = httpx.ReadTimeout("private tail")
+    elif kind == "implicit":
+        error.__context__ = httpx.ReadTimeout("private unrelated context")
+    elif kind == "subclass":
+        error.__cause__ = type("PrivateReadError", (httpx.ReadError,), {})("private subclass")
+    assert module.transport_failure_diagnostic(error) == "APITimeoutError: transport cause unavailable"
+
+
+def test_nontransport_error_has_no_transport_diagnostic():
+    error = ApiCallError("private message", None, "PrivateSecretException", 0, 0.0, 0.0, False)
+    error.__cause__ = httpx.ReadError("private context")
+    assert module.transport_failure_diagnostic(error) is None
 
 
 def test_cancel_after_completed_response_preserves_billed_usage(monkeypatch):

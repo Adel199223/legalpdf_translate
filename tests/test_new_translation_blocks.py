@@ -89,6 +89,43 @@ def test_real_new_source_to_docx(tmp_path, lang, page_breaks):
     assert summary["budget_post_run"]["reasoning_tokens_included_in_output"] is True
 
 
+def test_structured_transport_cause_survives_only_as_content_free_event(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import httpx
+    import legalpdf_translate.openai_client as transport
+
+    calls = []
+    private_detail = "private-provider-detail https://private.invalid/token SECRET"
+    def create(**kwargs):
+        calls.append(kwargs)
+        try:
+            raise httpx.ReadError(private_detail)
+        except httpx.ReadError as cause:
+            raise transport.APIConnectionError(message=private_detail, request=None) from cause
+
+    monkeypatch.setattr(transport, "resolve_openai_key_with_source",
+                        lambda *a, **k: pytest.fail("No ambient credentials in diagnostic test"))
+    monkeypatch.setattr(transport.time, "sleep", lambda _: pytest.fail("No retry after uncertain dispatch"))
+    client = transport.OpenAIResponsesClient(pre_call_jitter_seconds=0, max_transport_retries=4,
+        sdk_client=SimpleNamespace(base_url="https://api.openai.com/v1", responses=SimpleNamespace(create=create)))
+    config = replace(configuration(tmp_path), diagnostics_admin_mode=True)
+    result = TranslationWorkflow(client=client, translation_protocol="legal_blocks_v2").run(config)
+
+    assert not result.success and len(calls) == 1
+    state = load_run_state(result.run_dir / "run_state.json")
+    assert state.pages["1"]["exception_class"] == "APIConnectionError"
+    assert state.pages["1"]["error"] == "runtime_failure"
+    assert state.pages["1"]["usage"]["failed_attempt"] == {}
+    events_raw = (result.run_dir / "run_events.jsonl").read_text("utf-8")
+    events = [json.loads(line) for line in events_raw.splitlines()]
+    failures = [item for item in events if item["event_type"] == "api_call_failed"]
+    assert len(failures) == 1
+    assert failures[0]["error"] == "APIConnectionError: transport cause class=httpx.ReadError"
+    assert failures[0]["stage"] == "translate" and failures[0]["page_index"] == 1
+    assert private_detail not in events_raw and "private.invalid" not in events_raw
+    assert not list((result.run_dir / "pages").glob("page_*.commit.json"))
+
+
 @pytest.mark.parametrize("kind", ["incomplete", "refused", "missing", "duplicate", "foreign"])
 def test_rejected_output_never_committed(tmp_path, kind):
     config = configuration(tmp_path)
