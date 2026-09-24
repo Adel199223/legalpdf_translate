@@ -135,7 +135,7 @@ export function mountFormattingReview({root, prepareButton, getScope, getJob, re
     if (documentEditor.check) documentEditor.check.checked = documentEditor.decision.all_pages_reviewed;
     update();
   }
-  const safely = (fn) => async () => { try { await fn(); } catch (error) { localMessage = error.message; render(); } };
+  const safely = (fn) => async () => { localMessage = ""; try { await fn(); } catch (error) { localMessage = error.message; render(); } };
   function render(s = controller.snapshot()) {
     const ownerKey = JSON.stringify(s.owner);
     if (ownerKey !== seenOwner) { seenOwner = ownerKey; choice = ""; opened = false; }
@@ -183,6 +183,9 @@ export function mountFormattingReview({root, prepareButton, getScope, getJob, re
     }, s.busy));
     if (s.canDiscardSubmission) root.append(button(doc, "Discard the unsubmitted request and continue editing", () => {
       if (controller.discardUnsubmitted()) { accept = false; render(); }
+    }, s.busy));
+    if (s.canDiscardSave) root.append(button(doc, "Discard the unsaved request and continue editing", () => {
+      if (controller.discardUnsaved()) { accept = false; render(); }
     }, s.busy));
     const pages = s.view?.pages || [];
     if (pages.length && s.verified && !s.operationNonce && !s.busy) {

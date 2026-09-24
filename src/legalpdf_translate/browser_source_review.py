@@ -10,6 +10,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 import json
+import os
 from pathlib import Path
 import re
 import threading
@@ -74,8 +75,11 @@ class BrowserSourceReviewManager:
     def _register(self, owner, config, settings_path):
         if type(config) is not RunConfig or not isinstance(settings_path, Path):
             _fail("backend_config_required")
-        path = settings_path.expanduser().resolve(strict=True)
-        if not path.is_file():
+        candidate = settings_path.expanduser()
+        path = candidate.resolve()
+        # A fresh profile uses ordinary in-memory defaults until settings are saved.
+        # Existing non-files and dangling links are not an absent settings file.
+        if os.path.lexists(candidate) and not path.is_file():
             _fail("settings_unavailable")
         saved = deepcopy(config)
         return _Review(owner, saved, path, OrdinarySourceReviewService(saved))

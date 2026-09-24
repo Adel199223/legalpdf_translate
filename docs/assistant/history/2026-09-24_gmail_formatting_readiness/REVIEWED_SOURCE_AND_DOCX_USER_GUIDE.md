@@ -12,8 +12,6 @@ Use the normal manual PDF upload. This source-review workflow needs browser-rend
 
 Check your saved settings first. If you deliberately change them after acquiring source evidence, start a fresh review context. The review controls do not silently change your saved settings or global model choices.
 
-In builds containing the fresh-profile fix, you can use the initial settings before saving preferences. Source and formatting review do not create a settings file just to continue. Local OCR and the other prerequisites above still apply; see the current handoff for the installed build.
-
 ## Quick Start (No Technical Background)
 
 ### 1. Review and accept the source
@@ -43,8 +41,6 @@ This panel arranges saved translation text; it does not edit that text or buy an
 4. Assign each fragment once to a body paragraph, table cell, header, footer or local folio. Account for all source and translated text. If a selection cuts a character sequence or protected literal, use the validation message to select the complete passage; do not remove text to bypass the check.
 5. Check the whole page and its source-to-translation mappings, enter the reviewer details and choose **Save page formatting**. Repeat for every page. Finish or cancel an unfinished fragment edit before reordering fragments.
 
-Keep fragment cuts at supported complete-line boundaries in the retained source and translation. Several visible elements may have been joined into one OCR line; arbitrary word cuts can be unsupported. Review missing line breaks before accepting and translating the source. Protected literals and directional scopes must stay whole. The explicit reviewed table-cell option below permits only its supported separator cuts; formatting review does not rewrite saved text.
-
 ### Tables, groups and spacing
 
 Use **Add empty table** to define columns, rows and cell ownership. Put each selected fragment in its correct cell and check row order. Optional column gaps must be supported by the visible source; they are not guessed automatically.
@@ -52,8 +48,6 @@ Use **Add empty table** to define columns, rows and cell ownership. Put each sel
 Document groups describe joined documents and must cover every page once, in order. Review local page numbering and headers/footers for each group.
 
 Review **Text separators inside reviewed table cells** separately from **Vertical spacing between source regions**. Both vertical-spacing choices preserve complete text; they change the amount of vertical space, not what is retained.
-
-**Allow reviewed table-cell separators** can split a spaced literal pipe between adjacent reviewed cells in one row. Keep the pipe and its following spaces with the preceding cell; no character is discarded. The actual source and translation selections must each have valid boundaries. **Preserve full measured vertical source gaps** can create more output pages than capped spacing, so inspect the finished file without shortening its text to force a page count.
 
 Enter **Document formatting reviewer** and an explanation. Check **I reviewed every page, its text mappings and the document groups**, then choose **Save document review**. A subsequent page change clears document completion, including a change saved in another browser view.
 
@@ -67,12 +61,11 @@ Saving formatting decisions does not change the original DOCX. If review stops b
 
 ## Recovering a lost response
 
-The separate-workspace guidance below is available in the daily-use app containing PR #302. Check [the current handoff](../HANDOFF.md) for the installed build and current verification scope.
+The separate-workspace guidance below is currently in the isolated test build. Check [the current handoff](../HANDOFF.md) for availability of the review and recovery controls in the daily-use app.
 
 | What happened | What to do |
 | --- | --- |
 | A page-save response was lost | Read the current review. If offered, retry that exact save. Resolve a conflicting saved generation explicitly. |
-| A formatting page or document save was rejected | Choose **Read current review / recover response**. In a build containing the safe-discard fix, a fresh read confirming the unchanged draft can offer **Discard the unsaved request and continue editing**. Choose it explicitly to keep and correct your local edits. Uncertain, changed or accepted work remains protected; check the current handoff for availability. |
 | Source or formatting acceptance was interrupted | Keep the original submission details and use **Retry this exact source submission** or **Retry this exact formatting submission**. |
 | Formatting submission was rejected before acceptance | Choose **Read current review / recover response**. If the server confirms the same unsubmitted draft, **Discard the unsubmitted request and continue editing** lets you correct it. This button is unavailable when submission remains uncertain or an accepted revision was observed. |
 | Translation start was interrupted | Use **Recover this exact translation start**. Do not start another translation to recover the first one. |

@@ -1,11 +1,5 @@
 # External Source Registry
 
-## Gmail and formatting readiness reference — 2026-09-24
-
-The official [GPT-5.2 model page](https://developers.openai.com/api/docs/models/gpt-5.2) was searched and opened for the fresh [readiness plan](exec_plans/active/2026-09-24_gmail_formatting_readiness.md). Standard USD per million tokens remains 1.75 input, 0.175 cached input and 14 output; documented capacities remain 400,000 context and 128,000 output tokens. Full conservative input plus output capacity gives USD2.492 per legacy request; the existing structured 24,000-output ceiling gives USD1.036. These are calculated reservation ceilings, not expected or actual charges.
-
-The explicitly authorized new tests use a proposed shared USD3 ordinary budget with explicit standard tier, while the original USD3.92137740 known spend and USD0.119 hold remain preserved. Combined maximum exposure is USD7.04037740 within the original USD10 limit. The new budget does not reopen the old blocked campaign, rewrite its ledger, establish old usage or change saved defaults. Runtime binding and actual results remain to be verified. The [prior registry beforeimage](history/2026-09-24_gmail_formatting_readiness/EXTERNAL_SOURCE_REGISTRY.md) retains earlier conditional proposals.
-
 ## French uncertain-charge diagnosis and conditional retry — 2026-09-24
 
 Official pages below were opened on2026-09-24 for the isolated FRlong01 reconciliation. They explain API behavior and proposal bounds; none supplies account-specific billing or proves the historical transport cause. Installed SDK2.36.0 source remains the local runtime evidence; current Python docs may describe a newer SDK.

@@ -63,7 +63,7 @@ export function createFormattingReviewController({getScope, getJob, request = fe
   function reset() {
     state = {view: null, reviewId: "", revisionId: "", operationNonce: "", artifactId: "", busy: false,
       errorCode: "", verified: false, restored: false, associated: false, pendingKind: "", conflict: false,
-      dirty: false, documentDirty: false, canDiscardSubmission: false};
+      dirty: false, documentDirty: false, canDiscardSubmission: false, canDiscardSave: false};
     pending = null; dirtyPages.clear();
   }
   const snapshot = () => ({...state, owner: owner ? {...owner} : null});
@@ -96,7 +96,7 @@ export function createFormattingReviewController({getScope, getJob, request = fe
   async function perform(action) {
     sync(); if (state.busy) return snapshot();
     const ticket = {epoch, owner: owner ? {...owner} : null};
-    state.busy = true; state.errorCode = ""; state.canDiscardSubmission = false; emit();
+    state.busy = true; state.errorCode = ""; state.canDiscardSubmission = false; state.canDiscardSave = false; emit();
     try {
       if (!owner) throw new Error("formatting_review_owner_changed");
       await action(ticket);
@@ -141,7 +141,11 @@ export function createFormattingReviewController({getScope, getJob, request = fe
       state.verified = false; state.associated = false;
       const view = await send(ticket, `/${state.reviewId}`); if (!view) return;
       merge(view); if (view.status === "declined") return;
-      if (pending && ["page", "document"].includes(pending.kind) && view.generation === pending.body.expected_generation + 1) {
+      if (pending && ["page", "document"].includes(pending.kind) && !pending.changedObserved
+          && view.status === "draft" && !view.revision_id && !state.revisionId && !state.operationNonce && !state.artifactId
+          && Array.isArray(view.rebuild_operations) && view.rebuild_operations.length === 0
+          && Array.isArray(view.artifacts) && view.artifacts.length === 0
+          && view.generation === pending.body.expected_generation + 1) {
         const saved = pending.kind === "page" ? view.pages?.find((p) => p.page_number === pending.pageNumber)?.decision : view.document_decision;
         if (formattingValuesEqual(saved, pending.body.decision)) {
           if (pending.kind === "page") dirtyPages.delete(pending.pageNumber); else state.documentDirty = false;
@@ -149,6 +153,12 @@ export function createFormattingReviewController({getScope, getJob, request = fe
         }
       }
       state.conflict = Boolean(pending && ["page", "document"].includes(pending.kind) && view.generation > pending.body.expected_generation);
+      if (pending && ["page", "document"].includes(pending.kind)
+          && (view.generation !== pending.body.expected_generation || view.status !== "draft"
+            || view.revision_id || view.rebuild_operations?.length || view.artifacts?.length)) {
+        // A later contradictory read cannot erase an observed save/publication.
+        pending.changedObserved = true;
+      }
       if (view.revision_id) {
         if (!ID.test(view.revision_id) || state.revisionId && state.revisionId !== view.revision_id) throw new Error("formatting_review_unverified");
         // A read proves an existing revision, not which reviewer submitted it.
@@ -174,6 +184,11 @@ export function createFormattingReviewController({getScope, getJob, request = fe
         && !state.revisionId && !state.operationNonce && !state.artifactId
         && Array.isArray(view.rebuild_operations) && view.rebuild_operations.length === 0
         && Array.isArray(view.artifacts) && view.artifacts.length === 0);
+      state.canDiscardSave = Boolean(pending && ["page", "document"].includes(pending.kind) && !pending.changedObserved
+        && view.status === "draft" && view.generation === pending.body.expected_generation && !view.revision_id
+        && !state.revisionId && !state.operationNonce && !state.artifactId && !state.conflict
+        && Array.isArray(view.rebuild_operations) && view.rebuild_operations.length === 0
+        && Array.isArray(view.artifacts) && view.artifacts.length === 0);
     });
   }
   async function save(kind, decision, pageNumber = null) {
@@ -182,7 +197,8 @@ export function createFormattingReviewController({getScope, getJob, request = fe
       const suffix = `/${state.reviewId}/` + (kind === "page" ? `pages/${pageNumber}` : "document");
       const body = {expected_generation: state.view.generation, decision: clone(decision)};
       if (pending && (pending.kind !== kind || pending.suffix !== suffix || !formattingValuesEqual(pending.body, body))) throw new Error("formatting_review_pending_request");
-      pending = {kind, suffix, pageNumber, body}; state.pendingKind = kind;
+      const changedObserved = pending?.changedObserved === true;
+      pending = {kind, suffix, pageNumber, body, changedObserved}; state.pendingKind = kind;
       const view = await send(ticket, suffix, body); if (!view) return;
       merge(view); if (view.status === "declined") return;
       if (kind === "page") dirtyPages.delete(pageNumber); else state.documentDirty = false;
@@ -265,6 +281,17 @@ export function createFormattingReviewController({getScope, getJob, request = fe
     pending = null; state.pendingKind = ""; state.canDiscardSubmission = false; state.errorCode = "";
     return {kind: "submit"};
   }
+  function discardUnsaved() {
+    sync();
+    if (state.busy || !state.verified || !state.canDiscardSave || !["page", "document"].includes(pending?.kind)
+        || pending.changedObserved || state.conflict || state.view?.status !== "draft"
+        || state.view.generation !== pending.body.expected_generation
+        || state.revisionId || state.operationNonce || state.artifactId) return null;
+    const result = {kind: pending.kind, pageNumber: pending.pageNumber};
+    // Abandon only the uncommitted request; the operator keeps all local edits.
+    pending = null; state.pendingKind = ""; state.canDiscardSave = false; state.errorCode = "";
+    return result;
+  }
   function imageUrl(pageNumber) {
     return owner && state.verified && ID.test(state.reviewId) && Number.isInteger(pageNumber)
       ? routeOf(owner) + `/${state.reviewId}/pages/${pageNumber}/image?mode=${owner.runtimeMode}&workspace=${encodeURIComponent(owner.workspaceId)}` : "";
@@ -277,5 +304,5 @@ export function createFormattingReviewController({getScope, getJob, request = fe
   reset(); restore();
   return {snapshot, sync, prepare, read, savePage: (number, decision) => save("page", decision, number),
     saveDocument: (decision) => save("document", decision), submit, inspect, rebuild, markDirty, discardConflict,
-    discardUnsubmitted, imageUrl, artifactUrl};
+    discardUnsubmitted, discardUnsaved, imageUrl, artifactUrl};
 }

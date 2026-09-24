@@ -60,6 +60,7 @@ from .user_settings import (
 )
 
 if TYPE_CHECKING:
+    from .accounting_policy import OrdinaryAccountingPolicy
     from .workflow import TranslationWorkflow
 
 _PAGE_LOG_RE = re.compile(
@@ -1131,10 +1132,22 @@ class _ManagedTranslationJob:
 class TranslationJobManager:
     """In-process durable job registry for browser translation workflows."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        accounting_factory: Callable[..., Any] | None = None,
+        accounting_policy: OrdinaryAccountingPolicy | None = None,
+    ) -> None:
         self._lock = threading.RLock()
         self._jobs: dict[str, _ManagedTranslationJob] = {}
         self._reservations: dict[str, str] = {}
+        # Caller-owned accounting can share a hard cap across real browser jobs.
+        # Leave ordinary construction unchanged when no dependencies are supplied.
+        self._workflow_accounting: dict[str, Any] = {}
+        if accounting_factory is not None:
+            self._workflow_accounting["accounting_factory"] = accounting_factory
+        if accounting_policy is not None:
+            self._workflow_accounting["accounting_policy"] = accounting_policy
 
     def _job_actions(self, job: _ManagedTranslationJob) -> dict[str, bool]:
         status = job.status
@@ -1386,6 +1399,7 @@ class TranslationJobManager:
                         log_callback=lambda message: self._append_log(job_id, message),
                         progress_callback=lambda idx, total, status: self._update_progress(job_id, idx, total, status),
                         gui_settings=gui_settings,
+                        **self._workflow_accounting,
                         **({"reviewed_source_context": selected_context} if selected_context is not None else {}),
                     )
                     self._mark_running(job_id, workflow, "Translating...")
@@ -1419,6 +1433,7 @@ class TranslationJobManager:
                     workflow = TranslationWorkflow(
                         log_callback=lambda message: self._append_log(job_id, message),
                         gui_settings=gui_settings,
+                        **self._workflow_accounting,
                     )
                     self._mark_running(job_id, workflow, "Analyzing...")
                     summary = workflow.analyze(config)
@@ -1444,6 +1459,7 @@ class TranslationJobManager:
                 workflow = TranslationWorkflow(
                     log_callback=lambda message: self._append_log(job_id, message),
                     gui_settings=gui_settings,
+                    **self._workflow_accounting,
                     **({"reviewed_source_context": selected_context} if selected_context is not None else {}),
                 )
                 self._mark_running(job_id, workflow, "Rebuilding DOCX...")
@@ -1655,7 +1671,10 @@ class TranslationJobManager:
                     or type(workspace_id) is not str or not workspace_id
                     or not isinstance(settings_path, Path)):
                 raise ValueError
-            path = settings_path.expanduser().resolve(strict=True)
+            candidate = settings_path.expanduser()
+            path = candidate.resolve()
+            if os.path.lexists(candidate) and not path.is_file():
+                raise ValueError
             with self._lock:
                 job = self._jobs.get(job_id)
                 if (job is None or job.job_id != job_id or job.runtime_mode != runtime_mode
