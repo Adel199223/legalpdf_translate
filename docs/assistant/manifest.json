@@ -474,5 +474,5 @@
     "cloud_scoring_failure_recovery_policy": "Cloud failure semantics use unavailable|failed and recovery order is cloud-fix-rerun before local-heavy fallback.",
     "cloud_local_apply_separation_policy": "Cloud evaluation outputs must not auto-apply runtime config/state; local manual acceptance gate is required before final apply."
   },
-  "last_updated": "2026-04-28"
+  "last_updated": "2026-09-24"
 }

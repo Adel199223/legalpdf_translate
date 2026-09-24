@@ -53,16 +53,28 @@ Only stop a matching LegalPDF server when the current task permits it or the use
 Never stop browsers, unrelated Python processes, or unknown processes.
 
 ## Manual Retest Steps
+Before the click, verify the actual canonical build/served asset and check whether the configured Gmail helper has a connected account using its read-only account-status command. Do not print account details or tokens. Browser/assistant-connector authentication and app-helper authentication are separate. If a new connection is needed within an already explicitly authorized live Gmail check, initiate only the necessary scoped connection under that existing authorization; do not ask for the same permission again. Let the user complete Google's sign-in/consent and verify the resulting scopes without printing private details; do not automate authentication dialogs. An intake-only test needs no email-sending authority.
+
 1. Open a real Gmail email with an attachment.
 2. Click the LegalPDF extension once.
 3. Confirm the current tab moves into the LegalPDF browser flow.
 4. Confirm attachment review opens for the exact message.
 5. Run translation or interpretation only if appropriate for the test.
-6. Confirm the live path shows the current UI polish from PR #46.
+6. Verify the observed behavior against the recorded current canonical build and served assets. A posted bridge context alone does not prove that the message or its attachments loaded.
 7. Treat numeric mismatch warnings as a legal-review gate.
 8. Review generated DOCX/PDF files before sending any Gmail draft.
 
-Codex should not click the extension or operate live Gmail unless a future task explicitly authorizes that scope.
+Codex should click the extension or operate live Gmail only within explicit current user authorization. Existing authorization persists across interruption; an old failed or consumed extension operation must not be replayed merely to resume the task.
+
+## Scoped intake and preparation checks
+
+After an actual extension handoff failed solely because the app helper lacked a connection, a verified connection can be followed by **Advanced message details** / **Load this Gmail message** for the retained exact message. Record this as manual recovery; it does not establish a seamless extension-to-output pass. Keep read-only intake separate from translation, draft and send authority.
+
+Before **Continue**, create or choose an existing writable output folder. A missing folder can return a setup refusal before a prepared session exists. Preserve that refusal; correct the folder once within the scoped test instead of restarting intake. When a Preview restore chip sits behind the open Review modal, minimize Review first, then restore Preview. Check selection and navigation state; hidden and visible drawer sizing can produce different canvas pixels without proving content loss.
+
+Normal full bootstrap, first PDF bundle responses and some generic error responses may assess Word readiness. An uncached assessment can launch a Word probe and a fictional-document PDF canary; the cache lasts 60 seconds. A failed preparation response can therefore have native effects even when no translation session was created. Scope and record the actual assessments, preserve the canonical readiness journal before/after, verify owned cleanup, and stop dependent actions if the observed bound is exceeded. Do not bypass readiness or call these routes native-free. The canonical app-data journal can differ from a historical isolated acceptance journal; verify exact paths and preserve both. Canary success does not establish legal-document translation or rendering quality.
+
+The September24 qualified intake check loaded one message, previewed two PDFs and prepared one session without starting it. Its first setup refusal caused an unexpected fourth readiness pair beyond the original three-pair plan; all four reported cleanup and the corrected request succeeded without another assessment. The [completed check](exec_plans/completed/2026-09-24_live_gmail_connection_recovery.md) retains the failure, scope deviation, recovery and limitations.
 
 ## If The Bridge Is Not Ready
 - If `8877` is listening but `8765` is not, stop random fixes and run a focused live-bridge diagnosis.

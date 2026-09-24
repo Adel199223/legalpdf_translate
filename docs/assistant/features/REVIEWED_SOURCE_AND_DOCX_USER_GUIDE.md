@@ -57,15 +57,20 @@ Enter the final reviewer and explicit acceptance, then choose **Accept formattin
 
 The reviewed DOCX is a distinct output. Keep the original output and review the final Word file before delivery, especially pagination, tables, headers/footers, Arabic/Latin direction and existing translation findings. Editing retained target text invalidates its reviewed mapping; edits made directly in Word are not imported into this review.
 
+Saving formatting decisions does not change the original DOCX. If review stops before acceptance and a successful build, the original translation file remains the original output; it has not acquired the unfinished formatting edits.
+
 ## Recovering a lost response
+
+The rejected-submission and reopened-draft improvements below are currently in the isolated test build. Check [the current handoff](../HANDOFF.md) before expecting them in the daily-use app.
 
 | What happened | What to do |
 | --- | --- |
 | A page-save response was lost | Read the current review. If offered, retry that exact save. Resolve a conflicting saved generation explicitly. |
 | Source or formatting acceptance was interrupted | Keep the original submission details and use **Retry this exact source submission** or **Retry this exact formatting submission**. |
+| Formatting submission was rejected before acceptance | Choose **Read current review / recover response**. If the server confirms the same unsubmitted draft, **Discard the unsubmitted request and continue editing** lets you correct it. This button is unavailable when submission remains uncertain or an accepted revision was observed. |
 | Translation start was interrupted | Use **Recover this exact translation start**. Do not start another translation to recover the first one. |
 | DOCX build was interrupted | Use **Recover this exact DOCX build**. A pending or unknown result is not permission to repeat the build. |
-| You reloaded the browser | Recovery works only for the exact operation still associated with the review on the server. An unknown stored operation can remain read-only. |
+| You reloaded the browser | Read the current review. A confirmed unsubmitted draft can be completed, explicitly accepted and built in the reopened session. Recovery of an existing revision still works only for its exact associated operation; an unknown stored operation can remain read-only. |
 | The server restarted | This UI cannot restore its previous review handle. Browser drafts and operation associations are not guaranteed to survive a server restart. |
 | Source, settings or saved target text changed | Expect a stale-review or conflict notice. Obtain a fresh valid context or review; do not repair checkpoints or hashes manually. |
 

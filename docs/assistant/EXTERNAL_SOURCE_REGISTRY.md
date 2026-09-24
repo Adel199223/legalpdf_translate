@@ -4,7 +4,11 @@ Purpose: record official primary sources used for material external behavior/cap
 
 ## Normal-browser Arabic acceptance reference — 2026-09-17
 
+Resume verification,2026-09-24: the official [GPT-5.2 model page](https://developers.openai.com/api/docs/models/gpt-5.2) was checked again before the bounded FRlong case. Standard USD per million remains1.75 input,0.175 cached input and14 output. The existing high-effort/default-tier reservation and settlement rules remain valid. This recheck changes neither saved defaults nor the original USD10 lifetime/inclusive USD4 campaign ceilings.
+
 The official GPT-5.2 model page was searched and opened on 2026-09-17 for the scoped Arabic acceptance. Standard USD per million tokens remains 1.75 input, 0.175 cached input and 14 output: https://developers.openai.com/api/docs/models/gpt-5.2. The run explicitly uses high effort and the default service tier. Request reservations and actual usage settlement are recorded in the [Arabic browser acceptance plan](exec_plans/completed/2026-09-17_arabic_normal_browser_acceptance.md); this verification does not change saved defaults or expand the original USD10 lifetime budget. Earlier dated receipts remain historical evidence.
+
+The same official rates were rechecked on 2026-09-17 for the fresh multilingual acceptance preparation. The [isolated diagnostic-cost correction](exec_plans/completed/2026-09-17_measured_diagnostic_cost.md) uses that reference to correct the two stale GPT-5.2 legacy estimate entries to USD1.75 input and USD14 inclusive output. Legacy estimates remain unverified estimates for accounting purposes; measured diagnostic results instead reuse the persisted durable-accounting summary, including cached input and unknown coverage. No model, effort, service-tier default or budget allowance changes follow.
 
 ## OpenAI Python SDK transport compatibility — 2026-09-16
 
