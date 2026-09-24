@@ -258,3 +258,91 @@ def test_existing_zero_budget_block_precedes_provider(tmp_path):
     result = TranslationWorkflow(client=client, translation_protocol="legal_blocks_v2").run(config)
     assert not result.success and result.error == "budget_cap_exceeded"
     assert client.calls == []
+
+
+FRENCH_LEGAL_SOURCE = (
+    "Ao abrigo do artigo 12.º do Código de Processo Penal português, José Nobre deve cumprir "
+    "a obrigação indicada no processo 12/26.4TEST. A referência electrónica permite consultar o documento."
+)
+FRENCH_LEGAL_TARGET = (
+    "En vertu de l'article 12.º du Code de procédure pénale portugais, José Nobre doit respecter "
+    "l'obligation indiquée dans l'affaire 12/26.4TEST. La référence électronique permet de consulter le document."
+)
+
+
+def french_legal_configuration(tmp_path):
+    config = configuration(tmp_path, lang=TargetLang.FR)
+    with fitz.open() as document:
+        page = document.new_page()
+        assert page.insert_textbox(fitz.Rect(48, 80, 540, 250), FRENCH_LEGAL_SOURCE, fontsize=11) >= 0
+        document.save(config.pdf_path)
+    return config
+
+
+@pytest.mark.parametrize("corrected", [True, False])
+def test_french_legal_title_translation_keeps_strict_existing_correction_contract(tmp_path, corrected):
+    from legalpdf_translate.translation_structure import structured_system_instructions
+
+    config = french_legal_configuration(tmp_path)
+    calls = []
+    leaked = FRENCH_LEGAL_TARGET.replace("Code de procédure pénale", "Código de Processo Penal")
+
+    class FrenchClient:
+        def create_page_response(self, **kwargs):
+            calls.append(kwargs)
+            payload, _ = json.JSONDecoder().raw_decode(kwargs["prompt_text"])
+            text = FRENCH_LEGAL_TARGET if corrected and len(calls) == 2 else leaked
+            return ApiCallResult(
+                raw_output=json.dumps({"blocks": [{"id": row["id"], "text": text}
+                                                  for row in payload["blocks"]]}, ensure_ascii=False),
+                usage={}, response_id=f"fictional-fr-{len(calls)}", response_status="completed")
+
+    result = TranslationWorkflow(client=FrenchClient(), translation_protocol="legal_blocks_v2").run(config)
+    assert len(calls) == 2  # Only the existing primary and one compliance correction.
+    assert all(call["instructions"] == structured_system_instructions(TargetLang.FR) for call in calls)
+    instructions = calls[0]["instructions"]
+    assert "translate legal terms, law and code titles" in instructions
+    assert "Portuguese jurisdiction" in instructions
+    assert "Do not substitute French law or institutions" in instructions
+    assert "Preserve accented proper names and identifiers verbatim" in instructions
+    assert "block_language_or_token_defect" in calls[1]["prompt_text"]
+    assert calls[1]["effort"] == calls[0]["effort"]
+    assert calls[1]["response_format"] == calls[0]["response_format"]
+    assert calls[1]["max_output_tokens"] == calls[0]["max_output_tokens"]
+    state = load_run_state(result.run_dir / "run_state.json")
+    if corrected:
+        assert result.success, result.error
+        target = (result.run_dir / "pages" / "page_0001.txt").read_text("utf-8")
+        assert target == FRENCH_LEGAL_TARGET
+        assert state.pages["1"]["fidelity_review_status"] == "not_evaluated"
+    else:
+        assert not result.success
+        assert state.pages["1"]["validator_defect_reason"] == "block_language_or_token_defect"
+        assert state.done_count == 0
+        assert not list((result.run_dir / "pages").glob("page_*.txt"))
+        assert not list((result.run_dir / "pages").glob("page_*.commit.json"))
+
+
+def test_french_old_instruction_resume_rejects_before_dispatch_or_artifact_write(tmp_path, monkeypatch):
+    from legalpdf_translate import new_translation_blocks as block_module
+    from legalpdf_translate.translation_structure import structured_system_instructions
+
+    config = configuration(tmp_path, lang=TargetLang.FR)
+    current = structured_system_instructions(TargetLang.FR)
+    old = current[:current.index("Use formal legal French")] + (
+        "Use formal legal French; preserve Portuguese legal concepts and accented proper names verbatim.")
+    current_by_lang = {lang: structured_system_instructions(lang) for lang in TargetLang}
+    monkeypatch.setattr(block_module, "structured_system_instructions",
+                        lambda lang: old if lang == TargetLang.FR else current_by_lang[lang])
+    client = FakeClient(TargetLang.FR)
+    workflow = TranslationWorkflow(client=client, translation_protocol="legal_blocks_v2")
+    result = workflow.run(config)
+    assert result.success, result.error
+    before = {str(p.relative_to(config.output_dir)): p.read_bytes()
+              for p in config.output_dir.rglob("*") if p.is_file()}
+    monkeypatch.setattr(block_module, "structured_system_instructions", structured_system_instructions)
+    with pytest.raises(ValueError, match="incompatible"):
+        workflow.run(replace(config, resume=True))
+    assert len(client.calls) == 1
+    assert before == {str(p.relative_to(config.output_dir)): p.read_bytes()
+                      for p in config.output_dir.rglob("*") if p.is_file()}

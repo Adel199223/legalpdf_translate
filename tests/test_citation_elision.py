@@ -138,9 +138,67 @@ def test_arabic_plain_article_lists_keep_explicit_and_elided_equivalence(head):
 
 
 def test_arabic_unrecognised_subdivision_words_do_not_borrow_article_head():
-    # Arabic subdivision prose is outside this conservative continuation grammar.
+    # A numeric paragraph using this label is still outside the supported grammar.
     text = "المادة 24، الفقرة 1 و35."
     assert blocks._citation_heads(text) == Counter({"24": 1})
+
+
+@pytest.mark.parametrize("head", ["للمادة", "للمادتين", "للمواد", "وللمادة", "فللمادة"])
+def test_contracted_arabic_heads_keep_explicit_citation_identity(head):
+    target = f"وفقا {head} 27.º من القانون."
+    assert blocks._citation_heads(target) == Counter({"27": 1})
+    check("Artigo 27.º do Código.", target, TargetLang.AR)
+
+
+@pytest.mark.parametrize("comma", [",", "،"])
+@pytest.mark.parametrize("label,values", [("رقم", "2"), ("الأرقام", "2 و3")])
+def test_arabic_number_and_letter_subdivisions_allow_only_marked_next_article(comma, label, values):
+    target = f"المادة 27.º{comma} {label} {values}{comma} الفقرة c و42.º{comma} رقم 4 من القانون."
+    assert blocks._citation_heads(target) == Counter({"27": 1, "42": 1})
+
+
+def test_public_arabic_validator_accepts_contraction_and_subdivision_chain_together():
+    source = "artigo 27.º, n.º 2, alínea c) e 42.º, n.º 3."
+    target = "وفقا للمادة 27.º، رقم 2، الفقرة c) و42.º، رقم 3."
+    assert blocks._citation_heads(source) == blocks._citation_heads(target)
+    check(source, target, TargetLang.AR)
+
+
+@pytest.mark.parametrize("text", [
+    "كلمةللمادة 27.º.", "لللمادة 27.º.", "للمادية 27.º.",
+    "للمادة\n27.º.", "للمواد\u2028 27.º.",
+])
+def test_contracted_arabic_heads_require_supported_word_and_horizontal_boundary(text):
+    assert blocks._citation_heads(text) == Counter()
+
+
+@pytest.mark.parametrize("tail", [
+    "، رقم 2 و42.", "، رقم 2، الفقرة c و42.",
+    "، رقم 2 و42 يوما.", "، رقم 2 و42.50 قيمة.",
+    "، رقم 2 و42/ABC.", "، رقم 2 و12/05/2030.",
+    "، رقم 2؛ و42.º.", "، رقم 2. و42.º.",
+    "، رقم 2، الفقرة c، مرجع 42.º.", "، رقم 2، الفقرة word و42.º.",
+    "، رقم 2، الفقرة 3 و42.º.", "، رقم 2، الفقرة c\nو42.º.",
+    "، رقم\n2 و42.º.", "، رقم 2، الفقرة\u2028c و42.º.",
+])
+def test_arabic_subdivisions_do_not_promote_values_cross_boundaries_or_read_prose(tail):
+    assert blocks._citation_heads("المادة 27.º" + tail) == Counter({"27": 1})
+
+
+def test_arabic_subdivision_exact_counts_still_reject_reference_reassignment():
+    source = "artigo 27.º, n.º 2, alínea c) e 42.º."
+    target = "المادة 27.º، رقم 2، الفقرة c). مرجع 42.º."
+    assert Counter(blocks._NUMBER.findall(source)) == Counter(blocks._NUMBER.findall(target))
+    with pytest.raises(BlockCoverageError, match="^block_citation_association_defect$"):
+        check(source, target, TargetLang.AR)
+
+
+def test_arabic_subdivision_keeps_tail_caps_and_literal_guard():
+    assert blocks._citation_heads("المادة 27.º، رقم " + " " * 512 + "2 و42.º.") == Counter({"27": 1})
+    heads = blocks._citation_heads("المادة 27.º" + "، رقم 2" * 100 + " و42.º.")
+    assert heads == Counter({"27": 1})
+    with pytest.raises(BlockCoverageError, match="^block_language_or_token_defect$"):
+        check("artigo 27.º.", "وفقا للمادة 27.º. untranslated", TargetLang.AR)
 
 
 @pytest.mark.parametrize("delimiter", [",", "،", ";", "؛"])
@@ -214,8 +272,8 @@ def test_citation_policy_changes_real_translation_identity_only_through_evaluati
     config = SimpleNamespace(target_lang=TargetLang.FR, pdf_path=tmp_path / "fictional.pdf")
     monkeypatch.setattr(blocks, "source_page_identity", lambda _path, page: {"page": page, "source": "fictional"})
     current = blocks.NewTranslationBlocks(workflow, config, [1], source_hash="fictional", context_hash="fictional")
-    assert blocks.CITATION_POLICY_VERSION == "article_heads_v4_arabic_punctuation"
-    monkeypatch.setattr(blocks, "CITATION_POLICY_VERSION", "article_heads_v3_bounded_coordinated_elision")
+    assert blocks.CITATION_POLICY_VERSION == "article_heads_v5_arabic_contracted_subdivisions"
+    monkeypatch.setattr(blocks, "CITATION_POLICY_VERSION", "article_heads_v4_arabic_punctuation")
     previous = blocks.NewTranslationBlocks(workflow, config, [1], source_hash="fictional", context_hash="fictional")
     assert current.identity["fingerprint"] != previous.identity["fingerprint"]
     assert current.instructions == previous.instructions
