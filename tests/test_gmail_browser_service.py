@@ -5,6 +5,8 @@ from pathlib import Path
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 from legalpdf_translate.gmail_browser_service import GmailBrowserSessionManager
 from legalpdf_translate.gmail_batch import (
     build_gmail_batch_session_payload,
@@ -19,6 +21,19 @@ from legalpdf_translate.gmail_batch import (
 from legalpdf_translate.gmail_intake import InboundMailContext
 from legalpdf_translate.gmail_window_trace import update_launch_session_state
 from legalpdf_translate.interpretation_service import InterpretationValidationError
+
+
+@pytest.fixture(autouse=True)
+def _stub_gmail_prerequisites_before_session_setup(monkeypatch):
+    # Bootstrap/session responses collect capabilities before some tests install
+    # their specific mocks. Ambient Gmail accounts must never enter these tests.
+    monkeypatch.setattr(
+        "legalpdf_translate.gmail_browser_service.assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=False, message="Gmail unavailable in this test", gog_path=None,
+            account_email="", accounts=(),
+        ),
+    )
 
 
 def _load_result(
@@ -1328,6 +1343,51 @@ def test_prepare_translation_session_exposes_gmail_batch_launch_context(tmp_path
         "selected_start_page": 3,
         "gmail_batch_session_report_path": str(session.session_report_path),
     }
+
+
+def test_preflight_batch_finalization_allows_bounded_slow_word_startup(tmp_path: Path, monkeypatch) -> None:
+    import legalpdf_translate.word_automation as word_automation
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("{}", encoding="utf-8")
+    session = _translation_batch_session(tmp_path)
+    session.effective_output_dir.mkdir(parents=True, exist_ok=True)
+    calls = []
+
+    def launch(*, timeout_seconds):
+        calls.append(("launch", timeout_seconds))
+        ready = timeout_seconds >= 20.0
+        return word_automation.WordAutomationResult(
+            ok=ready, action="pdf_preflight", message="Synthetic slow startup",
+            failure_code="" if ready else "timeout",
+            cleanup_attempted=True, cleanup_succeeded=ready,
+        )
+
+    def canary(*, timeout_seconds, temp_root):
+        calls.append(("canary", timeout_seconds))
+        return word_automation.WordAutomationResult(
+            ok=True, action="pdf_export_canary", message="Synthetic canary passed",
+            cleanup_attempted=True, cleanup_succeeded=True,
+        )
+
+    monkeypatch.setattr(word_automation, "probe_word_pdf_export_support", launch)
+    monkeypatch.setattr(word_automation, "run_word_pdf_export_canary", canary)
+    monkeypatch.setattr("legalpdf_translate.gmail_browser_service.write_gmail_batch_session_report", lambda _session: None)
+    monkeypatch.setattr("legalpdf_translate.gmail_browser_service.assess_gmail_draft_prereqs", lambda **_kwargs: SimpleNamespace(
+        ready=False, message="Synthetic Gmail unavailable", gog_path=None, account_email="", accounts=[],
+    ))
+    manager = GmailBrowserSessionManager()
+    manager._workspace(runtime_mode="live", workspace_id="gmail-intake").batch_session = session
+
+    payload = manager.preflight_batch_finalization(
+        runtime_mode="live", workspace_id="gmail-intake", settings_path=settings_path, force_refresh=True,
+    )
+
+    assert payload["normalized_payload"]["finalization_preflight"]["finalization_ready"] is True
+    assert payload["normalized_payload"]["finalization_state"] == "ready_to_finalize"
+    assert session.finalization_state == "ready_to_finalize"
+    assert calls == [("launch", 45.0), ("canary", 45.0)]
+    assert session.draft_created is False
 
 
 def test_preflight_batch_finalization_blocks_when_word_export_canary_fails(tmp_path: Path, monkeypatch) -> None:

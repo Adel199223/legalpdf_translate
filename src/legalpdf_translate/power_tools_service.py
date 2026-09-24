@@ -578,7 +578,6 @@ def _provider_state_payload(settings_path: Path) -> dict[str, object]:
     )
     word = assess_word_pdf_export_readiness(
         cache_scope=f"provider_state::{_word_pdf_cache_scope_token(settings_path)}",
-        launch_timeout_seconds=8.0,
         export_timeout_seconds=45.0,
     )
     translation_key, translation_source = resolve_openai_key_with_source()
@@ -810,7 +809,6 @@ def run_word_pdf_export_test(*, settings_path: Path) -> dict[str, object]:
     _clear_word_pdf_export_cache_for_settings(settings_path=settings_path)
     readiness = assess_word_pdf_export_readiness(
         cache_scope=f"provider_state::{_word_pdf_cache_scope_token(settings_path)}",
-        launch_timeout_seconds=8.0,
         export_timeout_seconds=45.0,
         force_refresh=True,
     )

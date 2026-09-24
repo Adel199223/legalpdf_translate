@@ -615,6 +615,72 @@ def test_assess_word_pdf_export_readiness_reports_launch_vs_canary(monkeypatch) 
     assert calls == {"launch": 1, "canary": 1}
 
 
+@pytest.mark.parametrize("timeout_override", [None, 25.0])
+def test_probe_word_pdf_export_support_allows_bounded_slow_startup(monkeypatch, timeout_override) -> None:
+    observed_timeouts = []
+
+    class SlowStartupProcess(_FakePopen):
+        def communicate(self, timeout=None):
+            observed_timeouts.append(timeout)
+            # Model a 20-second startup without sleeping or launching Word.
+            if self.kill_calls == 0 and timeout < 20.0:
+                raise subprocess.TimeoutExpired(cmd=["synthetic-word-helper"], timeout=timeout)
+            return super().communicate(timeout=timeout)
+
+    monkeypatch.setattr(word_automation, "_is_windows_host", lambda: True)
+    monkeypatch.setattr(word_automation, "_resolve_powershell_path", lambda: "synthetic-powershell.exe")
+    monkeypatch.setattr(word_automation.time, "perf_counter", lambda: 100.0)
+    process = SlowStartupProcess()
+    calls = _record_pdf_helper(monkeypatch, process=process)
+
+    kwargs = {} if timeout_override is None else {"timeout_seconds": timeout_override}
+    result = word_automation.probe_word_pdf_export_support(**kwargs)
+
+    assert result.ok is True
+    assert result.cleanup_succeeded is True
+    assert observed_timeouts == [45.0 if timeout_override is None else timeout_override]
+    assert process.kill_calls == 0
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("required_seconds", [20.0, 46.0])
+def test_readiness_keeps_slow_startup_bounded_and_skips_canary_on_failure(monkeypatch, required_seconds) -> None:
+    calls = []
+
+    def launch(*, timeout_seconds):
+        calls.append(("launch", timeout_seconds))
+        ready = timeout_seconds >= required_seconds
+        return word_automation.WordAutomationResult(
+            ok=ready,
+            action="pdf_preflight",
+            message="Synthetic startup completed" if ready else "Synthetic startup deadline expired",
+            failure_code="" if ready else "timeout",
+            cleanup_attempted=True,
+            cleanup_succeeded=ready,
+        )
+
+    def canary(*, timeout_seconds, temp_root):
+        calls.append(("canary", timeout_seconds))
+        return word_automation.WordAutomationResult(
+            ok=True, action="pdf_export_canary", message="Synthetic canary passed",
+            cleanup_attempted=True, cleanup_succeeded=True,
+        )
+
+    monkeypatch.setattr(word_automation, "probe_word_pdf_export_support", launch)
+    monkeypatch.setattr(word_automation, "run_word_pdf_export_canary", canary)
+    payload = word_automation.assess_word_pdf_export_readiness(
+        cache_scope=f"bounded-slow-startup-{required_seconds}", force_refresh=True,
+    )
+
+    assert payload["finalization_ready"] is (required_seconds <= 45.0)
+    assert payload["launch_preflight"]["cleanup_succeeded"] is (required_seconds <= 45.0)
+    assert calls == ([("launch", 45.0), ("canary", 45.0)] if required_seconds <= 45.0 else [("launch", 45.0)])
+    if required_seconds > 45.0:
+        assert payload["failure_code"] == "timeout"
+        assert payload["export_canary"]["ok"] is False
+        assert payload["export_canary"]["cleanup_succeeded"] is False
+
+
 def test_assess_word_pdf_export_readiness_uses_cache(monkeypatch) -> None:
     calls = {"launch": 0, "canary": 0}
     monkeypatch.setattr(
