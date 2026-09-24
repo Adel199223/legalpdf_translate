@@ -134,8 +134,12 @@ export function buildGmailPanelStatusPresentation({
   let gmailMessage = "Choose the attachment you want to process, preview it if needed, then continue.";
   const hasLoadResult = Boolean(loadResult);
   const hasActiveSession = Boolean(activeSession);
+  const showLoadFailure = loadResult?.ok === false && !hasActiveSession;
 
-  if (!hasLoadResult && !hasActiveSession && recoveredAction?.visible) {
+  if (showLoadFailure) {
+    gmailMessage = String(loadResult.status_message || "").trim()
+      || "Gmail message could not be loaded. Open Advanced message details to review the message and try again.";
+  } else if (!hasLoadResult && !hasActiveSession && recoveredAction?.visible) {
     gmailMessage = "A previous Gmail result is still available here, but this page is waiting for a new Gmail message.";
   } else if (stageUsesStageDescription(stage)) {
     gmailMessage = presentation.description;
@@ -148,7 +152,9 @@ export function buildGmailPanelStatusPresentation({
 
   return {
     gmail: {
-      tone: loadResult?.ok ? "ok" : "",
+      tone: showLoadFailure
+        ? loadResult.classification === "unavailable" ? "warn" : "bad"
+        : loadResult?.ok ? "ok" : "",
       message: gmailMessage,
     },
     session: activeSession

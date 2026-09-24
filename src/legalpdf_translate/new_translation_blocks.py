@@ -41,17 +41,20 @@ from .validators import validate_ar, validate_enfr
 
 INTEGRATION_VERSION = "new_runs_v1"
 CONTEXT_POLICY_VERSION = "direct_winner_neighbors_v1"
-CITATION_POLICY_VERSION = "article_heads_v4_arabic_punctuation"
+CITATION_POLICY_VERSION = "article_heads_v5_arabic_contracted_subdivisions"
 MAX_OUTPUT_TOKENS = 24000
 MAX_SOURCE_CHARS = 120000
 _NUMBER = re.compile(r"\d[\d.,]*\d|\d")
-_ARTICLE = re.compile(r"(?:\bart(?:igo|icle)?s?\.?\s*|(?:المادة|المادتان|المادتين|المواد)\s*)(\d+(?:[º°.]|\s*[-–]\s*[A-Z])?)", re.I)
+_ARTICLE = re.compile(
+    r"(?:\bart(?:igo|icle)?s?\.?\s*|(?:المادة|المادتان|المادتين|المواد)\s*"
+    r"|(?<!\w)[وف]?(?:للمادة|للمادتين|للمواد)[ \t]+)"
+    r"(\d+(?:[º°.]|\s*[-–]\s*[A-Z])?)", re.I)
 # Continue only a closed citation grammar. Horizontal whitespace is deliberate:
 # a new source/target line or sentence never borrows the previous article head.
 _CITATION_JOIN = re.compile(r"[ \t]*(?:(?:[,،][ \t]*)?(?:\b(?:e|et|and)\b[ \t]*|و[ \t]*)|[,،][ \t]*)", re.I)
 _CITATION_SUBDIVISION = re.compile(
-    r"[ \t]*,[ \t]*(?:(?P<number>n(?:\.[º°]|[º°]|\.)s?|nos?\.?|paragraphs?|paragraphes?|§{1,2})"
-    r"|(?P<letter>al[íi]n[ée]as?|subparagraphs?|points?))[ \t]+", re.I)
+    r"[ \t]*[,،][ \t]*(?:(?P<number>n(?:\.[º°]|[º°]|\.)s?|nos?\.?|paragraphs?|paragraphes?|§{1,2}|رقم|الأرقام)"
+    r"|(?P<letter>al[íi]n[ée]as?|subparagraphs?|points?|الفقرة))[ \t]+", re.I)
 _CITATION_SUBNUMBER = re.compile(r"\d+(?![\wº°]|[./][\wº°]|,[\d]|[-–][A-Z0-9])", re.I)
 _CITATION_SUBLETTER = re.compile(r"[a-z]\)?(?!\w)", re.I)
 _CITATION_ELIDED_NUMBER = re.compile(

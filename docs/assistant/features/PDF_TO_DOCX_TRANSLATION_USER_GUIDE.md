@@ -326,7 +326,7 @@ Use this when the source files already arrived in Gmail and you want one reply d
 - Gmail intake is fail-closed. The batch does not start unless the extension can identify one exact open Gmail message and the app accepts the localhost handoff.
 - In normal browser-first use, the live bridge owner should be the LegalPDF browser app server. Qt ownership is fallback/coexistence only.
 - If a second click arrives while the same tab is still redirecting or hydrating for the current handoff, the extension can show wait guidance. Stale “already preparing” state from an older click should clear instead of blocking a fresh attempt.
-- A successful accepted click should leave diagnostics with `bridge_context_posted=true`, `source_gmail_url` present, and a current `handoff_session_id`; `Pending load` with unavailable message/thread IDs is not an accepted state.
+- Bridge transport should leave diagnostics with `bridge_context_posted=true`, `source_gmail_url` present, and a current `handoff_session_id`. Successful intake additionally requires the exact message and attachment list to load. `Pending load` or failed loading is not intake acceptance. The app's Gmail helper needs its own connection; a signed-in browser or assistant connector does not supply that connection.
 - The app fetches only the exact intake message, not the whole thread.
 - The review list hides inline/signature/media junk and shows only supported source attachments from that exact message.
 - PDF preview uses a lazy continuous-scroll viewer so large documents can be inspected before translation without rendering every page up front.
@@ -433,3 +433,8 @@ suggestion uses local text; explicit autofill is a separate user action.
 - Runtime behavior: `APP_KNOWLEDGE.md`
 - Workflow specifics: `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
 - Data/persistence behavior: `docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md`
+
+
+## Opening an incomplete run
+
+In the current acceptance build, open **Recent Work**, expand **Translation Runs**, and choose **Open run**. The app takes you to that run. If a failed or cancelled run has a partial Word file, **Download partial DOCX** appears beside its status. It contains only the completed source-page translations and is clearly marked incomplete. Opening it does not restart translation. These fixes are currently unpublished; check the [current handoff](../HANDOFF.md) for availability in the normal app.

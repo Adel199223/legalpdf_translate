@@ -47,6 +47,19 @@ def test_estimate_cost_unknown_model() -> None:
     assert "not in built-in" in expl
 
 
+def test_gpt52_legacy_estimates_use_current_public_standard_rates() -> None:
+    from legalpdf_translate.cost_guardrails import estimate_cost_usd, resolve_pricing
+
+    cost, explanation = estimate_cost(model="gpt-5.2", input_tokens=1668,
+        output_tokens=1820, reasoning_tokens=1058)
+    rates = resolve_pricing("gpt-5.2", env={}).rates
+    assert rates is not None
+    assert cost == .028399
+    assert estimate_cost_usd(input_tokens=1668, output_tokens=1820, reasoning_tokens=1058, rates=rates) == .028399
+    assert "estimate only" in explanation
+    assert rates.pricing_version == "legacy_unverified"
+
+
 def test_estimate_cost_env_rates() -> None:
     cost, expl = estimate_cost(
         model="anything",

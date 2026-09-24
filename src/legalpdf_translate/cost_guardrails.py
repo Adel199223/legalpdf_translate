@@ -24,7 +24,7 @@ _BUILT_IN_MODEL_RATES: dict[str, dict[str, float]] = {
     "o3": {"input": 2.00, "output": 8.00, "reasoning": 8.00},
     "o3-mini": {"input": 1.10, "output": 4.40, "reasoning": 4.40},
     "o4-mini": {"input": 1.10, "output": 4.40, "reasoning": 4.40},
-    "gpt-5.2": {"input": 2.00, "output": 8.00, "reasoning": 8.00},
+    "gpt-5.2": {"input": 1.75, "output": 14.00, "reasoning": 14.00},
 }
 
 _PROMPT_OVERHEAD_BY_LANG = {

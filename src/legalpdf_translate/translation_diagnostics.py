@@ -24,7 +24,7 @@ _MODEL_PRICES: dict[str, dict[str, float]] = {
     "o3": {"input": 2.00, "output": 8.00, "reasoning": 8.00},
     "o3-mini": {"input": 1.10, "output": 4.40, "reasoning": 4.40},
     "o4-mini": {"input": 1.10, "output": 4.40, "reasoning": 4.40},
-    "gpt-5.2": {"input": 2.00, "output": 8.00, "reasoning": 8.00},
+    "gpt-5.2": {"input": 1.75, "output": 14.00, "reasoning": 14.00},
 }
 
 
@@ -377,25 +377,25 @@ def emit_cost_estimate_event(
     reasoning_tokens: int,
     estimated_cost: float | None,
     cost_explanation: str,
+    cost_estimation_status: str | None = None,
+    dispatch_accounting: Mapping[str, Any] | None = None,
 ) -> None:
     """Emit cost_estimate_summary event."""
     if collector is None or not hasattr(collector, "add_event"):
         return
-    collector.add_event(
-        event_type="cost_estimate_summary",
-        stage="run",
-        counters={
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "reasoning_tokens": reasoning_tokens,
-            "total_tokens": input_tokens + output_tokens,
-        },
-        details={
-            "model": model,
-            "estimated_cost": estimated_cost,
-            "cost_explanation": cost_explanation,
-        },
-    )
+    counters = {"input_tokens": input_tokens, "output_tokens": output_tokens,
+        "reasoning_tokens": reasoning_tokens, "total_tokens": input_tokens + output_tokens}
+    details: dict[str, Any] = {"model": model, "estimated_cost": estimated_cost, "cost_explanation": cost_explanation}
+    if cost_estimation_status is not None:
+        details["cost_estimation_status"] = cost_estimation_status
+    if dispatch_accounting is not None:
+        totals = dispatch_accounting.get("totals", {})
+        counters.update(cached_input_tokens=totals.get("cached_input_tokens", 0),
+                        cache_write_tokens=totals.get("cache_write_tokens", 0))
+        details.update(coverage_status=dispatch_accounting.get("coverage_status"),
+                       known_cost_usd=dispatch_accounting.get("known_cost_usd"),
+                       pricing_snapshot=dispatch_accounting.get("pricing_snapshot"))
+    collector.add_event(event_type="cost_estimate_summary", stage="run", counters=counters, details=details)
 
 
 def emit_docx_write_event(

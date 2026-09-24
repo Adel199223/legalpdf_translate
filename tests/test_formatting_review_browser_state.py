@@ -171,6 +171,230 @@ console.log(JSON.stringify({pending, blockedCount, submits, completed, restored:
     assert result["restored"]["revisionId"] == "b" * 32 and result["restored"]["restored"]
 
 
+def test_restored_draft_explicit_new_submission_enables_one_first_build():
+    result = probe(DOM + r"""
+const storage = memory(), calls = []; let nonces = 0;
+const revision = {...draft, status: "submitted", revision_id: "b".repeat(32)};
+const options = {getScope: () => scope, getJob: () => job, storage,
+  createNonce: () => { nonces += 1; return "c".repeat(32); },
+  request: async (url, owner, options) => {
+    const body = options.body ? JSON.parse(options.body) : null; calls.push({url, body});
+    if (url.endsWith("/submit")) return envelope(revision);
+    if (url.endsWith("/rebuild")) {
+      if (![...storage.data.values()].some((raw) => raw.includes(body.operation_nonce))) throw new Error("Nonce not persisted");
+      return envelope({...revision, status: "pending", rebuild_operations: [{operation_nonce: body.operation_nonce,
+        revision_id: revision.revision_id, status: "pending"}], artifacts: []});
+    }
+    return envelope({...draft, rebuild_operations: [], artifacts: []});
+  }};
+const initial = core.createFormattingReviewController(options); await initial.prepare(true);
+const mounted = ui.mountFormattingReview({...options, root, prepareButton});
+await prepareButton.fire("click"); await findButton("Read current formatting review").fire("click");
+const restored = mounted.controller.snapshot();
+await fill("Formatting acceptance reviewer", "Operator");
+await check("I accept these complete formatting decisions for this exact translation");
+await findButton("Accept formatting revision").fire("click");
+const submitted = mounted.controller.snapshot(), buildDisabled = findButton("Build DOCX from this revision").disabled;
+await findButton("Build DOCX from this revision").fire("click");
+console.log(JSON.stringify({restored, submitted, buildDisabled, nonces, unsafeWrites,
+  builds: calls.filter((row) => row.url.endsWith("/rebuild")), final: mounted.controller.snapshot()}));
+""")
+    assert result["restored"]["restored"] and result["restored"]["verified"]
+    assert not result["submitted"]["restored"] and not result["buildDisabled"]
+    assert result["nonces"] == 1 and len(result["builds"]) == 1
+    assert result["builds"][0]["body"] == {"revision_id": "b" * 32, "operation_nonce": "c" * 32}
+    assert result["final"]["associated"] and result["unsafeWrites"] == 0
+
+
+def test_rejected_submit_needs_authoritative_draft_read_and_explicit_discard_to_edit():
+    result = probe(DOM + r"""
+const calls = [], storage = memory();
+const mounted = ui.mountFormattingReview({root, prepareButton, getScope: () => scope, getJob: () => job, storage,
+  request: async (url, owner, options) => {
+    calls.push({url, body: options.body ? JSON.parse(options.body) : null});
+    if (url.endsWith("/submit")) throw new Error("browser_formatting_review_operation_failed");
+    return envelope({...draft, rebuild_operations: [], artifacts: []});
+  }});
+await prepareButton.fire("click"); await mounted.controller.prepare(true);
+await fill("Formatting acceptance reviewer", "Operator");
+await check("I accept these complete formatting decisions for this exact translation");
+await findButton("Accept formatting revision").fire("click");
+const failed = mounted.controller.snapshot();
+const beforeReadDiscard = mounted.controller.discardUnsubmitted?.() || null;
+await findButton("Read current formatting review").fire("click");
+const confirmed = mounted.controller.snapshot(), beforeDiscard = calls.length;
+const button = walk(root).find((node) => node.tagName === "BUTTON" && node.textContent === "Discard the unsubmitted request and continue editing");
+if (button) await button.fire("click");
+console.log(JSON.stringify({failed, beforeReadDiscard, confirmed, buttonFound: Boolean(button),
+  discardRequests: calls.length - beforeDiscard, final: mounted.controller.snapshot(),
+  editDisabled: fieldControl("Page formatting reviewer", "INPUT").disabled,
+  accepted: walk(root).find((node) => node.tagName === "LABEL"
+    && node.children[1]?.textContent === "I accept these complete formatting decisions for this exact translation").querySelector("input").checked,
+  unsafeWrites}));
+""")
+    assert result["failed"]["pendingKind"] == "submit" and not result["beforeReadDiscard"]
+    assert result["confirmed"].get("canDiscardSubmission") and result["buttonFound"]
+    assert result["confirmed"]["pendingKind"] == "submit", "Read alone must not abandon the request"
+    assert result["discardRequests"] == 0 and not result["final"]["pendingKind"]
+    assert not result["editDisabled"] and not result["accepted"] and result["unsafeWrites"] == 0
+
+
+def test_uncertain_submission_reads_cannot_discard_or_grant_new_build_authority():
+    result = probe(r"""
+const outcomes = [];
+for (const scenario of ["pending", "published", "changed_generation", "build_present", "read_failed"]) {
+  const storage = memory(); let reads = 0, submits = 0, builds = 0;
+  const c = core.createFormattingReviewController({getScope: () => scope, getJob: () => job, storage,
+    request: async (url) => {
+      if (url.endsWith("/prepare")) return envelope(draft);
+      if (url.endsWith("/submit")) { submits += 1; throw new Error("Response uncertain"); }
+      if (url.endsWith("/rebuild")) { builds += 1; throw new Error("Must not dispatch"); }
+      reads += 1;
+      if (scenario === "read_failed") throw new Error("Read unavailable");
+      const view = {...draft, rebuild_operations: [], artifacts: []};
+      if (scenario === "pending") view.status = "submission_pending";
+      if (scenario === "published") Object.assign(view, {status: "submitted", revision_id: "b".repeat(32)});
+      if (scenario === "changed_generation") view.generation += 1;
+      if (scenario === "build_present") view.rebuild_operations = [{operation_nonce: "c".repeat(32), revision_id: "b".repeat(32)}];
+      return envelope(view);
+    }});
+  await c.prepare(true); await c.submit("Original reviewer", true); await c.read();
+  const discarded = c.discardUnsubmitted?.() || null; await c.rebuild();
+  outcomes.push({scenario, discarded, state: c.snapshot(), reads, submits, builds});
+}
+console.log(JSON.stringify(outcomes));
+""")
+    for row in result:
+        assert row["discarded"] is None and row["state"]["pendingKind"] == "submit", row["scenario"]
+        assert not row["state"].get("canDiscardSubmission") and not row["state"]["revisionId"]
+        assert row["submits"] == row["reads"] == 1 and row["builds"] == 0
+
+
+def test_reading_or_resubmitting_restored_published_revision_does_not_mint_build():
+    result = probe(r"""
+const storage = memory(); let builds = 0, nonces = 0;
+const revision = {...draft, status: "submitted", revision_id: "b".repeat(32), rebuild_operations: [], artifacts: []};
+const options = {getScope: () => scope, getJob: () => job, storage,
+  createNonce: () => { nonces += 1; return "c".repeat(32); }, request: async (url) => {
+    if (url.endsWith("/prepare")) return envelope(draft);
+    if (url.endsWith("/rebuild")) { builds += 1; throw new Error("Must not dispatch"); }
+    return envelope(revision);
+  }};
+const initial = core.createFormattingReviewController(options); await initial.prepare(true); await initial.submit("Operator", true);
+const restored = core.createFormattingReviewController(options); await restored.read(); await restored.rebuild();
+const readOnly = restored.snapshot(); await restored.submit("Operator", true); await restored.rebuild();
+console.log(JSON.stringify({readOnly, final: restored.snapshot(), builds, nonces}));
+""")
+    assert result["readOnly"]["restored"] and result["final"]["restored"]
+    assert result["final"]["errorCode"] == "formatting_review_unknown_build"
+    assert result["builds"] == result["nonces"] == 0
+
+
+def test_restored_lost_submit_requires_exact_ack_and_cannot_replace_known_build():
+    result = probe(r"""
+const outcomes = [];
+for (const recordedBuild of [false, true]) {
+  const storage = memory(), bodies = []; let published = false, builds = 0, nonces = 0;
+  const revision = {...draft, status: "submitted", revision_id: "b".repeat(32)};
+  const options = {getScope: () => scope, getJob: () => job, storage,
+    createNonce: () => { nonces += 1; return "c".repeat(32); }, request: async (url, owner, options) => {
+      if (url.endsWith("/prepare")) return envelope(draft);
+      if (url.endsWith("/submit")) {
+        bodies.push(JSON.parse(options.body)); published = true;
+        if (bodies.length === 1) throw new Error("Published; response lost");
+        // The real submit response has no generation or operation inventory.
+        return envelope({status: "submitted", review_id: draft.review_id, job_id: job.job_id,
+          reviewer_kind: "operator_review", revision_id: revision.revision_id});
+      }
+      if (url.endsWith("/rebuild")) { builds += 1; throw new Error("Retain this exact pending build"); }
+      return envelope({...published ? revision : draft, rebuild_operations: published && recordedBuild
+        ? [{operation_nonce: "f".repeat(32), revision_id: revision.revision_id, status: "pending"}] : [], artifacts: []});
+    }};
+  const initial = core.createFormattingReviewController(options); await initial.prepare(true);
+  const restored = core.createFormattingReviewController(options); await restored.read();
+  await restored.submit("Exact reviewer", true); await restored.read();
+  const uncertain = restored.snapshot(); await restored.rebuild(); const beforeRetry = builds;
+  await restored.submit("Different reviewer", true); const changedReviewerCount = bodies.length;
+  await restored.submit("Exact reviewer", true); const acknowledged = restored.snapshot(); await restored.rebuild();
+  outcomes.push({recordedBuild, uncertain, beforeRetry, changedReviewerCount, bodies, acknowledged, builds, nonces});
+}
+console.log(JSON.stringify(outcomes));
+""")
+    for row in result:
+        assert row["uncertain"]["restored"] and row["uncertain"]["pendingKind"] == "submit"
+        assert not row["uncertain"]["revisionId"] and not row["uncertain"]["canDiscardSubmission"]
+        assert row["beforeRetry"] == 0 and row["changedReviewerCount"] == 1
+        assert len(row["bodies"]) == 2 and row["bodies"][0] == row["bodies"][1]
+        assert not row["acknowledged"]["pendingKind"]
+        assert row["acknowledged"]["restored"] is row["recordedBuild"]
+        assert row["builds"] == row["nonces"] == (0 if row["recordedBuild"] else 1)
+
+
+def test_confirmed_discard_permission_is_invalidated_by_failed_read_or_owner_change():
+    result = probe(r"""
+const outcomes = [];
+for (const changedOwner of [false, true]) {
+  let activeJob = {...job}, failRead = false, requests = 0;
+  const c = core.createFormattingReviewController({getScope: () => scope, getJob: () => activeJob, storage: memory(),
+    request: async (url) => {
+      requests += 1;
+      if (url.endsWith("/submit") || failRead) throw new Error("Fictional failure");
+      return envelope({...draft, rebuild_operations: [], artifacts: []});
+    }});
+  await c.prepare(true); await c.submit("Operator", true); await c.read();
+  const confirmed = c.snapshot();
+  if (changedOwner) activeJob = {...job, job_id: "tx-other"};
+  else { failRead = true; await c.read(); }
+  const before = requests, discarded = c.discardUnsubmitted();
+  outcomes.push({changedOwner, confirmed, discarded, state: c.snapshot(), discardRequests: requests - before});
+}
+console.log(JSON.stringify(outcomes));
+""")
+    for row in result:
+        assert row["confirmed"]["canDiscardSubmission"]
+        assert row["discarded"] is None and not row["state"]["canDiscardSubmission"]
+        assert row["discardRequests"] == 0
+        if not row["changedOwner"]:
+            assert row["state"]["pendingKind"] == "submit" and not row["state"]["verified"]
+
+
+def test_observed_publication_cannot_be_discarded_after_a_contradictory_draft_read():
+    result = probe(r"""
+const outcomes = [];
+for (const observedStatus of ["submission_pending", "submitted"]) {
+  let reads = 0, submits = 0;
+  const revision = {...draft, status: "submitted", revision_id: "b".repeat(32)};
+  const c = core.createFormattingReviewController({getScope: () => scope, getJob: () => job, storage: memory(),
+    request: async (url) => {
+      if (url.endsWith("/prepare")) return envelope(draft);
+      if (url.endsWith("/submit")) {
+        submits += 1; if (submits < 3) throw new Error("Acknowledgement uncertain");
+        return envelope(revision);
+      }
+      reads += 1;
+      const view = {...draft, rebuild_operations: [], artifacts: []};
+      if (reads === 1) {
+        view.status = observedStatus;
+        if (observedStatus === "submitted") view.revision_id = revision.revision_id;
+      }
+      // Healthy service intent is durable. A contradictory response must not
+      // undo an already observed publication when preserving uncertainty.
+      return envelope(view);
+    }});
+  await c.prepare(true); await c.submit("Same reviewer", true); await c.read();
+  await c.submit("Same reviewer", true); await c.read();
+  const contradicted = c.snapshot(), discarded = c.discardUnsubmitted();
+  await c.submit("Same reviewer", true);
+  outcomes.push({observedStatus, contradicted, discarded, submits, final: c.snapshot()});
+}
+console.log(JSON.stringify(outcomes));
+""")
+    for row in result:
+        assert not row["contradicted"]["canDiscardSubmission"] and row["discarded"] is None
+        assert row["contradicted"]["pendingKind"] == "submit" and row["submits"] == 3
+        assert not row["final"]["pendingKind"] and row["final"]["revisionId"] == "b" * 32
+
+
 def test_stale_revision_check_or_build_failure_disables_previous_download_until_fresh_read():
     result = probe(r"""
 const revision = {...draft, status: "submitted", revision_id: "b".repeat(32)};

@@ -37,6 +37,7 @@ import {
 } from "./result_card_ui.js";
 import {
   collapseTranslationCompletionSectionsInto,
+  renderTranslationDownloadLinkInto,
   renderTranslationDownloadLinksInto,
   renderTranslationCheckboxInto,
   renderTranslationCompletionSurfaceInto,
@@ -1074,6 +1075,11 @@ function translationDownloadLinkNodes() {
 
 function renderTranslationDownloadLinks(links = {}) {
   renderTranslationDownloadLinksInto(translationDownloadLinkNodes(), links);
+  const partialHref = ["failed", "cancelled"].includes(translationState.currentJob?.status)
+    ? links.partial || ""
+    : "";
+  renderTranslationDownloadLinkInto(qs("translation-run-download-partial"), partialHref);
+  qs("translation-run-partial-artifact")?.classList.toggle("hidden", !partialHref);
 }
 
 function translationRunReportHref(job = translationState.currentJob) {
@@ -2097,7 +2103,21 @@ function renderTranslationJobs(jobs) {
     setPanelStatus("translation-jobs", "", deriveRecentWorkPresentation({ translationRunCount: jobs.length }).translationRunsCount);
   }
   renderTranslationJobsInto(container, jobs, {
-    onOpen: (job) => renderTranslationJob(job),
+    onOpen: (job) => {
+      applyTranslationSeed(job?.result?.save_seed || blankSaveSeed());
+      renderTranslationJob(job);
+      setActiveView("new-job");
+      dispatchNewJobTask("translation");
+      renderShellVisibilityInto({
+        views: document.querySelectorAll(".page-view"),
+        navButtons: document.querySelectorAll(".nav-button"),
+        activeView: "new-job",
+      });
+      openTranslationCompletionDrawer();
+      if (!hasTranslationCompletionSurface()) {
+        qs("translation-run-status-shell")?.parentElement?.scrollIntoView({ block: "start" });
+      }
+    },
     onResume: (job) => handleResume(job.job_id),
     onRebuild: (job) => handleRebuild(job.job_id),
   });
@@ -2469,6 +2489,7 @@ export function initializeTranslationUi() {
   });
 
   for (const eventName of ["input", "change"]) {
+    qs("translation-target-lang")?.addEventListener(eventName, renderTranslationSourceCard);
     outputDirInput?.addEventListener(eventName, () => {
       renderTranslationOutputSummary();
       syncTranslationPrimaryActionState();

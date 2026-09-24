@@ -189,12 +189,12 @@ This recovery does not require weakening Word security settings or repairing/rei
 7. If the page says auto-launch is unavailable from this checkout, open the extension options page and refresh diagnostics.
 8. If the page says the token is invalid, treat that as a Settings/native-host mismatch and refresh diagnostics instead of editing the extension options page manually.
 9. If the page says the message is ambiguous, collapse extra Gmail messages and leave only one expanded.
-10. If the app shows no supported attachments, that email likely contains only inline or unsupported files.
+10. If the message loaded successfully but the app shows no supported attachments, it may contain only inline or unsupported files. If message loading failed, check the app's Gmail connection first. Being signed into Gmail in your browser does not connect the app's separate Gmail helper.
 11. If the batch stops after Save to Job Log, that is expected when you cancel the dialog or when the case/court details no longer match.
 12. If you skip or fail honorários generation at the end of the translation batch, or cancel/fail the interpretation honorários export after Gmail intake, the app does not create the Gmail reply draft.
 13. The extension does not create its own report file. Use the browser banner for handoff failures, then the app/run reports for everything after intake.
 14. If the honorários PDF cannot be generated, the export still keeps the local DOCX but Gmail draft creation stays blocked for that export.
-15. If the same tab reaches LegalPDF but shows `Pending load`, unavailable message/thread IDs, or no attachment-ready text, treat the click diagnostics as the source of truth: `bridge_context_posted` should be `true`, `source_gmail_url` should be present, and the native-host path should be the EXE target rather than the old `.cmd` wrapper.
+15. If the same tab reaches LegalPDF but shows `Pending load`, unavailable message/thread IDs, or no attachment-ready text, inspect the click diagnostics: `bridge_context_posted` confirms only that the bridge received the request. Successful intake also requires the exact message and its attachments to load. Check the app's Gmail connection and visible failure reason before clicking again; the native-host path should be the EXE target rather than the old `.cmd` wrapper.
 16. If Gmail/browser preparation fails before a run exists, use `Generate Failure Report` from the Gmail diagnostics area instead of searching for a run report that does not exist yet. That report now includes the raw browser PDF worker/module failure details.
 17. If Gmail finalization is blocked or completes and you still want a full last-step artifact, use `Generate Finalization Report` from the finalization drawer. That report now stays available for blocked states and completed states, including successful draft creation.
 18. If the current Gmail attachment was already run and you want to do it again from the same live workspace, use `Redo Current Attachment` instead of `Reset Gmail Workspace`. `Redo` keeps the Gmail batch session and only resets the translation side for that attachment.
@@ -249,3 +249,8 @@ Use this fix:
 8. In Gmail batches, if you accidentally choose the translated DOCX filename while saving honorários, the app now auto-renames the honorários file instead of overwriting the translation.
 9. If a Gmail batch reply draft still fails after translation finished, look for `gmail_batch_session.json` under your output folder’s `_gmail_batch_sessions` directory before retrying blindly.
 10. For interpretation rows, the saved distance is tied to the service city. If the KM value looks wrong, confirm the row's service city before saving or exporting honorários.
+
+
+## Opening an incomplete run
+
+In the current acceptance build, open **Recent Work**, expand **Translation Runs**, and choose **Open run**. The app takes you to that run. If a failed or cancelled run has a partial Word file, **Download partial DOCX** appears beside its status. It contains only the completed source-page translations and is clearly marked incomplete. Opening it does not restart translation. These fixes are currently unpublished; check the [current handoff](../HANDOFF.md) for availability in the normal app.

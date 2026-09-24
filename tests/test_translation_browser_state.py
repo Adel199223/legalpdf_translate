@@ -483,6 +483,55 @@ const results = {};
 }
 
 {
+  const scenario = await setupScenario("manual-target-events");
+  const target = scenario.env.element("translation-target-lang");
+  target.value = "AR";
+  scenario.env.enqueueFetch(() => responseJson({
+    status: "ok",
+    normalized_payload: {
+      source_path: "C:/uploads/target-event-source.pdf",
+      source_filename: "target-event-source.pdf",
+      source_type: "pdf",
+      page_count: 2,
+    },
+  }));
+  await beginSourceInputChange(scenario.env, makeFile("target-event-source.pdf", { type: "application/pdf" }));
+  const before = captureUi(scenario.env, scenario.translationModule);
+  const requestsBefore = scenario.env.fetchCalls.length;
+  const changes = [];
+  for (const [value, event] of [["FR", "change"], ["EN", "input"], ["AR", "change"]]) {
+    target.value = value;
+    await scenario.env.dispatch("translation-target-lang", event);
+    changes.push({ value, event, ...captureUi(scenario.env, scenario.translationModule) });
+  }
+  results.manualTargetEvents = {
+    before, changes,
+    defaultTarget: scenario.stateModule.appState.bootstrap.normalized_payload.settings_summary.default_lang,
+    requestsFromChanges: scenario.env.fetchCalls.length - requestsBefore,
+  };
+}
+
+{
+  const scenario = await setupScenario("prepared-target-events");
+  scenario.translationModule.applyTranslationLaunch(preparedLaunch({
+    target_lang: "EN",
+    gmail_batch_context: { ...preparedLaunch().gmail_batch_context, selected_target_lang: "EN" },
+  }));
+  const requestsBefore = scenario.env.fetchCalls.length;
+  const changes = [];
+  for (const [value, event] of [["FR", "change"], ["AR", "input"]]) {
+    scenario.env.element("translation-target-lang").value = value;
+    await scenario.env.dispatch("translation-target-lang", event);
+    changes.push(captureUi(scenario.env, scenario.translationModule));
+  }
+  results.preparedTargetEvents = {
+    changes,
+    defaultTarget: scenario.stateModule.appState.bootstrap.normalized_payload.settings_summary.default_lang,
+    requestsFromChanges: scenario.env.fetchCalls.length - requestsBefore,
+  };
+}
+
+{
   const scenario = await setupScenario("prepared");
   scenario.translationModule.applyTranslationLaunch(preparedLaunch());
   results.prepared = captureUi(scenario.env, scenario.translationModule);
@@ -919,6 +968,55 @@ const results = {};
     },
   });
   results.failedDiagnostics = captureUi(scenario.env, scenario.translationModule);
+}
+
+{
+  const scenario = await setupScenario("open-existing-runs", "http://127.0.0.1:8877/?mode=live&workspace=workspace-1#recent-jobs");
+  const failed = {
+    job_id: "tx-partial-fictional", job_kind: "translate", status: "failed",
+    status_text: "Translation stopped on page 6.",
+    config: { source_path: "C:/fixtures/notice.pdf", target_lang: "FR" },
+    progress: { selected_index: 5, selected_total: 9 },
+    result: { success: false, completed_pages: 5, error: "runtime_failure" },
+    actions: { download_partial_docx: true, resume: true, rebuild: true },
+  };
+  const jobs = [
+    failed,
+    { ...failed, job_id: "tx-no-partial", actions: {} },
+    { ...failed, job_id: "tx-cancelled", status: "cancelled" },
+    { ...failed, job_id: "tx-complete", status: "completed",
+      result: { success: true, completed_pages: 9,
+        save_seed: { case_number: "FICTIONAL-COMPLETE", target_lang: "FR" } },
+      actions: { download_output_docx: true } },
+  ];
+  scenario.env.enqueueFetch(() => responseJson({ status: "ok", normalized_payload: { arabic_review: { required: false } } }));
+  scenario.translationModule.renderTranslationBootstrap({ normalized_payload: {
+    translation: { defaults: { lang: "AR" }, active_jobs: jobs, history: [] }, gmail: {},
+  } });
+  await waitForAsyncWork();
+  const beforeOpenFetchCount = scenario.env.fetchCalls.length;
+  const captureOpen = () => ({
+    ...captureUi(scenario.env, scenario.translationModule),
+    route: window.location.hash,
+    partialHref: scenario.env.element("translation-run-download-partial").href,
+    partialHidden: scenario.env.element("translation-run-download-partial").classList.contains("hidden"),
+    partialCardHidden: scenario.env.element("translation-run-partial-artifact").classList.contains("hidden"),
+    completeHref: scenario.env.element("translation-download-docx").href,
+    fetchCount: scenario.env.fetchCalls.length - beforeOpenFetchCount,
+  });
+  const clickRun = async (index) => {
+    scenario.stateModule.setActiveView("recent-jobs");
+    const card = scenario.env.element("translation-jobs-list").children[index];
+    await card.children[1].children[0].click();
+    return captureOpen();
+  };
+  results.openExistingRuns = {
+    failed: await clickRun(0),
+    unavailable: await clickRun(1),
+    cancelled: await clickRun(2),
+    completed: await clickRun(3),
+    failedAfterCompleted: await clickRun(0),
+  };
 }
 
 {
@@ -1365,6 +1463,26 @@ def test_translation_browser_loaded_job_source_replaces_stale_summary_and_run_st
     assert "Page translation failed." in failed_diagnostics["jobDiagnostics"]
 
 
+def test_target_language_events_refresh_local_source_card_without_saving_defaults() -> None:
+    result = _probe_results()["manualTargetEvents"]
+    assert result["before"]["sourceCardTarget"] == "Target language: AR"
+    assert result["before"]["sourceCardFilename"] == "target-event-source.pdf"
+    assert [row["sourceCardTarget"] for row in result["changes"]] == [
+        "Target language: FR", "Target language: EN", "Target language: AR",
+    ]
+    assert all(row["sourceCardFilename"] == "target-event-source.pdf" for row in result["changes"])
+    assert result["defaultTarget"] == "AR"
+    assert result["requestsFromChanges"] == 0
+
+
+def test_target_language_events_preserve_prepared_gmail_target_precedence() -> None:
+    result = _probe_results()["preparedTargetEvents"]
+    assert all(row["sourceCardTarget"] == "Current Gmail job target: EN" for row in result["changes"])
+    assert all(row["sourceCardDefaultTarget"] == "Default target for new jobs: AR" for row in result["changes"])
+    assert result["defaultTarget"] == "AR"
+    assert result["requestsFromChanges"] == 0
+
+
 def test_translation_completion_presentation_helper_uses_beginner_finish_copy() -> None:
     presentation = _probe_results()["completionPresentation"]
 
@@ -1454,6 +1572,35 @@ def test_recent_work_presentation_helper_uses_beginner_saved_work_copy() -> None
     assert "job-log rows" not in helper_text
     assert "browser translation jobs" not in helper_text
     assert "row #" not in helper_text
+
+
+def test_open_run_navigates_to_status_and_exposes_only_available_partial_file() -> None:
+    runs = _probe_results()["openExistingRuns"]
+    for key in ("failed", "failedAfterCompleted", "cancelled"):
+        run = runs[key]
+        assert run["route"] == "#new-job"
+        assert run["partialHref"].endswith(
+            f"/{'tx-cancelled' if key == 'cancelled' else 'tx-partial-fictional'}/artifact/partial_docx?mode=live&workspace=workspace-1"
+        )
+        assert run["partialHidden"] is False
+        assert run["partialCardHidden"] is False
+        assert run["snapshot"]["hasCompletionSurface"] is False
+        assert run["snapshot"]["completionDrawerOpen"] is False
+        assert run["snapshot"]["currentJobStatus"] == ("cancelled" if key == "cancelled" else "failed")
+        assert run["fetchCount"] == 0
+    unavailable = runs["unavailable"]
+    assert unavailable["route"] == "#new-job"
+    assert unavailable["partialHref"] == ""
+    assert unavailable["partialHidden"] is True
+    assert unavailable["partialCardHidden"] is True
+    assert unavailable["fetchCount"] == 0
+    completed = runs["completed"]
+    assert completed["route"] == "#new-job"
+    assert completed["partialHref"] == ""
+    assert completed["partialCardHidden"] is True
+    assert completed["snapshot"]["completionDrawerOpen"] is True
+    assert completed["completeHref"].endswith("/tx-complete/artifact/output_docx?mode=live&workspace=workspace-1")
+    assert completed["fetchCount"] == 0
 
 
 def test_dashboard_presentation_helper_uses_beginner_overview_copy() -> None:

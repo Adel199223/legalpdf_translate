@@ -63,7 +63,7 @@ export function createFormattingReviewController({getScope, getJob, request = fe
   function reset() {
     state = {view: null, reviewId: "", revisionId: "", operationNonce: "", artifactId: "", busy: false,
       errorCode: "", verified: false, restored: false, associated: false, pendingKind: "", conflict: false,
-      dirty: false, documentDirty: false};
+      dirty: false, documentDirty: false, canDiscardSubmission: false};
     pending = null; dirtyPages.clear();
   }
   const snapshot = () => ({...state, owner: owner ? {...owner} : null});
@@ -96,7 +96,7 @@ export function createFormattingReviewController({getScope, getJob, request = fe
   async function perform(action) {
     sync(); if (state.busy) return snapshot();
     const ticket = {epoch, owner: owner ? {...owner} : null};
-    state.busy = true; state.errorCode = ""; emit();
+    state.busy = true; state.errorCode = ""; state.canDiscardSubmission = false; emit();
     try {
       if (!owner) throw new Error("formatting_review_owner_changed");
       await action(ticket);
@@ -156,6 +156,9 @@ export function createFormattingReviewController({getScope, getJob, request = fe
         // retry lets the service verify its exact reviewer and generation.
         if (pending?.kind !== "submit") state.revisionId = view.revision_id;
       } else if (state.revisionId) throw new Error("formatting_review_unverified");
+      if (pending?.kind === "submit" && (view.status === "submission_pending" || ID.test(view.revision_id))) {
+        pending.publicationObserved = true;
+      }
       if (state.operationNonce) {
         const matches = view.rebuild_operations?.filter((op) => op.operation_nonce === state.operationNonce) || [];
         if (matches.length > 1 || matches.length === 1 && matches[0].revision_id !== state.revisionId) throw new Error("formatting_review_unverified");
@@ -164,6 +167,13 @@ export function createFormattingReviewController({getScope, getJob, request = fe
         state.artifactId = artifact && ID.test(artifact.artifact_id) ? artifact.artifact_id : "";
       }
       state.verified = true; persist();
+      // A successful read returns "draft" only when no submit intent exists.
+      // Keep the pending request until the operator explicitly discards it.
+      state.canDiscardSubmission = Boolean(pending?.kind === "submit" && !pending.publicationObserved && view.status === "draft"
+        && view.generation === pending.body.expected_generation && !view.revision_id
+        && !state.revisionId && !state.operationNonce && !state.artifactId
+        && Array.isArray(view.rebuild_operations) && view.rebuild_operations.length === 0
+        && Array.isArray(view.artifacts) && view.artifacts.length === 0);
     });
   }
   async function save(kind, decision, pageNumber = null) {
@@ -189,10 +199,18 @@ export function createFormattingReviewController({getScope, getJob, request = fe
         reviewer, accept_formatting: true};
       if (state.view.status === "submission_pending" && pending?.kind !== "submit") throw new Error("formatting_review_pending_request");
       if (pending && (pending.kind !== "submit" || !formattingValuesEqual(pending.body, body))) throw new Error("formatting_review_pending_request");
-      pending = {kind: "submit", body}; state.pendingKind = "submit";
+      const beganDraft = pending?.kind === "submit" ? pending.beganDraft
+        : !state.revisionId && !state.artifactId && state.view.status === "draft";
+      const publicationObserved = pending?.kind === "submit" && pending.publicationObserved === true;
+      pending = {kind: "submit", body, beganDraft, publicationObserved}; state.pendingKind = "submit";
       const view = await send(ticket, `/${state.reviewId}/submit`, body); if (!view) return;
       merge(view); if (view.status === "declined") return;
-      if (!ID.test(view.revision_id) || state.revisionId && state.revisionId !== view.revision_id) throw new Error("formatting_review_unverified");
+      if (view.status !== "submitted" || !ID.test(view.revision_id)
+          || state.revisionId && state.revisionId !== view.revision_id) throw new Error("formatting_review_unverified");
+      // This explicit request, including an exact retry, established the new
+      // revision. Stored identifiers or a read of an existing revision cannot
+      // authorize its first build after reload.
+      if (beganDraft && !state.view.rebuild_operations?.length && !state.view.artifacts?.length) state.restored = false;
       state.revisionId = view.revision_id; pending = null; state.pendingKind = ""; persist();
     });
   }
@@ -239,6 +257,14 @@ export function createFormattingReviewController({getScope, getJob, request = fe
     pending = null; state.pendingKind = ""; state.conflict = false; state.dirty = dirtyPages.size > 0 || state.documentDirty;
     return result;
   }
+  function discardUnsubmitted() {
+    sync();
+    if (state.busy || !state.verified || !state.canDiscardSubmission || pending?.kind !== "submit"
+        || state.view?.status !== "draft" || state.view.generation !== pending.body.expected_generation
+        || state.revisionId || state.operationNonce || state.artifactId) return null;
+    pending = null; state.pendingKind = ""; state.canDiscardSubmission = false; state.errorCode = "";
+    return {kind: "submit"};
+  }
   function imageUrl(pageNumber) {
     return owner && state.verified && ID.test(state.reviewId) && Number.isInteger(pageNumber)
       ? routeOf(owner) + `/${state.reviewId}/pages/${pageNumber}/image?mode=${owner.runtimeMode}&workspace=${encodeURIComponent(owner.workspaceId)}` : "";
@@ -250,5 +276,6 @@ export function createFormattingReviewController({getScope, getJob, request = fe
   }
   reset(); restore();
   return {snapshot, sync, prepare, read, savePage: (number, decision) => save("page", decision, number),
-    saveDocument: (decision) => save("document", decision), submit, inspect, rebuild, markDirty, discardConflict, imageUrl, artifactUrl};
+    saveDocument: (decision) => save("document", decision), submit, inspect, rebuild, markDirty, discardConflict,
+    discardUnsubmitted, imageUrl, artifactUrl};
 }

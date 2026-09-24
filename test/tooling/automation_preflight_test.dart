@@ -203,7 +203,7 @@ void main() {
     );
   }, failures);
 
-  _runCase('falls back to Windows file version when browser reports session text', () {
+  _runCase('reads Windows browser file version without opening its session', () {
     final Map<String, dynamic> result = preflight.runAutomationPreflight(
       runner: _runnerWindowsEdgeSessionMessage,
       environment: <String, String>{
@@ -215,6 +215,54 @@ void main() {
       result['automation_browser_version'] == '136.0.3240.92',
       'Expected Windows file-version fallback when --version reports session text',
     );
+  }, failures);
+
+  for (final String route in <String>['environment', 'path', 'fallback']) {
+    _runCase('Windows $route discovery never executes the browser', () {
+      final List<List<String>> commands = <List<String>>[];
+      preflight.CommandResult runner(List<String> command) {
+        commands.add(List<String>.of(command));
+        if (command.first.toLowerCase().endsWith('msedge.exe')) {
+          throw _CaseFailure('Version inspection attempted to launch Edge');
+        }
+        return route == 'path'
+            ? _runnerWindowsEdgeSessionMessage(command)
+            : _runnerWindowsEdgeFallback(command);
+      }
+
+      final Map<String, dynamic> result = preflight.runAutomationPreflight(
+        runner: runner,
+        environment: <String, String>{
+          'AUTOMATION_PREFLIGHT_ASSUME_WINDOWS': '1',
+          if (route == 'environment')
+            'AUTOMATION_BROWSER_BINARY':
+                r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+        },
+      );
+      _expect(result['automation_browser_version'] == '136.0.3240.92',
+          'Expected actual file-version metadata');
+      _expect(commands.where((List<String> command) => command.first == 'powershell').length == 1,
+          'Expected one metadata read');
+    }, failures);
+  }
+
+  _runCase('missing Windows version metadata does not launch a browser fallback', () {
+    preflight.CommandResult runner(List<String> command) {
+      if (command.first.toLowerCase().endsWith('msedge.exe')) {
+        throw _CaseFailure('Missing metadata attempted to launch Edge');
+      }
+      if (command.first == 'powershell') {
+        return preflight.CommandResult(exitCode: 1, stdout: '', stderr: 'unavailable');
+      }
+      return _runnerWindowsEdgeFallback(command);
+    }
+
+    final Map<String, dynamic> result = preflight.runAutomationPreflight(
+      runner: runner,
+      environment: <String, String>{'AUTOMATION_PREFLIGHT_ASSUME_WINDOWS': '1'},
+    );
+    _expect(result['automation_browser_version'] == '',
+        'Unavailable metadata must remain unknown');
   }, failures);
 
   _runCase('marks host unavailable when toolchain incomplete', () {
@@ -234,5 +282,5 @@ void main() {
     exit(1);
   }
 
-  stdout.writeln('All automation preflight tests passed (5 cases).');
+  stdout.writeln('All automation preflight tests passed (9 cases).');
 }

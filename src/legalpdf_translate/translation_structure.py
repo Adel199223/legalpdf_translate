@@ -37,7 +37,13 @@ _COMMON = (
 )
 _LANGUAGE = {
     "EN": "Use formal legal English with British spelling; preserve accented proper names verbatim.",
-    "FR": "Use formal legal French; preserve Portuguese legal concepts and accented proper names verbatim.",
+    "FR": (
+        "Use formal legal French. Preserve the meaning and Portuguese jurisdiction of legal concepts; "
+        "translate legal terms, law and code titles, institutional labels and other ordinary text into French. "
+        "Do not substitute French law or institutions for their Portuguese counterparts. "
+        "Preserve accented proper names and identifiers verbatim; legal terms and titles are not "
+        "proper names to retain untranslated."
+    ),
     "AR": (
         "Use Modern Standard Arabic. Preserve personal names and postal addresses in their exact Latin "
         "spelling, including accents, as coherent spans. Preserve supplied [[...]] tokens unchanged, "
