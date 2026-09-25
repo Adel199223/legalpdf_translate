@@ -10,7 +10,7 @@ This bridge is intentionally shorter. Defer to [root APP_KNOWLEDGE.md](../../APP
 - [App guide](features/APP_USER_GUIDE.md), [PDF guide](features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md), [reviewed-source/DOCX guide](features/REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md).
 - [Index](INDEX.md) and [manifest](manifest.json): select only the applicable workflow.
 
-Canonical main is the daily-use build. The reviewed-source, accounting, formatting and browser implementation is available in builds containing the verified PR #296 merge; use the [current handoff](HANDOFF.md) for the actual revision and verification scope. Assistant model preference is separate from app provider policy and saved settings.
+Canonical main includes merged PR #303 at `ca395d6`. English reviewed formatting and a genuinely saved Gmail output have qualified evidence; Arabic follow-up and the isolated Word-startup fix remain active. Use [HANDOFF.md](HANDOFF.md) for exact build/runtime identities, current bounds and acceptance limits. The startup source and prior stopped shadow tree have separate provenance; read the actual application receipt before declaring the installed build verified. Assistant model preference is separate from app provider policy and saved settings.
 
 Docs Sync has standing user authorization for useful scoped maintenance; do not ask again. Historical acceptance tokens and budget checkpoints remain evidence, not new authority. See the [dated former bridge](history/2026-09-16_front_doors/APP_KNOWLEDGE_BRIDGE.md) only when its detail is needed.
 

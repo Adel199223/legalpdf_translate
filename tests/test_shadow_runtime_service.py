@@ -120,13 +120,29 @@ def _word_pdf_state(*, ready: bool = True) -> dict[str, object]:
 
 
 @pytest.fixture(autouse=True)
-def _stub_word_readiness_before_settings_setup(monkeypatch):
+def _stub_provider_diagnostics_before_settings_setup(monkeypatch):
     # Settings saves/bootstrap also collect provider diagnostics. Install the
     # default before any test setup, not only before its final preflight call.
     monkeypatch.setattr(
         power_tools_service,
         "assess_word_pdf_export_readiness",
         lambda **_kwargs: _word_pdf_state(),
+    )
+    monkeypatch.setattr(
+        power_tools_service,
+        "assess_gmail_draft_prereqs",
+        lambda **_kwargs: SimpleNamespace(
+            ready=False, message="Gmail unavailable in this test", gog_path=None,
+            account_email="", accounts=(),
+        ),
+    )
+    monkeypatch.setattr(
+        power_tools_service,
+        "inspect_edge_native_host",
+        lambda **_kwargs: {
+            **_native_host_state(ready=False, repairable=False),
+            "self_test_status": "not_run", "reason": "native_host_unavailable_in_test",
+        },
     )
 
 
@@ -695,6 +711,52 @@ def test_native_host_test_and_repair_return_provider_state(
     assert native_host_repair["status"] == "ok"
     assert native_host_repair["normalized_payload"]["repair_result"]["changed"] is True
     assert native_host_repair["normalized_payload"]["provider_state"]["native_host"]["ready"] is True
+
+
+@pytest.mark.parametrize("entry_point", ["run_settings_preflight", "run_word_pdf_export_test"])
+def test_browser_word_readiness_allows_bounded_slow_startup(tmp_path: Path, monkeypatch, entry_point) -> None:
+    import legalpdf_translate.word_automation as word_automation
+
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}", encoding="utf-8")
+    calls = []
+
+    def launch(*, timeout_seconds):
+        calls.append(("launch", timeout_seconds))
+        ready = timeout_seconds >= 20.0
+        return word_automation.WordAutomationResult(
+            ok=ready, action="pdf_preflight", message="Synthetic slow startup",
+            failure_code="" if ready else "timeout",
+            cleanup_attempted=True, cleanup_succeeded=ready,
+        )
+
+    def canary(*, timeout_seconds, temp_root):
+        calls.append(("canary", timeout_seconds))
+        return word_automation.WordAutomationResult(
+            ok=True, action="pdf_export_canary", message="Synthetic canary passed",
+            cleanup_attempted=True, cleanup_succeeded=True,
+        )
+
+    # Exercise the real aggregator rather than the module's default readiness stub.
+    monkeypatch.setattr(power_tools_service, "assess_word_pdf_export_readiness", word_automation.assess_word_pdf_export_readiness)
+    monkeypatch.setattr(word_automation, "probe_word_pdf_export_support", launch)
+    monkeypatch.setattr(word_automation, "run_word_pdf_export_canary", canary)
+    monkeypatch.setattr(power_tools_service, "_stored_translation_key_available", lambda: False)
+    monkeypatch.setattr(power_tools_service, "_stored_ocr_key_available", lambda: False)
+    monkeypatch.setattr(power_tools_service, "_resolve_ocr_api_key_source_for_browser", lambda _config: None)
+    monkeypatch.setattr(power_tools_service, "resolve_openai_key_with_source", lambda: (None, None))
+    monkeypatch.setattr(power_tools_service, "assess_gmail_draft_prereqs", lambda **_kwargs: SimpleNamespace(
+        ready=False, message="Synthetic Gmail unavailable", gog_path=None, account_email="", accounts=[],
+    ))
+    monkeypatch.setattr(power_tools_service, "local_ocr_available", lambda: False)
+    monkeypatch.setattr(power_tools_service, "document_runtime_state_payload", lambda: {})
+    monkeypatch.setattr(power_tools_service, "_native_host_state_payload", lambda _path: {})
+
+    response = getattr(power_tools_service, entry_point)(settings_path=settings_file)
+
+    assert response["normalized_payload"]["word_pdf_export"]["finalization_ready"] is True
+    assert calls == [("launch", 45.0), ("canary", 45.0)]
+    assert response["status"] == "ok"
 
 
 def test_run_word_pdf_export_test_returns_failed_when_canary_fails(

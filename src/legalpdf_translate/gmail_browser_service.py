@@ -2415,7 +2415,6 @@ class GmailBrowserSessionManager:
             raise ValueError("Confirm every selected Gmail attachment before finalizing the batch reply.")
         readiness = assess_word_pdf_export_readiness(
             cache_scope=f"gmail_batch_finalization::{_word_pdf_cache_scope_token(settings_path)}::{session.session_id}",
-            launch_timeout_seconds=8.0,
             export_timeout_seconds=45.0,
             force_refresh=force_refresh,
         )

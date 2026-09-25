@@ -1,5 +1,15 @@
 # Gmail-to-output and advanced-formatting readiness
 
+## Current continuation checkpoint — 2026-09-25
+
+PR #303 is merged on canonical main at `ca395d601efe4e00aad3458526b7d961d3cf5f0c`. Its four readiness fixes passed Full_04 and exact-head CI; earlier pending-publication statements below are chronological evidence only. EN03 reviewed formatting is complete with recorded qualifications. Genuine Gmail03 image-only/OCR-off output passed qualified document/native review and normal Save/Confirm, adding row 90 while preserving all 63 prior job rows. Its later automatic eight-second Word preflight failed; separately reviewed exact-process cleanup and a fresh supported 45-second preflight succeeded. The original Windows delay remains unknown.
+
+The related [Word startup deadline plan](2026-09-25_word_startup_readiness_deadline.md) owns the fresh isolated code change. Its shared 45-second default and deterministic test isolation passed 91 focused tests and independent review; required Full is bound to committed source `58a2df5c939f753f603b4df3f69f3d8d283985d3`. Its actual Full/publication/application and default-readiness native receipts are named in HANDOFF; complete only gates that remain absent or unsuccessful.
+
+AR01 remains a genuine 1/3-page partial failure, not advanced-formatting acceptance. AR02 is a fresh fictional one-page case for reviewed pipe-cell separators, full measured spacing and RTL/mixed literals. Its upload is currently blocked by the browser automation extension's file-URL setting; the user has been asked to enable it. No AR02 provider request occurred. Shadow06 used the unchanged `dad5ea1` formatting worktree, then stopped with zero jobs and confirmed process/port/Word cleanup. It is consumed; use a fresh owned runtime after the upload restriction is resolved. Live03 is stopped with zero jobs and an expected exit 1 solely because authorized metadata confirmation added `court_emails_by_city`. All saved translation defaults and other settings fields remain equal; do not restore the earlier settings file.
+
+The same phase has 14 finalized reservations costing USD0.21838600, no new hold/block and two slots/USD2.78161400 remaining. Preserve the original USD10 ceiling, all 226 old rows, USD0.119 hold/block, saved defaults and consumed evidence. No more Gmail paid checks are planned. Sending, OAuth expansion, public hosting and default promotion remain excluded. The parent goal remains active until the Arabic output criteria are actually verified; current status and bounded evidence routes are in [HANDOFF](../../HANDOFF.md).
+
 ## Goal and non-goals
 
 Finish the two current user-requested gaps: demonstrate the complete actual Gmail attachment-to-finished-output workflow and verify the remaining advanced formatting features in actual rendered output. Fix demonstrated related problems. Current explicit autonomous computer/API authorization takes precedence over historical paid/native/Gmail and stage-token stops for this new scope. No outgoing email, public hosting, unrelated changes or global default/model promotion is included.

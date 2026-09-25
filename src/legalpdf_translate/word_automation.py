@@ -21,6 +21,8 @@ _WORD_PHASE_PREFIX = "LEGALPDF_WORD_PHASE:"
 _WORD_HELPER_PID_PREFIX = "LEGALPDF_WORD_HELPER_PID:"
 _WORD_HELPER_OWNER_PREFIX = "LEGALPDF_WORD_HELPER_OWNER:"
 _WORD_HELPER_OWNER = "app_owned"
+# Preflight includes startup identity checks and confirmed owned cleanup.
+WORD_PDF_STARTUP_TIMEOUT_SECONDS = 45.0
 _WORD_READINESS_CACHE_TTL_SECONDS = 60.0
 _WORD_READINESS_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
 
@@ -814,7 +816,7 @@ def export_docx_to_pdf_in_word(docx_path: Path, pdf_path: Path, *, timeout_secon
                               pdf_path=pdf_path.expanduser().absolute(), timeout_seconds=float(timeout_seconds))
 
 
-def probe_word_pdf_export_support(*, timeout_seconds: float = 12.0) -> WordAutomationResult:
+def probe_word_pdf_export_support(*, timeout_seconds: float = WORD_PDF_STARTUP_TIMEOUT_SECONDS) -> WordAutomationResult:
     return _run_pdf_operation(action="pdf_preflight", timeout_seconds=float(timeout_seconds))
 
 
@@ -889,7 +891,7 @@ def run_word_pdf_export_canary(*, timeout_seconds: float = 45.0, temp_root: Path
 def assess_word_pdf_export_readiness(
     *,
     cache_scope: object | None = None,
-    launch_timeout_seconds: float = 12.0,
+    launch_timeout_seconds: float = WORD_PDF_STARTUP_TIMEOUT_SECONDS,
     export_timeout_seconds: float = 45.0,
     force_refresh: bool = False,
     cache_ttl_seconds: float = _WORD_READINESS_CACHE_TTL_SECONDS,
