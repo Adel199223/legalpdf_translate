@@ -1,9 +1,15 @@
 [CmdletBinding()]
 param(
-    [switch]$Full
+    [switch]$Full,
+    [switch]$Quick,
+    [ValidateSet(1, 2, 4)]
+    [int]$Workers = 2
 )
 
 $ErrorActionPreference = "Stop"
+if ($Quick -and $Full) {
+    throw "Choose either -Quick or -Full."
+}
 if (Test-Path Variable:PSNativeCommandUseErrorActionPreference) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
@@ -46,7 +52,10 @@ function Invoke-LoggedCommand {
         $ErrorActionPreference = "Continue"
     }
     try {
-        $outputLines = & $Executable @Arguments 2>&1
+        $outputLines = & $Executable @Arguments 2>&1 | ForEach-Object {
+            Write-Host $_.ToString()
+            $_
+        }
         $exitCode = $LASTEXITCODE
         if ($null -eq $exitCode) {
             $exitCode = 0
@@ -54,6 +63,7 @@ function Invoke-LoggedCommand {
     }
     catch {
         $outputLines = @($_)
+        Write-Host $_.ToString()
         $exitCode = if ($LASTEXITCODE) { $LASTEXITCODE } else { 1 }
         if (-not $AllowFailure) {
             throw
@@ -61,11 +71,6 @@ function Invoke-LoggedCommand {
     }
     finally {
         $ErrorActionPreference = $previousPreference
-    }
-    foreach ($line in @($outputLines)) {
-        if ($null -ne $line) {
-            Write-Host $line.ToString()
-        }
     }
     if ($exitCode -eq 0) {
         Write-Step "PASS (exit $exitCode): $DisplayCommand"
@@ -159,29 +164,44 @@ $changedPaths = Get-ChangedPaths
 $docsValidationTriggered = Test-DocsValidationTriggered -Paths $changedPaths
 $directDartExe = "C:\dev\tools\flutter\bin\cache\dart-sdk\bin\dart.exe"
 
-$baselineCommands = @(
+$quickCommands = @(
     @{
         Executable = $venvPython
-        Arguments = @("-m", "pytest", "-q", "tests/test_shadow_web_api.py", "tests/test_shadow_web_route_state.py", "tests/test_translation_browser_state.py")
+        Arguments = @("-m", "pytest", "-q", "--durations=10",
+            "tests/test_cli_flags.py", "tests/test_workflow_parallel.py", "tests/test_run_report.py",
+            "tests/test_translation_browser_state.py", "tests/test_source_review_browser_state.py",
+            "tests/test_formatting_review_browser_state.py", "-k",
+            "not test_actual_dom_operator_actions_to_public_service_context_and_workflow and not test_actual_dom_to_owned_formatting_api_build_and_download_preserves_original_run")
     },
     @{
         Executable = $venvPython
-        Arguments = @("-m", "compileall", "src", "tests")
+        Arguments = @("-m", "compileall", "-q", "src", "tests", "tooling")
+    }
+)
+
+$baselineCommands = @(
+    @{
+        Executable = $venvPython
+        Arguments = @("-m", "pytest", "-q", "--durations=10", "tests/test_shadow_web_api.py", "tests/test_shadow_web_route_state.py", "tests/test_translation_browser_state.py")
+    },
+    @{
+        Executable = $venvPython
+        Arguments = @("-m", "compileall", "-q", "src", "tests", "tooling")
     }
 )
 
 $fullExtraCommands = @(
     @{
         Executable = $venvPython
-        Arguments = @("-m", "pytest", "-q", "tests/test_gmail_review_state.py")
+        Arguments = @("-m", "pytest", "-q", "--durations=10", "tests/test_gmail_review_state.py")
     },
     @{
         Executable = $venvPython
-        Arguments = @("-m", "pytest", "-q", "tests/test_gmail_intake.py", "-k", "browser_pdf or runtime_guard or review")
+        Arguments = @("-m", "pytest", "-q", "--durations=10", "tests/test_gmail_intake.py", "-k", "browser_pdf or runtime_guard or review")
     },
     @{
         Executable = $venvPython
-        Arguments = @("-m", "pytest", "-q",
+        Arguments = @("-m", "pytest", "-q", "--durations=10",
             "tests/test_source_review_candidate.py", "tests/test_ordinary_reviewed_source.py",
             "tests/test_ordinary_source_review_service.py", "tests/test_ordinary_source_bounded_reads.py",
             "tests/test_browser_source_review.py", "tests/test_shadow_web_source_review_api.py",
@@ -189,14 +209,18 @@ $fullExtraCommands = @(
     },
     @{
         Executable = $venvPython
-        Arguments = @("-m", "pytest", "-q",
+        Arguments = @("tooling/test_shards.py", "run", "--workers", [string]$Workers,
+            "--timings", "tooling/test_timings.json", "--output",
+            (Join-Path $projectRoot ("tmp/validation/formatting-" + [guid]::NewGuid().ToString("N"))), "--",
             "tests/test_ordinary_formatting_review_service.py", "tests/test_ordinary_formatting_options.py",
             "tests/test_browser_formatting_review.py", "tests/test_shadow_web_formatting_review_api.py",
             "tests/test_formatting_review_browser_state.py", "tests/test_formatting_review_cli.py")
     }
 )
 
-foreach ($command in $baselineCommands) {
+$initialCommands = if ($Quick) { $quickCommands } else { $baselineCommands }
+Write-Step $(if ($Quick) { "Quick feedback tier; does not replace Full or complete pytest." } elseif ($Full) { "Selected Full tier; formatting group uses $Workers isolated process(es)." } else { "Standard browser tier." })
+foreach ($command in $initialCommands) {
     $display = Format-CommandDisplay -Executable $command.Executable -Arguments $command.Arguments
     $null = Invoke-LoggedCommand -Executable $command.Executable -Arguments $command.Arguments -DisplayCommand $display
 }
