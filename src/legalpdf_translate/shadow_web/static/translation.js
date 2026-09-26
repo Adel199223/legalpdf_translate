@@ -1541,9 +1541,9 @@ function scheduleArabicReviewPoll(delayMs = 500) {
 
 async function refreshArabicReviewState({ allowRestore = false } = {}) {
   stopArabicReviewPolling();
-  const reviewTargetKnown = currentCompletedTranslationJobRequiresArabicReview()
-    || Boolean(currentArabicReviewState().completion_key)
-    || allowRestore;
+  const reviewTargetKnown = translationState.currentJob
+    ? currentCompletedTranslationJobRequiresArabicReview()
+    : Boolean(currentArabicReviewState().completion_key) || allowRestore;
   if (!reviewTargetKnown) {
     clearArabicReviewState();
     return currentArabicReviewState();

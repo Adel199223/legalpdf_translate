@@ -1243,6 +1243,116 @@ const results = {};
   };
 }
 
+function reviewJob({ jobId = "tx-review", language = "AR", status = "completed", kind = "translate", output = true } = {}) {
+  return {
+    job_id: jobId, job_kind: kind, status,
+    config: { source_path: "C:/fixtures/notice.pdf", target_lang: language },
+    result: { save_seed: {
+      case_number: "FICTIONAL-REVIEW", target_lang: language,
+      output_docx: output ? "C:/fixtures/translated.docx" : "",
+    } },
+    actions: { download_output_docx: output },
+  };
+}
+
+function pendingReview(jobId) {
+  return responseJson({ status: "ok", normalized_payload: { arabic_review: {
+    required: true, resolved: false, job_id: jobId, completion_key: `review-${jobId}`,
+    status: "pending", message: "Review the Arabic document before saving.", auto_open_pending: false,
+  } } });
+}
+
+function reviewBootstrap(scenario) {
+  scenario.translationModule.renderTranslationBootstrap({ normalized_payload: {
+    translation: { defaults: { lang: "AR" }, active_jobs: [], history: [] }, gmail: {},
+  } });
+}
+
+async function settleReviewWork() {
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+results.ineligibleReviewRefresh = {};
+for (const [name, options] of Object.entries({
+  completedEN: { language: "EN" },
+  completedFR: { language: "FR" },
+  queuedAR: { status: "queued" },
+  runningAR: { status: "running" },
+  cancellingAR: { status: "cancel_requested" },
+  failedAR: { status: "failed" },
+  cancelledAR: { status: "cancelled" },
+  analysisAR: { kind: "analyze" },
+  rebuildAR: { kind: "rebuild" },
+  missingOutputAR: { output: false },
+})) {
+  const scenario = await setupScenario(`review-ineligible-${name}`);
+  scenario.env.enqueueFetch(() => failureJson("Arabic review requires a completed Arabic translation.", { status: 422 }));
+  scenario.translationModule.renderTranslationJob(reviewJob(options));
+  reviewBootstrap(scenario);
+  await settleReviewWork();
+  results.ineligibleReviewRefresh[name] = {
+    requests: scenario.env.fetchCalls,
+    saveStatus: scenario.env.element("translation-save-status").textContent,
+    snapshot: scenario.translationModule.getTranslationUiSnapshot(),
+  };
+}
+
+{
+  const scenario = await setupScenario("review-completed-ar");
+  scenario.env.enqueueFetch(() => pendingReview("tx-review"));
+  scenario.translationModule.renderTranslationJob(reviewJob());
+  await settleReviewWork();
+  scenario.env.enqueueFetch(() => pendingReview("tx-review"));
+  reviewBootstrap(scenario);
+  await settleReviewWork();
+  results.completedArabicReviewRefresh = {
+    requests: [...scenario.env.fetchCalls],
+    snapshot: scenario.translationModule.getTranslationUiSnapshot(),
+    saveDisabled: scenario.env.element("translation-save-row").disabled,
+  };
+
+  scenario.env.enqueueFetch(() => failureJson("Arabic review output could not be inspected.", { status: 422 }));
+  reviewBootstrap(scenario);
+  await settleReviewWork();
+  results.arabicReviewRefreshFailure = {
+    saveStatus: scenario.env.element("translation-save-status").textContent,
+    requestCount: scenario.env.fetchCalls.length,
+  };
+}
+
+{
+  const scenario = await setupScenario("review-stale-ar-then-en");
+  scenario.env.enqueueFetch(() => pendingReview("tx-review"));
+  scenario.translationModule.renderTranslationJob(reviewJob());
+  await settleReviewWork();
+  const before = scenario.env.fetchCalls.length;
+  scenario.env.enqueueFetch(() => failureJson("Arabic review requires a completed Arabic translation.", { status: 422 }));
+  scenario.translationModule.renderTranslationJob(reviewJob({ jobId: "tx-en", language: "EN" }));
+  reviewBootstrap(scenario);
+  await settleReviewWork();
+  results.staleArabicReviewAfterEnglish = {
+    requestCount: scenario.env.fetchCalls.length - before,
+    snapshot: scenario.translationModule.getTranslationUiSnapshot(),
+    saveDisabled: scenario.env.element("translation-save-row").disabled,
+  };
+}
+
+{
+  const scenario = await setupScenario("review-restore-without-current-job");
+  scenario.env.enqueueFetch(() => pendingReview("tx-restored-ar"));
+  scenario.env.enqueueFetch(() => responseJson({ status: "ok", normalized_payload: {
+    job: reviewJob({ jobId: "tx-restored-ar" }),
+  } }));
+  scenario.env.enqueueFetch(() => pendingReview("tx-restored-ar"));
+  reviewBootstrap(scenario);
+  await settleReviewWork();
+  results.restoredArabicReviewWithoutCurrentJob = {
+    requests: scenario.env.fetchCalls,
+    snapshot: scenario.translationModule.getTranslationUiSnapshot(),
+    saveDisabled: scenario.env.element("translation-save-row").disabled,
+  };
+}
+
 console.log(JSON.stringify(results));
 """
     return run_browser_esm_json_probe(
@@ -1261,6 +1371,45 @@ console.log(JSON.stringify(results));
 @functools.lru_cache(maxsize=1)
 def _probe_results() -> dict[str, object]:
     return _run_translation_browser_state_probe()
+
+
+def test_bootstrap_does_not_request_arabic_review_for_known_ineligible_jobs() -> None:
+    for name, result in _probe_results()["ineligibleReviewRefresh"].items():
+        assert result["requests"] == [], name
+        assert "Arabic review requires" not in result["saveStatus"], name
+        assert result["snapshot"]["requiresArabicReview"] is False, name
+
+
+def test_bootstrap_preserves_completed_arabic_review_and_surfaces_real_errors() -> None:
+    result = _probe_results()["completedArabicReviewRefresh"]
+    assert len(result["requests"]) == 2
+    assert all("/api/translation/arabic-review/state?job_id=tx-review" in request["path"] for request in result["requests"])
+    assert result["snapshot"]["requiresArabicReview"] is True
+    assert result["snapshot"]["arabicReviewResolved"] is False
+    assert result["saveDisabled"] is True
+    failure = _probe_results()["arabicReviewRefreshFailure"]
+    assert failure["requestCount"] == 3
+    assert "Arabic review output could not be inspected." in failure["saveStatus"]
+
+
+def test_bootstrap_clears_stale_arabic_review_after_switching_to_english() -> None:
+    result = _probe_results()["staleArabicReviewAfterEnglish"]
+    assert result["requestCount"] == 0
+    assert result["snapshot"]["currentJobId"] == "tx-en"
+    assert result["snapshot"]["requiresArabicReview"] is False
+    assert result["saveDisabled"] is False
+
+
+def test_bootstrap_restores_pending_arabic_review_without_a_current_job() -> None:
+    result = _probe_results()["restoredArabicReviewWithoutCurrentJob"]
+    assert len(result["requests"]) == 3
+    assert result["requests"][0]["path"].split("?")[0] == "/api/translation/arabic-review/state"
+    assert "job_id=" not in result["requests"][0]["path"]
+    assert result["requests"][1]["path"].split("?")[0] == "/api/translation/jobs/tx-restored-ar"
+    assert result["snapshot"]["currentJobId"] == "tx-restored-ar"
+    assert result["snapshot"]["requiresArabicReview"] is True
+    assert result["snapshot"]["arabicReviewResolved"] is False
+    assert result["saveDisabled"] is True
 
 
 def test_translation_browser_idle_and_prepared_action_states() -> None:

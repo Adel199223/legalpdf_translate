@@ -1,8 +1,14 @@
 # External Source Registry
 
+## Fresh Gmail completion reference — 2026-09-26
+
+Reopened the official [GPT-5.2 model page](https://developers.openai.com/api/docs/models/gpt-5.2): standard USD per million remains1.75 input,0.175 cached input and14 output; context400,000 and maximum output128,000 remain documented. High reasoning effort and snapshot `gpt-5.2-2025-12-11` remain listed. The local conservative reservation calculation therefore remains USD2.492 per ordinary request; this is an upper reservation, not expected spend. No model/default promotion follows.
+
+The [Gmail closeout plan](exec_plans/completed/2026-09-26_gmail_finalization_and_arabic_closeout.md) used a separately reviewed USD3/max4 sequential-reservation phase for one one-page job. Gmail05 settled one call at USD0.02977975; the old16-slot phase remains exhausted at USD0.23975525 actual. Original known3.92137740 + preserved hold0.119 + exhausted-phase actual0.23975525 + fresh cap3 gives USD7.28013265 maximum combined exposure under the unchanged USD10 ceiling. This arithmetic is local accounting, not provider-confirmed billing for the old unknown charge. The original phase identity and every ledger row remain intact. Exact registry beforeimages are retained privately under `docs_sync_ar02_gmail_closeout_01/`.
+
 ## Gmail and formatting readiness reference — 2026-09-24
 
-The official [GPT-5.2 model page](https://developers.openai.com/api/docs/models/gpt-5.2) was searched and opened for the fresh [readiness plan](exec_plans/active/2026-09-24_gmail_formatting_readiness.md). Standard USD per million tokens remains 1.75 input, 0.175 cached input and 14 output; documented capacities remain 400,000 context and 128,000 output tokens. Full conservative input plus output capacity gives USD2.492 per legacy request; the existing structured 24,000-output ceiling gives USD1.036. These are calculated reservation ceilings, not expected or actual charges.
+The official [GPT-5.2 model page](https://developers.openai.com/api/docs/models/gpt-5.2) was searched and opened for the fresh [readiness plan](exec_plans/completed/2026-09-24_gmail_formatting_readiness.md). Standard USD per million tokens remains 1.75 input, 0.175 cached input and 14 output; documented capacities remain 400,000 context and 128,000 output tokens. Full conservative input plus output capacity gives USD2.492 per legacy request; the existing structured 24,000-output ceiling gives USD1.036. These are calculated reservation ceilings, not expected or actual charges.
 
 The explicitly authorized new tests use a proposed shared USD3 ordinary budget with explicit standard tier, while the original USD3.92137740 known spend and USD0.119 hold remain preserved. Combined maximum exposure is USD7.04037740 within the original USD10 limit. The new budget does not reopen the old blocked campaign, rewrite its ledger, establish old usage or change saved defaults. Runtime binding and actual results remain to be verified. The [prior registry beforeimage](history/2026-09-24_gmail_formatting_readiness/EXTERNAL_SOURCE_REGISTRY.md) retains earlier conditional proposals.
 
