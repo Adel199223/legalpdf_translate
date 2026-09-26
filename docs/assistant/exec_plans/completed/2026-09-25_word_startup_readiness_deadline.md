@@ -8,13 +8,13 @@ Both Gmail live03 and shadow06 are now stopped; shadow06 made no AR02 provider r
 
 ## Completion — 2026-09-25
 
-Completed and published through PR #304. Source commit `58a2df5c939f753f603b4df3f69f3d8d283985d3`, reviewed publication head `11beb6c5c296c4087e3455aa176e3de70f158722` and canonical merge `1d6fdb3e7bfdd0c60ef74f8b9f5f2d3a977c5a46` have the verified source/tree relationships recorded below. Targeted regression, fresh Full, exact-head CI, canonical application and one actual default native-readiness pair are complete. The implementation/progress text below is chronological evidence; its earlier pending gates are superseded by this closeout. The [parent Gmail/formatting task](../active/2026-09-24_gmail_formatting_readiness.md) remains active for the qualified remaining scope.
+Completed and published through PR #304. Source commit `58a2df5c939f753f603b4df3f69f3d8d283985d3`, reviewed publication head `11beb6c5c296c4087e3455aa176e3de70f158722` and canonical merge `1d6fdb3e7bfdd0c60ef74f8b9f5f2d3a977c5a46` have the verified source/tree relationships recorded below. Targeted regression, fresh Full, exact-head CI, canonical application and one actual default native-readiness pair are complete. The implementation/progress text below is chronological evidence; its earlier pending gates are superseded by this closeout. The [parent Gmail/formatting task](2026-09-24_gmail_formatting_readiness.md) now records completed scoped implementation/qualified acceptance; its remaining publication status is routed through HANDOFF.
 
 ## Goal and non-goals
 
 Conditionally fix the demonstrated inconsistency between ordinary browser Word readiness callers and the shared startup deadline. A genuine Gmail Confirm saved its case successfully, then automatic finalization preflight stopped its owned helper after an eight-second deadline before Word ownership was established. Preserve that failed operation and determine whether a fresh, supported 45-second canonical preflight succeeds with confirmed cleanup before changing product code.
 
-This is a narrow follow-up to the [Gmail and formatting readiness plan](../active/2026-09-24_gmail_formatting_readiness.md). It does not repeat translation, re-save the confirmed case, create or send a Gmail draft, change formatting behavior, alter provider settings, promote saved defaults, or reopen the shelved historical French investigation. Existing user authorization governs the overall task; this plan does not independently grant new runtime, paid, native or publication authority.
+This is a narrow follow-up to the [Gmail and formatting readiness plan](2026-09-24_gmail_formatting_readiness.md). It does not repeat translation, re-save the confirmed case, create or send a Gmail draft, change formatting behavior, alter provider settings, promote saved defaults, or reopen the shelved historical French investigation. Existing user authorization governs the overall task; this plan does not independently grant new runtime, paid, native or publication authority.
 
 ## Scope
 
