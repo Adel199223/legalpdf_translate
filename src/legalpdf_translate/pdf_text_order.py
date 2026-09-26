@@ -91,7 +91,9 @@ _ABBREVIATED_PAGE_COUNTER_RE = re.compile(
 BARCODE_PATTERNS = [
     re.compile(r"%\*.+\*%"),
     re.compile(r"\b200460-[A-Za-z0-9/-]+\b"),
-    re.compile(r"\b[A-Za-z0-9]{3,}[-/][A-Za-z0-9./-]{5,}\b"),
+    # Generic identifiers need a digit in the candidate itself. Ordinary
+    # hyphenated words inside prose are not barcode furniture.
+    re.compile(r"\b(?=[A-Za-z0-9./-]*[0-9])[A-Za-z0-9]{3,}[-/][A-Za-z0-9./-]{5,}\b"),
     re.compile(r"\b\d{6,}[-/][\dA-Za-z./-]{2,}\b"),
 ]
 
@@ -120,8 +122,13 @@ def _text_has_anchor(text: str, anchors: Iterable[str]) -> bool:
 def _is_barcode_like(text: str) -> bool:
     if "%*" in text:
         return True
-    compact = re.sub(r"\s+", "", text)
-    if re.fullmatch(r"[A-Za-z0-9%*/\-]{12,}", compact or ""):
+    stripped = text.strip()
+    compact = re.sub(r"\s+", "", stripped)
+    # Removing spaces also joins ordinary ASCII prose, including sentences
+    # with numbers. Only compact a single identifier or spaced numeric code.
+    compact_identifier = not re.search(r"\s", stripped) or re.fullmatch(r"[0-9\s]+", stripped)
+    if (compact_identifier and re.search(r"[0-9]", compact)
+            and re.fullmatch(r"[A-Za-z0-9%*/\-]{12,}", compact)):
         return True
     return any(pattern.search(text) for pattern in BARCODE_PATTERNS)
 

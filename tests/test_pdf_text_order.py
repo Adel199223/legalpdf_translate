@@ -7,6 +7,7 @@ from legalpdf_translate.pdf_text_order import (
     build_text_blocks_from_page_dict,
     get_page_count,
     order_text_blocks,
+    order_text_blocks_with_metadata,
 )
 
 
@@ -87,3 +88,47 @@ def test_page_abbreviation_embedded_in_body_is_not_a_footer() -> None:
 
     assert order_text_blocks([body, following], 500, 1000).splitlines() == [body.text, following.text]
     assert body.group == BlockGroup.BODY
+
+
+@pytest.mark.parametrize("preserve_structure", [False, True])
+@pytest.mark.parametrize("continuation_text", [
+    "The following ordinary prose includes saca-rolhas and continues.",
+    "A parenthetical note mentions sexta-feira within ordinary prose.",
+    "PSP officers then described the ordinary events from the report",
+    "PSP officers described 3 ordinary events from the report",
+    "16. The ordinary account mentions saca-rolhas in the next clause.",
+])
+def test_near_top_prose_continuation_keeps_geometric_order(
+    continuation_text, preserve_structure,
+) -> None:
+    header = TextBlock(40, 15, 460, 40, "Tribunal Judicial de Exemplo")
+    opener = TextBlock(40, 134, 460, 150, "The factual account begins here:")
+    continuation = TextBlock(40, 157, 460, 210, continuation_text)
+    following = TextBlock(40, 310, 460, 350, "The account then continues normally.")
+    footer = TextBlock(440, 980, 480, 995, "p. 4")
+
+    ordered, metadata = order_text_blocks_with_metadata(
+        [footer, continuation, following, opener, header], 500, 1000,
+        preserve_structure=preserve_structure,
+    )
+
+    assert ordered.splitlines() == [
+        header.text, opener.text, continuation.text, following.text, footer.text,
+    ]
+    assert continuation.group == BlockGroup.BODY
+    assert metadata["barcode_blocks_count"] == 0
+    assert metadata["ordered_body_blocks"] == (opener, continuation, following)
+
+
+@pytest.mark.parametrize("identifier", [
+    "%*LETTERS-ONLY*%", "200460-ABCDEF", "ABC-123DEF", "123456-AB",
+    "ABCDEFGHIJ12", "12 345 678 9012",
+])
+def test_real_barcode_markers_and_numeric_identifiers_keep_furniture_order(identifier) -> None:
+    body = TextBlock(40, 134, 460, 150, "Ordinary body content.")
+    barcode = TextBlock(40, 157, 460, 180, identifier)
+
+    ordered = order_text_blocks([body, barcode], 500, 1000)
+
+    assert ordered.splitlines() == [identifier, body.text]
+    assert barcode.group == BlockGroup.BARCODE
