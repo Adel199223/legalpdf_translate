@@ -50,6 +50,9 @@ _CLOCK_RUN_RE = re.compile(
     r"(?::[0-5][0-9])?(?![\w:\[\]])"
 )
 _NUMERIC_SLASH_RUN_RE = re.compile(r"(?<![\w/\[\]+\\@#-])[0-9]+/[0-9]+(?![\w/\[\]+\\@#-])")
+_PHONE_TRIPLET_RUN_RE = re.compile(
+    r"(?<![\w\[\]+\\@#-])[0-9]{3} [0-9]{3} [0-9]{3}(?![\w\[\]+\\@#-])"
+)
 
 
 @dataclass(frozen=True)
@@ -341,6 +344,67 @@ def _keep_numeric_slash_separators_ltr(segments: list[tuple[str, str]]) -> list[
     return result
 
 
+def _keep_phone_triplet_spaces_ltr(segments: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Keep only a closed ASCII NNN NNN NNN shape coherent across tokens.
+
+    Saved numeric tokens otherwise leave their spaces as separate RTL runs.
+    Relabel just the two internal spaces, never infer a larger numeric or
+    address group, and preserve every character and explicit line boundary.
+    """
+    text = "".join(chunk for _, chunk in segments)
+    positions = [index for index, char in enumerate(text) if ord(char) not in _BIDI_CONTROL_CODEPOINTS]
+    visible = "".join(text[index] for index in positions)
+    spaces: set[int] = set()
+    for match in _PHONE_TRIPLET_RUN_RE.finditer(visible):
+        start, end = match.span()
+        if any(unicodedata.category(char).startswith("M") or unicodedata.category(char) == "Cf"
+               for char in visible[max(0, start - 1):start] + visible[end:end + 1]):
+            continue
+        # A triplet inside four groups, a country code or an extension is not
+        # a complete value. Horizontal spacing cannot hide its numeric neighbor.
+        left_text, right_text = visible[:start].rstrip(" \t\u00a0"), visible[end:].lstrip(" \t\u00a0")
+        if ((len(left_text) < start and left_text and left_text[-1].isdigit()) or
+            (len(right_text) < len(visible) - end and right_text and right_text[0].isdigit())):
+            continue
+        connectors = ".,/:;-\\@#+"
+        left, right = start, end
+        while left and visible[left - 1] in connectors:
+            left -= 1
+        while right < len(visible) and visible[right] in connectors:
+            right += 1
+        if ((left < start and left and
+             (visible[left - 1].isalnum() or visible[left - 1] == "_" or
+              unicodedata.category(visible[left - 1]).startswith("M") or
+              unicodedata.category(visible[left - 1]) == "Cf")) or
+            (right > end and right < len(visible) and
+             (visible[right].isalnum() or visible[right] == "_" or
+              unicodedata.category(visible[right]).startswith("M") or
+              unicodedata.category(visible[right]) == "Cf"))):
+            continue
+        raw_start, raw_end = positions[start], positions[end - 1] + 1
+        while raw_start and ord(text[raw_start - 1]) in _BIDI_CONTROL_CODEPOINTS:
+            raw_start -= 1
+        while raw_end < len(text) and ord(text[raw_end]) in _BIDI_CONTROL_CODEPOINTS:
+            raw_end += 1
+        if not _numeric_slash_scope_is_ltr(text, raw_start, raw_end):
+            continue
+        spaces.update((positions[start + 3], positions[start + 7]))
+    if not spaces:
+        return segments
+    result: list[tuple[str, str]] = []
+    offset = 0
+    line_breaks = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+    for kind, chunk in segments:
+        for index, char in enumerate(chunk):
+            direction = "ltr" if offset + index in spaces else kind
+            if result and result[-1][0] == direction and result[-1][1][-1] not in line_breaks:
+                result[-1] = (direction, result[-1][1] + char)
+            else:
+                result.append((direction, char))
+        offset += len(chunk)
+    return result
+
+
 def _segment_rtl_placeholder_aware_line(
     text: str,
     *,
@@ -402,7 +466,7 @@ def _segment_rtl_placeholder_aware_runs(
     if any("\n" in match.group("token") or "\r" in match.group("token")
            for match in _PLACEHOLDER_TOKEN_SPAN_RE.finditer(text)):
         line_runs, _ = _segment_rtl_placeholder_aware_line(text, strip_bidi_controls=strip_bidi_controls)
-        pieces = _keep_numeric_slash_separators_ltr(line_runs)
+        pieces = _keep_phone_triplet_spaces_ltr(_keep_numeric_slash_separators_ltr(line_runs))
         kinds = {kind for kind, _ in pieces}
         return pieces, "rtl" in kinds and "ltr" in kinds
     pieces: list[tuple[str, str]] = []
@@ -419,7 +483,7 @@ def _segment_rtl_placeholder_aware_runs(
                 line, strip_bidi_controls=strip_bidi_controls,
             )
             pieces.extend(line_runs)
-    pieces = _keep_numeric_slash_separators_ltr(pieces)
+    pieces = _keep_phone_triplet_spaces_ltr(_keep_numeric_slash_separators_ltr(pieces))
     kinds = {kind for kind, _ in pieces}
     return pieces, "rtl" in kinds and "ltr" in kinds
 
