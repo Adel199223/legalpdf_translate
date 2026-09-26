@@ -113,7 +113,7 @@ def test_build_honorarios_paragraph_texts_uses_locked_template() -> None:
     assert paragraphs == [
         ("Número de processo: 109/26.0PBBJA", "left"),
         ("", "left"),
-        ("Exmo. Sr(a). Procurador(a) da república do Juízo Local Criminal de Beja", "address"),
+        ("Ao Juízo Local Criminal de Beja", "address"),
         ("", "left"),
         (f"Nome: {profile.document_name}", "left"),
         (f"Morada: {profile.postal_address}", "left"),
@@ -154,7 +154,7 @@ def test_generate_honorarios_docx_has_expected_text_and_alignment(tmp_path: Path
     doc = Document(output)
     paragraphs = doc.paragraphs
     assert paragraphs[0].text == "Número de processo: 109/26.0PBBJA"
-    assert paragraphs[2].text == "Exmo. Sr(a). Procurador(a) da república do Juízo Local Criminal de Beja"
+    assert paragraphs[2].text == "Ao Juízo Local Criminal de Beja"
     assert "\n" not in paragraphs[2].text
     assert paragraphs[12].text == "Melhores cumprimentos,"
     assert paragraphs[14].text == "Espera deferimento,"
@@ -203,7 +203,7 @@ def test_build_honorarios_paragraph_texts_keeps_case_city_only_in_closing_date()
     paragraphs = build_honorarios_paragraph_texts(draft)
 
     assert paragraphs[2] == (
-        "Exmo. Sr(a). Procurador(a) da república do Tribunal Judicial da Comarca de Beja",
+        "Ao Tribunal Judicial da Comarca de Beja",
         "address",
     )
     assert "\n" not in paragraphs[2][0]
@@ -262,10 +262,65 @@ def test_build_honorarios_paragraph_texts_appends_case_city_for_generic_entity()
     paragraphs = build_honorarios_paragraph_texts(draft)
 
     assert paragraphs[2] == (
-        "Exmo. Sr(a). Procurador(a) da república do Tribunal do Trabalho de Beja",
+        "Ao Tribunal do Trabalho de Beja",
         "address",
     )
     assert "\n" not in paragraphs[2][0]
+
+
+@pytest.mark.parametrize(
+    "entity,city,expected_recipient",
+    [
+        ("Tribunal Judicial", "Beja", "Ao Tribunal Judicial de Beja"),
+        ("Tribunal Judicial da Comarca de Beja", "Moura", "Ao Tribunal Judicial da Comarca de Beja"),
+        ("Tribunal do Trabalho", "Beja", "Ao Tribunal do Trabalho de Beja"),
+        ("Juízo Local Criminal de Beja", "Beja", "Ao Juízo Local Criminal de Beja"),
+        ("  JUÍZO   CENTRAL CÍVEL  ", "Beja", "Ao JUÍZO CENTRAL CÍVEL de Beja"),
+        ("Juizo Local Criminal de Évora", "Evora", "Ao Juizo Local Criminal de Évora"),
+        ("tribunal judicial de", "Beja", "Ao tribunal judicial de Beja"),
+        (
+            "Ministério Público", "Beja",
+            "Exmo. Sr(a). Procurador(a) da república do Ministério Público de Beja",
+        ),
+        (
+            "Ministério Público de Beja - Tribunal Judicial", "Beja",
+            "Exmo. Sr(a). Procurador(a) da república do Ministério Público de Beja - Tribunal Judicial",
+        ),
+        (
+            "Procuradoria do Juízo Local Criminal de Beja", "Beja",
+            "Exmo. Sr(a). Procurador(a) da república do Procuradoria do Juízo Local Criminal de Beja",
+        ),
+        (
+            "ministerio publico junto do Tribunal Judicial de Beja", "Beja",
+            "Exmo. Sr(a). Procurador(a) da república do ministerio publico junto do Tribunal Judicial de Beja",
+        ),
+        (
+            "Gabinete junto do Juízo Local Criminal de Beja", "Beja",
+            "Exmo. Sr(a). Procurador(a) da república do Gabinete junto do Juízo Local Criminal de Beja",
+        ),
+        ("Entidade Exemplo", "Beja", "Exmo. Sr(a). Procurador(a) da república do Entidade Exemplo de Beja"),
+        ("Juizoteca Exemplo", "Beja", "Exmo. Sr(a). Procurador(a) da república do Juizoteca Exemplo de Beja"),
+    ],
+)
+def test_translation_docx_recipient_uses_only_explicit_leading_judicial_entity(
+    tmp_path: Path, entity: str, city: str, expected_recipient: str,
+) -> None:
+    draft = build_honorarios_draft(
+        case_number="TEST-001",
+        word_count=120,
+        case_entity=entity,
+        case_city=city,
+        profile=_profile(),
+        today=date(2026, 3, 10),
+    )
+
+    output = generate_honorarios_docx(draft, tmp_path / "fictional-fee.docx")
+    paragraphs = Document(output).paragraphs
+
+    assert paragraphs[2].text == expected_recipient
+    assert "\n" not in paragraphs[2].text
+    assert paragraphs[8].text == "O documento traduzido contém 120 palavras."
+    assert paragraphs[16].text == f"{city}, 10 de março de 2026"
 
 
 def test_default_honorarios_filename_sanitizes_case_number() -> None:

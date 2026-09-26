@@ -291,6 +291,8 @@ def _interpretation_one_way_distance(draft: HonorariosDraft) -> float:
 
 def _translation_recipient_line(draft: HonorariosDraft) -> str:
     entity = _complete_case_entity_with_city(draft.case_entity, draft.case_city)
+    if re.match(r"^(?:tribunal judicial|tribunal do trabalho|juizo)\b", _normalize_text_for_match(entity)):
+        return "Ao " + entity
     if entity.casefold() == "ministério público":
         return "Exmo. Sr(a). Procurador(a) da república do Ministério Público"
     return "Exmo. Sr(a). Procurador(a) da república do " + entity
