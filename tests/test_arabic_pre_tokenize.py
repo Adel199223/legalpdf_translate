@@ -1,3 +1,5 @@
+import pytest
+
 from legalpdf_translate.arabic_pre_tokenize import (
     LRI,
     PDI,
@@ -51,3 +53,37 @@ def test_bracket_adjacent_identifier_is_wrapped_without_triple_brackets() -> Non
 
 def test_extract_locked_tokens_ignores_malformed_nested_triple_brackets() -> None:
     assert extract_locked_tokens("[[[36231063]]]") == []
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Recebe €850,00/mês.", "Recebe €[[850,00]]/mês."),
+        ("Paga €275,50.;", "Paga €[[275,50]].;"),
+        ("Valor €125.75/dia.", "Valor €[[125.75]]/dia."),
+        ("Valor £25.50.", "Valor £[[25.50]]."),
+        ("Entre € 200,00 e € 350,00.", "Entre € [[200,00]] e € [[350,00]]."),
+        ("Total €1.234,56/mês.", "Total €[[1.234,56]]/mês."),
+    ],
+)
+def test_currency_decimal_remains_one_locked_value_before_units_and_punctuation(text, expected) -> None:
+    assert pretokenize_arabic_source(text) == expected
+    assert expected.replace("[[", "").replace("]]", "") == text
+
+
+def test_decimal_currency_does_not_split_existing_identifiers_or_tokens() -> None:
+    text = "Ref. 42/24.0TEST data 12.05.2026 CP 1234-567 valor €[[50,00]]/mês."
+    assert pretokenize_arabic_source(text) == (
+        "Ref. [[42/24.0TEST]] data [[12.05.2026]] CP [[1234-567]] valor €[[50,00]]/mês."
+    )
+
+
+def test_currency_fraction_is_part_of_required_token() -> None:
+    from legalpdf_translate.validators import validate_ar
+
+    expected = extract_locked_tokens(pretokenize_arabic_source("€850,00/mês."))
+    assert expected == ["850,00"]
+    split = f"المبلغ {LRI}[[850]]{PDI}،{LRI}[[00]]{PDI}"
+    complete = f"المبلغ {LRI}[[850,00]]{PDI}"
+    assert validate_ar(split, expected_tokens=expected).kind == "expected_token_mismatch"
+    assert validate_ar(complete, expected_tokens=expected).ok

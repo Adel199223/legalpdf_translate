@@ -14,6 +14,7 @@ import re
 import stat
 import threading
 import uuid
+from zipfile import BadZipFile
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from .checkpoint import (
@@ -34,6 +35,7 @@ from .joblog_flow import (
     build_joblog_settings_save_bundle,
     build_seed_from_joblog_row,
     build_seed_from_run,
+    count_words_from_docx,
     hydrate_joblog_seed,
     merge_payload_into_joblog_settings,
     normalize_joblog_payload,
@@ -856,6 +858,56 @@ def list_translation_history(*, db_path: Path, limit: int = 100) -> list[dict[st
     return items
 
 
+def reviewed_translation_word_count(docx_path: Path) -> int:
+    """Read the durable review artifact, never fall back to pre-review page text."""
+    try:
+        word_count = count_words_from_docx(docx_path)
+    except (OSError, BadZipFile, ValueError) as exc:
+        raise ValueError("The reviewed translation DOCX could not be read. Save and close it, then try again.") from exc
+    if word_count <= 0:
+        raise ValueError("The reviewed translation DOCX is missing or has no readable words. Save and close it, then try again.")
+    return word_count
+
+
+def translation_job_docx_path(job: Mapping[str, Any]) -> Path:
+    result = job.get("result", {})
+    seed = result.get("save_seed") if isinstance(result, Mapping) else None
+    if job.get("status") != "completed" or job.get("job_kind") != "translate" or not isinstance(seed, Mapping):
+        raise ValueError("A completed translation with a Save-to-Job-Log seed is required.")
+    path = seed.get("output_docx") or seed.get("partial_docx")
+    if not path:
+        raise ValueError("The reviewed translation DOCX is unavailable.")
+    return Path(str(path)).expanduser().resolve()
+
+
+def refresh_completed_translation_metrics(job: Mapping[str, Any]) -> dict[str, Any]:
+    """Refresh a response snapshot without rewriting the original completion seed."""
+    refreshed = deepcopy(dict(job))
+    if job.get("status") != "completed" or job.get("job_kind") != "translate":
+        return refreshed
+    seed = refreshed.get("result", {}).get("save_seed")
+    if not isinstance(seed, dict):
+        return refreshed
+    seed["word_count"] = reviewed_translation_word_count(translation_job_docx_path(job))
+    seed["expected_total"] = round(float(seed.get("rate_per_word", 0)) * seed["word_count"], 2)
+    seed["profit"] = round(float(seed.get("amount_paid", 0) or seed["expected_total"]) - float(seed.get("api_cost", 0)), 2)
+    return refreshed
+
+
+def _refresh_saved_word_count(payload: dict[str, Any], word_count: int, *, seed: JobLogSeed) -> None:
+    previous_count = payload["word_count"]
+    if previous_count == word_count:
+        return
+    previous_total = payload["expected_total"]
+    calculated_profit = round((payload["amount_paid"] or previous_total) - payload["api_cost"], 2)
+    # Non-calculated amounts are explicit operator edits and remain unchanged.
+    if previous_total in (round(payload["rate_per_word"] * previous_count, 2), seed.expected_total):
+        payload["expected_total"] = round(payload["rate_per_word"] * word_count, 2)
+    if payload["profit"] in (calculated_profit, seed.profit):
+        payload["profit"] = round((payload["amount_paid"] or payload["expected_total"]) - payload["api_cost"], 2)
+    payload["word_count"] = word_count
+
+
 def save_translation_row(
     *,
     settings_path: Path,
@@ -863,6 +915,7 @@ def save_translation_row(
     form_values: Mapping[str, Any],
     seed_payload: Mapping[str, Any] | None = None,
     row_id: int | None = None,
+    word_count_docx: Path | None = None,
 ) -> dict[str, Any]:
     seed = _hydrate_translation_seed_payload(seed_payload)
     raw_values = _translation_raw_values(form_values, seed=seed)
@@ -873,6 +926,8 @@ def save_translation_row(
         use_service_location_in_honorarios_checked=False,
         include_transport_sentence_in_honorarios_checked=True,
     )
+    if word_count_docx is not None:
+        _refresh_saved_word_count(payload, reviewed_translation_word_count(word_count_docx), seed=seed)
 
     with closing(open_job_log(job_log_db_path)) as conn:
         if row_id is not None:

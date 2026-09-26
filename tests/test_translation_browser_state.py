@@ -186,6 +186,11 @@ function makeElement(id = "", initial = {}) {
       return this.dispatch("click");
     },
   };
+  let fieldValue = String(element.value);
+  Object.defineProperty(element, "value", {
+    get() { return fieldValue; },
+    set(value) { fieldValue = String(value); },
+  });
   element.classList = createClassList(element);
   return element;
 }
@@ -1353,6 +1358,87 @@ for (const [name, options] of Object.entries({
   };
 }
 
+results.editedDocxMetrics = [];
+{
+  const scenario = await setupScenario("missing-artifact-warning");
+  const job = reviewJob({ language: "EN" });
+  job.diagnostics = { word_count_warning: "Reviewed DOCX is missing; restore it before saving." };
+  scenario.translationModule.renderTranslationJob(job);
+  results.missingArtifactWarning = {
+    status: scenario.env.element("translation-save-status").textContent,
+    drawer: scenario.env.element("translation-completion-status").textContent,
+  };
+  scenario.env.enqueueFetch(() => responseJson({ normalized_payload: { job } }));
+  await scenario.env.dispatch("translation-save-row", "click");
+  results.missingArtifactWarning.saveRequests = scenario.env.countFetches("/api/translation/save-row");
+  results.missingArtifactWarning.saveError = scenario.env.element("translation-save-status").textContent;
+}
+
+for (const manualAmounts of [false, true]) {
+  const scenario = await setupScenario(`edited-docx-${manualAmounts}`);
+  const job = reviewJob({ language: "EN" });
+  Object.assign(job.result.save_seed, { word_count: 10, rate_per_word: .09,
+    expected_total: .90, amount_paid: 0, api_cost: .10, profit: .80 });
+  scenario.translationModule.renderTranslationJob(job);
+  scenario.env.element("translation-case-number").value = "EDITED-CASE";
+  scenario.env.element("translation-date").value = "2026-09-26";
+  scenario.env.enqueueFetch(() => responseJson({ normalized_payload: { job } }));
+  scenario.env.enqueueFetch(() => responseJson({
+    normalized_payload: job.result.save_seed, saved_result: { row_id: 92 },
+  }));
+  scenario.env.enqueueFetch(() => historyResponse());
+  await scenario.env.dispatch("translation-save-row", "click");
+  if (manualAmounts) {
+    scenario.env.element("translation-expected-total").value = "12";
+    scenario.env.element("translation-profit").value = "7";
+  }
+  const fresh = structuredClone(job);
+  Object.assign(fresh.result.save_seed, { word_count: 9, expected_total: .81, profit: .71 });
+  scenario.env.enqueueFetch(() => responseJson({ normalized_payload: { job: fresh } }));
+  const values = await scenario.translationModule.collectCurrentTranslationSaveValues();
+  results.editedDocxMetrics.push({ values, rowId: scenario.env.element("translation-row-id").value });
+}
+
+{
+  const scenario = await setupScenario("review-resolved-recounts");
+  const job = reviewJob();
+  Object.assign(job.result.save_seed, { word_count: 10, rate_per_word: .09,
+    expected_total: .90, amount_paid: 0, api_cost: .10, profit: .80 });
+  scenario.env.enqueueFetch(() => pendingReview("tx-review"));
+  scenario.translationModule.renderTranslationJob(job);
+  await settleReviewWork();
+  scenario.env.element("translation-case-number").value = "PRESERVE-CASE";
+  scenario.env.enqueueFetch(() => responseJson({ normalized_payload: { arabic_review: {
+    required: true, resolved: true, job_id: "tx-review", status: "resolved",
+  } } }));
+  const fresh = structuredClone(job);
+  Object.assign(fresh.result.save_seed, { word_count: 9, expected_total: .81, profit: .71 });
+  scenario.env.enqueueFetch(() => responseJson({ normalized_payload: { job: fresh } }));
+  await scenario.env.dispatch("translation-arabic-review-continue-without-changes", "click");
+  results.resolvedReviewMetrics = {
+    words: scenario.env.element("translation-word-count").value,
+    total: scenario.env.element("translation-expected-total").value,
+    caseNumber: scenario.env.element("translation-case-number").value,
+  };
+}
+
+{
+  const scenario = await setupScenario("metrics-switch-job");
+  const oldJob = reviewJob({ language: "EN" });
+  oldJob.result.save_seed.word_count = 10;
+  scenario.translationModule.renderTranslationJob(oldJob);
+  const pending = deferred();
+  scenario.env.enqueueFetch(() => pending.promise);
+  const refresh = scenario.translationModule.collectCurrentTranslationSaveValues();
+  const nextJob = reviewJob({ jobId: "tx-next", language: "EN" });
+  nextJob.result.save_seed.word_count = 50;
+  scenario.translationModule.renderTranslationJob(nextJob);
+  pending.resolve(responseJson({ normalized_payload: { job: oldJob } }));
+  let error = "";
+  try { await refresh; } catch (caught) { error = caught.message; }
+  results.metricsSwitchJob = { error, words: scenario.env.element("translation-word-count").value };
+}
+
 console.log(JSON.stringify(results));
 """
     return run_browser_esm_json_probe(
@@ -1371,6 +1457,36 @@ console.log(JSON.stringify(results));
 @functools.lru_cache(maxsize=1)
 def _probe_results() -> dict[str, object]:
     return _run_translation_browser_state_probe()
+
+
+def test_edited_docx_refresh_preserves_saved_row_case_fields_and_explicit_amounts() -> None:
+    automatic, manual = _probe_results()["editedDocxMetrics"]
+    for result in (automatic, manual):
+        assert str(result["rowId"]) == "92"
+        assert result["values"]["case_number"] == "EDITED-CASE"
+        assert result["values"]["translation_date"] == "2026-09-26"
+        assert float(result["values"]["word_count"]) == 9
+    assert float(automatic["values"]["expected_total"]) == .81
+    assert float(automatic["values"]["profit"]) == .71
+    assert float(manual["values"]["expected_total"]) == 12
+    assert float(manual["values"]["profit"]) == 7
+    resolved = _probe_results()["resolvedReviewMetrics"]
+    assert float(resolved["words"]) == 9
+    assert float(resolved["total"]) == .81
+    assert resolved["caseNumber"] == "PRESERVE-CASE"
+
+
+def test_async_count_refresh_does_not_apply_to_another_job() -> None:
+    result = _probe_results()["metricsSwitchJob"]
+    assert "active translation changed" in result["error"]
+    assert float(result["words"]) == 50
+
+
+def test_missing_artifact_warning_survives_completion_render_and_blocks_save() -> None:
+    result = _probe_results()["missingArtifactWarning"]
+    for key in ("status", "drawer", "saveError"):
+        assert "Reviewed DOCX is missing" in result[key]
+    assert result["saveRequests"] == 0
 
 
 def test_bootstrap_does_not_request_arabic_review_for_known_ineligible_jobs() -> None:

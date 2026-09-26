@@ -80,6 +80,76 @@ def _load_result(
     )
 
 
+@pytest.mark.parametrize("save_first", [False, True])
+@pytest.mark.parametrize("readable", [False, True])
+def test_confirm_translation_recounts_staged_docx_and_reuses_saved_row(tmp_path: Path, monkeypatch, save_first, readable) -> None:
+    from .test_translation_completion_metrics import completion_job, completion_seed, write_docx
+    from legalpdf_translate import translation_service
+    import legalpdf_translate.gmail_browser_service as gmail_service
+
+    monkeypatch.setattr(translation_service, "build_translation_capability_flags", lambda **_: {})
+    monkeypatch.setattr(gmail_service, "build_gmail_browser_capability_flags", lambda **_: {})
+    loaded = _load_result(message_id="fictional-message", thread_id="fictional-thread",
+                          subject="Fictional", account_email="user@example.test", attachment_ids=("attachment",))
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"fictional source")
+    attachment = DownloadedGmailAttachment(candidate=loaded.message.attachments[0], saved_path=source,
+                                           start_page=1, page_count=1)
+    session = GmailBatchSession(intake_context=loaded.intake_context, message=loaded.message,
+        gog_path=loaded.gog_path, account_email=loaded.account_email,
+        downloaded_attachments=(attachment,), download_dir=tmp_path, selected_target_lang="AR")
+    manager = GmailBrowserSessionManager()
+    manager._store_loaded_result(runtime_mode="shadow", workspace_id="fictional", result=loaded)
+    manager._workspace(runtime_mode="shadow", workspace_id="fictional").batch_session = session
+    docx = tmp_path / "translated.docx"
+    write_docx(docx, 10)
+    job = completion_job(docx)
+    job["config"] = {"source_path": str(source), "start_page": 1}
+    seed = completion_seed(docx)
+    settings = tmp_path / "settings.json"
+    database = tmp_path / "jobs.sqlite"
+    row_id = None
+    if save_first:
+        row_id = translation_service.save_translation_row(settings_path=settings, job_log_db_path=database,
+            form_values=seed, seed_payload=seed, word_count_docx=docx)["saved_result"]["row_id"]
+    write_docx(docx, 9)
+    if not readable:
+        docx.write_bytes(b"corrupt reviewed artifact")
+    real_stage = gmail_service.stage_gmail_batch_translated_docx
+    def stage_then_change_original(**kwargs):
+        staged = real_stage(**kwargs)
+        write_docx(docx, 8)
+        return staged
+    monkeypatch.setattr(gmail_service, "stage_gmail_batch_translated_docx", stage_then_change_original)
+    def confirm():
+        return manager.confirm_current_batch_translation(runtime_mode="shadow", workspace_id="fictional",
+            settings_path=settings, job_log_db_path=database, translation_jobs=SimpleNamespace(get_job=lambda _: job),
+            job_id="fictional-job", form_values=seed, row_id=row_id)
+    if not readable:
+        with pytest.raises(ValueError, match="reviewed translation DOCX could not be read"):
+            confirm()
+        assert session.confirmed_items == []
+        if save_first:
+            history = translation_service.list_translation_history(db_path=database)
+            assert len(history) == 1
+            assert history[0]["row"]["word_count"] == 10
+        else:
+            assert not database.exists()
+        return
+    response = confirm()
+    confirmed = session.confirmed_items[0]
+    assert confirmed.translated_word_count == 9
+    assert translation_service.reviewed_translation_word_count(confirmed.staged_translated_docx_path) == 9
+    assert translation_service.reviewed_translation_word_count(docx) == 8
+    history = translation_service.list_translation_history(db_path=database)
+    assert len(history) == 1
+    assert history[0]["row"]["word_count"] == 9
+    assert history[0]["row"]["expected_total"] == .81
+    assert history[0]["row"]["profit"] == .71
+    if save_first:
+        assert response["normalized_payload"]["saved_result"]["row_id"] == row_id
+
+
 def _translation_batch_session(tmp_path: Path) -> GmailBatchSession:
     load_result = _load_result(
         message_id="msg-1",

@@ -1381,6 +1381,7 @@ function syncTranslationCompletionSurface() {
   const saveStatusNode = qs("translation-save-status");
   const saveButton = qs("translation-save-row");
   const review = currentArabicReviewState();
+  const countWarning = translationState.currentJob?.diagnostics?.word_count_warning || "";
   const hasSaveSurface = hasTranslationSaveSeed();
   const presentation = deriveTranslationCompletionPresentation({
     job: translationState.currentJob,
@@ -1403,11 +1404,11 @@ function syncTranslationCompletionSurface() {
     available,
     hasSaveSurface,
     openButtonLabel: completionButtonLabel(),
-    drawerStatus: presentation.drawerStatus,
+    drawerStatus: countWarning || presentation.drawerStatus,
     emptyTitle: presentation.emptyTitle,
     emptyCopy: presentation.emptyCopy,
     saveTitle: presentation.saveTitle,
-    saveStatus: presentation.saveStatus,
+    saveStatus: countWarning || presentation.saveStatus,
     saveButtonLabel: presentation.saveButtonLabel,
     saveDisabled: !hasSaveSurface || currentArabicReviewIsBlocking(),
   });
@@ -1428,11 +1429,11 @@ function syncTranslationCompletionSurface() {
     closeTranslationCompletionDrawer();
     return;
   }
-  if (hasSaveSurface && !translationState.currentRowId && review.required) {
+  if (countWarning || (hasSaveSurface && !translationState.currentRowId && review.required)) {
     setPanelStatus(
       "translation-save",
-      review.resolved ? "" : "warn",
-      presentation.saveStatus,
+      countWarning || !review.resolved ? "warn" : "",
+      countWarning || presentation.saveStatus,
     );
   }
   renderTranslationCompletionResultCard();
@@ -1516,6 +1517,51 @@ function applyTranslationSeed(seed, { rowId = null } = {}) {
   syncTranslationCompletionSurface();
 }
 
+async function refreshCurrentTranslationMetrics() {
+  const jobId = translationState.currentJobId;
+  const rowId = translationState.currentRowId;
+  const completionKey = currentTranslationCompletionKey();
+  if (!jobId || translationState.currentJob?.status !== "completed") {
+    return;
+  }
+  const payload = await fetchJson(`/api/translation/jobs/${jobId}`, appState);
+  if (translationState.currentJobId !== jobId || translationState.currentRowId !== rowId
+      || currentTranslationCompletionKey() !== completionKey) {
+    throw new Error("The active translation changed while refreshing its word count.");
+  }
+  const job = payload.normalized_payload?.job;
+  if (job?.diagnostics?.word_count_warning) {
+    throw new Error(job.diagnostics.word_count_warning);
+  }
+  const seed = job?.result?.save_seed;
+  if (!seed) {
+    return;
+  }
+  const values = collectTranslationSaveValues();
+  const number = (value) => Number(String(value).replace(",", "."));
+  const money = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
+  const previousTotal = number(values.expected_total);
+  const previousSeed = translationState.currentSeed || {};
+  let expectedTotal = previousTotal;
+  if (number(values.word_count) !== Number(seed.word_count)) {
+    if (previousTotal === money(number(values.rate_per_word) * number(values.word_count))
+        || previousTotal === Number(previousSeed.expected_total)) {
+      expectedTotal = money(number(values.rate_per_word) * Number(seed.word_count));
+      setFieldValue("translation-expected-total", expectedTotal);
+    }
+    const paid = number(values.amount_paid);
+    const cost = number(values.api_cost);
+    if (number(values.profit) === money((paid || previousTotal) - cost)
+        || number(values.profit) === Number(previousSeed.profit)) {
+      setFieldValue("translation-profit", money((paid || expectedTotal) - cost));
+    }
+  }
+  setFieldValue("translation-word-count", seed.word_count);
+  translationState.currentSeed = { ...translationState.currentSeed, ...seed };
+  translationState.currentJob = job;
+  syncTranslationCompletionSurface();
+}
+
 function currentArabicReviewRequestPayload(extra = {}) {
   const review = currentArabicReviewState();
   const completionKey = currentTranslationCompletionKey() || review.completion_key || "";
@@ -1567,6 +1613,9 @@ async function refreshArabicReviewState({ allowRestore = false } = {}) {
     return currentArabicReviewState();
   }
   setArabicReviewState(review);
+  if (review.required && review.resolved) {
+    await refreshCurrentTranslationMetrics();
+  }
   if (review.required && !review.resolved) {
     if (review.auto_open_pending && review.job_id && review.job_id === translationState.currentJobId) {
       try {
@@ -1612,6 +1661,9 @@ async function continueArabicReview(continuation) {
   });
   const review = normalizeArabicReviewState(payload.normalized_payload?.arabic_review);
   setArabicReviewState(review);
+  if (review.resolved) {
+    await refreshCurrentTranslationMetrics();
+  }
   setDiagnostics("translation-save", payload, {
     hint: review.message || "Arabic DOCX review continuation recorded.",
     open: false,
@@ -1789,7 +1841,8 @@ export function getCurrentTranslationJobId() {
   return translationState.currentJobId || "";
 }
 
-export function collectCurrentTranslationSaveValues() {
+export async function collectCurrentTranslationSaveValues() {
+  await refreshCurrentTranslationMetrics();
   return collectTranslationSaveValues();
 }
 
@@ -2317,6 +2370,7 @@ async function handleTranslationSave() {
   if (currentArabicReviewIsBlocking()) {
     throw new Error(currentArabicReviewState().message || "Review the Arabic document in Word before you save the case record.");
   }
+  await refreshCurrentTranslationMetrics();
   const payload = await fetchJson("/api/translation/save-row", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2329,6 +2383,9 @@ async function handleTranslationSave() {
     }),
   });
   translationState.currentRowId = payload.saved_result.row_id;
+  for (const key of ["word_count", "expected_total", "profit"]) {
+    setFieldValue(`translation-${key.replaceAll("_", "-")}`, payload.normalized_payload[key]);
+  }
   setFieldValue("translation-row-id", payload.saved_result.row_id);
   setPanelStatus("translation-save", "ok", `Saved case record #${payload.saved_result.row_id}.`);
   setDiagnostics("translation-save", payload, { hint: `Saved case record #${payload.saved_result.row_id}.`, open: false });
