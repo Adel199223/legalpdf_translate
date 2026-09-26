@@ -126,7 +126,9 @@ from legalpdf_translate.translation_service import (
     build_translation_capability_flags,
     export_translation_review_queue_for_job,
     list_translation_history,
+    refresh_completed_translation_metrics,
     save_translation_row,
+    translation_job_docx_path,
     upload_translation_source,
 )
 from legalpdf_translate.shadow_runtime import (
@@ -3027,6 +3029,12 @@ def create_shadow_app(
         job = _owned_translation_job(context, target, job_id)
         if job is None:
             return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
+        try:
+            job = refresh_completed_translation_metrics(job)
+        except ValueError as exc:
+            # Viewing the original job/report remains available if its artifact moved.
+            # Mutations independently require a successful read of the current DOCX.
+            job = {**job, "diagnostics": {**job.get("diagnostics", {}), "word_count_warning": str(exc)}}
         return JSONResponse(
             _merge_response(
                 context,
@@ -3211,12 +3219,14 @@ def create_shadow_app(
                         ),
                     )
         try:
+            word_count_docx = translation_job_docx_path(job) if job is not None else None
             response = save_translation_row(
                 settings_path=target.data_paths.settings_path,
                 job_log_db_path=target.data_paths.job_log_db_path,
                 form_values=dict(payload.get("form_values", {})),
-                seed_payload=payload.get("seed_payload"),
+                seed_payload=job["result"]["save_seed"] if job is not None else payload.get("seed_payload"),
                 row_id=row_id,
+                word_count_docx=word_count_docx,
             )
         except ValueError as exc:
             return _validation_error_response(context, target, message=str(exc))

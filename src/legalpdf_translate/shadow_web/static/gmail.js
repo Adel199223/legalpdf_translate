@@ -1863,13 +1863,14 @@ async function confirmCurrentTranslation() {
     throw new Error(confirmationGate.message);
   }
   const jobId = confirmationGate.jobId;
+  const formValues = await gmailState.hooks.collectCurrentTranslationSaveValues?.() || {};
   const payload = await fetchJson("/api/gmail/batch/confirm-current", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(buildGmailConfirmCurrentTranslationRequestPayload({
       jobId,
       completionKey: translationUi.arabicReviewCompletionKey || "",
-      formValues: gmailState.hooks.collectCurrentTranslationSaveValues?.() || {},
+      formValues,
       rowId: qs("translation-row-id")?.value || null,
     })),
   });

@@ -79,8 +79,14 @@ FOOTER_ANCHORS = [
     "pág.",
     "pag.",
     "page",
-    "p.",
 ]
+
+# A bare "p." also occurs in legal prose ("p. e p. pelo art."). Only
+# recognize that abbreviation as furniture when it labels a page counter.
+_ABBREVIATED_PAGE_COUNTER_RE = re.compile(
+    r"^\s*p\.\s*\d+(?:\s*(?:/|de|of)\s*\d+)?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 BARCODE_PATTERNS = [
     re.compile(r"%\*.+\*%"),
@@ -184,7 +190,8 @@ def _classify_blocks(blocks: list[TextBlock], page_width: float, page_height: fl
             block.group = BlockGroup.BODY
             continue
         header_anchor = _text_has_anchor(block.text, HEADER_ANCHORS)
-        footer_anchor = _text_has_anchor(block.text, FOOTER_ANCHORS)
+        footer_anchor = (_text_has_anchor(block.text, FOOTER_ANCHORS)
+                         or _ABBREVIATED_PAGE_COUNTER_RE.search(block.text) is not None)
         barcode_anchor = _is_barcode_like(block.text)
         if header_anchor and block.y0 <= top_zone:
             block.group = BlockGroup.HEADER

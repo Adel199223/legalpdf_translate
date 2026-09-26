@@ -34686,7 +34686,8 @@ def test_shadow_web_translation_bootstrap_and_save_history_flow(tmp_path: Path, 
 def test_shadow_web_arabic_review_routes_block_save_until_resolved(tmp_path: Path, monkeypatch) -> None:
     with _build_app(tmp_path, monkeypatch) as client:
         docx_path = tmp_path / "translated_ar.docx"
-        docx_path.write_bytes(b"docx")
+        from .test_translation_completion_metrics import write_docx
+        write_docx(docx_path, 980)
         job = _completed_ar_job(docx_path)
         monkeypatch.setattr(
             client.app.state.shadow_context.translation_jobs,
@@ -34778,6 +34779,61 @@ def test_shadow_web_arabic_review_routes_block_save_until_resolved(tmp_path: Pat
         saved_payload = saved.json()
         assert saved.status_code == 200
         assert saved_payload["saved_result"]["row_id"] > 0
+
+
+def test_reviewed_docx_job_status_and_save_use_owned_current_artifact(tmp_path: Path, monkeypatch) -> None:
+    from .test_translation_completion_metrics import write_docx
+
+    with _build_app(tmp_path, monkeypatch) as client:
+        docx_path = tmp_path / "reviewed.docx"
+        write_docx(docx_path, 228)
+        job = _completed_ar_job(docx_path)
+        seed = job["result"]["save_seed"]
+        seed.update(word_count=228, rate_per_word=.09, expected_total=20.52, api_cost=.09, profit=20.43)
+        monkeypatch.setattr(client.app.state.shadow_context.translation_jobs, "get_job", lambda _: job)
+        client.get("/api/translation/arabic-review/state?job_id=tx-ar-001")
+        write_docx(docx_path, 227)
+        continued = client.post("/api/translation/arabic-review/continue", json={
+            "job_id": "tx-ar-001", "continuation": "continue_without_changes",
+        })
+        assert continued.status_code == 200
+        refreshed = client.get("/api/translation/jobs/tx-ar-001")
+        assert refreshed.json()["normalized_payload"]["job"]["result"]["save_seed"]["word_count"] == 227
+        # Stale submitted metrics and a forged client artifact must not control the save.
+        saved = client.post("/api/translation/save-row", json={
+            "job_id": "tx-ar-001", "form_values": seed,
+            "seed_payload": {**seed, "output_docx": str(tmp_path / "forged.docx")},
+        })
+        assert saved.status_code == 200
+        assert saved.json()["normalized_payload"]["word_count"] == 227
+        assert saved.json()["normalized_payload"]["expected_total"] == 20.43
+        assert saved.json()["normalized_payload"]["profit"] == 20.34
+        assert saved.json()["saved_result"]["translated_docx_path"] == str(docx_path)
+        assert seed["word_count"] == 228
+
+
+def test_missing_docx_preserves_job_details_but_blocks_job_bound_save(tmp_path: Path, monkeypatch) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        job = _completed_ar_job(tmp_path / "missing.docx")
+        job["config"]["target_lang"] = "EN"
+        job["result"]["save_seed"]["target_lang"] = "EN"
+        job["diagnostics"] = {"kind": "translate", "retained": "original diagnostic"}
+        job["artifacts"]["run_report_path"] = str(tmp_path / "run_report.md")
+        monkeypatch.setattr(client.app.state.shadow_context.translation_jobs, "get_job", lambda _: job)
+        response = client.get("/api/translation/jobs/tx-ar-001")
+        assert response.status_code == 200
+        shown = response.json()["normalized_payload"]["job"]
+        assert shown["result"] == job["result"]
+        assert shown["artifacts"] == job["artifacts"]
+        assert shown["diagnostics"]["retained"] == "original diagnostic"
+        assert "missing" in shown["diagnostics"]["word_count_warning"]
+        assert "word_count_warning" not in job["diagnostics"]
+        saved = client.post("/api/translation/save-row", json={
+            "job_id": "tx-ar-001", "form_values": job["result"]["save_seed"],
+        })
+        assert saved.status_code == 422
+        assert "reviewed translation DOCX" in saved.json()["diagnostics"]["error"]
+        assert client.get("/api/translation/history").json()["normalized_payload"]["history"] == []
 
 
 def test_shadow_web_arabic_review_open_reports_fallback_used(tmp_path: Path, monkeypatch) -> None:

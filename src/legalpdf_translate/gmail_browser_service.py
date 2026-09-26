@@ -2100,27 +2100,22 @@ class GmailBrowserSessionManager:
         save_seed = result.get("save_seed")
         if not isinstance(save_seed, dict):
             raise ValueError("The selected translation job does not have a Save-to-Job-Log seed yet.")
-        from .translation_service import save_translation_row
+        from .translation_service import save_translation_row, translation_job_docx_path
 
+        translated_docx_path = translation_job_docx_path(job)
+        if not translated_docx_path.exists():
+            raise ValueError(f"Translated DOCX not found: {translated_docx_path}")
+        staged_docx = stage_gmail_batch_translated_docx(session=session, translated_docx_path=translated_docx_path)
+        # The saved fee metrics must describe the exact bytes attached to the draft.
         save_response = save_translation_row(
             settings_path=settings_path,
             job_log_db_path=job_log_db_path,
             form_values=dict(form_values),
             seed_payload=save_seed,
             row_id=row_id,
+            word_count_docx=staged_docx,
         )
         saved_result = dict(save_response.get("saved_result", {}))
-        translated_docx_text = (
-            _clean_text(saved_result.get("translated_docx_path"))
-            or _clean_text(job.get("artifacts", {}).get("output_docx"))
-            or _clean_text(job.get("artifacts", {}).get("partial_docx"))
-        )
-        if not translated_docx_text:
-            raise ValueError("The translated DOCX for the confirmed Gmail attachment is unavailable.")
-        translated_docx_path = Path(translated_docx_text).expanduser().resolve()
-        if not translated_docx_path.exists():
-            raise ValueError(f"Translated DOCX not found: {translated_docx_path}")
-        staged_docx = stage_gmail_batch_translated_docx(session=session, translated_docx_path=translated_docx_path)
         run_dir_text = _clean_text(result.get("run_dir")) or _clean_text(job.get("artifacts", {}).get("run_dir"))
         run_dir = Path(run_dir_text).expanduser().resolve() if run_dir_text else translated_docx_path.parent
         confirmed_item = GmailBatchConfirmedItem(

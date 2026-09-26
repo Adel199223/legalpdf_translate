@@ -1,6 +1,8 @@
 import fitz
+import pytest
 
 from legalpdf_translate.pdf_text_order import (
+    BlockGroup,
     TextBlock,
     build_text_blocks_from_page_dict,
     get_page_count,
@@ -63,3 +65,25 @@ def test_get_page_count_reads_pdf_pages(tmp_path) -> None:
     doc.close()
 
     assert get_page_count(pdf_path) == 3
+
+
+@pytest.mark.parametrize("page_counter", ["p. 3", "P. 3 de 8", "p. 3 / 8", "p. 3 of 8"])
+def test_bottom_legal_citation_stays_before_continuation_and_real_footer(page_counter) -> None:
+    citation = TextBlock(40, 880, 460, 895, "p. pelo art. 12, n.º 1, als. a) e")
+    continuation = TextBlock(40, 900, 460, 915, "b), da Lei n.º 8/2024.")
+    contact = TextBlock(40, 950, 460, 965, "Tribunal de Exemplo - telefone 210000000")
+    footer = TextBlock(440, 980, 480, 995, page_counter)
+
+    ordered = order_text_blocks([footer, continuation, citation, contact], 500, 1000)
+
+    assert ordered.splitlines() == [citation.text, continuation.text, contact.text, page_counter]
+    assert citation.group == BlockGroup.BODY
+    assert footer.group == BlockGroup.FOOTER
+
+
+def test_page_abbreviation_embedded_in_body_is_not_a_footer() -> None:
+    body = TextBlock(40, 910, 460, 930, "Veja a p. 3 do relatório e o art. 12.")
+    following = TextBlock(40, 940, 460, 960, "A obrigação mantém-se.")
+
+    assert order_text_blocks([body, following], 500, 1000).splitlines() == [body.text, following.text]
+    assert body.group == BlockGroup.BODY

@@ -21,6 +21,12 @@ CASE_REF_RE = re.compile(
     r"(?<!\w)(?=[A-Za-z0-9./-]{5,})(?=[A-Za-z0-9./-]*\d)(?=[A-Za-z0-9./-]*(?:/|-|\.))[A-Za-z0-9./-]+(?!\w)"
 )
 STANDALONE_NUMBER_RE = re.compile(r"(?<![\w./-])\d+(?:[.,]\d+)?(?![\w./-])")
+# Currency gives an unambiguous numeric boundary even before /unit or a
+# sentence-ending dot, where the generic number matcher can backtrack to the
+# integer prefix. Protect the complete value without consuming its currency.
+CURRENCY_DECIMAL_RE = re.compile(
+    r"[€$£¥][^\S\r\n]*(?P<amount>\d+(?:[.,]\d+)+)(?!\d|[.,]\d)"
+)
 
 PORTUGUESE_MONTH_DATE_RE = re.compile(
     r"\b\d{1,2}\s+(?:de\s+)?(?:janeiro|fevereiro|março|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de)?\s+\d{4}\b",
@@ -89,6 +95,9 @@ def _collect_full_value_spans(segment: str) -> list[_Span]:
 
 def _collect_spans(segment: str) -> list[_Span]:
     spans = _collect_full_value_spans(segment)
+    currency_spans = [_Span(match.start("amount"), match.end("amount"))
+                      for match in CURRENCY_DECIMAL_RE.finditer(segment)]
+    spans.extend(currency_spans)
     for regex in (
         EMAIL_RE,
         URL_RE,
@@ -101,6 +110,10 @@ def _collect_spans(segment: str) -> list[_Span]:
         STANDALONE_NUMBER_RE,
     ):
         for match in regex.finditer(segment):
+            # A dot-decimal followed by /unit is a monetary value, not a case
+            # identifier whose token should also consume the unit/punctuation.
+            if regex is CASE_REF_RE and any(match.start() == span.start for span in currency_spans):
+                continue
             spans.append(_Span(match.start(), match.end()))
     return spans
 
