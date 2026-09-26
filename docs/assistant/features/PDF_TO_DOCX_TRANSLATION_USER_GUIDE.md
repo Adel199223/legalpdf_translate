@@ -182,11 +182,13 @@ After a successful run, the app can prefill the Job Log dialog using the latest 
 
 The prefill helps, but you still stay in control of the saved row.
 
+In builds containing the reviewed-word-count fix (see [current status](../HANDOFF.md)), save your Word edits before saving the case or confirming the Gmail attachment. The app recounts that saved DOCX and updates calculated amounts; a different amount you entered explicitly is retained. Gmail confirmation counts the copy it will attach. If the file cannot be read, save and close it, then try the save step again. A historical job-log edit stays manual, and an already-created fee PDF or draft is not automatically revised by later Word edits.
+
 For Arabic target runs, the app inserts an Arabic review step before `Save to Job Log` opens. That dialog opens the durable DOCX in Word automatically, waits for your manual save, and then continues automatically. Use `Open in Word` if you need to reopen the file. If save detection misses, use `Continue now` after saving, or `Continue without changes` if you intentionally want to skip the edit. The browser no longer auto-runs `Align Right + Save` for you.
 
 The translation completion area now treats the detailed run report as a normal run artifact. `Generate Run Report` writes or refreshes `<run_dir>/run_report.md`, downloads it immediately once, and leaves `Download Run Report` available afterward for repeat sharing. This stays available even while an Arabic Word review step is still unresolved. For Gmail-started runs, the same report keeps the `Gmail Intake / Batch Context` section and now labels `run tokens` separately from `billed total (includes reasoning)`.
 
-`Words` now means translated output words. The app uses this precedence:
+`Words` means translated output words. Initial run summaries use this precedence:
 1. final DOCX
 2. partial DOCX
 3. `pages/page_*.txt`

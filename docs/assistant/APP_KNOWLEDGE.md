@@ -4,6 +4,8 @@ This bridge is intentionally shorter. Defer to [root APP_KNOWLEDGE.md](../../APP
 
 ## Start here
 
+The implementation baseline is applied PR #307 (`2a6eb5962820b3c0f015dc6e296516ff2dac8049`), not a permanent current HEAD. The active five-request workflow has two reviewed unsent drafts and three unstarted requests. Count/citation/decimal fixes passed focused regressions, independent review and final combined Full (664 selected executions, 812.809 seconds). On 2026-09-26 the user approved publication, canonical application and continuation of the remaining selected translations without routine reconsent, within the original ceiling and without sends. Publication is in progress; [HANDOFF.md](HANDOFF.md) routes exact lifecycle status to the private `five_oldest_requests_20260926_01/publication_01/publication_receipt.json` and actual repository state. Product hashes remain frozen; dated acceptance and performance results below are historical evidence.
+
 - [Current handoff](HANDOFF.md): active worktree, evidence distinctions and next action.
 - [Canonical architecture overview](../../APP_KNOWLEDGE.md): browser, Workflow, reviewed source, accounting and editable DOCX.
 - [Validation](VALIDATION.md): targeted tests, complete pytest and standard Full are separate checks.

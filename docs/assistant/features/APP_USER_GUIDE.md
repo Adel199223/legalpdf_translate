@@ -202,6 +202,8 @@ This recovery does not require weakening Word security settings or repairing/rei
 
 If a Word/PDF check fails after you saved the Gmail attachment, the translated Word file and saved case can still be complete. Check the saved result before translating or saving it again. Let the Word check finish; PDF creation and the Gmail reply are later steps, and a failure there does not by itself mean you need another translation.
 
+Finish and save Word corrections before confirming the Gmail attachment. Builds containing the reviewed-word-count fix recount the saved attachment and update calculated amounts; [the PDF guide](PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md) explains that step, and [current status](../HANDOFF.md) identifies the applied build. After a reply draft has been created, inspect and correct that existing draft if necessary. Do not create the same completed reply again to refresh an attachment.
+
 ## Warning Dialogs
 - `Switch to fixed high`: Use this when the app warns that `xhigh` can multiply cost and time. It changes the current run away from the risky `xhigh` mode.
 - `Apply safe OCR profile`: Use this when the app warns that the document appears OCR-heavy and local OCR is unavailable. It changes only the current run to:
