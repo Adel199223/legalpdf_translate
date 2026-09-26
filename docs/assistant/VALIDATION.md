@@ -1,8 +1,20 @@
 # Validation guide
 
-Use the smallest meaningful check first. Do not claim a test passed until its process and terminal result are known. [HANDOFF.md](HANDOFF.md) and the [completed Gmail/formatting readiness plan](exec_plans/completed/2026-09-24_gmail_formatting_readiness.md) identify current work. The [completed multilingual plan](exec_plans/completed/2026-09-17_multilingual_gmail_acceptance.md), its [September24 recovery](exec_plans/completed/2026-09-24_acceptance_interruption_recovery.md), the [completed Arabic acceptance plan](exec_plans/completed/2026-09-17_arabic_normal_browser_acceptance.md) and [ordinary integration plan](exec_plans/completed/2026-09-16_ordinary_browser_integration.md) retain earlier qualified results. This page defines the validation tiers.
+Use the smallest meaningful check first. Do not claim a test passed until its process and terminal result are known. [HANDOFF.md](HANDOFF.md) and the [test performance plan](exec_plans/active/2026-09-26_test_performance.md) identify current work. The [completed Gmail/formatting plan](exec_plans/completed/2026-09-24_gmail_formatting_readiness.md), [completed multilingual plan](exec_plans/completed/2026-09-17_multilingual_gmail_acceptance.md), its [September24 recovery](exec_plans/completed/2026-09-24_acceptance_interruption_recovery.md), the [completed Arabic acceptance plan](exec_plans/completed/2026-09-17_arabic_normal_browser_acceptance.md) and [ordinary integration plan](exec_plans/completed/2026-09-16_ordinary_browser_integration.md) retain earlier qualified results. This page defines the validation tiers.
 
 ## Current validation checkpoint
+
+The test-performance changes below are local and unpublished on `codex/test-performance-20260926`, based on `b35be1c3ad401ba70ca3dc4464f09bf64782958b`. Completed local measurements on 2026-09-26 are:
+
+| Scope | Verified result | Elapsed time |
+|---|---|---|
+| Complete baseline, before runner changes | 6,717 passed | 1,835.010 seconds wall time (30 minutes 35.01 seconds) |
+| Quick feedback | 87 passed; exactly two DOM-to-workflow cases excluded from Quick only | 10.72 seconds pytest; 16.202 seconds whole wrapper |
+| Selected Full | 659 passed; broader selected integration scope retained | 838.559 seconds whole wrapper (13 minutes 58.56 seconds) |
+| Full formatting component | 173 cases across two isolated workers | Worker wall times 538.359 and 516.531 seconds, running concurrently |
+| Complete four-worker comparison | 6,754 passed: exact ordered 6,717 baseline cases plus 37 runner regressions | 537.941 seconds wall time (8 minutes 57.94 seconds) |
+
+These rows have overlapping tests: do not add their counts or compare selected Full with complete baseline as an equal-coverage speedup. The complete comparison preserves every original ordered node ID and adds 37 runner cases; its observed wall time is **3.411x faster / 70.685% shorter**. This is one local measurement, not a hosted-CI guarantee. The baseline overlapped short documented Quick/tool checks; the parallel comparison did not overlap another test suite. Both complete runs used the same explicit offscreen Qt platform and Windows system fonts. Formatting worker times are neither additive elapsed time nor the Full wrapper total. The comparison audit verified all five frozen comparison pins, 484 existing source/test pins and 68 protected file pins unchanged. Later-added artifact-selector tests are outside that measured snapshot and require separate recorded validation. Private `test_performance_20260926_01/comparison_audit_01.json`, `baseline_summary.json`, `baseline_complete_result.json`, `quick_02_result.json` and `full_01_result.json` retain the evidence; the active plan owns subsequent outcomes.
 
 Earlier PR #303 merged at canonical `ca395d601efe4e00aad3458526b7d961d3cf5f0c`, matching reviewed `dad5ea1`. Full_04 passed **655 selected tests**, nine expected deselections, compilation and hygiene, with 486 matching source pins. Direct docs validation passed separately; the initial Dart AOT failure and successful fallback remain preserved. All four required exact-head CI jobs passed. Private `gmail_formatting_readiness_20260924_01/pr303_publication_01/` and `validation/full_04/independent_terminal_review.json` provide exact evidence. Full is not the complete repository pytest collection; overlapping older suites are not additive unique coverage.
 
@@ -55,18 +67,27 @@ For an uncertain provider failure, join the original reservation, dispatch and a
 
 ```powershell
 .\.venv311\Scripts\python.exe -m pytest -q -ra tests
+.\.venv311\Scripts\python.exe tooling/test_shards.py run --workers 4 --timings tooling/test_timings.json --output tmp/validation/complete-01 -- tests
 ```
 
 Use the complete collection before merge and after integrated code/test/workflow changes when required. Retain the full terminal count, failures, skips, duration and JUnit when available. For a long run, use a bounded owned launcher, capture logs and freeze its named source/test snapshot. Do not duplicate collection or start another full run merely because the active run is quiet.
 
+The shard runner collects the requested scope, assigns every collected test exactly once by whole file, then checks each worker's collection and actual execution against that plan. It balances files using measured timings; new files are included automatically. Qt UI files remain together to avoid local desktop focus conflicts. Workers have separate app-data, temporary and report roots, and preserve the normal test guards. Use `--workers 1` for sequential diagnosis or `2` on a constrained machine. Output directories must be new: choose another suffix instead of overwriting evidence. Planning estimates are not measured elapsed time. Per-worker logs, durations, JUnit and the complete assignment remain in the named output directory.
+
 ## 3. Standard validation wrapper
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1 -Quick
 powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1
 powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1 -Full
+powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1 -Full -Workers 1
 ```
 
-The wrapper runs focused browser tests, compileall, relevant docs validation and workspace hygiene. `-Full` adds Gmail unit coverage and separate groups of seven source-review and six formatting-review test files. **Full is not the complete repository pytest collection.** Preserve its existing Gmail filters and interpreter selection; it does not authorize live Gmail or native Word operations.
+`-Quick` runs core CLI/workflow/report checks and translation/source/formatting browser-state checks for early feedback. The two measured DOM-to-workflow integration cases, `test_actual_dom_operator_actions_to_public_service_context_and_workflow` and `test_actual_dom_to_owned_formatting_api_build_and_download_preserves_original_run`, are excluded only from Quick and remain in Full and complete coverage. It does not replace the standard browser/API tier or required complete coverage. `-Quick` and `-Full` cannot be combined.
+
+The default wrapper retains focused browser/API tests, compileall, relevant docs validation and workspace hygiene. `-Full` adds the same Gmail filter and source-review/formatting-review files as before; its six formatting files run in two isolated processes by default, with `-Workers 1` retaining sequential execution. **Full is not the complete repository pytest collection.** The wrapper reports slow tests without changing assertions or granting live Gmail/native authority.
+
+CI runs the complete suite on every PR, main push and manual dispatch. Four isolated Windows jobs execute exhaustive partitions; the stable required `test (3.11)` check requires all partitions and Windows/Linux contract checks, then verifies matching collections, exactly-once execution and JUnit receipts. Failed, cancelled, skipped or missing jobs cannot make the aggregate pass. Feature-branch pushes no longer duplicate an open PR's full run; use manual dispatch before a PR exists. Superseded PR runs are cancelled, while main runs are retained. In the local CI rerun design, artifacts are named `pytest-shard-N-attempt-${{ github.run_attempt }}` and downloaded only from the current workflow run. `tooling/ci_test_evidence.py` selects the highest numeric attempt for each of four shards, then delegates complete-collection/execution/JUnit checks to the strict verifier. Older artifacts remain retained; a failed or incomplete latest attempt cannot fall back to an earlier success. Timing/artifact details belong in the [CI workflow](workflows/CI_REPO_WORKFLOW.md). This design has not yet established a hosted-CI result.
 
 ## 4. Documentation and policy checks
 
