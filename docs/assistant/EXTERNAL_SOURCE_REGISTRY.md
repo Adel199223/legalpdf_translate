@@ -1,5 +1,17 @@
 # External Source Registry
 
+## Test performance tooling — 2026-09-26
+
+Official sources checked for the [test performance plan](exec_plans/active/2026-09-26_test_performance.md):
+
+- [pytest invocation and durations](https://docs.pytest.org/en/stable/how-to/usage.html): selected paths and `--durations` support measured feedback without removing assertions.
+- [GitHub workflow triggers](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow): separate matching push/PR events create separate runs; a main-only push filter retains PR and manual validation.
+- [GitHub concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency): workflow groups support cancelling superseded PR runs; the local configuration preserves main runs.
+- [GitHub contexts](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts), checked 2026-09-26: `github.run_id` stays fixed across reruns, while numeric `github.run_attempt` starts at 1 and increments per rerun. The local CI design uses attempt-qualified shard artifact names; latest-per-shard selection and strict rejection of a failed latest attempt are repository policy, not claims supplied by this reference.
+- [upload-artifact](https://github.com/actions/upload-artifact) and [download-artifact](https://github.com/actions/download-artifact): official usage examples specify v7 upload and v8 download; shard artifacts have unique names and reports only.
+
+These references support workflow mechanics. Actual speed, coverage and isolation require local/CI results; documentation is not evidence of an achieved speedup. No application dependency or provider configuration change follows.
+
 ## Fresh Gmail completion reference — 2026-09-26
 
 Reopened the official [GPT-5.2 model page](https://developers.openai.com/api/docs/models/gpt-5.2): standard USD per million remains1.75 input,0.175 cached input and14 output; context400,000 and maximum output128,000 remain documented. High reasoning effort and snapshot `gpt-5.2-2025-12-11` remain listed. The local conservative reservation calculation therefore remains USD2.492 per ordinary request; this is an upper reservation, not expected spend. No model/default promotion follows.
