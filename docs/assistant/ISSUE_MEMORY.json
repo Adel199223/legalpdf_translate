@@ -1,7 +1,63 @@
 {
   "version": 1,
-  "last_updated": "2026-09-16T20:01:02Z",
+  "last_updated": "2026-09-27T16:25:50Z",
   "issues": [
+    {
+      "id": "fictional-powershell-outer-timeout",
+      "title": "Synthetic PowerShell startup and compilation exceed a nonsemantic outer test cap",
+      "first_seen_timestamp": "2026-09-27T16:09:28Z",
+      "last_seen_timestamp": "2026-09-27T16:21:53Z",
+      "repeat_count": 2,
+      "status": "mitigated",
+      "trigger_source": "operational",
+      "symptoms": [
+        "The same casing-success fake helper exceeded its20-second subprocess cap in two consecutive PR CI attempts; sibling variants and2,095 other partition cases passed."
+      ],
+      "likely_root_cause": "The outer allowance includes PowerShell startup, C# Add-Type compilation and fake execution; exact delayed phase and environmental cause remain unknown.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-09-27T16:21:53Z",
+          "summary": "One failed-jobs-only retry on unchanged source repeated the exact timeout.",
+          "outcome": "failed_again_original_attempts_preserved"
+        }
+      ],
+      "accepted_fix": {
+        "timestamp": "2026-09-27T16:25:50Z",
+        "summary": "Named finite60-second allowance only for the shared fictional helper; production deadlines, native guards and semantic assertions unchanged.",
+        "expected_result": "Allow bounded host startup/compiler overhead without redefining a product timing requirement. Final validation is routed through the current publication receipt; retain mitigated until stability is established."
+      },
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "docs/assistant/VALIDATION.md",
+        "docs/assistant/exec_plans/completed/2026-09-27_future_translation_workflow_fixes.md"
+      ],
+      "bootstrap_relevance": "possible",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "Separate harness startup/compiler limits from production deadlines",
+          "Retain finite bounds and semantic assertions",
+          "Preserve failed attempts and avoid repeated unchanged retries"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "private_artifact",
+          "ref": "future_translation_workflow_fixes_20260927_01/publication_01/pr_ci_qt_followup_receipt_01.json"
+        },
+        {
+          "type": "private_artifact",
+          "ref": "future_translation_workflow_fixes_20260927_01/publication_01/pr_ci_qt_followup_retry_failure_receipt_01.json"
+        },
+        {
+          "type": "private_artifact",
+          "ref": "future_translation_workflow_fixes_20260927_01/fake_helper_timeout_fix_01/"
+        }
+      ]
+    },
     {
       "id": "windows-private-launch-guard-preflight-fidelity",
       "title": "Private Windows guards missed actual launch, import, temporary-file and held-lock semantics",

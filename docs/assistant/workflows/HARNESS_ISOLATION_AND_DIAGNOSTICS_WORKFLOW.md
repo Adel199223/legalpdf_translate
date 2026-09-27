@@ -165,6 +165,10 @@ Keep attempts, actual provider dispatches and settlement separate. A validation 
 
 Tests that manually pump Qt events must not treat `processEvents()` as proof that `deleteLater()` objects were destroyed. Keep external-launch guards active, explicitly drain deferred deletion on the GUI thread, and test destruction of retained widget/child wrappers. Preserve failing process logs and exit status before changing cleanup. For a native fault, direct stdout/stderr with Python faulthandler retains diagnostic frames that a PowerShell error pipeline can truncate. A focused mixed-module run tests the observed ordering; hosted sharding may use a different history. Keep Qt test modules in the declared affinity group and retain meaningful assertions.
 
+## Fictional PowerShell test deadlines
+
+The shared fake Word helper has a finite60-second subprocess allowance for PowerShell startup, C# compilation and synthetic execution. This outer test-harness limit is separate from production startup/operation deadlines and from any explicit timing assertion. Retain native-entrypoint substitution guards and semantic assertions. Preserve actual timeout failures, distinguish unknown execution phase from a proved application defect, and use bounded diagnostic runs; repeated unchanged CI retries do not repair an inadequate harness allowance. This rule was added for Issue Memory `fictional-powershell-outer-timeout`.
+
 ## Handoff Checklist
 1. State whether the test/runtime used isolated state or explicit live-state opt-in.
 2. State the expected listener port/process ownership when localhost runtime is involved.
