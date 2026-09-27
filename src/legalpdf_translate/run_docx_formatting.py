@@ -122,11 +122,13 @@ def _read(value, *, maximum=_MAX_FILE, within=None):
         return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
     try:
         before = identity(path.stat())
+        if before[2] > maximum:
+            _fail("run_formatting_file_too_large")
         with path.open("rb") as stream:
             opened = identity(os.fstat(stream.fileno()))
-            raw = stream.read(maximum + 1)
+            raw = stream.read(before[2] + 1)
             after = identity(os.fstat(stream.fileno()))
-        if before != opened or opened != after or after != identity(path.stat()):
+        if before != opened or opened != after or after != identity(path.stat()) or len(raw) != before[2]:
             _fail("run_formatting_file_changed_during_read")
         if len(raw) > maximum:
             _fail("run_formatting_file_too_large")
