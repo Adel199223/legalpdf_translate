@@ -1,9 +1,10 @@
 """Offline publication guards for the formatting-only integration.
 
-Expected requests/resources were inspected at production base 022b5af. These
-small contract snapshots intentionally do not read git, another checkout, real
-credentials, or provider services. A future deliberate policy change can update
-them explicitly; formatting work must not do so implicitly.
+Request contracts were inspected at production base 022b5af. Instruction hashes
+were explicitly refreshed for the authorized 2026-09-27 source-fidelity guidance,
+readable tracking identifiers and atomic Arabic addresses. These small snapshots
+never read git, another checkout, real credentials or provider services. Future
+deliberate policy changes must refresh them explicitly, never as a formatting side effect.
 """
 from __future__ import annotations
 
@@ -34,9 +35,9 @@ from legalpdf_translate.types import (
 
 
 _INSTRUCTION_SHA256 = {
-    "EN": "a7df7e97b012e2a235e8edc7374247e05e9ef4006c8a03b0f2c891962d968b9a",
-    "FR": "661180b1a3a2e711f50f5f82777c9cc86d1224f5ff65d06fb4cde20d67a7c3c4",
-    "AR": "9bbae954d09864fb62f6f0f9c0d02352161eccaa77e8707f64a282f480e2b4a0",
+    "EN": "7afa9ba0da4377123e8d61749a3e772a9606402de117f4b9862d097033c91ebf",
+    "FR": "f3f379fe5e76b4a99370dcfb91aa1354095d7653ae3e344c5eab3bdb340ee864",
+    "AR": "77cc634234f5d94839139b70f509d8fede83edaa352447c6fbc0c041b6793678",
 }
 _SOURCE = "O arguido deve cumprir as obrigações determinadas pelo tribunal."
 _TARGET = {
@@ -91,6 +92,14 @@ def test_formatting_does_not_promote_translation_or_ocr_defaults():
 def test_production_instructions_and_page_prompt_remain_plain_text(lang):
     instructions = load_system_instructions(lang)
     assert hashlib.sha256(instructions.encode("utf-8")).hexdigest() == _INSTRUCTION_SHA256[lang.value]
+    assert instructions.count("SOURCE MEANING AND VISUAL TEXT FIDELITY\n") == 1
+    plain_text_contract = {
+        TargetLang.EN: "Return ONLY the English translation inside ONE plain-text code block.",
+        TargetLang.FR: "Retourner UNIQUEMENT la traduction francaise dans UN seul bloc de code texte brut.",
+        TargetLang.AR: "Return ONLY the Arabic translation inside ONE plain-text code block.",
+    }
+    assert plain_text_contract[lang] in instructions
+    assert "JSON with unchanged IDs" not in instructions
     prefix = "" if lang == TargetLang.AR else lang.value + "\n"
     assert build_page_prompt(lang, 2, 4, _SOURCE, "Earlier source context.") == (
         prefix + "<<<PAGE 2 OF 4>>>\n<<<BEGIN CONTEXT>>>\nEarlier source context.\n"
