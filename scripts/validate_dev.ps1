@@ -243,7 +243,8 @@ $fullExtraCommands = @(
             "tests/test_docx_arabic_folio.py", "tests/test_resources_loader.py",
             "tests/test_qt_app_state.py", "tests/test_formatting_policy_isolation.py",
             "tests/test_qt_cleanup.py", "tests/test_qt_arabic_review_lifecycle.py",
-            "tests/test_test_shards.py")
+            "tests/test_test_shards.py",
+            "tests/test_word_startup_diagnostics.py::test_valid_process_name_preserves_exact_case_and_existing_success")
     }
 )
 
