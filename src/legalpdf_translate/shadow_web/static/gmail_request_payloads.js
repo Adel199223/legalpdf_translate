@@ -79,22 +79,31 @@ export function buildGmailConfirmCurrentTranslationRequestPayload({
   completionKey = "",
   formValues = {},
   rowId = null,
+  baselineId = null,
+  expectedDeliveryGeneration = null,
 } = {}) {
   return {
     job_id: stringOrEmpty(jobId),
     completion_key: stringOrEmpty(completionKey),
     form_values: objectOrEmpty(formValues),
     row_id: rowId ?? null,
+    ...(baselineId ? {baseline_id:stringOrEmpty(baselineId),expected_delivery_generation:expectedDeliveryGeneration} : {}),
   };
 }
 
 export function buildGmailBatchFinalizeRequestPayload({
   profileId = "",
   outputFilename = "",
+  recipientBlock = "",
+  includeTranslatorDeclaration = false,
+  translatorDeclarationText = "",
 } = {}) {
   return {
     profile_id: stringOrEmpty(profileId),
     output_filename: stringOrEmpty(outputFilename),
+    recipient_block: stringOrEmpty(recipientBlock),
+    include_translator_declaration: Boolean(includeTranslatorDeclaration),
+    translator_declaration_text: includeTranslatorDeclaration ? stringOrEmpty(translatorDeclarationText) : "",
   };
 }
 

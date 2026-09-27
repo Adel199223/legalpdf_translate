@@ -12,7 +12,9 @@ from PIL import Image
 from .browser_esm_probe import run_browser_esm_json_probe
 import legalpdf_translate.browser_arabic_review as browser_arabic_review
 import legalpdf_translate.browser_app_service as browser_app_service
+import legalpdf_translate.gmail_focus_host as gmail_focus_host
 import legalpdf_translate.power_tools_service as power_tools_service
+import legalpdf_translate.shadow_runtime as shadow_runtime
 from legalpdf_translate.browser_gmail_bridge import BrowserLiveBridgeSyncResult
 from legalpdf_translate.power_tools_service import generate_browser_run_report
 import legalpdf_translate.shadow_web.app as shadow_app_module
@@ -24,6 +26,8 @@ from legalpdf_translate.word_automation import WordAutomationResult
 
 _ORIGINAL_BUILD_BROWSER_PROVIDER_STATE = shadow_app_module.build_browser_provider_state
 _ORIGINAL_WORD_READINESS = power_tools_service.assess_word_pdf_export_readiness
+_ORIGINAL_CLASSIFY_SHADOW_LISTENER = shadow_app_module.classify_shadow_listener
+_ORIGINAL_PREPARE_GMAIL_INTAKE = browser_app_service.prepare_gmail_intake
 _GOOGLE_PHOTOS_CALLBACK_PATH = "/api/interpretation/google-photos/oauth/callback"
 
 
@@ -160,6 +164,28 @@ def _build_app(tmp_path: Path, monkeypatch, *, build_identity: RuntimeBuildIdent
         "detect_browser_data_paths",
         lambda mode, **kwargs: _browser_data_paths(tmp_path, mode),
     )
+    # TestClient does not open a TCP listener. Runtime response diagnostics must
+    # not enumerate this machine's ports for every unrelated API assertion.
+    # Preserve explicit ownership scenarios supplied by listener-focused tests.
+    if shadow_app_module.classify_shadow_listener is _ORIGINAL_CLASSIFY_SHADOW_LISTENER:
+        monkeypatch.setattr(
+            shadow_app_module,
+            "classify_shadow_listener",
+            lambda *, port, **kwargs: ShadowListenerOwnership(
+                host="127.0.0.1", port=port, status="available", pid=None, reason="no_listener",
+            ),
+        )
+    # Generic capability decoration also discovers a browser launch target,
+    # spawning Python runtime probes. No real Gmail bridge belongs to TestClient.
+    # Keep aggregation real and retain explicitly supplied bridge scenarios.
+    if browser_app_service.prepare_gmail_intake is _ORIGINAL_PREPARE_GMAIL_INTAKE:
+        monkeypatch.setattr(
+            browser_app_service,
+            "prepare_gmail_intake",
+            lambda **kwargs: {
+                "ok": False, "reason": "bridge_disabled", "bridgePort": 8765, "ui_owner": "none",
+            },
+        )
     if shadow_app_module.build_browser_provider_state is _ORIGINAL_BUILD_BROWSER_PROVIDER_STATE:
         monkeypatch.setattr(
             shadow_app_module,
@@ -241,6 +267,23 @@ def test_build_app_preserves_explicit_provider_and_word_readiness_mocks(tmp_path
         assert calls == [{"settings_path": tmp_path / "settings.json"}]
     finally:
         client.close()
+
+
+def test_build_app_response_diagnostics_do_not_probe_os_listeners(tmp_path: Path, monkeypatch) -> None:
+    def forbidden_listener_probe(*_args, **_kwargs):
+        raise AssertionError("API fixture crossed the operating-system listener boundary")
+
+    monkeypatch.setattr(shadow_runtime, "detect_listener_pid", forbidden_listener_probe)
+    monkeypatch.setattr(gmail_focus_host, "_run_python_runtime_probe", forbidden_listener_probe)
+    with _build_app(tmp_path, monkeypatch) as client:
+        for _ in range(3):
+            response = client.get("/api/translation/arabic-review/state")
+            assert response.status_code == 200
+            metadata = json.loads(_runtime_paths(tmp_path).runtime_metadata_path.read_text(encoding="utf-8"))
+            assert metadata["listener_ownership"]["status"] == "available"
+        capabilities = client.get("/api/capabilities")
+        assert capabilities.status_code == 200
+        assert capabilities.json()["capability_flags"]["gmail_bridge"]["status"] == "warn"
 
 
 def test_shadow_web_bootstrap_and_save_row_flow(tmp_path: Path, monkeypatch) -> None:
@@ -16112,10 +16155,16 @@ console.log(JSON.stringify({
     assert results["built"]["batchFinalize"] == {
         "profile_id": f"profile-{malicious}",
         "output_filename": f"final-{malicious}.pdf",
+        "recipient_block": "",
+        "include_translator_declaration": False,
+        "translator_declaration_text": "",
     }
     assert results["built"]["batchFinalizeDefaults"] == {
         "profile_id": "",
         "output_filename": "",
+        "recipient_block": "",
+        "include_translator_declaration": False,
+        "translator_declaration_text": "",
     }
     assert results["built"]["interpretationFinalize"] == {
         "form_values": {
@@ -34169,6 +34218,9 @@ def test_shadow_web_gmail_finalize_routes_and_attachment_file(tmp_path: Path, mo
         job_id,
         form_values,
         row_id,
+        ordinary_layout_manager=None,
+        baseline_id=None,
+        expected_delivery_generation=None,
     ):
         recorded["confirm_current"] = {
             "runtime_mode": runtime_mode,
@@ -34198,6 +34250,9 @@ def test_shadow_web_gmail_finalize_routes_and_attachment_file(tmp_path: Path, mo
         profile_id,
         build_sha="",
         asset_version="",
+        recipient_block="",
+        include_translator_declaration=False,
+        translator_declaration_text="",
     ):
         recorded["finalize_batch"] = {
             "runtime_mode": runtime_mode,
@@ -34807,7 +34862,7 @@ def test_reviewed_docx_job_status_and_save_use_owned_current_artifact(tmp_path: 
         assert saved.status_code == 200
         assert saved.json()["normalized_payload"]["word_count"] == 227
         assert saved.json()["normalized_payload"]["expected_total"] == 20.43
-        assert saved.json()["normalized_payload"]["profit"] == 20.34
+        assert saved.json()["normalized_payload"]["profit"] is None
         assert saved.json()["saved_result"]["translated_docx_path"] == str(docx_path)
         assert seed["word_count"] == 228
 

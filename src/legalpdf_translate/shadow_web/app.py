@@ -27,6 +27,8 @@ from legalpdf_translate.browser_formatting_review import BrowserFormattingReview
 from legalpdf_translate.shadow_web.formatting_review_api import DisabledFormattingReviews, FormattingReviewRoutes
 from legalpdf_translate.saved_docx_layout_service import SavedDocxLayoutService
 from legalpdf_translate.shadow_web.saved_docx_layout_api import SavedDocxLayoutRoutes, default_saved_docx_layout_root
+from legalpdf_translate.shadow_web.ordinary_layout_routes import OrdinaryLayoutRoutes
+from legalpdf_translate.ordinary_layout_integration import BrowserOrdinaryLayouts, delivery_job_snapshot, open_layout_artifact, owned_form_values
 from legalpdf_translate.browser_gmail_bridge import BrowserLiveBridgeSyncResult, BrowserLiveGmailBridgeManager
 from legalpdf_translate.browser_pdf_bundle import (
     browser_pdf_bundle_manifest_path,
@@ -197,6 +199,11 @@ class BrowserAppServices:
     formatting_reviews_factory: Callable[[Any], Any] | None = None
     saved_docx_layout_factory: Callable[..., Any] | None = None
     saved_docx_layout_root: Callable[..., Path] | None = None
+    ordinary_layout_factory: Callable[..., Any] | None = None
+    ordinary_layout_root: Callable[..., Path] | None = None
+    ordinary_layout_provider_factory: Callable[..., Any] | None = None
+    ordinary_layout_accounting_factory: Callable[..., Any] | None = None
+    ordinary_layout_policy: Any = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -942,6 +949,7 @@ def _validation_error_response(
     message: str,
     validation_error: Mapping[str, Any] | None = None,
     status_code: int = 422,
+    capability_flags: Mapping[str, Any] | None = None,
 ) -> JSONResponse:
     normalized_payload: dict[str, Any] = {}
     diagnostics: dict[str, Any] = {"error": message}
@@ -956,6 +964,7 @@ def _validation_error_response(
                 "status": "failed",
                 "normalized_payload": normalized_payload,
                 "diagnostics": diagnostics,
+                "capability_flags": capability_flags,
             },
         ),
         status_code=status_code,
@@ -1532,6 +1541,35 @@ def create_shadow_app(
     app.state.source_review_routes = SourceReviewRoutes(app, context_for=_context, target_for=_active_target)
     app.state.formatting_review_routes = FormattingReviewRoutes(app, context_for=_context, target_for=_active_target)
     app.state.saved_docx_layout_routes = SavedDocxLayoutRoutes(app, context_for=_context)
+    ordinary_layouts = BrowserOrdinaryLayouts(context_for=_context)
+    app.state.ordinary_layouts = ordinary_layouts
+    app.state.ordinary_layout_routes = OrdinaryLayoutRoutes(app, manager_for=ordinary_layouts.manager_for)
+
+    @app.post("/api/translation/jobs/{job_id}/layout/budget")
+    async def api_ordinary_layout_budget(request: Request, job_id: str):
+        from .ordinary_layout_routes import payload, response, error_response
+        from .source_review_api import explicit_scope
+        from starlette.concurrency import run_in_threadpool
+        try:
+            mode, workspace_id = explicit_scope(request, {})
+            data = await payload(request, {"baseline_id", "expected_generation", "authorization_nonce", "cap_usd"})
+            manager = ordinary_layouts.manager_for(request, mode, workspace_id)
+            return response(await run_in_threadpool(ordinary_layouts.authorize, manager, job_id, data))
+        except Exception as exc:
+            return error_response(exc)
+
+    @app.post("/api/translation/jobs/{job_id}/layout/open")
+    async def api_ordinary_layout_open(request: Request, job_id: str):
+        from .ordinary_layout_routes import payload, response, error_response
+        from .source_review_api import explicit_scope
+        from starlette.concurrency import run_in_threadpool
+        try:
+            mode, workspace_id = explicit_scope(request, {})
+            data = await payload(request, {"baseline_id", "artifact_id", "expected_generation"})
+            manager = ordinary_layouts.manager_for(request, mode, workspace_id)
+            return response(await run_in_threadpool(open_layout_artifact, manager, job_id, data))
+        except Exception as exc:
+            return error_response(exc)
 
     @app.get("/static-build/{asset_version}/{asset_path:path}", name="static_build")
     async def versioned_static_asset(asset_version: str, asset_path: str) -> Response:
@@ -2838,6 +2876,9 @@ def create_shadow_app(
                 job_id=job_id,
                 form_values=dict(payload.get("form_values", {})),
                 row_id=payload.get("row_id"),
+                ordinary_layout_manager=ordinary_layouts.manager_for(request, target.mode, target.workspace_id),
+                baseline_id=payload.get("baseline_id"),
+                expected_delivery_generation=payload.get("expected_delivery_generation"),
             )
         except ValueError as exc:
             return _validation_error_response(context, target, message=str(exc))
@@ -2861,6 +2902,9 @@ def create_shadow_app(
                 profile_id=str(payload.get("profile_id", "") or "").strip() or None,
                 build_sha=context.build_identity.head_sha,
                 asset_version=context.asset_version,
+                recipient_block=payload.get("recipient_block", ""),
+                include_translator_declaration=payload.get("include_translator_declaration", False),
+                translator_declaration_text=payload.get("translator_declaration_text", ""),
             )
         except ValueError as exc:
             return _validation_error_response(context, target, message=str(exc))
@@ -3039,6 +3083,11 @@ def create_shadow_app(
         if job is None:
             return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
         try:
+            if job.get("status") == "completed" and job.get("job_kind") == "translate":
+                manager = ordinary_layouts.manager_for(request, target.mode, target.workspace_id)
+                state = manager.state(job_id)
+                job = {**job, "ordinary_layout": state}
+                job, _ = delivery_job_snapshot(manager, job)
             job = refresh_completed_translation_metrics(job)
         except ValueError as exc:
             # Viewing the original job/report remains available if its artifact moved.
@@ -3176,7 +3225,12 @@ def create_shadow_app(
         if _owned_translation_job(context, target, job_id) is None:
             return JSONResponse({"status": "failed", "diagnostics": {"error": "Translation job was not found."}}, status_code=404)
         try:
-            path = context.translation_jobs.job_artifact_path(job_id=job_id, artifact_kind=artifact_kind)
+            if artifact_kind == "output_docx":
+                job, _ = delivery_job_snapshot(ordinary_layouts.manager_for(request, target.mode, target.workspace_id),
+                    _owned_translation_job(context, target, job_id))
+                path = translation_job_docx_path(job)
+            else:
+                path = context.translation_jobs.job_artifact_path(job_id=job_id, artifact_kind=artifact_kind)
         except ValueError as exc:
             return JSONResponse(
                 {"status": "failed", "diagnostics": {"error": str(exc)}},
@@ -3228,14 +3282,19 @@ def create_shadow_app(
                         ),
                     )
         try:
+            if job is not None:
+                job, _ = delivery_job_snapshot(ordinary_layouts.manager_for(request, target.mode, target.workspace_id), job,
+                    mutation=True, baseline_id=payload.get("baseline_id"),
+                    expected_delivery_generation=payload.get("expected_delivery_generation"))
             word_count_docx = translation_job_docx_path(job) if job is not None else None
             response = save_translation_row(
                 settings_path=target.data_paths.settings_path,
                 job_log_db_path=target.data_paths.job_log_db_path,
-                form_values=dict(payload.get("form_values", {})),
+                form_values=owned_form_values(job, payload.get("form_values", {})) if job is not None else dict(payload.get("form_values", {})),
                 seed_payload=job["result"]["save_seed"] if job is not None else payload.get("seed_payload"),
                 row_id=row_id,
                 word_count_docx=word_count_docx,
+                owned_run_id=job["result"]["save_seed"].get("run_id") if job is not None else None,
             )
         except ValueError as exc:
             return _validation_error_response(context, target, message=str(exc))
@@ -3250,7 +3309,9 @@ def create_shadow_app(
         try:
             job = _translation_job_or_error(context, target, job_id=job_id) if job_id else None
         except ValueError as exc:
-            return _validation_error_response(context, target, message=str(exc), status_code=404)
+            return _validation_error_response(
+                context, target, message=str(exc), status_code=404, capability_flags={}
+            )
         try:
             payload = context.arabic_reviews.state_for_workspace(
                 runtime_mode=target.mode,
@@ -3259,7 +3320,7 @@ def create_shadow_app(
                 completion_key=completion_key,
             )
         except ValueError as exc:
-            return _validation_error_response(context, target, message=str(exc))
+            return _validation_error_response(context, target, message=str(exc), capability_flags={})
         return JSONResponse(
             _merge_response(
                 context,
@@ -3268,6 +3329,7 @@ def create_shadow_app(
                     "status": "ok",
                     "normalized_payload": {"arabic_review": payload},
                     "diagnostics": {},
+                    "capability_flags": {},
                 },
             )
         )
@@ -3291,7 +3353,7 @@ def create_shadow_app(
                 completion_key=completion_key,
             )
         except ValueError as exc:
-            return _validation_error_response(context, target, message=str(exc))
+            return _validation_error_response(context, target, message=str(exc), capability_flags={})
         return JSONResponse(
             _merge_response(
                 context,
@@ -3300,6 +3362,7 @@ def create_shadow_app(
                     "status": "ok",
                     "normalized_payload": {"arabic_review": arabic_review},
                     "diagnostics": diagnostics,
+                    "capability_flags": {},
                 },
             )
         )
@@ -3323,7 +3386,7 @@ def create_shadow_app(
                 completion_key=completion_key,
             )
         except ValueError as exc:
-            return _validation_error_response(context, target, message=str(exc))
+            return _validation_error_response(context, target, message=str(exc), capability_flags={})
         return JSONResponse(
             _merge_response(
                 context,
@@ -3332,6 +3395,7 @@ def create_shadow_app(
                     "status": "ok",
                     "normalized_payload": {"arabic_review": arabic_review},
                     "diagnostics": diagnostics,
+                    "capability_flags": {},
                 },
             )
         )
@@ -3356,7 +3420,7 @@ def create_shadow_app(
                 completion_key=completion_key,
             )
         except ValueError as exc:
-            return _validation_error_response(context, target, message=str(exc))
+            return _validation_error_response(context, target, message=str(exc), capability_flags={})
         return JSONResponse(
             _merge_response(
                 context,
@@ -3365,6 +3429,7 @@ def create_shadow_app(
                     "status": "ok",
                     "normalized_payload": {"arabic_review": arabic_review},
                     "diagnostics": {},
+                    "capability_flags": {},
                 },
             )
         )

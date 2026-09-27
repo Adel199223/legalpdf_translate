@@ -133,6 +133,10 @@ class GmailBatchConfirmedItem:
     case_city: str
     court_email: str
 
+    delivery_sha256: str = ""
+    delivery_generation: int | None = None
+    delivery_selection_id: str = ""
+
     @property
     def consistency_signature(self) -> GmailBatchConsistencySignature:
         return gmail_batch_consistency_signature(
@@ -307,6 +311,9 @@ def build_gmail_batch_session_payload(session: GmailBatchSession) -> dict[str, A
             "translated_docx_basename": item.translated_docx_path.name,
             "staged_translated_docx_path": str(item.staged_translated_docx_path.expanduser().resolve()),
             "staged_translated_docx_basename": item.staged_translated_docx_path.name,
+            "delivery_sha256": item.delivery_sha256,
+            "delivery_generation": item.delivery_generation,
+            "delivery_selection_id": item.delivery_selection_id,
         }
         for item in session.confirmed_items
     ]

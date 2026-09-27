@@ -31,6 +31,7 @@ from .user_profile import (
     UserProfile,
 )
 from .types import OcrApiProvider
+from .pricing import DEFAULT_TRANSLATION_RATE, nonnegative_decimal
 
 APP_FOLDER_NAME = "LegalPDFTranslate"
 SETTINGS_FILENAME = "settings.json"
@@ -288,7 +289,7 @@ DEFAULT_JOBLOG_SETTINGS: dict[str, Any] = {
     "vocab_job_types": list(DEFAULT_VOCAB_JOB_TYPES),
     "vocab_court_emails": list(DEFAULT_VOCAB_COURT_EMAILS),
     "court_emails_by_city": {},
-    "default_rate_per_word": {"EN": 0.08, "FR": 0.08, "AR": 0.09},
+    "default_rate_per_word": {lang: DEFAULT_TRANSLATION_RATE for lang in ("EN", "FR", "AR")},
     "joblog_visible_columns": list(DEFAULT_JOBLOG_VISIBLE_COLUMNS),
     "joblog_column_widths": {},
     "metadata_ai_enabled": True,
@@ -490,16 +491,10 @@ def _coerce_rate_map(value: object, *, fallback: dict[str, float]) -> dict[str, 
         return dict(fallback)
     output = dict(fallback)
     for lang in ("EN", "FR", "AR"):
-        raw = value.get(lang)
-        if isinstance(raw, (int, float)):
-            output[lang] = float(raw)
-        elif isinstance(raw, str):
-            cleaned = raw.strip().replace(",", ".")
-            if cleaned:
-                try:
-                    output[lang] = float(cleaned)
-                except ValueError:
-                    continue
+        try:
+            output[lang] = float(nonnegative_decimal(value.get(lang), "Rate/word"))
+        except ValueError:
+            continue
     return output
 
 

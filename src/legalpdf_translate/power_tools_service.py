@@ -735,6 +735,15 @@ def build_power_tools_bootstrap(
 
 
 def save_browser_settings(*, settings_path: Path, values: dict[str, object]) -> dict[str, object]:
+    from .pricing import nonnegative_decimal
+
+    rates = dict(load_joblog_settings_from_path(settings_path)["default_rate_per_word"])
+    if "default_rate_per_word" in values:
+        supplied_rates = values["default_rate_per_word"]
+        if not isinstance(supplied_rates, dict) or set(supplied_rates) - {"EN", "FR", "AR"}:
+            raise ValueError("Default rates must map EN, FR and AR to nonnegative numbers.")
+        for language, rate in supplied_rates.items():
+            rates[language] = float(nonnegative_decimal(rate, f"{language} rate/word"))
     provider_text = str(values.get("ocr_api_provider", "openai") or "openai")
     provider = normalize_ocr_api_provider(provider_text)
     ocr_env = str(values.get("ocr_api_key_env_name", "") or "").strip() or default_ocr_api_env_name(provider)
@@ -775,7 +784,7 @@ def save_browser_settings(*, settings_path: Path, values: dict[str, object]) -> 
         "metadata_ai_enabled": bool(values.get("metadata_ai_enabled", True)),
         "metadata_photo_enabled": bool(values.get("metadata_photo_enabled", True)),
         "service_equals_case_by_default": bool(values.get("service_equals_case_by_default", True)),
-        "default_rate_per_word": dict(values.get("default_rate_per_word", {}) or {}),
+        "default_rate_per_word": rates,
         "ocr_mode": gui_values["ocr_mode_default"],
         "ocr_engine": gui_values["ocr_engine_default"],
         "ocr_api_provider": gui_values["ocr_api_provider"],

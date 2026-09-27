@@ -248,3 +248,39 @@ def test_reopened_artifact_and_mapping_tampering_is_rejected(mutation):
         mapping["docx_sha256"] = model._sha(output)
     with pytest.raises(model.SavedDocxLayoutError):
         writer.validate_built_docx(output, mapping, original_docx=raw, snapshot=snapshot, pages=pages, decisions=dec)
+
+
+@pytest.mark.parametrize("lang", ["EN", "FR", "AR"])
+def test_successive_equal_column_bands_pair_headings_and_bodies_without_reordering(lang):
+    texts = {
+        "EN": ["Notice", "Response", "Keep the notice condition.", "Response remains optional."],
+        "FR": ["Avis", "Réponse", "Conserver la condition de l'avis.", "La réponse reste facultative."],
+        "AR": ["إشعار", "رد", "يُحفظ شرط الإشعار", "يبقى الرد اختيارياً"],
+    }[lang]
+    def edit(doc):
+        if lang == "AR":
+            for paragraph in doc.paragraphs:
+                _add_rtl_flags(paragraph)
+                for run in paragraph.runs:
+                    _set_rtl_run_props(run, bidi_lang="ar-SA")
+    raw = document_bytes(texts, edit)
+    snapshot, pages, decisions = reviewed(raw, lang)
+    ids = [row["id"] for row in snapshot["paragraphs"]]
+    decisions["bands"] = [{"kind": "columns", "widths_pct": [50, 50], "gutter_pt": 12,
+        "cells": [{"groups": [{"paragraph_ids": [identifier], "panel": False}]}
+                  for identifier in pair]} for pair in (ids[:2], ids[2:])]
+    for choice in decisions["paragraphs"][:2]:
+        choice.update(role="heading", heading_level=1, heading_size_pt=12, bold=True)
+    artifact = writer.build_docx(raw, snapshot, pages, decisions)
+    root = xml(artifact.docx_bytes)
+    tables = root.find(qn("w:body")).findall(qn("w:tbl"))
+    assert len(tables) == 2
+    grids = [[n.get(qn("w:w")) for n in table.find(qn("w:tblGrid"))] for table in tables]
+    assert grids[0] == grids[1] and grids[0][0] == grids[0][1]
+    cells = [table.find(qn("w:tr")).findall(qn("w:tc")) for table in tables]
+    assert [["".join(cell.itertext()) for cell in row] for row in cells] == [texts[:2], texts[2:]]
+    assert artifact.source_map["exact_text_preserved"] and artifact.source_map["logical_order_preserved"]
+    output_rows = [located(root, row["location"]) for row in artifact.source_map["paragraphs"]]
+    assert ["".join(p.itertext()) for p in output_rows] == texts
+    if lang == "AR":
+        assert all(p.find(qn("w:pPr") + "/" + qn("w:bidi")).get(qn("w:val")) == "1" for p in output_rows)

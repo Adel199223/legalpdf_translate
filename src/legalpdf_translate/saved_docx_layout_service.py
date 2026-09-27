@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import wraps
 import hashlib
@@ -53,6 +54,21 @@ class SavedDocxLayoutServiceError(ValueError):
         self.code = code if code.startswith("saved_docx_layout_") else "saved_docx_layout_" + code
         self.status = self.status_code = status
         super().__init__(self.code)
+
+
+@dataclass(frozen=True)
+class VerifiedSavedLayoutArtifact:
+    """Server-only verified bytes and provenance, never a browser-supplied path."""
+    docx_bytes: bytes
+    receipt: dict
+    source_map: dict
+    review_id: str
+    artifact_id: str
+    generation: int
+    current_generation: int
+    target_lang: str
+    source_pdf_sha256: str
+    saved_docx_sha256: str
 
 
 def _fail(code, status=422):
@@ -756,3 +772,20 @@ class SavedDocxLayoutService:
                 _fail("artifact_not_found", 404)
             attempt = folder / "builds" / row["operation_nonce"]
             return self._verified_artifact(folder, attempt, _decode(_read(attempt / "intent.json")))[kind]
+
+    @_public
+    def verified_artifact(self, review_id, artifact_id):
+        """Atomically verify the complete stored build for a trusted caller."""
+        _identifier(artifact_id)
+        with self._scope(review_id) as folder:
+            manifest, _, _ = self._load(folder, images=True)
+            generations, _, _ = self._generations(folder)
+            builds, _ = self._builds(folder, manifest, generations)
+            row = next((r for r in builds if r.get("artifact_id") == artifact_id and r["status"] == "built"), None)
+            if row is None:
+                _fail("artifact_not_found", 404)
+            attempt = folder / "builds" / row["operation_nonce"]
+            raw = self._verified_artifact(folder, attempt, _decode(_read(attempt / "intent.json")))
+            return VerifiedSavedLayoutArtifact(raw["docx"], _decode(raw["receipt"]), _decode(raw["source_map"]),
+                review_id, artifact_id, row["generation"], len(generations), manifest["target_lang"],
+                manifest["files"]["source.pdf"]["sha256"], manifest["files"]["original.docx"]["sha256"])
