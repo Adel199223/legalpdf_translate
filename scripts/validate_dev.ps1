@@ -241,7 +241,9 @@ $fullExtraCommands = @(
             "tests/test_translation_honorarios_options.py", "tests/test_gmail_fee_options_browser.py",
             "tests/test_gmail_start_page_input.py", "tests/test_shadow_web_arabic_review_passive.py",
             "tests/test_docx_arabic_folio.py", "tests/test_resources_loader.py",
-            "tests/test_qt_app_state.py", "tests/test_formatting_policy_isolation.py")
+            "tests/test_qt_app_state.py", "tests/test_formatting_policy_isolation.py",
+            "tests/test_qt_cleanup.py", "tests/test_qt_arabic_review_lifecycle.py",
+            "tests/test_test_shards.py")
     }
 )
 

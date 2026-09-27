@@ -69,11 +69,13 @@ def make_plan(node_ids, shard_count=1, timings=None):
     per_case = statistics.median(rates) if rates else 1.0
     weights = {name: float(timings.get(name, len(nodes) * per_case)) for name, nodes in files.items()}
     # Qt focus/window tests share a process-global GUI resource. Keep this
-    # family together, including future files following the existing prefix.
+    # family together for both test_qt_* and test_*_qt naming conventions.
     units = {}
     for name in files:
         basename = PurePosixPath(name).name
-        affinity = "qt" if basename.startswith("test_qt_") or basename == "test_honorarios_docx.py" else name
+        is_qt = (basename.startswith("test_qt_") or basename.endswith("_qt.py")
+                 or basename == "test_honorarios_docx.py")
+        affinity = "qt" if is_qt else name
         units.setdefault(affinity, []).append(name)
     assignments = [[] for _ in range(shard_count)]
     totals = [0.0] * shard_count

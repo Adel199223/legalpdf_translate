@@ -40,13 +40,20 @@ def test_new_files_are_automatically_assigned_with_a_positive_estimated_weight()
     assert all(part["node_ids"] for part in plan["shards"])
 
 
-def test_qt_family_and_honorarios_remain_on_one_worker_including_new_qt_files():
-    nodes = nodes_for("test_qt_app_state", "test_qt_new_window", "test_honorarios_docx",
-                      "test_plain_a", "test_plain_b", "test_plain_c")
-    plan = shards.make_plan(nodes, 4)
-    owners = {part["index"] for part in plan["shards"] for name in part["files"]
-              if "test_qt_" in name or "honorarios" in name}
+@pytest.mark.parametrize("count", [2, 4])
+def test_qt_family_and_honorarios_remain_on_one_worker_including_new_qt_files(count):
+    qt_names = ("test_qt_app_state", "test_translation_finance_qt", "test_qt_cleanup",
+                "test_dialog_qt", "test_honorarios_docx")
+    nodes = nodes_for(qt_names[0], "test_qtish_window", *qt_names[1:],
+                      "test_plain_qt_metadata", "test_plain")
+    qt_files = {f"tests/{name}.py" for name in qt_names}
+    plan = shards.make_plan(nodes, count)
+    owners = [part for part in plan["shards"] if qt_files.intersection(part["files"])]
     assert len(owners) == 1
+    assert set(owners[0]["files"]) == qt_files
+    assert owners[0]["node_ids"] == [node for node in nodes if shards.test_file(node) in qt_files]
+    assigned = [node for part in plan["shards"] for node in part["node_ids"]]
+    assert sorted(assigned) == sorted(nodes) and len(assigned) == len(set(assigned))
     assert all(part["node_ids"] for part in plan["shards"])
 
 

@@ -2109,7 +2109,10 @@ class QtArabicDocxReviewDialog(QDialog):
             role="form",
             preferred_size=QSize(760, 260),
         )
-        QTimer.singleShot(0, self._start_review)
+        self._startup_timer = QTimer(self)
+        self._startup_timer.setSingleShot(True)
+        self._startup_timer.timeout.connect(self._start_review)
+        self._startup_timer.start(0)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -2165,6 +2168,7 @@ class QtArabicDocxReviewDialog(QDialog):
         self.cancel_btn.clicked.connect(self.reject)
 
     def done(self, result: int) -> None:
+        self._startup_timer.stop()
         self._poll_timer.stop()
         super().done(result)
 
