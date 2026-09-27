@@ -161,6 +161,10 @@ Keep attempts, actual provider dispatches and settlement separate. A validation 
   - keep the main warning concise and place raw diagnostics in expandable details only
   - preserve any usable local artifact and offer one calm recovery path instead of stacking follow-up warnings
 
+## Qt test cleanup and native fault evidence
+
+Tests that manually pump Qt events must not treat `processEvents()` as proof that `deleteLater()` objects were destroyed. Keep external-launch guards active, explicitly drain deferred deletion on the GUI thread, and test destruction of retained widget/child wrappers. Preserve failing process logs and exit status before changing cleanup. For a native fault, direct stdout/stderr with Python faulthandler retains diagnostic frames that a PowerShell error pipeline can truncate. A focused mixed-module run tests the observed ordering; hosted sharding may use a different history. Keep Qt test modules in the declared affinity group and retain meaningful assertions.
+
 ## Handoff Checklist
 1. State whether the test/runtime used isolated state or explicit live-state opt-in.
 2. State the expected listener port/process ownership when localhost runtime is involved.
