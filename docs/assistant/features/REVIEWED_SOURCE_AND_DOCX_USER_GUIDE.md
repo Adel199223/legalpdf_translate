@@ -6,7 +6,27 @@ Availability: these optional controls are available in builds containing the rev
 
 Use this optional workflow to check the source text before translation, then arrange the saved translation into editable paragraphs, tables, headers and footers. Ordinary **Translate** remains available. Your acceptance records your decisions; it does not certify legal accuracy or guarantee the final Word layout.
 
-## Before you start
+## Current ordinary-output limitation
+
+Ordinary translations can produce readable text while losing the source's heading emphasis, columns, notice panels and header arrangement. This is especially visible with scanned PDFs translated from images when no source layout blocks are retained. The current formatting workflow below requires its own reviewed-source context; it cannot simply be attached afterward to any completed Gmail job or hand-edited Word file.
+
+The separate **Format a saved Word document** workflow is available in builds containing the completed [source-layout fidelity implementation](../exec_plans/completed/2026-09-26_source_layout_fidelity.md). Complete-page review accepted fictional Arabic, English and French examples and a separate five-page English copy with recorded qualifications. Check the current handoff for the verified applied build. The workflow imports your current Word file and original PDF, lets you associate unchanged paragraphs with visible source regions, and builds a separate editable copy. It does not automatically improve every ordinary translation.
+
+## Format a saved Word document
+
+In a build containing this feature, open **New Job → Format a saved Word document**. This local workflow needs no new translation or OCR call. It accepts supported paragraph-only Word documents with one section; complex tables, objects, revisions and unsupported fields are declined while originals remain intact.
+
+1. Select the original PDF, current saved DOCX and its English, French or Arabic language, then choose **Import for formatting**. Existing Word corrections and paragraph order are fixed in the imported snapshot.
+2. Select consecutive Word paragraphs, draw their matching region on the source page, and choose **Associate selected region**. For unmatched wording, enter an explicit reason and choose **Record retained-unmapped reason**. Every paragraph remains in the copy.
+3. Choose roles, headings, spacing and emphasis. Select an exact phrase for partial bold, italic or underline. Protected literals and direction controls cannot be split. Use consecutive ranges for physical columns and shaded notice panels; page-boundary paragraphs stay in plain flow.
+4. Review each complete source page, enter the reviewer and note, and confirm the complete document review. Save the review, then choose **Build separate Word copy**. Formatting edits require a renewed review. The schematic view does not certify Word rendering.
+5. Download the separate copy and compare every output page with the source, including Arabic glyphs/numbers, headings, columns and notices. Check the actual source image before marking wording unmatched. Preserve the original. Source-map and preservation-receipt downloads retain the review evidence; neither establishes legal accuracy or rendered acceptance. Natural wrapping and spacing can differ, and existing paragraph order is preserved even when the source uses a different order.
+
+**Saved formatting reviews** reopens work after restart. After a lost response, read the current saved review and recover the exact operation. An incomplete build needs an explicit new attempt; it is not replayed automatically. Unsaved local edits need an explicit discard before switching to another review. Later external Word edits require a new import.
+
+The workflow retains the original wording and fonts, uses editable layout tables for columns/panels and allows natural page growth. It does not recreate logos, stamps or an exact form facsimile. Saved defaults, old translation jobs and Gmail drafts are separate from this formatting copy.
+
+## Before you start a reviewed-source translation
 
 Use the normal manual PDF upload. This source-review workflow needs browser-rendered pages, the complete page selection, retained intermediates and an available local OCR baseline. It declines when OCR is off, only an API OCR engine is selected, local evidence is unavailable or only part of the document is selected. It does not purchase an OCR fallback automatically.
 
@@ -15,6 +35,8 @@ Check your saved settings first. If you deliberately change them after acquiring
 You can use the initial settings before saving preferences in the current published build. Source and formatting review do not create a settings file just to continue. Local OCR and the other prerequisites above still apply; see the current handoff for the installed build.
 
 ## Quick Start (No Technical Background)
+
+The steps below apply to reviewed-source translation and its completed-job formatting review. Use the separate saved-Word section above for an existing DOCX.
 
 ### 1. Review and accept the source
 

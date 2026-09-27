@@ -215,6 +215,13 @@ $fullExtraCommands = @(
             "tests/test_ordinary_formatting_review_service.py", "tests/test_ordinary_formatting_options.py",
             "tests/test_browser_formatting_review.py", "tests/test_shadow_web_formatting_review_api.py",
             "tests/test_formatting_review_browser_state.py", "tests/test_formatting_review_cli.py")
+    },
+    @{
+        Executable = $venvPython
+        Arguments = @("-m", "pytest", "-q", "--durations=10",
+            "tests/test_saved_docx_layout.py", "tests/test_saved_docx_layout_writer.py",
+            "tests/test_saved_docx_layout_service.py", "tests/test_shadow_web_saved_docx_layout_api.py",
+            "tests/test_saved_docx_layout_browser_state.py")
     }
 )
 
