@@ -214,7 +214,8 @@ $fullExtraCommands = @(
             (Join-Path $projectRoot ("tmp/validation/formatting-" + [guid]::NewGuid().ToString("N"))), "--",
             "tests/test_ordinary_formatting_review_service.py", "tests/test_ordinary_formatting_options.py",
             "tests/test_browser_formatting_review.py", "tests/test_shadow_web_formatting_review_api.py",
-            "tests/test_formatting_review_browser_state.py", "tests/test_formatting_review_cli.py")
+            "tests/test_formatting_review_browser_state.py", "tests/test_formatting_review_cli.py",
+            "tests/test_run_docx_formatting_bounded_reads.py")
     },
     @{
         Executable = $venvPython
@@ -222,6 +223,24 @@ $fullExtraCommands = @(
             "tests/test_saved_docx_layout.py", "tests/test_saved_docx_layout_writer.py",
             "tests/test_saved_docx_layout_service.py", "tests/test_shadow_web_saved_docx_layout_api.py",
             "tests/test_saved_docx_layout_browser_state.py")
+    },
+    @{
+        Executable = $venvPython
+        Arguments = @("-m", "pytest", "-q", "--durations=10",
+            "tests/test_ordinary_layout_contracts.py", "tests/test_ordinary_layout_service.py",
+            "tests/test_ordinary_layout_manager.py", "tests/test_ordinary_layout_delivery_integration.py",
+            "tests/test_shadow_web_ordinary_layout_api.py", "tests/test_ordinary_layout_browser_state.py",
+            "tests/test_ordinary_layout_parent_races.py", "tests/test_gmail_layout_confirmation_browser.py",
+            "tests/test_gmail_confirmation_prevalidation.py")
+    },
+    @{
+        Executable = $venvPython
+        Arguments = @("-m", "pytest", "-q", "--durations=10",
+            "tests/test_pricing.py", "tests/test_translation_finance_browser_state.py",
+            "tests/test_translation_finance_qt.py", "tests/test_translation_completion_metrics.py",
+            "tests/test_translation_honorarios_options.py", "tests/test_gmail_fee_options_browser.py",
+            "tests/test_gmail_start_page_input.py", "tests/test_shadow_web_arabic_review_passive.py",
+            "tests/test_docx_arabic_folio.py", "tests/test_resources_loader.py")
     }
 )
 

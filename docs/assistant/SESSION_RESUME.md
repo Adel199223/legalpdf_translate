@@ -8,7 +8,19 @@ This is the roadmap anchor file for `resume master plan`, `where did we leave of
 
 **Dormant roadmap state:** no active roadmap currently open on this worktree. New scoped work uses normal ExecPlan flow. Older stage tokens and completed campaigns do not create new work.
 
-## Authoritative worktree and publication provenance
+## Current scoped task and authoritative worktree — 2026-09-27
+
+Implementation and qualified acceptance for [future-translation workflow fixes](exec_plans/completed/2026-09-27_future_translation_workflow_fixes.md) are complete. The user's continuous goal covered significant issues for future translations, including EUR0.027 per word for Arabic, English and French. Authoring used `C:/Users/FA507/.codex/worktrees/word-startup-readiness/legalpdf_translate`, branch `codex/two-latest-unsent-retest-20260927`, with PR311/main as the original base. Final Full05 passed1,134 selected cases/nine expected deselections in785.750seconds with598 frozen source/test/script hashes unchanged. All final EN/FR/AR native pages, source/output review, delivery selection and isolated case saves have qualified acceptance; paid/native operations and runtimes are retired/consumed.
+
+Read private `future_translation_workflow_fixes_20260927_01/publication_01/publication_receipt.json` for the final PR/CI/merge/applied identity and cleanup. The separate installed-rate receipt and final application audit bind only the authorized EN/FR/AR saved-rate correction, preserving unrelated settings and all historical rows/outputs/draft copies. If these terminal receipts are absent, finish only the remaining authorized publication/application lifecycle; if present and complete, this scope has no remaining task. Preserve USD15, knownUSD7.75952080 and unchanged holdsUSD0.931, exposureUSD8.69052080. Current closeout guidance overrides the dated retest-only scope below.
+
+### Completed retest scope and evidence
+
+The [two latest unsent requests](exec_plans/completed/2026-09-27_two_latest_unsent_retest.md) completed qualified Arabic/English live browser workflows on unchanged clean canonical `main` at `2b831c26e7a858fb4e11ff3a8966112f39121c4a` (asset `15ed286b51e5`). Root's normal owned runtime shutdown and independent terminal reconciliation passed; the operation is retired/consumed. Read the current HANDOFF subsection and private `two_latest_unsent_retest_20260927_01/` terminal evidence for closure, not the superseded publication instructions below. The source-layout PR311 publication is already complete and must not be replayed.
+
+Current isolated docs branch is `codex/two-latest-unsent-retest-20260927`, using `C:/Users/FA507/.codex/worktrees/word-startup-readiness/legalpdf_translate`, based on canonical PR311. No product patch or further publication is authorized by this docs closeout. Preserve pending external-source registry edits, every old draft/output/default,72 rows with the old70 unchanged, USD15 ceiling and USD0.119 hold. Final user rate is EUR0.027/word for all languages; only new rows97/98 were corrected to EUR40.53/EUR30.73. Known spendUSD7.36186655 plus hold gives exposureUSD7.48086655. Manual formatting/draft integration, fee recalculation and passive native polling limitations are recorded in HANDOFF. No automated regression result is added by this live audit.
+
+## Historical source-layout worktree and publication provenance
 
 - Branch: `main`
 - Isolated authoring branch: `codex/source-layout-fidelity-20260926`. This is provenance, not the canonical resume marker used by shallow main CI checkouts.
@@ -19,6 +31,10 @@ This is the roadmap anchor file for `resume master plan`, `where did we leave of
 - Older test-performance, Gmail05, shadow06/shadow07 and historical multilingual live03 work remain completed evidence, distinct from `five_requests_live_03`.
 
 ## Next concrete action
+
+Inspect the current publication/application receipt named above. Complete any unfinished authorized release or narrow installed-rate correction; otherwise there is no remaining action for this completed scope. Preserve the reusable checkout and all private evidence. No more paid/native acceptance or Gmail action is needed, and no consumed translation, draft or helper should be replayed.
+
+### Historical next action (superseded by current task above)
 
 Local Stage3 work is complete and the user authorized commit/push/PR/CI/merge/application. Read private `source_layout_fidelity_20260926_01/publication_05/publication_receipt.json` for terminal status. If absent, complete only that approved lifecycle using the same checkout and preserved frozen validation; if complete, no active implementation or publication remains. The completed plan retains design, qualifications and failed attempts. Do not repeat accepted candidates or consumed native helpers. Preserve all private documents/drafts/defaults/accounting, USD15, historical USD10/USD0.119 hold and native01's unproven Word process. No paid or Gmail action is implied.
 
@@ -40,7 +56,9 @@ Preserve all 226 historical rows, the original USD10 ceiling, FRlong01's unknown
 
 ## Bounded evidence routes
 
-Current task evidence: `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/source_layout_fidelity_20260926_01/`. Original handoff/diagnosis/screenshots and every stage's exact beforeimages remain preserved. `design_02/` owns Stage1; `implementation_03/stage2_receipt_01.json` binds frozen implementation/tests; `visual_04/stage3_receipt_01.json` binds qualified final artifact acceptance. The completed plan owns design decisions, source-association correction and private helper failures. `publication_05/` separately retains beforeimages and the approved release lifecycle. Review receipts are separate from package/build receipts; do not rewrite either historical tier.
+Current retest evidence: `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/two_latest_unsent_retest_20260927_01/`. Read the terminal audit and per-request completed-review/rate addendum before relying on final state; `docs_closeout_01/beforeimages/` preserves exact documentation before this update.
+
+Completed source-layout evidence: `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/source_layout_fidelity_20260926_01/`. Original handoff/diagnosis/screenshots and every stage's exact beforeimages remain preserved. `design_02/` owns Stage1; `implementation_03/stage2_receipt_01.json` binds frozen implementation/tests; `visual_04/stage3_receipt_01.json` binds qualified final artifact acceptance. The completed plan owns design decisions, source-association correction and private helper failures. `publication_05/` separately retains beforeimages and the approved release lifecycle. Review receipts are separate from package/build receipts; do not rewrite either historical tier.
 
 Completed five-request evidence: `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/five_oldest_requests_20260926_01/`. Start with `operations/five_requests_live_03/independent_terminal_audit_01.json`, the completed parent plan and only the relevant per-request receipt. `reviews/five_drafts_final_counts_01.json`, `reviews/user_sent_first_three_confirmation_01.json` and the later `reviews/remaining_drafts_after_release_01.json` establish observed mail state. Phone publication is terminal in `phone_triplet_fix_01/publication_01/publication_receipt.json`. Prior publication, failed checks, frozen support and historical beforeimages remain intact.
 

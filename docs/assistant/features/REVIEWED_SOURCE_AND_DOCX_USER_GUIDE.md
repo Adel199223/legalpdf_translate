@@ -6,9 +6,29 @@ Availability: these optional controls are available in builds containing the rev
 
 Use this optional workflow to check the source text before translation, then arrange the saved translation into editable paragraphs, tables, headers and footers. Ordinary **Translate** remains available. Your acceptance records your decisions; it does not certify legal accuracy or guarantee the final Word layout.
 
-## Current ordinary-output limitation
+## Review a completed translation's layout
 
-Ordinary translations can produce readable text while losing the source's heading emphasis, columns, notice panels and header arrangement. This is especially visible with scanned PDFs translated from images when no source layout blocks are retained. The current formatting workflow below requires its own reviewed-source context; it cannot simply be attached afterward to any completed Gmail job or hand-edited Word file.
+Builds containing the future-translation update add **Source layout and delivery** to a completed ordinary translation, including Gmail work. Check [HANDOFF](../HANDOFF.md) for the applied build.
+
+1. Finish checking the wording first, including the Arabic Word review when required. Choose **Review source layout**. The app uses this job's original PDF and current Word document; no second upload is needed.
+2. Check the paragraph-to-page associations. For a scan or uncertain layout, associate the consecutive translated paragraphs with their source page and save the review. **Suggest source layout** can propose headings, emphasis, spacing, columns and notice panels from the page image. This is an optional paid action: the app shows a finite quote and requires an available API limit that includes the translation and every layout attempt. Opening the review is free, and manual formatting remains available.
+3. Inspect the proposals beside each complete source page. Check the region boxes, header and heading roles, emphasis, spacing, notice panels and physical columns. Correct regions and grouping manually where needed; a proposal can be wrong even when accepted by validation. It preserves the reviewed wording and does not mark the document reviewed for you. Save your source-review decisions, then choose **Build separate Word copy**.
+4. Open or download that exact copy and inspect every output page. Confirm **I inspected every page of this Word copy**, then choose **Use this copy for delivery**. Word opens a separate visual-review copy; editing that copy blocks acceptance. To correct wording, update the ordinary translation and prepare a fresh layout review.
+5. Save the case or confirm the Gmail attachment normally. Its word count, normal download and staged attachment use the selected document. Confirmation fixes the selected bytes. Later layout work cannot replace an already confirmed attachment. The provider output and reviewed baseline remain preserved separately.
+
+If the original layout is sufficient, expand **Keep the current translation's layout**, confirm your review and choose **Use current translation for delivery**. After preparation, an explicit delivery choice is required. A pending or uncertain layout operation must be recovered before saving. **Recover the same operation** checks its recorded result; it does not automatically repeat a paid call.
+
+Each suggested page has a four-minute request deadline and no automatic transport retry. A timeout can leave billing uncertain; recovery retains that evidence and does not release a hold or authorize another call.
+
+For a multi-page suggestion, **Stop after current page** stops later page requests. The current request settles normally, and completed proposals and recorded costs remain available for review. Stopping does not erase an uncertain charge or make a pending output ready for delivery.
+
+Manual corrections preserve the saved paragraph sequence. Where the source has two column headings followed by two bodies, successive equally sized column bands can align the headings and bodies without moving text. For Arabic, normally right-align paragraphs within their existing regions or cells, retaining genuine centered or justified treatments; do not mirror the physical columns. Give paired headings equal spacing above when the source places them on the same row. Review the actual Word result before selecting it.
+
+Recognizable structure is the aim. Natural wrapping, pagination and spacing can differ; logos, stamps and an exact form facsimile are not recreated. A formatting proposal or valid Word file does not certify translation accuracy.
+
+## Earlier ordinary-output limitation
+
+Ordinary translations can produce readable text while losing the source's heading emphasis, columns, notice panels and header arrangement. This is especially visible with scanned PDFs translated from images when no source layout blocks are retained. The older reviewed-source formatting workflow below requires its own context. Use the completed-translation workflow above in builds containing it, or the separate saved-Word workflow for an existing external document.
 
 The separate **Format a saved Word document** workflow is available in builds containing the completed [source-layout fidelity implementation](../exec_plans/completed/2026-09-26_source_layout_fidelity.md). Complete-page review accepted fictional Arabic, English and French examples and a separate five-page English copy with recorded qualifications. Check the current handoff for the verified applied build. The workflow imports your current Word file and original PDF, lets you associate unchanged paragraphs with visible source regions, and builds a separate editable copy. It does not automatically improve every ordinary translation.
 

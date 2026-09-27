@@ -1,0 +1,162 @@
+# Fix significant issues for future translations
+
+## Goal and non-goals
+
+Implement and verify the user's full follow-up goal: future Arabic, English and French translations use EUR0.027 per word; content/structure review and delivery work through the app; significant defects demonstrated by the two-request retest are corrected rather than hidden by manual output edits. Assess slow test organization where evidence justifies it. Existing reviewed outputs/drafts remain preserved and no email is sent.
+
+## Scope and authorization
+
+The current user explicitly requests continued work until all significant issues are solved for future translations, including pricing and structure. This authorizes implementation and the rate-specific future setting correction, superseding the earlier prohibition on promoting that incorrect rate. Preserve all unrelated saved choices, historical rows/documents/drafts, accounting evidence, USD15 ceiling and USD0.119 historical hold. Current known spend is USD7.36186655; exposure with hold USD7.48086655. Do not replay consumed paid/native operations. New paid acceptance, if necessary, needs a distinct bounded operation under the remaining allowance. No Send or signature.
+
+Use staged design, implementation and acceptance evidence, carrying forward the user's continuous authorization without requesting historical tokens again. Read the commit/publish workflow before any publication; preserve destructive/live-service boundaries. No database/schema backfill or retroactive historical price changes are part of this task.
+
+## Worktree provenance
+
+- Reuse `C:/Users/FA507/.codex/worktrees/word-startup-readiness/legalpdf_translate`.
+- Branch `codex/two-latest-unsent-retest-20260927`; retain its name and pending scoped documentation.
+- Base and target integration branch: canonical main, HEAD `2b831c26e7a858fb4e11ff3a8966112f39121c4a`, PR311.
+- Canonical checkout `C:/Users/FA507/.codex/legalpdf_translate` stays clean while implementing here; no test/live server is currently owned by the completed retest.
+- Existing private audit root: `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/two_latest_unsent_retest_20260927_01`.
+- Current operation evidence uses a new private `future_translation_workflow_fixes_20260927_01` root; prior evidence is read-only.
+
+## Requirements and acceptance evidence
+
+1. Future rates: EUR0.027 for AR/EN/FR across relevant browser/secondary entry points, valid three-decimal input, exact cent rounding and current word-count/rate recalculation. Respect a deliberate explicit total override. Old rows remain unchanged.
+2. Accounting display: do not subtract USD from EUR or leave stale profit presented as current. Preserve raw historical accounting; use honest currency-aware display/calculation without an invented exchange rate.
+3. Structural fidelity: recognizable source-supported headers/headings/emphasis/notices/columns/spacing remain available for future ordinary jobs, including image-only PDFs, through a coherent normal review workflow. Preserve exact reviewed wording, IDs, source/page ownership and original files; no cosmetic-only acceptance or fabricated reviewed-source provenance.
+4. Delivery: select and freeze the genuinely associated reviewed formatting artifact for normal download/case count/Gmail staging. Reject mismatched source/owner/language/generation, stale files and changes after confirmation. App-staged/delivered bytes and reviewed word count must agree without manual Gmail attachment replacement.
+5. Native side effects: passive Arabic state reads and their errors must not call unrelated Word/provider readiness. Explicit review actions and required finalization readiness remain enforced.
+6. Fee content: handle institution salutations correctly and support an explicit unsigned declaration when requested, retaining profile identity/payment information and preventing invented commitments or signatures.
+7. Translation quality: address demonstrated loss of uncertainty/conditional meaning and the procedural meaning of submitting a case for a ruling through general source-faithful guidance/review support. Do not introduce case-specific string replacement or claim arbitrary legal accuracy from synthetic tests.
+8. Input and performance: verify the suspected number-input commit issue against actual event logic; fix any demonstrated app defect. Classify/improve expensive tests only where timing and ownership evidence supports it; preserve exact meaningful coverage and required CI/Full checks.
+9. Completion: tests matched to the requirements, real rendered synthetic AR/EN/FR output and workflow acceptance, preserved historical/default/accounting state, coherent docs, and canonical application within authorized publication scope. A local patch alone is not the final future-use outcome.
+
+## Interfaces and contracts
+
+Keep existing paths, route IDs and submitted values compatible. Any additive delivery/fee fields or routes are explicitly required by the integration goal and must be versioned/bounded where needed. Browser dynamic content remains text-safe. Client submits opaque owned IDs, not trusted file paths or hashes. No global weakening of readiness, ownership, accounting, origin-metadata or schema guards.
+
+## Implementation sequence
+
+1. Inspect current source and preserved screenshots/diagnosis, then lock concrete pricing/structure/delivery/fee designs here before coding.
+2. Implement disjoint modules with owned file scopes and focused no-provider tests: price/calculation; passive-read readiness; source-faithful translation guidance; fee composition; genuine formatting/delivery workflow.
+3. Integrate UI state, ordinary save/count and Gmail staging; exercise state changes and stale/error paths with synthetic fixtures.
+4. Inspect timing evidence and optimize test organization if justified without weakening coverage.
+5. Run targeted tests, standard/required Full and complete applicable checks; inspect real native rendered output and browser workflow for all languages with isolated data. Use new bounded native operations only.
+6. Preserve beforeimages, synchronize touched architecture/handoff/guides/validation, follow approved publication/application lifecycle, and perform a requirement-by-requirement completion audit.
+
+## Risks and fallback
+
+- Automatic formatting of scans lacks source geometry under legacy translation. Resolve genuine source evidence and review UX before selecting a protocol or output default; do not infer approval from a successful package build.
+- A reviewed delivery selection must bind exact current target bytes and freeze at confirmation; retaining older originals is mandatory.
+- Finance must not reinterpret old USD/EUR fields or erase historical profits. New display semantics need explicit currency separation.
+- Native and provider operations remain bounded, owned and separately accounted. Tests use isolated fictional state.
+- If a design needs a new contract, document and test compatibility rather than making a hidden breaking change.
+
+## Progress and decision locks
+
+2026-09-27: current goal active; previous completed retest is authoritative evidence of progress, not evidence that these defects are fixed. Existing checkout is based on canonical PR311 with five pending docs files preserved. Independent read-only design work is split across pricing/fee/accounting, structural workflow/delivery, and semantic/native/input/test behavior. No product code or live state changed yet.
+
+### Locked first implementation decisions
+
+- Pricing: central Decimal-based EUR amount calculation with half-up cent rounding; default rate0.027 for all three languages and valid three-decimal inputs. New jobs recalculate derived totals when counts/rates change; explicit overrides remain explicit. Historical rows hydrate historical values. The installed saved rate map needs a later separately preserved narrow update; changing fallback code alone does not fix existing settings.
+- Currency: never infer an exchange rate. New translation profit is uncalculated/null while API cost is USD and fees EUR; labels explain the currencies. Preserve old stored profit as historical/unverified, without DB migration/backfill. Do not substitute zero for unknown profit.
+- Passive Arabic review: explicit empty capability flags on every success/error response of state/open/align-right-save/continue prevent response decoration from invoking unrelated native readiness. Intended review actions and explicit Gmail finalization preflight stay unchanged. Do not change global readiness defaults or slow polling to conceal the cause.
+- Structural workflow: automatic attachment of the existing manual editor alone is insufficient. The design must address source-image-only layout proposals and convenient whole-page review in addition to genuine job-owned delivery selection. A built artifact is not visually accepted until the operator reviews that exact output; proposal data cannot masquerade as reviewed provenance. Design continues before this part is implemented.
+- Semantic guidance: ordinary and structured requests share explicit preservation of evidential uncertainty, actual legal conditions, requested versus completed acts, procedural submission versus termination, readable barcode identifiers and standard bullet glyphs. This is source-faithful guidance, not deterministic semantic certification or case-specific replacement. Prompt integration/structured checkpoint tests passed62 after correcting the French output-protocol assertion; real sample quality still requires later bounded acceptance.
+- Procedural terminology reference verified2026-09-27: this [Portuguese Supreme Court decision](https://www.dgsi.pt/jstj.nsf/954f0ce6ad9dd8b980256b5f003fa814/486549a975731a6f80257f03003aa91e) uses opening a conclusão for submission to issue a judgment. It supports distinguishing submission from termination/archiving; actual context governs. This language reference is recorded here because the external technical-source registry validator is deliberately limited to its approved product-documentation domains.
+- Fee content: translation recipients use the named institution (Ao Tribunal/Ministério Público/Juízo, À Procuradoria) rather than inventing a prosecutor title or forcing `do` before every entity. Unknown institutions retain their supplied name. An editable per-document recipient block overrides this default. An explicit unchecked declaration option exposes reviewable wording and adds only an unsigned declaration/blank signature line; it is never inferred from language and has no default-setting or old-file side effect.
+- Full structural design: ordinary job/source auto-binding, free supported source geometry seeds, an explicit accounted image-layout suggestion action for scans, populated unreviewed decisions, exact-text build, output review and immutable delivery selection. Preserve model/provider wording and current reviewed baselines independently. See private STRUCTURAL_DELIVERY_DESIGN_01.md; the implementation must include the image-only proposal and normal job/Gmail integration, not stop at a selector.
+
+### Implementation progress — 2026-09-27
+
+All product changes remain unpublished in the isolated checkout. No new provider,
+native, Gmail, installed-settings or historical-record operation has occurred.
+Original handoff/doc beforeimages remain under the new private evidence root.
+
+- Pricing/default/Qt/browser work passed176 focused cases. The factory rate is0.027 for EN/FR/AR; the installed saved map still awaits a preserved narrow correction after integration/application. New profit is null; old values remain historical. Two older Gmail tests initially expected the retired mixed-currency profit and are being corrected alongside integration coverage.
+- Passive Arabic responses passed33 targeted cases. The bounded Arabic-folio change passed639 writer cases and matched the three retained source-confirmed repairs without changing visible text. Prompt guidance corrects barcode examples and atomic address protection; no case-specific text replacement was added.
+- Input-before-blur was reproduced through the real Gmail browser module: requested start pages2/4/12 were submitted as1/1/1. Input handlers now update the selection model without rewriting the typing field. Focused input/runtime/resource checks passed77 cases.
+- API fixture profiling found unrelated listener enumeration and repeated Python launch discovery. The same settings node measured21.59s before,19.10s after listener isolation, and1.15s after conditional bridge-preparation isolation. Explicit boundary mocks and dedicated runtime tests remain intact. A combined module run passed226 with two expected concurrent integration assertion/signature failures; this is not final acceptance.
+- Fee composition now supports per-document recipient text and an explicitly selected, editable unsigned declaration. Browser/Gmail payloads carry these bounded options, and validation precedes native preflight. Exact document-content tests preserve fictional identity/tax/payment fields and the blank signature line.
+- The ordinary layout controller and embedded editor now exercise prepare, explicit suggestion, saved review, exact-text build, explicit Word open, output review and delivery selection in a real-module fictional DOM test. It also tests lost-response recovery, job-scope changes, and an explicit budget nonce. Focused browser/fee/input checks passed19; backend and lifecycle review continues.
+- Independent review found a late-response race between embedded editors for different jobs in one workspace. A disposed-controller/DOM regression and fix are in progress before UI acceptance.
+
+### Additional concrete interface decisions
+
+- `OrdinaryLayoutJob` comes only from the trusted job resolver; browser requests never supply source paths, bytes or authority. Baselines preserve separate provider and current-reviewed DOCX snapshots. Mandatory baseline ID plus expected review generation guards suggestions/acceptance; delivery has its own monotonic generation.
+- Save/Confirm receive additive `baseline_id` and `expected_delivery_generation` only for prepared jobs. They resolve one immutable selected path/hash/count and copy the save seed. Gmail staging stores selection identity and exact byte hash, then freezes that selection. A later independent review generation cannot mutate already confirmed delivery bytes.
+- An existing hard/campaign budget is reused unchanged by child layout journals. For a fully settled ordinary run without a hard budget, a separate explicit per-run budget action includes the known original translation cost and all future layout attempts in one durable ledger. Unknown original cost blocks authorization; no passive request creates a ledger or dispatches. No historical ceiling/hold is reset or replaced.
+- New layout policy uses the verified existing GPT5.2 public-standard contract, inclusive8000 output bound, no transport retries and a conservative USD0.812 per-page reservation. Exact returned tier/model/usage remain validated. This separate-purpose policy does not promote saved translation settings. Official references verified2026-09-27 are appended to EXTERNAL_SOURCE_REGISTRY.
+- Word opens a dedicated review copy. If it is edited after opening, acceptance must detect the changed bytes instead of silently selecting the pre-edit artifact. Content changes belong in the reviewed baseline and require a fresh preparation; explicit source/output review stays distinct from a successful package build.
+
+Remaining acceptance: finish independent integration/recovery review, classify new
+tests in the required Full selection, run scope-frozen targeted/Full checks,
+exercise isolated browser and complete rendered fictional EN/FR/AR pages, perform
+any new bounded semantic/layout provider acceptance under the unchanged lifetime
+ceiling, preserve exact beforeimages and correct only the installed future rate
+map, then complete authorized publication/application and the final requirement
+audit. Do not mark the goal complete from these partial implementation results.
+
+### Frozen validation and pre-release findings
+
+- Full01 passed in1021.531 seconds with unchanged code/test/script pins:247 standard browser/API,2 Gmail,5 intake,239 source-review,173 formatting,154 saved-DOCX,86 ordinary-layout and174 finance/fee/passive-Arabic cases (1,080 selected passes). The known Dart wrapper AOT failure recovered through the direct-Dart fallback; docs and hygiene passed. This is the baseline before the bounded confirmation/read-performance corrections below, not final acceptance of those later changes.
+- Root found and an independent fictional service probe reproduced a confirmation-order defect: invalid numeric fee input left zero confirmed items and no DB, but the selected document was already frozen and staged. After Full01 completed, the bounded prevalidation/recount/row-ownership/session-consistency correction and seven regressions were applied. Targeted validation and a new final Full remain required before closing acceptance.
+- A read-only profile of one real formatting API regression identified retained-file reads and metadata checks as the slow path, with no native/provider activity. The bounded follow-up changes only the read allocation from maximum+1 to observed-size+1, preserving path ownership and every before/open/after identity check and adding explicit length validation. No provenance guard, cross-request cache or test assertion is removed. Retain the profile and subsequent measurement under private test_profile_formatting_01/.
+- One fresh fictional unsigned-fee DOCX was built through the application and exported by native Word in8.8s. Root and independent reviewer inspected its complete single page: correct Procuradoria salutation, declaration, fictional identity/payment/tax information and blank signature line; no clipping/overlap. Native cleanup and both existing Word identities were preserved. Private `operations/native_render_fee02/` and `reviews/fee_visual_review_01.json` bind the evidence. Initial manifest01 declined before creating an operation or launching native code because a new user Word process appeared; the failure and unchanged original journal remain recorded. No provider cost was incurred.
+- The new fictional API acceptance helper is prepared and unarmed. It permits only three normal managed EN/FR/AR translations, then three explicit UI layout suggestions, under one new USD4 maximum that remains within the unchanged lifetime ceiling/hold. It keeps the real job registry for isolated browser review, forbids real Gmail and installed-settings mutations and does not fabricate review acceptance. Independent helper audit and final code pins must complete before arming.
+
+### Acceptance01 outcome and bounded recovery design
+
+After confirmation validation passed75 cases and bounded-read validation passed83 cases, Full02 started against frozen source with four formatting workers. The same measured formatting API case fell from42.50 to30.13 seconds; retain the cProfile/concurrent-load qualification rather than treating one comparison as a general speed guarantee.
+
+The new armed acceptance01 actually executed three genuine one-page EN/FR/AR translations. Their settled total isUSD0.09574775. Three original DOCXs were exported once through native Word, with successful owned cleanup and preservation of both pre-existing Word process identities. Root and independent complete-page reviews found no clipping, missing glyphs or literal-order defect; semantic review preserves uncertainty, conditions, requested evidence and submission to the judge. A minor Arabic verb-agreement qualification remains. Flat ordinary output still requires source-layout review.
+
+The first explicit English layout suggestion timed out after90.059 seconds without response identity or usage. No automatic retry or French/Arabic suggestion occurred. The operation terminated with four calls total, zero active jobs, unchanged installed settings and all250 runtime pins; both runner PIDs and port8892 were absent. Preserve its blocked ledger and **USD0.812 uncertain reservation**. Lifetime known is now**USD7.45761430**, holds are**USD0.931** (historical0.119 plus new0.812), exposure**USD8.38861430**, leaving**USD6.61138570** below the unchangedUSD15 ceiling. This is a qualified failed layout acceptance, not completed structural acceptance. Private `acceptance_support_01/acceptance_accounting_audit_01.json` binds terminal evidence. Do not replay its helper or consumed operation.
+
+The90-second layout timeout is a production default/maximum, overriding the client default; the actual failure does not prove output-token exhaustion or a provider-side cause. Resolve a finite longer layout deadline without changing model, retry count, output-token ceiling or reservation. Normal manager recovery after shutdown also needs honest retained-run reconstruction: investigate a new copied workspace with documented path-only relocation and ordinary resume, with provider/native tripwires, exact beforeimages and no fabricated completion/review/usage flags. Never run rebuild/resume against consumed originals.
+
+Any subsequent approved acceptance uses a distinct layout-only operation with at most three EN/FR/AR calls and aUSD2.436 hard cap, binding the old blocked ledger/holds unchanged. That worst case stays within both the initialUSD4 acceptance allowance and lifetimeUSD15 ceiling. No recovery dispatch is armed until its copied-run recovery proof, final source pins and independent audit pass.
+
+Design clarification: EN/FR saved order has both source-column headings before both bodies. Two adjacent equal-width column bands (heading-left/heading-right, then body-left/body-right) can preserve every paragraph in order and recognizable pairing. Do not incorrectly group heading-right with body-left in one contiguous column. Arabic has ordinary heading/body pairs. All proposals and final native pages still require actual review. The isolated offline bootstrap deliberately omits navigation; the browser used the verified `#recent-jobs` product route to open genuine jobs. This harness does not establish normal navigation acceptance.
+
+### Layout recovery01 contract finding and locked correction
+
+Full03 passed1,116 selected cases with unchanged code/test/script pins in761.812s. Recovery01 locally resumed all three completed runs with identical decompressed DOCX parts and no translation calls. Its first English layout request settled atUSD0.11489625; the response was retained but rejected by the downstream decision validator. Root stopped the operation normally before French/Arabic dispatch. This is not successful structural acceptance.
+
+Offline diagnosis isolates one schema/consumer mismatch: paragraph1 has institution role and heading_size_pt14, allowed by the provider schema but prohibited by the writer, which reserves heading-size overrides for heading roles. Changing only that value to null in memory makes all ten bands validate, including the two aligned column bands. Keep the writer strict. The concrete correction is a role-discriminated nested anyOf provider schema: headings require level1/2/3 and bounded optional size; every other role requires level0 and null size. Explicit prompt bounds must match spacing, columns and heading constraints. Add focused contract-to-writer regression coverage; no silent role promotion, text edits or fabricated review acceptance.
+
+For retained English acceptance, reuse the paid response only as unreviewed local evidence, documenting the single unsupported-size removal and any operator source-region/emphasis corrections through the genuine saved-review service. Do not redispatch English. A fresh bounded continuation may make only the two as-yet-unconsumed French/Arabic layout requests after the corrected source is frozen; preserve all retired operations/ledgers and theUSD0.931 holds. Current lifetime known isUSD7.57251055 and exposureUSD8.50351055 underUSD15. Final native pages and actual delivery selection/save still remain required.
+
+### Recovery02 progress and bounded geometry correction
+
+Full04 passed1,124 selected tests with nine expected intake deselections in770.156s; all598 frozen implementation/test/script hashes remained unchanged. The English retained-response draft was reviewed through the browser, with truthful full-page associations for all25 paragraphs and the exact source-supported emphasis. Its separate Word copy was downloaded, exported once and independently reviewed on its complete native page. Recognizable headings, notice panel and correctly paired columns pass with approximate header position/spacing; final delivery selection and case save remain pending.
+
+The sole new French layout request settled atUSD0.07906150 but was rejected for paragraph24's zero-height normalized box `[0.07, 1, 0.75, 1]`. All remaining25-paragraph/four-band proposal content validates when only that box is set to null in memory. Preserve the raw response, failure and accounting unchanged. Lifetime known isUSD7.65157205; unchanged holdsUSD0.931 yield exposureUSD8.58257205 underUSD15. Only the distinct Arabic request remains unconsumed; no English/French paid retry is planned.
+
+Concrete minimal fix, to implement after the live acceptance runtime stops: a structurally valid four-coordinate finite in-range but empty/reversed box becomes an explicitly unmapped, unreviewed association with a reason. Malformed/nonfinite/out-of-range boxes still reject. Never sort, clamp or invent geometry; preserve raw proposal bytes and all downstream source-review, ownership and writer guards. Before that product change, recover the retained French proposal through the public saved-review service as an unreviewed local draft, then correct associations and missing source-supported phrase emphasis through actual browser review. Validate the general fix offline against the retained paid response and focused regressions; no fresh provider rerun is needed to prove this normalization behavior.
+
+### Complete acceptance and final bounded corrections
+
+Recovery02 completed exactly two fresh layout requests: FrenchUSD0.07906150 and ArabicUSD0.10794875, settled totalUSD0.18701025 with no new hold or translation. It shut down normally with zero active jobs; PID26728 and port8892 were absent, all250 runtime pins matched, installed settings and the earlier blocked budget remained unchanged. Lifetime known isUSD7.75952080, unchanged holdsUSD0.931 and exposureUSD8.69052080 underUSD15. The helper and both requests are consumed.
+
+Root and independent reviewers accepted every full native page of the final EN/FR/AR copies. English/French retain25 paragraphs each and Arabic24 with exact Unicode text, controls and order. All source associations were explicitly reviewed as whole-page associations instead of inaccurate suggested boxes. Source-supported phrase emphasis was retained/restored. Arabic candidate2 adds normal right alignment inside the unchanged physical columns and equal spacing above paired headings; candidate1 and all original outputs remain preserved. Header placement, font, spacing, rules and duplicated retained/native folios remain qualified approximations. A minor pre-existing Arabic verb-agreement issue is retained; these fictional examples do not certify unattended legal translation.
+
+The browser's output-review and delivery controls selected EN review4, FR review4 and AR review5. Exactly three isolated case records save216/222/173 words atEUR0.027, totalsEUR5.83/5.99/4.67. Backend cost fields include actual translation plus settled layout costs; profit remains null because EUR fees and USD cost are distinct currencies. No live Gmail draft, Send, signature or historical-row change belongs to this fictional acceptance. The latest two real unsent translations remain completed evidence, not work to repeat.
+
+Final locked refinements after runtime shutdown:
+
+- Apply the bounded invalid-box correction described above; validate the unchanged retained French response locally.
+- Refresh displayed server-owned API-cost fields after delivery selection and save-metric refresh, preserving editable case/rate/amount/manual-total fields and guarding late responses by current job/scope/selection. Actual saved rows are already correct; the demonstrated defect is a stale browser display.
+- Add concise proposal guidance for normal right alignment of Arabic inside fixed physical regions/cells, retaining genuine centered/justified treatments, plus equal space-before for headings on the same source row. This changes guidance only; exact wording, column order, review obligations and validation stay intact.
+
+Run focused regressions and one scope-frozen Full05 after these corrections, then finish scoped docs, publication/application and the preserved installed rate-only update. Do not repeat paid/native acceptance merely to validate these deterministic contract/display/prompt changes. The private harness's exhausted quota produced a generic attention message alongside successful Arabic suggestions; it is not a demonstrated cross-job product error. A transient Arabic generation warning did not prevent its verified single save; the current GET and exact row/delivery identity were healthy. Keep these observations qualified.
+
+### Branch-local closeout — final validation and acceptance complete
+
+All implementation requirements have passed bounded independent review. Final Full05 exited0 in785.750seconds with1,134 selected executions and nine expected intake deselections:249 browser/API,2 Gmail,5 intake,239 source-review,191 formatting,157 saved-DOCX,117 ordinary-layout and174 finance/fee/Arabic/input/folio/resource. All598 frozen source/test/script hashes remained unchanged. Compilation and docs/hygiene passed with the recorded direct-Dart fallback after the known AOT255 wrapper issue. The wrapper SHA256 is `69a3b64b9c8e47dfcf594007a846260edb84f9adebdbce6f2188c47a01c0f8b1`; private `validation_full_05/terminal_count_receipt.json` reconciles the counts. Focused32-contract,19-manager and22-cost-display results overlap Full and are not additive unique coverage.
+
+The requirements matrix found no further significant implementation gap. Meaningful local delivery tests verify downloaded, selected/frozen and Gmail-staged bytes and staged word counts, including races and prevalidation failures. This is distinct from the earlier real two-request Gmail retest; no fresh live Gmail acceptance is claimed for this patch. Final fictional native acceptance remains qualified as described above. The source and each reviewed derivative are preserved; human source/output review remains required.
+
+The plan moves to completed for branch-local implementation and acceptance closeout. Exact committed/PR/CI/merged/applied state and branch cleanup belong to private `future_translation_workflow_fixes_20260927_01/publication_01/publication_receipt.json`; the narrow installed rate-only change belongs to `installed_rate_correction_01/receipt.json`, verified by `final_application_audit_01.json`. Until those terminal receipts exist, authorized publication/application remains required and the overall goal is not complete. Do not infer installed state from the original PR311 base. No further provider/native/Gmail operation is required. Preserve all historical evidence and USD7.75952080 known plusUSD0.931 holds, exposureUSD8.69052080 underUSD15.
+
+Final staging subsequently removed one trailing ASCII space from a newly added delivery-integration test. Its exact Full05 beforeimage is preserved in private `publication_01/whitespace_test.before.py`; AST and token type/string equality prove no semantic change. Product source is unchanged. `publication_01/whitespace_only_receipt.json` binds both hashes; required hosted CI validates the final committed bytes. This cosmetic cleanup is not attributed to the earlier frozen hash set.
