@@ -144,6 +144,9 @@ function makeElement(id = "", initial = {}) {
       this.children.push(node);
       return node;
     },
+    append(...nodes) {
+      nodes.forEach((node) => this.appendChild(node));
+    },
     replaceChildren(...nodes) {
       this.children = nodes;
     },
@@ -1389,14 +1392,38 @@ for (const manualAmounts of [false, true]) {
   scenario.env.enqueueFetch(() => historyResponse());
   await scenario.env.dispatch("translation-save-row", "click");
   if (manualAmounts) {
+    scenario.env.element("translation-total-mode").value = "manual";
+    await scenario.env.dispatch("translation-total-mode", "change");
     scenario.env.element("translation-expected-total").value = "12";
-    scenario.env.element("translation-profit").value = "7";
   }
   const fresh = structuredClone(job);
-  Object.assign(fresh.result.save_seed, { word_count: 9, expected_total: .81, profit: .71 });
+  Object.assign(fresh.result.save_seed, { word_count: 9, expected_total: .81, profit: .71,
+    api_cost: .25, estimated_api_cost: .35 });
   scenario.env.enqueueFetch(() => responseJson({ normalized_payload: { job: fresh } }));
   const values = await scenario.translationModule.collectCurrentTranslationSaveValues();
   results.editedDocxMetrics.push({ values, rowId: scenario.env.element("translation-row-id").value });
+}
+
+{
+  const scenario = await setupScenario("immediate-finance-inputs");
+  const job = reviewJob({ language: "EN" });
+  Object.assign(job.result.save_seed, {word_count:1132, rate_per_word:.08, expected_total:90.56, profit:null});
+  scenario.translationModule.renderTranslationJob(job);
+  scenario.env.element("translation-word-count").value = "1138";
+  await scenario.env.dispatch("translation-word-count", "input");
+  const afterWords = scenario.env.element("translation-expected-total").value;
+  scenario.env.element("translation-rate-per-word").value = "0.027";
+  await scenario.env.dispatch("translation-rate-per-word", "input");
+  const afterRate = scenario.env.element("translation-expected-total").value;
+  scenario.env.element("translation-total-mode").value = "manual";
+  await scenario.env.dispatch("translation-total-mode", "change");
+  scenario.env.element("translation-expected-total").value = "22.22";
+  scenario.env.element("translation-word-count").value = "1501";
+  await scenario.env.dispatch("translation-word-count", "input");
+  results.financeInputs = {afterWords, afterRate,
+    manual:scenario.env.element("translation-expected-total").value,
+    profit:scenario.env.element("translation-profit").value,
+    note:scenario.env.element("translation-profit-note").textContent};
 }
 
 {
@@ -1439,6 +1466,62 @@ for (const manualAmounts of [false, true]) {
   results.metricsSwitchJob = { error, words: scenario.env.element("translation-word-count").value };
 }
 
+function selectedLayout(job, selection = "a", generation = 1) {
+  return {job_id:job.job_id,status:"prepared",attached:true,stale:false,frozen:false,
+    baseline_id:"b".repeat(32),generation:4,delivery_generation:generation,
+    review:{review_id:"c".repeat(32),generation:4},
+    delivery:{kind:"reviewed",selection_id:selection.repeat(32),generation,word_count:216,stale:false}};
+}
+
+results.selectedDeliveryCosts = [];
+for (const estimate of [.13810825, null]) {
+  const scenario = await setupScenario(`selected-cost-${estimate}`);
+  const job = reviewJob({language:"EN"});
+  Object.assign(job.result.save_seed,{word_count:217,api_cost:.023212,estimated_api_cost:.023212});
+  scenario.translationModule.renderTranslationJob(job);
+  scenario.env.element("translation-case-number").value="PRESERVE-CASE";
+  scenario.env.element("translation-rate-per-word").value=".027";
+  scenario.env.element("translation-total-mode").value="manual";
+  scenario.env.element("translation-expected-total").value="22.22";
+  scenario.env.element("translation-amount-paid").value="3.21";
+  const selected=structuredClone(job); selected.ordinary_layout=selectedLayout(job);
+  // A normal job refresh discovers the selection and invokes the mounted
+  // layout callback, without re-rendering the case form or reapplying its seed.
+  scenario.env.enqueueFetch(async()=>responseJson({normalized_payload:{job:selected}}));
+  const pending=deferred(); scenario.env.enqueueFetch(()=>pending.promise);
+  await scenario.translationModule.collectCurrentTranslationSaveValues();
+  const waiting={api:scenario.env.element("translation-api-cost").value,
+    estimate:scenario.env.element("translation-estimated-api-cost").value};
+  const authoritative=structuredClone(selected);
+  Object.assign(authoritative.result.save_seed,{word_count:216,api_cost:.13810825,estimated_api_cost:estimate});
+  pending.resolve(responseJson({normalized_payload:{job:authoritative}}));
+  await settleReviewWork();
+  results.selectedDeliveryCosts.push({waiting,words:scenario.env.element("translation-word-count").value,
+    api:scenario.env.element("translation-api-cost").value,estimate:scenario.env.element("translation-estimated-api-cost").value,
+    caseNumber:scenario.env.element("translation-case-number").value,rate:scenario.env.element("translation-rate-per-word").value,
+    mode:scenario.env.element("translation-total-mode").value,total:scenario.env.element("translation-expected-total").value,
+    paid:scenario.env.element("translation-amount-paid").value,requests:scenario.env.fetchCalls.length});
+}
+
+{
+  const scenario=await setupScenario("selected-cost-race");
+  const job=reviewJob({language:"EN"});
+  scenario.translationModule.renderTranslationJob(job);
+  const first=deferred(), second=deferred();
+  scenario.env.enqueueFetch(()=>first.promise);
+  const older=structuredClone(job);older.ordinary_layout=selectedLayout(job,"a",1);
+  scenario.translationModule.renderTranslationJob(older);
+  scenario.env.enqueueFetch(()=>second.promise);
+  const newer=structuredClone(job);newer.ordinary_layout=selectedLayout(job,"d",2);
+  Object.assign(newer.result.save_seed,{api_cost:.42,estimated_api_cost:.42});
+  scenario.translationModule.renderTranslationJob(newer);
+  second.resolve(responseJson({normalized_payload:{job:newer}}));await settleReviewWork();
+  Object.assign(older.result.save_seed,{api_cost:.11,estimated_api_cost:.11});
+  first.resolve(responseJson({normalized_payload:{job:older}}));await settleReviewWork();
+  results.selectedDeliveryCostRace={api:scenario.env.element("translation-api-cost").value,
+    estimate:scenario.env.element("translation-estimated-api-cost").value};
+}
+
 console.log(JSON.stringify(results));
 """
     return run_browser_esm_json_probe(
@@ -1466,20 +1549,50 @@ def test_edited_docx_refresh_preserves_saved_row_case_fields_and_explicit_amount
         assert result["values"]["case_number"] == "EDITED-CASE"
         assert result["values"]["translation_date"] == "2026-09-26"
         assert float(result["values"]["word_count"]) == 9
+        assert float(result["values"]["api_cost"]) == .25
+        assert float(result["values"]["estimated_api_cost"]) == .35
     assert float(automatic["values"]["expected_total"]) == .81
-    assert float(automatic["values"]["profit"]) == .71
+    assert float(automatic["values"]["profit"]) == .80
     assert float(manual["values"]["expected_total"]) == 12
-    assert float(manual["values"]["profit"]) == 7
+    assert float(manual["values"]["profit"]) == .80
     resolved = _probe_results()["resolvedReviewMetrics"]
     assert float(resolved["words"]) == 9
     assert float(resolved["total"]) == .81
     assert resolved["caseNumber"] == "PRESERVE-CASE"
 
 
+def test_finance_inputs_recalculate_immediately_and_manual_override_is_explicit():
+    result = _probe_results()["financeInputs"]
+    assert (result["afterWords"], result["afterRate"], result["manual"]) == ("91.04", "30.73", "22.22")
+    assert result["profit"] == ""
+    assert "USD" in result["note"] and "EUR" in result["note"]
+
+
 def test_async_count_refresh_does_not_apply_to_another_job() -> None:
     result = _probe_results()["metricsSwitchJob"]
     assert "active translation changed" in result["error"]
     assert float(result["words"]) == 50
+
+
+def test_selected_delivery_refreshes_costs_and_preserves_editable_finance_fields():
+    known, incomplete = _probe_results()["selectedDeliveryCosts"]
+    for result in (known, incomplete):
+        assert result["waiting"] == {"api": "", "estimate": ""}
+        assert result["requests"] == 2
+        assert float(result["words"]) == 216
+        assert float(result["api"]) == .13810825
+        assert result["caseNumber"] == "PRESERVE-CASE"
+        assert float(result["rate"]) == .027
+        assert result["mode"] == "manual"
+        assert result["total"] == "22.22"
+        assert result["paid"] == "3.21"
+    assert float(known["estimate"]) == .13810825
+    assert incomplete["estimate"] == ""
+
+
+def test_older_selection_cost_response_cannot_overwrite_newer_delivery():
+    result = _probe_results()["selectedDeliveryCostRace"]
+    assert float(result["api"]) == float(result["estimate"]) == .42
 
 
 def test_missing_artifact_warning_survives_completion_render_and_blocks_save() -> None:

@@ -224,7 +224,7 @@ def test_build_honorarios_paragraph_texts_uses_case_city_for_plain_ministerio_pu
     paragraphs = build_honorarios_paragraph_texts(draft)
 
     assert paragraphs[2] == (
-        "Exmo. Sr(a). Procurador(a) da república do Ministério Público de Beja",
+        "Ao Ministério Público de Beja",
         "address",
     )
     assert "\n" not in paragraphs[2][0]
@@ -243,7 +243,7 @@ def test_build_honorarios_paragraph_texts_uses_cuba_for_plain_ministerio_publico
     paragraphs = build_honorarios_paragraph_texts(draft)
 
     assert paragraphs[2] == (
-        "Exmo. Sr(a). Procurador(a) da república do Ministério Público de Cuba",
+        "Ao Ministério Público de Cuba",
         "address",
     )
     assert paragraphs[16] == ("Cuba, 19 de abril de 2026", "center")
@@ -280,29 +280,29 @@ def test_build_honorarios_paragraph_texts_appends_case_city_for_generic_entity()
         ("tribunal judicial de", "Beja", "Ao tribunal judicial de Beja"),
         (
             "Ministério Público", "Beja",
-            "Exmo. Sr(a). Procurador(a) da república do Ministério Público de Beja",
+            "Ao Ministério Público de Beja",
         ),
         (
             "Ministério Público de Beja - Tribunal Judicial", "Beja",
-            "Exmo. Sr(a). Procurador(a) da república do Ministério Público de Beja - Tribunal Judicial",
+            "Ao Ministério Público de Beja - Tribunal Judicial",
         ),
         (
             "Procuradoria do Juízo Local Criminal de Beja", "Beja",
-            "Exmo. Sr(a). Procurador(a) da república do Procuradoria do Juízo Local Criminal de Beja",
+            "À Procuradoria do Juízo Local Criminal de Beja",
         ),
         (
             "ministerio publico junto do Tribunal Judicial de Beja", "Beja",
-            "Exmo. Sr(a). Procurador(a) da república do ministerio publico junto do Tribunal Judicial de Beja",
+            "Ao ministerio publico junto do Tribunal Judicial de Beja",
         ),
         (
             "Gabinete junto do Juízo Local Criminal de Beja", "Beja",
-            "Exmo. Sr(a). Procurador(a) da república do Gabinete junto do Juízo Local Criminal de Beja",
+            "Ao Gabinete junto do Juízo Local Criminal de Beja",
         ),
-        ("Entidade Exemplo", "Beja", "Exmo. Sr(a). Procurador(a) da república do Entidade Exemplo de Beja"),
-        ("Juizoteca Exemplo", "Beja", "Exmo. Sr(a). Procurador(a) da república do Juizoteca Exemplo de Beja"),
+        ("Entidade Exemplo", "Beja", "Entidade Exemplo de Beja"),
+        ("Juizoteca Exemplo", "Beja", "Juizoteca Exemplo de Beja"),
     ],
 )
-def test_translation_docx_recipient_uses_only_explicit_leading_judicial_entity(
+def test_translation_docx_recipient_addresses_the_named_institution(
     tmp_path: Path, entity: str, city: str, expected_recipient: str,
 ) -> None:
     draft = build_honorarios_draft(

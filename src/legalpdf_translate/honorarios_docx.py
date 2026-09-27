@@ -34,6 +34,10 @@ _PT_MONTHS = {
 _INVALID_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _TRAILING_PREPOSITION_RE = re.compile(r"\b(?:de|do|da|dos|das)\s*$", re.IGNORECASE)
 _PREPOSITION_TOKENS = {"de", "do", "da", "dos", "das"}
+DEFAULT_TRANSLATOR_DECLARATION = (
+    "Comprometo-me, por minha honra, a desempenhar conscienciosamente as funções "
+    "de tradutor que me são confiadas no presente processo."
+)
 _INCOMPLETE_LOCATION_TOKENS = {
     "audiencia",
     "central",
@@ -81,6 +85,8 @@ class HonorariosDraft:
     travel_km_outbound: float = 0.0
     travel_km_return: float = 0.0
     recipient_block: str = ""
+    include_translator_declaration: bool = False
+    translator_declaration_text: str = ""
 
 
 def format_portuguese_date(value: date) -> str:
@@ -95,7 +101,15 @@ def build_honorarios_draft(
     case_city: str,
     profile: UserProfile,
     today: date | None = None,
+    recipient_block: str = "",
+    include_translator_declaration: bool = False,
+    translator_declaration_text: str = "",
 ) -> HonorariosDraft:
+    options = validate_translation_honorarios_options(
+        recipient_block=recipient_block,
+        include_translator_declaration=include_translator_declaration,
+        translator_declaration_text=translator_declaration_text,
+    )
     current_date = today or date.today()
     return HonorariosDraft(
         case_number=case_number.strip(),
@@ -104,7 +118,34 @@ def build_honorarios_draft(
         case_city=case_city.strip(),
         date_pt=format_portuguese_date(current_date),
         profile=profile,
+        **options,
     )
+
+
+def _checked_document_text(value: str, label: str, maximum: int) -> str:
+    if not isinstance(value, str) or len(value) > maximum:
+        raise ValueError(f"{label} exceeds its text limit.")
+    if any(ord(char) < 32 and char not in "\n\r\t" for char in value):
+        raise ValueError(f"{label} contains unsupported control characters.")
+    return value.strip()
+
+
+def validate_translation_honorarios_options(
+    *, recipient_block: str = "", include_translator_declaration: bool = False,
+    translator_declaration_text: str = "",
+) -> dict[str, str | bool]:
+    """Validate per-document choices before any export or draft side effect."""
+    if not isinstance(include_translator_declaration, bool):
+        raise ValueError("The translator declaration choice must be a boolean.")
+    recipient = _checked_document_text(recipient_block, "Recipient", 1000)
+    declaration = _checked_document_text(translator_declaration_text, "Translator declaration", 4000)
+    return {
+        "recipient_block": recipient,
+        "include_translator_declaration": include_translator_declaration,
+        "translator_declaration_text": (
+            (declaration or DEFAULT_TRANSLATOR_DECLARATION) if include_translator_declaration else ""
+        ),
+    }
 
 
 def build_interpretation_honorarios_draft(
@@ -290,17 +331,20 @@ def _interpretation_one_way_distance(draft: HonorariosDraft) -> float:
 
 
 def _translation_recipient_line(draft: HonorariosDraft) -> str:
+    if draft.recipient_block.strip():
+        return _checked_document_text(draft.recipient_block, "Recipient", 1000)
     entity = _complete_case_entity_with_city(draft.case_entity, draft.case_city)
-    if re.match(r"^(?:tribunal judicial|tribunal do trabalho|juizo)\b", _normalize_text_for_match(entity)):
+    normalized = _normalize_text_for_match(entity)
+    if re.match(r"^procuradoria\b", normalized):
+        return "À " + entity
+    if re.match(r"^(?:tribunal|juizo|ministerio publico|gabinete)\b", normalized):
         return "Ao " + entity
-    if entity.casefold() == "ministério público":
-        return "Exmo. Sr(a). Procurador(a) da república do Ministério Público"
-    return "Exmo. Sr(a). Procurador(a) da república do " + entity
+    return entity
 
 
 def _translation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]]:
     profile = draft.profile
-    return [
+    paragraphs = [
         (f"Número de processo: {draft.case_number}", "left"),
         ("", "left"),
         (_translation_recipient_line(draft), "address"),
@@ -328,6 +372,15 @@ def _translation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]
         ("", "left"),
         (profile.document_name, "center"),
     ]
+    if draft.include_translator_declaration:
+        declaration = _checked_document_text(
+            draft.translator_declaration_text or DEFAULT_TRANSLATOR_DECLARATION,
+            "Translator declaration", 4000,
+        )
+        closing = paragraphs.index(("Espera deferimento,", "center"))
+        paragraphs[closing:closing] = [(declaration, "left"), ("", "left")]
+        paragraphs.extend([("", "left"), ("Assinatura: ______________________________", "center")])
+    return paragraphs
 
 
 def _interpretation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]]:

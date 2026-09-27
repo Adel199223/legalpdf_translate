@@ -22,7 +22,7 @@ B) HEADER (doit etre PREMIER sur la page, au-dessus du corps):
 Regle: placer ces blocs d'en-tete en haut de page (papier a en-tete/adresse du tribunal d'abord, puis bloc notification/certification).
 
 C) BARCODE/POSTAL CODES (zone haute):
-- Lignes de code de suivi, code-barres, ou chaines de reference (ex.: "200460-...", "%*RE...*%", et similaires).
+- Identifiants de suivi et references lisibles imprimes a cote ou sous un code-barres. Copier exactement les caracteres visibles ; ne pas inventer de signes pour cent, d'asterisques ou de caracteres de controle de police a partir des barres. Conserver la ponctuation reellement imprimee dans l'identifiant.
 Regle: placer ces lignes apres l'en-tete et avant le bloc destinataire.
 
 D) BODY (tout le reste):

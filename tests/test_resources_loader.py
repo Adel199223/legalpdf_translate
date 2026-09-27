@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from legalpdf_translate.resources_loader import load_system_instructions
+from legalpdf_translate.translation_fidelity import FIDELITY_GUIDANCE
+from legalpdf_translate.translation_structure import structured_system_instructions
 from legalpdf_translate.types import TargetLang
 
 
@@ -31,3 +35,20 @@ def test_load_system_instructions_ar_still_uses_arabic_resource() -> None:
     assert "only when no stable equivalent exists or when uncertain." in text
     assert "allowed only for acronyms on first mention" in text
     assert "[[Official Portuguese title]] — الترجمة العربية الدقيقة" not in text
+
+
+@pytest.mark.parametrize("lang", list(TargetLang))
+def test_both_translation_paths_receive_source_fidelity_guidance(lang: TargetLang) -> None:
+    ordinary = load_system_instructions(lang)
+    structured = structured_system_instructions(lang)
+    for instructions in (ordinary, structured):
+        assert instructions.count(FIDELITY_GUIDANCE) == 1
+        assert "evidential certainty" in instructions
+        assert "rather than asserting a certain fact" in instructions
+        assert "placing the case file before" in instructions
+        assert "Preserve an actual direction to archive" in instructions
+        assert "not a font-dependent private-use glyph" in instructions
+    # Sharing fidelity guidance must not merge the incompatible output protocols.
+    assert ("bloc de code texte brut" if lang == TargetLang.FR else "code block") in ordinary
+    assert "JSON with unchanged IDs" in structured
+    assert "code block" not in structured

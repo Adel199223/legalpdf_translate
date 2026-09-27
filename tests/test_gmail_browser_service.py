@@ -145,7 +145,7 @@ def test_confirm_translation_recounts_staged_docx_and_reuses_saved_row(tmp_path:
     assert len(history) == 1
     assert history[0]["row"]["word_count"] == 9
     assert history[0]["row"]["expected_total"] == .81
-    assert history[0]["row"]["profit"] == .71
+    assert history[0]["row"]["profit"] is None
     if save_first:
         assert response["normalized_payload"]["saved_result"]["row_id"] == row_id
 
@@ -1679,7 +1679,10 @@ def test_finalize_batch_success_returns_persisted_finalization_report_context(tm
     )
     monkeypatch.setattr(
         "legalpdf_translate.honorarios_docx.build_honorarios_draft",
-        lambda **_kwargs: SimpleNamespace(case_number="305/23.2GCBJA"),
+        lambda **_kwargs: (
+            validation_calls.setdefault("fee_options", _kwargs),
+            SimpleNamespace(case_number="305/23.2GCBJA"),
+        )[-1],
     )
     monkeypatch.setattr(
         "legalpdf_translate.interpretation_service._run_pdf_export_with_retry",
@@ -1730,6 +1733,9 @@ def test_finalize_batch_success_returns_persisted_finalization_report_context(tm
         settings_path=settings_path,
         output_filename="",
         profile_id=None,
+        recipient_block="À Procuradoria de Exemplo",
+        include_translator_declaration=True,
+        translator_declaration_text="Declaração revista para este processo.",
     )
 
     report_context = payload["normalized_payload"]["finalization_report_context"]
@@ -1752,6 +1758,9 @@ def test_finalize_batch_success_returns_persisted_finalization_report_context(tm
     assert report_context["outcome"]["pdf_path_exists"] is True
     assert validation_calls["translated_docxs"] == [session.confirmed_items[0].staged_translated_docx_path]
     assert validation_calls["honorarios_pdf"] == pdf_path
+    assert validation_calls["fee_options"]["recipient_block"] == "À Procuradoria de Exemplo"
+    assert validation_calls["fee_options"]["include_translator_declaration"] is True
+    assert validation_calls["fee_options"]["translator_declaration_text"] == "Declaração revista para este processo."
     assert payload["normalized_payload"]["active_session"]["finalization_report_context"]["status"] == "ok"
     assert session.finalization_report_context["status"] == "ok"
     assert session.finalization_report_context["finalization_state"] == "draft_ready"

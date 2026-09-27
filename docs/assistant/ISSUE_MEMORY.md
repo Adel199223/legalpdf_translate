@@ -86,6 +86,18 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 
 ## Active Entries
 
+### fictional-powershell-outer-timeout
+
+- Title: Synthetic PowerShell startup and compilation exceed a nonsemantic outer test cap.
+- Observed2026-09-27 at16:09:28Z and16:21:53Z; repeat count2; status `mitigated`, operational trigger.
+- Symptoms: the same casing-success node hit its20-second outer cap twice; sibling variants and2,095 other partition cases passed each attempt.
+- Cause: exact delayed phase/environment remains unknown. The cap includes process startup, C# compilation and fake execution; no20-second performance assertion exists in this node.
+- Attempted fix: one failed-jobs-only retry on unchanged source failed again; both attempts remain preserved.
+- Accepted mitigation: named finite60-second fake-helper allowance, keeping real deadlines, native substitutions and semantic assertions unchanged. Stability remains subject to final validation; no regression after an accepted fix is claimed.
+- Affected workflow/docs: harness isolation/diagnostics, VALIDATION and the future-translation workflow plan. Bootstrap relevance `possible`; no global template work.
+- Docs-sync relevance: high. This entry prompted the scoped harness-deadline rule. Do not replace unknown phase evidence with a claimed CPU/antivirus cause or an unbounded wait.
+- Evidence: private `future_translation_workflow_fixes_20260927_01/publication_01/pr_ci_qt_followup_receipt_01.json`, `pr_ci_qt_followup_retry_failure_receipt_01.json` and `fake_helper_timeout_fix_01/`.
+
 ### windows-private-launch-guard-preflight-fidelity
 
 - Title: Private Windows guards missed actual launch, import, temporary-file and held-lock semantics.

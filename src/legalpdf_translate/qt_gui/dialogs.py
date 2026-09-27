@@ -60,6 +60,7 @@ from legalpdf_translate.config import (
     DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
     OPENAI_MODEL,
 )
+from legalpdf_translate.pricing import translation_fee_eur
 from legalpdf_translate.glossary import (
     GlossaryEntry,
     build_consistency_glossary_markdown,
@@ -2108,7 +2109,10 @@ class QtArabicDocxReviewDialog(QDialog):
             role="form",
             preferred_size=QSize(760, 260),
         )
-        QTimer.singleShot(0, self._start_review)
+        self._startup_timer = QTimer(self)
+        self._startup_timer.setSingleShot(True)
+        self._startup_timer.timeout.connect(self._start_review)
+        self._startup_timer.start(0)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -2164,6 +2168,7 @@ class QtArabicDocxReviewDialog(QDialog):
         self.cancel_btn.clicked.connect(self.reject)
 
     def done(self, result: int) -> None:
+        self._startup_timer.stop()
         self._poll_timer.stop()
         super().done(result)
 
@@ -2662,9 +2667,9 @@ class QtSaveToJobLogDialog(QDialog):
             "" if self._seed.total_tokens is None else str(int(self._seed.total_tokens))
         )
         metrics_form.addWidget(self.total_tokens_edit, 1, 1)
-        metrics_form.addWidget(self._field_label("Est. API cost"), 1, 2)
+        metrics_form.addWidget(self._field_label("Est. API cost (USD)"), 1, 2)
         self.estimated_api_cost_edit = QLineEdit(
-            "" if self._seed.estimated_api_cost is None else f"{float(self._seed.estimated_api_cost):.2f}"
+            "" if self._seed.estimated_api_cost is None else str(self._seed.estimated_api_cost)
         )
         metrics_form.addWidget(self.estimated_api_cost_edit, 1, 3)
         metrics_form.addWidget(self._field_label("Quality risk score"), 2, 0)
@@ -2682,24 +2687,35 @@ class QtSaveToJobLogDialog(QDialog):
         finance_panel.setObjectName("ShellPanel")
         finance_form = QGridLayout(finance_panel)
         finance_form.setContentsMargins(12, 12, 12, 12)
-        finance_form.addWidget(self._field_label("Rate/word"), 0, 0)
-        self.rate_edit = QLineEdit(f"{self._seed.rate_per_word:.4f}")
+        finance_form.addWidget(self._field_label("Rate/word (EUR)"), 0, 0)
+        self.rate_edit = QLineEdit(str(self._seed.rate_per_word))
         finance_form.addWidget(self.rate_edit, 0, 1)
-        finance_form.addWidget(self._field_label("Expected total"), 0, 2)
-        self.expected_total_edit = QLineEdit(f"{self._seed.expected_total:.2f}")
+        finance_form.addWidget(self._field_label("Expected total (EUR)"), 0, 2)
+        self.expected_total_edit = QLineEdit(str(self._seed.expected_total))
         finance_form.addWidget(self.expected_total_edit, 0, 3)
-        finance_form.addWidget(self._field_label("Amount paid"), 1, 0)
-        self.amount_paid_edit = QLineEdit(f"{self._seed.amount_paid:.2f}")
+        finance_form.addWidget(self._field_label("Amount paid (EUR)"), 1, 0)
+        self.amount_paid_edit = QLineEdit(str(self._seed.amount_paid))
         finance_form.addWidget(self.amount_paid_edit, 1, 1)
-        finance_form.addWidget(self._field_label("API cost"), 1, 2)
-        self.api_cost_edit = QLineEdit(f"{self._seed.api_cost:.2f}")
+        finance_form.addWidget(self._field_label("API cost (USD)"), 1, 2)
+        self.api_cost_edit = QLineEdit(str(self._seed.api_cost))
         finance_form.addWidget(self.api_cost_edit, 1, 3)
-        finance_form.addWidget(self._field_label("Profit"), 2, 0)
-        self.profit_edit = QLineEdit(f"{self._seed.profit:.2f}")
+        finance_form.addWidget(self._field_label("Historical profit (unverified)"), 2, 0)
+        self.profit_edit = QLineEdit("" if self._seed.profit is None else str(self._seed.profit))
+        self.profit_edit.setReadOnly(True)
         finance_form.addWidget(self.profit_edit, 2, 1)
+        self.total_mode_combo = QComboBox()
+        self.total_mode_combo.addItem("Calculate from words × rate", "auto")
+        self.total_mode_combo.addItem("Set total manually", "manual")
+        self.total_mode_combo.setCurrentIndex(1 if self._edit_row_id is not None
+            or _is_interpretation_job_type(self._seed.job_type) else 0)
+        finance_form.addWidget(self.total_mode_combo, 2, 2, 1, 2)
+        finance_note = QLabel("Fees are EUR; API costs are USD. Profit is not calculated across currencies. "
+                             "Any historical profit value is retained without recalculation.")
+        finance_note.setWordWrap(True)
+        finance_form.addWidget(finance_note, 3, 0, 1, 4)
         finance_form.setColumnStretch(1, 1)
         finance_form.setColumnStretch(3, 1)
-        self.finance_section = CollapsibleSection("Amounts (EUR)", expanded=False, parent=scroll_content)
+        self.finance_section = CollapsibleSection("Fees and costs", expanded=False, parent=scroll_content)
         self.finance_section.set_content_widget(finance_panel)
         scroll_root.addWidget(self.finance_section)
         scroll_root.addStretch(1)
@@ -2758,7 +2774,22 @@ class QtSaveToJobLogDialog(QDialog):
         self.add_service_entity_btn.clicked.connect(lambda: self._add_value("Service entity", "vocab_service_entities", self.service_entity_combo))
         self.add_case_city_btn.clicked.connect(lambda: self._add_value("City", "vocab_cities", self.case_city_combo))
         self.add_service_city_btn.clicked.connect(lambda: self._add_value("City", "vocab_cities", self.service_city_combo))
+        self.rate_edit.textChanged.connect(self._sync_translation_fee)
+        self.word_count_edit.textChanged.connect(self._sync_translation_fee)
+        self.total_mode_combo.currentIndexChanged.connect(self._sync_translation_fee)
+        self._sync_translation_fee()
         self._refresh_interpretation_mode_state()
+
+    def _sync_translation_fee(self, *_args: object) -> None:
+        automatic = self.total_mode_combo.currentData() == "auto"
+        self.expected_total_edit.setReadOnly(automatic)
+        if automatic:
+            try:
+                amount = translation_fee_eur(self.word_count_edit.text(), self.rate_edit.text())
+            except ValueError:
+                self.expected_total_edit.clear()
+            else:
+                self.expected_total_edit.setText(f"{amount:.2f}")
 
     def _add_value(self, title: str, key: str, combo: QComboBox) -> None:
         value, ok = QInputDialog.getText(self, f"Add {title}", f"{title}:")
@@ -3653,6 +3684,7 @@ class QtSaveToJobLogDialog(QDialog):
             "total_tokens": self.total_tokens_edit.text(),
             "rate_per_word": self.rate_edit.text(),
             "expected_total": self.expected_total_edit.text(),
+            "expected_total_mode": self.total_mode_combo.currentData(),
             "amount_paid": self.amount_paid_edit.text(),
             "api_cost": self.api_cost_edit.text(),
             "estimated_api_cost": self.estimated_api_cost_edit.text(),
@@ -3667,13 +3699,16 @@ class QtSaveToJobLogDialog(QDialog):
             if include_transport_sentence_check is not None
             else bool(getattr(self._seed, "include_transport_sentence_in_honorarios", True))
         )
-        return _normalize_joblog_payload(
+        payload = _normalize_joblog_payload(
             seed=self._seed,
             raw_values=self._collect_raw_values(),
             service_same_checked=self.service_same_check.isChecked(),
             use_service_location_in_honorarios_checked=self.use_service_location_check.isChecked(),
             include_transport_sentence_in_honorarios_checked=include_transport_sentence,
         )
+        if not _is_interpretation_job_type(payload["job_type"]):
+            payload["profit"] = self._seed.profit if self._edit_row_id is not None else None
+        return payload
 
     def _open_translation_docx(self) -> None:
         resolved = self._current_translation_docx_path()

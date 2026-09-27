@@ -79,6 +79,11 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 12. Use the Job Log when you need an interpretation-only honorários document without a translation run, or start from Gmail intake when the court notice already arrived by email.
 
 ## Using the Job Log
+
+In builds containing the future-translation update, the standard rate is **EUR 0.027 per word for English, French and Arabic**. The calculated total follows the current word count and rate, rounded to cents. Choose **Set total manually** for a deliberate override. Fees are EUR and API costs are USD, so new profit stays blank; old profit is labelled historical and is not recalculated. Existing rows keep their values. Check the [current handoff](../HANDOFF.md) for application status and the separately recorded saved-rate correction.
+
+Completed translations in those builds offer **Source layout and delivery**. Review the source associations, correct regions and formatting as needed, inspect every page of the separate Word copy, and explicitly select the version used for saving and Gmail attachments. Your original remains available. The [review guide](REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md#review-a-completed-translations-layout) separates optional paid suggestions from free manual formatting and explains recovery.
+
 1. Open `Tools > View Job Log` when you want to check or fix something you already saved.
 2. Use the small pen button for the full edit form.
 3. Double-click a visible row value for a quick inline change, then use `Save` or `Cancel` on that row.
@@ -95,6 +100,8 @@ This guide is explanatory only. For architecture/status truth, defer to `APP_KNO
 14. Date fields can still be typed as `YYYY-MM-DD`, but you can now also pick them from a calendar popup. The calendar starts on Monday.
 
 ## Word and PDF copies of honorários
+
+For a translation batch, you can override the recipient text and explicitly include an editable, unsigned translator declaration. Leaving the override blank uses the named institution. The declaration starts unchecked and adds a blank signature line only when selected. These choices affect the current fee document, preserving saved profile/payment details and earlier files.
 
 Your translation stays in an editable Word document; you do not need a PDF translation. The separate `Requerimento de Honorários` keeps an editable DOCX and uses Microsoft Word to create a PDF with the same basename. The app checks the newly generated PDF before reporting success. An older PDF is not counted as a successful new export.
 

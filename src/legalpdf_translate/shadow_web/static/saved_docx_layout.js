@@ -3,7 +3,7 @@ import { fetchJson } from "./api.js";
 const PREFIX = "/api/saved-docx-layout";
 const copy = (value) => value == null ? value : JSON.parse(JSON.stringify(value));
 const ownerKey = (owner) => `${owner.runtimeMode}:${owner.workspaceId}`;
-const pointerKey = (owner) => `legalpdf:saved-docx-layout:v1:${ownerKey(owner)}`;
+const pointerKey = (owner, namespace) => `legalpdf:saved-docx-layout:v1:${ownerKey(owner)}${namespace ? `:${namespace}` : ""}`;
 const safeId = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(value);
 const canonical = (value) => JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item)
   ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item);
@@ -15,19 +15,20 @@ export function savedLayoutUrl(path, owner) {
 
 /** Owns only this independent local review. Browser persistence contains pointers, never document text. */
 export function createSavedDocxLayoutController({ getScope, request = fetchJson,
-  storage = globalThis.localStorage, createNonce = () => crypto.randomUUID().replaceAll("-", ""), onChange = () => {} }) {
-  let owner, epoch = 0, state, pendingPayload = null;
-  function emit() { onChange(snapshot()); }
+  storage = globalThis.localStorage, storageNamespace = "", createNonce = () => crypto.randomUUID().replaceAll("-", ""), onChange = () => {} }) {
+  let owner, epoch = 0, state, pendingPayload = null, disposed = false;
+  function emit() { if (!disposed) onChange(snapshot()); }
   function persist() {
-    try { storage?.setItem(pointerKey(owner), JSON.stringify({ reviewId: state.reviewId, pending: state.pending })); }
+    try { storage?.setItem(pointerKey(owner, storageNamespace), JSON.stringify({ reviewId: state.reviewId, pending: state.pending })); }
     catch { /* The server's review list remains the recovery authority. */ }
   }
   function sync() {
+    if (disposed) return false;
     const next = { runtimeMode: getScope().runtimeMode, workspaceId: getScope().workspaceId };
     if (owner && ownerKey(owner) === ownerKey(next)) return false;
     owner = next; epoch += 1; pendingPayload = null;
     let pointer = {};
-    try { pointer = JSON.parse(storage?.getItem(pointerKey(owner)) || "{}"); } catch { /* Ignore invalid pointer. */ }
+    try { pointer = JSON.parse(storage?.getItem(pointerKey(owner, storageNamespace)) || "{}"); } catch { /* Ignore invalid pointer. */ }
     state = { owner, reviewId: safeId(pointer.reviewId) ? pointer.reviewId : "", pending: null,
       view: null, decisions: null, reviews: [], capabilities: null, busy: false, dirty: false,
       verified: false, conflict: false, editBaseGeneration: null, canAbandonBuild: false, errorCode: "", restored: true };
@@ -46,7 +47,7 @@ export function createSavedDocxLayoutController({ getScope, request = fetchJson,
     persist();
   }
   async function run(operation) {
-    sync(); if (state.busy) return null;
+    sync(); if (disposed || state.busy) return null;
     const token = epoch; const scope = copy(owner); state.busy = true; state.errorCode = ""; emit();
     const call = async (path, options = {}) => {
       const result = await request(savedLayoutUrl(path, scope), scope, { cache: "no-store", ...options });
@@ -77,7 +78,7 @@ export function createSavedDocxLayoutController({ getScope, request = fetchJson,
     return matches.length === 1 ? matches[0] : null;
   }
   function edit(decisions, { reviewOnly = false } = {}) {
-    sync(); if (!state.verified || state.busy || state.pending || state.conflict) return false;
+    sync(); if (disposed || !state.verified || state.busy || state.pending || state.conflict) return false;
     if (!state.dirty) state.editBaseGeneration = state.view.generation;
     state.decisions = copy(decisions);
     if (!reviewOnly) { state.decisions.review.document_reviewed = false; state.decisions.review.pages_reviewed = []; }
@@ -98,11 +99,13 @@ export function createSavedDocxLayoutController({ getScope, request = fetchJson,
     });
   }
   async function open(reviewId) {
+    if (disposed) return null;
     sync(); if (!safeId(reviewId) || state.busy || state.dirty || state.pending) return fail("saved_layout_pending_changes");
     state.reviewId = reviewId; state.view = null; state.decisions = null; state.verified = false; persist();
     return read();
   }
   async function read() {
+    if (disposed) return null;
     sync();
     if (!state.reviewId) return fail("saved_layout_choose_review");
     return run(async (call) => {
@@ -129,7 +132,7 @@ export function createSavedDocxLayoutController({ getScope, request = fetchJson,
   }
   async function importFiles(sourcePdf, savedDocx, targetLang) {
     sync();
-    if (state.busy) return null;
+    if (disposed || state.busy) return null;
     if (!sourcePdf || !savedDocx || !["EN", "FR", "AR"].includes(targetLang)) return fail("saved_layout_choose_files");
     if (state.dirty || state.pending && state.pending.kind !== "import") return fail("saved_layout_pending_changes");
     if (sourcePdf.size > 64 * 1024 ** 2 || savedDocx.size > 32 * 1024 ** 2) return fail("saved_layout_file_too_large");
@@ -143,7 +146,7 @@ export function createSavedDocxLayoutController({ getScope, request = fetchJson,
   }
   async function save() {
     sync();
-    if (state.busy) return null;
+    if (disposed || state.busy) return null;
     if ((!state.verified && !(state.pending?.kind === "save" && pendingPayload)) || state.conflict || state.pending && state.pending.kind !== "save") return fail("saved_layout_read_current_review");
     if (state.pending && !pendingPayload) return fail("saved_layout_recover_save");
     if (!state.pending) {
@@ -158,7 +161,7 @@ export function createSavedDocxLayoutController({ getScope, request = fetchJson,
   }
   async function build({ newAttempt = false } = {}) {
     sync();
-    if (state.busy) return null;
+    if (disposed || state.busy) return null;
     if (!state.verified || state.dirty || state.conflict || state.pending && state.pending.kind !== "build") return fail("saved_layout_save_review_first");
     if (!state.view?.decisions?.review?.document_reviewed) return fail("saved_layout_review_incomplete");
     if (newAttempt) {
@@ -175,26 +178,32 @@ export function createSavedDocxLayoutController({ getScope, request = fetchJson,
   }
   function discardChanges() {
     sync();
-    if (!state.verified || state.busy || state.pending?.kind === "build" && !state.canAbandonBuild || state.pending?.kind === "import") return false;
+    if (disposed || !state.verified || state.busy || state.pending?.kind === "build" && !state.canAbandonBuild || state.pending?.kind === "import") return false;
     state.decisions = copy(state.view.decisions); state.dirty = false; state.conflict = false; state.editBaseGeneration = null; state.canAbandonBuild = false; clearPending(); emit(); return true;
   }
   function startNewImport() {
-    sync(); if (state.busy || state.dirty || state.pending && state.pending.kind !== "import") return false;
+    sync(); if (disposed || state.busy || state.dirty || state.pending && state.pending.kind !== "import") return false;
     clearPending(); state.reviewId = ""; state.view = state.decisions = null; state.verified = false; state.conflict = false; state.errorCode = ""; persist(); emit(); return true;
   }
   function artifactUrl(artifact, kind = "docx") {
-    sync(); if (!state.verified || !safeId(artifact?.artifact_id) || !["docx", "source_map", "receipt"].includes(kind)) return "";
+    sync(); if (disposed || !state.verified || !safeId(artifact?.artifact_id) || !["docx", "source_map", "receipt"].includes(kind)) return "";
     const owned = (state.view.artifacts || []).find((item) => item.artifact_id === artifact.artifact_id);
     const build = (state.view.builds || []).find((item) => item.artifact_id === artifact.artifact_id && item.status === "built");
     if (!owned || !build || owned.generation !== build.generation) return "";
     return savedLayoutUrl(reviewPath(`/artifacts/${encodeURIComponent(artifact.artifact_id)}/${kind}`), owner);
   }
   function imageUrl(pageNumber) {
-    sync(); return state.verified && state.view.pages.some((p) => p.page_number === pageNumber)
+    sync(); return !disposed && state.verified && state.view.pages.some((p) => p.page_number === pageNumber)
       ? savedLayoutUrl(reviewPath(`/pages/${pageNumber}/image`), owner) : "";
   }
+  function dispose() {
+    disposed = true; epoch += 1; state.busy = false; state.verified = false;
+    // Preserve the last pending nonce for a fresh controller to recover. An
+    // in-flight server operation may already have succeeded; never replay it
+    // or let its late response update a replacement editor in the same owner.
+  }
   sync();
-  return { snapshot, sync, initialize, importFiles, open, read, edit, save, build, discardChanges, startNewImport, artifactUrl, imageUrl };
+  return { snapshot, sync, initialize, importFiles, open, read, edit, save, build, discardChanges, startNewImport, artifactUrl, imageUrl, dispose };
 }
 
 export { canonical as canonicalSavedLayoutDecision };

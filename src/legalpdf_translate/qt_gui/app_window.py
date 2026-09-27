@@ -6137,7 +6137,6 @@ class QtMainWindow(QMainWindow):
         seed.quality_risk_score = quality_risk_score
         if estimated_api_cost is not None:
             seed.api_cost = float(estimated_api_cost)
-            seed.profit = round(seed.expected_total - seed.api_cost, 2)
 
         suggestion = extract_pdf_header_metadata_priority_pages(
             seed.pdf_path,

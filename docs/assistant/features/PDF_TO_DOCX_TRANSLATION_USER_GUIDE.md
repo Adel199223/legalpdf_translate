@@ -163,7 +163,14 @@ If the Review Queue opens empty, the app did not flag any pages for extra review
 
 Arabic citation-heavy pages now contribute more signal here than before. Large numeric mismatch, citation mismatch, and bidi-warning counts no longer stay near-zero risk just because the run completed successfully.
 
+The updated translation guidance asks every language to preserve uncertainty, conditions, deadlines and whether an act is merely requested or already completed. Check those points against the source, including whether a procedural instruction means submitting the case for a ruling. These instructions improve the translation contract; they do not certify a completed translation.
+
 ## Save to Job Log
+
+In builds containing the future-translation fixes, the standard rate is **EUR 0.027 per word for English, French and Arabic**, with totals rounded to cents. Counts and rates update the calculated total immediately; choose **Set total manually** when you intend a different fee, including zero. Existing saved rows retain their historical amounts and profit. API cost is USD and fees are EUR, so a new profit stays uncalculated. Check the [current handoff](../HANDOFF.md) for application status and the separate saved-rate correction.
+
+For completed translations, **Source layout and delivery** lets you review source associations, correct the geometry manually, build and inspect a separate formatted Word copy, then explicitly select it for normal saving and Gmail staging. The original remains preserved. See the [step-by-step review guide](REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md#review-a-completed-translations-layout). Once a layout review is prepared, resolve pending operations and choose a current delivery copy before saving.
+
 After a successful run, the app can prefill the Job Log dialog using the latest run artifacts.
 
 1. Finish a translation.
@@ -270,6 +277,9 @@ The app uses a checked, separate Word instance and a temporary source copy; it d
 5. Review the final PDF before email use. Do not change Trust Center/security settings or assume Office needs reinstalling; retain the diagnostic details if support is needed.
 
 ## Honorarios + Gmail Drafts
+
+The translation batch's finalization form supports an optional recipient block and an unchecked translator-declaration option. A blank recipient override addresses the named institution. Review the wording before creating the fee documents. Selecting the declaration adds editable text and a blank signature line; it never signs the document. These choices apply to this batch, preserving profile identity/payment details, saved defaults and previous fee files.
+
 If you generate a `Requerimento de Honorários`, the app can also prepare a Gmail draft to the row's `Court Email`.
 
 ### Current run

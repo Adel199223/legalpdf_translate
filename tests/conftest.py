@@ -70,6 +70,7 @@ def _block_native_word_execution():
 
 def _cleanup_qt_widgets() -> None:
     try:
+        from PySide6.QtCore import QCoreApplication, QEvent
         from PySide6.QtWidgets import QApplication
     except Exception:  # pragma: no cover
         return
@@ -101,8 +102,12 @@ def _cleanup_qt_widgets() -> None:
             widget.deleteLater()
         except RuntimeError:
             continue
+    # processEvents alone does not deliver DeferredDelete without a running
+    # event loop. Destroy widgets while their Python wrappers are still held.
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     app.processEvents()
-    app.processEvents()
+    # Residual events may themselves schedule QObject deletion.
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 @pytest.fixture(autouse=True)

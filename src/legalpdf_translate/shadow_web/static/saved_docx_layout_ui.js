@@ -102,20 +102,20 @@ export function setNoticePanelRange(decisions, paragraphs, first, last) {
   return replaceLayoutRange(decisions, paragraphs, first, last, [{ kind: "flow", groups: [{ paragraph_ids: ids, panel: true }] }]);
 }
 
-export function mountSavedDocxLayout({ root, ...options }) {
+export function mountSavedDocxLayout({ root, embedded = false, readOnly = () => false, onStateChange = () => {}, ...options }) {
   if (!root) return null;
   const doc = root.ownerDocument || document;
   let controller, sourceFile = null, wordFile = null, language = "EN", first = 0, last = 0, pageNumber = 1;
-  let active = 0, region = null, dragging = null, localMessage = "", seenReview = "", seenOwner = "", initialized = false;
+  let active = 0, region = null, dragging = null, localMessage = "", seenReview = "", seenOwner = "", initialized = false, disposed = false;
   const el = (tag, text, className) => { const node = doc.createElement(tag); if (text != null) node.textContent = String(text); if (className) node.className = className; return node; };
-  const button = (text, action, disabled = false) => { const node = el("button", text); node.type = "button"; node.disabled = disabled;
-    node.addEventListener("click", async () => { try { localMessage = ""; await action(); } catch (error) { localMessage = error.message; } render(); }); return node; };
+  const button = (text, action, disabled = false, mutates = false) => { const node = el("button", text); node.type = "button"; node.disabled = disabled;
+    node.addEventListener("click", async () => { if (disposed || node.disabled || mutates && readOnly()) return; try { localMessage = ""; await action(); } catch (error) { localMessage = error.message; } render(); }); return node; };
   const field = (parent, label, node) => { const wrap = el("label", null, "saved-layout-field"); wrap.append(el("span", label), node); parent.append(wrap); return node; };
   const input = (type, value) => { const node = el("input"); node.type = type; node.value = value ?? ""; return node; };
   const select = (values, value) => { const node = el("select"); for (const choice of values) { const option = el("option", Array.isArray(choice) ? choice[1] : choice); option.value = Array.isArray(choice) ? choice[0] : choice; node.append(option); } node.value = String(value); return node; };
   const check = (parent, label, value, action, disabled = false) => { const node = input("checkbox", ""); node.checked = Boolean(value); node.disabled = disabled; field(parent, label, node);
     node.addEventListener("change", () => { try { action(node.checked); } catch (error) { localMessage = error.message; render(); } }); return node; };
-  const update = (mutate, reviewOnly = false) => { const decisions = copy(controller.snapshot().decisions); mutate(decisions); controller.edit(decisions, { reviewOnly }); };
+  const update = (mutate, reviewOnly = false) => { if (disposed || readOnly()) return; const decisions = copy(controller.snapshot().decisions); mutate(decisions); controller.edit(decisions, { reviewOnly }); };
   const selectedIds = (view) => view.paragraphs.slice(first, last + 1).map((p) => p.id);
   const mutateSelected = (mutate) => update((d) => { const ids = new Set(selectedIds(controller.snapshot().view)); d.paragraphs.filter((p) => ids.has(p.paragraph_id)).forEach(mutate); });
   const settingsNumber = (parent, label, value, min, max, action, disabled, blank = true) => {
@@ -165,6 +165,9 @@ export function mountSavedDocxLayout({ root, ...options }) {
     frame.append(image, overlay); parent.append(frame);
     parent.append(button("Associate selected region", () => { if (!region) throw new Error("Select a source region first.");
       mutateSelected((p) => { p.regions.push({ page_number: pageNumber, bbox_px: [...region] }); p.unmapped_reason = ""; }); }, locked || !region));
+    if (embedded) parent.append(button("These selected paragraphs belong to this page", () => {
+      mutateSelected((p) => { p.regions = [{ page_number: pageNumber, bbox_px: [0, 0, page.width_px, page.height_px] }]; p.unmapped_reason = ""; });
+    }, locked));
     // Numeric bounds are an accessible alternative to dragging; they remain image coordinates, never hashes or paths.
     const boxFields = el("details"); boxFields.append(el("summary", "Select region with coordinates")); const values = region ? [...region] : [0, 0, page.width_px, page.height_px];
     ["Left", "Top", "Right", "Bottom"].forEach((label, i) => settingsNumber(boxFields, label, values[i], 0, i % 2 ? page.height_px : page.width_px, (value) => { values[i] = value; }, locked, false));
@@ -281,10 +284,10 @@ export function mountSavedDocxLayout({ root, ...options }) {
     for (const qualification of state.view.qualifications || []) section.append(el("p", typeof qualification === "string" ? qualification : qualification.message || qualification.code || "Retained source qualification"));
     section.append(el("p", "Saving and building verify preservation of the Word wording. Compare every page of the separate output before accepting its rendered layout."));
     if (state.pending?.kind === "save" && !state.pendingSavePayloadAvailable) section.append(el("p", "The interrupted local save payload is unavailable after this reload. The last saved decisions are displayed. Read the current review to recover its receipt, or explicitly discard the unavailable local request."));
-    section.append(button(state.pending?.kind === "save" ? "Retry the exact save" : "Save formatting review", () => controller.save(), state.busy || !state.verified || state.conflict || Boolean(state.pending && state.pending.kind !== "save") || Boolean(state.pending?.kind === "save" && !state.pendingSavePayloadAvailable)));
-    section.append(button(state.pending?.kind === "build" ? "Recover the same build" : "Build separate Word copy", () => controller.build(), state.busy || state.dirty || problems.length > 0 || state.conflict || Boolean(state.pending && state.pending.kind !== "build")));
+    section.append(button(state.pending?.kind === "save" ? "Retry the exact save" : "Save formatting review", () => controller.save(), readOnly() || state.busy || !state.verified || state.conflict || Boolean(state.pending && state.pending.kind !== "save") || Boolean(state.pending?.kind === "save" && !state.pendingSavePayloadAvailable), true));
+    section.append(button(state.pending?.kind === "build" ? "Recover the same build" : "Build separate Word copy", () => controller.build(), readOnly() || state.busy || state.dirty || problems.length > 0 || state.conflict || Boolean(state.pending && state.pending.kind !== "build"), true));
     const attempt = state.pending?.kind === "build" && state.view.builds?.find((b) => b.operation_nonce === state.pending.nonce);
-    if (attempt?.status === "incomplete") section.append(button("Start a new build attempt after the incomplete attempt", () => controller.build({ newAttempt: true }), state.busy));
+    if (attempt?.status === "incomplete") section.append(button("Start a new build attempt after the incomplete attempt", () => controller.build({ newAttempt: true }), readOnly() || state.busy, true));
     if (state.dirty || state.conflict || state.pending?.kind === "save") section.append(button("Discard local edits and use the last read saved review", () => controller.discardChanges(), state.busy || !state.verified || Boolean(state.pending?.kind === "build" && !state.canAbandonBuild)));
     if (state.pending?.kind === "build" && state.canAbandonBuild) section.append(button("Use latest saved review and retain previous build records", () => controller.discardChanges(), state.busy || !state.verified));
     for (const artifact of state.view.artifacts || []) {
@@ -297,7 +300,7 @@ export function mountSavedDocxLayout({ root, ...options }) {
     } parent.append(section);
   }
   function render() {
-    if (!controller) return;
+    if (!controller || disposed) return;
     const state = controller.snapshot(), owner = `${state.owner.runtimeMode}:${state.owner.workspaceId}`;
     if (owner !== seenOwner) { seenOwner = owner; sourceFile = wordFile = null; region = null; initialized = false; localMessage = ""; }
     if (state.reviewId !== seenReview) { seenReview = state.reviewId; first = last = active = 0; pageNumber = 1; region = null; }
@@ -305,10 +308,11 @@ export function mountSavedDocxLayout({ root, ...options }) {
     if (state.busy) root.append(el("p", "Working locally…", "saved-layout-status"));
     if (state.errorCode || localMessage) { const message = el("p", localMessage || `${savedLayoutMessage(state.errorCode)} (${state.errorCode})`, "saved-layout-error"); message.setAttribute("role", "alert"); root.append(message); }
     if (state.conflict) root.append(el("p", "Another save or changed input conflicts with this operation. Read the current review, then explicitly discard local edits before continuing."));
-    renderImport(state);
+    if (!embedded) renderImport(state);
+    else root.append(button("Refresh this document's saved review", () => controller.read(), state.busy));
     if (!state.view || !state.decisions) return;
     root.append(el("h3", `${state.view.target_lang} saved Word review · generation ${state.view.generation} · ${state.view.status}${state.dirty ? " · unsaved changes" : ""}`));
-    const locked = state.busy || !state.verified || Boolean(state.pending) || state.conflict;
+    const locked = state.busy || !state.verified || Boolean(state.pending) || state.conflict || readOnly();
     const comparison = el("div", null, "saved-layout-comparison"), source = el("section", null, "saved-layout-source"), words = el("section", null, "saved-layout-words");
     renderSource(state, source, locked); renderParagraphs(state, words, locked); comparison.append(source, words); root.append(comparison);
     renderLayout(state, root, locked); renderReview(state, root, locked);
@@ -316,13 +320,18 @@ export function mountSavedDocxLayout({ root, ...options }) {
   // Input change can fire while focus moves to Save. Let that click complete before
   // replacing controls, so a blur-triggered change never consumes the user's click.
   controller = createSavedDocxLayoutController({ ...options, onChange: (state) => {
+    if (disposed) return;
     if (doc.defaultView && state.dirty && !state.busy && !state.pending) doc.defaultView.setTimeout(render, 0);
     else render();
+    onStateChange(state);
   } }); render();
   const disclosure = root.closest?.("details");
-  const initialize = () => { if (!initialized) { initialized = true; return controller.initialize(); } return null; };
+  const initialize = () => { if (!disposed && !initialized) { initialized = true; return controller.initialize(); } return null; };
   disclosure?.addEventListener("toggle", () => { if (disclosure.open) initialize(); });
   const scopeChanged = () => { if (controller.sync() && disclosure?.open) initialize(); };
   globalThis.window?.addEventListener?.("legalpdf:route-state-changed", scopeChanged);
-  return { controller, render, initialize, dispose: () => globalThis.window?.removeEventListener?.("legalpdf:route-state-changed", scopeChanged) };
+  return { controller, render, initialize, dispose: () => {
+    disposed = true; dragging = null; controller.dispose();
+    globalThis.window?.removeEventListener?.("legalpdf:route-state-changed", scopeChanged);
+  } };
 }

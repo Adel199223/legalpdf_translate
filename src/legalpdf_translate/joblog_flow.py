@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 from xml.etree import ElementTree as ET
@@ -11,6 +12,7 @@ from zipfile import ZipFile
 
 from .ocr_engine import default_ocr_api_env_name
 from .types import OcrApiProvider
+from .pricing import nonnegative_decimal, translation_fee_eur
 
 if TYPE_CHECKING:
     from .metadata_autofill import MetadataExtractionDiagnostics, MetadataSuggestion
@@ -52,7 +54,7 @@ class JobLogSeed:
     total_tokens: int | None
     estimated_api_cost: float | None
     quality_risk_score: float | None
-    profit: float
+    profit: float | None
     travel_km_outbound: float | None = None
     travel_km_return: float | None = None
     use_service_location_in_honorarios: bool = False
@@ -129,9 +131,12 @@ def _parse_joblog_float(value: str, label: str) -> float:
     if cleaned == "":
         return 0.0
     try:
-        return float(cleaned)
+        result = float(cleaned)
     except ValueError as exc:
         raise ValueError(f"{label} must be numeric.") from exc
+    if not math.isfinite(result):
+        raise ValueError(f"{label} must be finite.")
+    return result
 
 
 def _parse_joblog_required_int(value: str, label: str) -> int:
@@ -158,10 +163,7 @@ def _parse_joblog_optional_float(value: str, label: str) -> float | None:
     cleaned = value.strip().replace(",", ".")
     if cleaned == "":
         return None
-    try:
-        return float(cleaned)
-    except ValueError as exc:
-        raise ValueError(f"{label} must be numeric.") from exc
+    return _parse_joblog_float(cleaned, label)
 
 
 def _validate_joblog_date(value: str, label: str) -> str:
@@ -242,7 +244,7 @@ def build_seed_from_joblog_row(row: Mapping[str, object]) -> JobLogSeed:
             if str(row.get("quality_risk_score", "") or "").strip() == ""
             else _coerce_joblog_float(row.get("quality_risk_score"))
         ),
-        profit=_coerce_joblog_float(row.get("profit")),
+        profit=None if row.get("profit") is None else _coerce_joblog_float(row.get("profit")),
         pdf_path=None,
         output_docx=_coerce_joblog_path(row.get("output_docx_path")),
         partial_docx=_coerce_joblog_path(row.get("partial_docx_path")),
@@ -273,7 +275,7 @@ def normalize_joblog_payload(
 
     amount_paid = _parse_joblog_float(raw_values["amount_paid"], "Amount paid")
     api_cost = _parse_joblog_float(raw_values["api_cost"], "API cost")
-    profit = _parse_joblog_float(raw_values["profit"], "Profit")
+    profit = _parse_joblog_optional_float(raw_values["profit"], "Profit")
     total_tokens = _parse_joblog_optional_int(raw_values["total_tokens"], "Total tokens")
     estimated_api_cost = _parse_joblog_optional_float(raw_values["estimated_api_cost"], "Estimated API cost")
     quality_risk_score = _parse_joblog_optional_float(raw_values["quality_risk_score"], "Quality risk score")
@@ -305,9 +307,17 @@ def normalize_joblog_payload(
         service_city = case_city
         service_date = translation_date
 
-    if expected_total == 0.0 and rate > 0:
-        expected_total = round(rate * float(word_count), 2)
-    if profit == 0.0:
+    total_mode = str(raw_values.get("expected_total_mode", "")).strip()
+    if total_mode not in {"", "auto", "manual"}:
+        raise ValueError("Expected total mode must be auto or manual.")
+    for value, label in ((rate, "Rate/word"), (expected_total, "Expected total"),
+                         (amount_paid, "Amount paid"), (api_cost, "API cost"),
+                         (word_count, "Words"), (pages, "Pages")):
+        nonnegative_decimal(value, label)
+    if total_mode == "auto" or (total_mode == "" and expected_total == 0.0 and rate > 0):
+        expected_total = translation_fee_eur(word_count, rate)
+    # Historic translation profit is retained, never recalculated across currencies.
+    if is_interpretation and profit == 0.0:
         if amount_paid > 0:
             profit = round(amount_paid - api_cost, 2)
         else:
@@ -498,7 +508,7 @@ def build_seed_from_run(
         partial_docx=partial_docx,
         pages_dir=pages_dir,
     )
-    expected_total = round(float(default_rate_per_word) * float(word_count), 2)
+    expected_total = translation_fee_eur(word_count, default_rate_per_word)
     return JobLogSeed(
         completed_at=completed_at,
         translation_date=_date_from_completed_at(completed_at),
@@ -526,7 +536,7 @@ def build_seed_from_run(
         total_tokens=None,
         estimated_api_cost=None,
         quality_risk_score=None,
-        profit=round(expected_total - float(api_cost), 2),
+        profit=None,
         pdf_path=pdf_path,
         output_docx=output_docx,
         partial_docx=partial_docx,

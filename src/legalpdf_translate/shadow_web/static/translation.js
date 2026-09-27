@@ -1,6 +1,8 @@
 import { fetchJson } from "./api.js";
+import { updateTranslationFinance } from "./translation_finance.js";
 import { mountSourceReview } from "./source_review_ui.js";
 import { mountFormattingReview } from "./formatting_review_ui.js";
+import { mountOrdinaryLayoutReview } from "./ordinary_layout_review_ui.js";
 import { applyActionFailureFeedbackToUi } from "./action_feedback_presentation.js";
 import { appState, setActiveView } from "./state.js";
 import { ensureBrowserPdfBundleFromFile } from "./browser_pdf.js";
@@ -86,6 +88,7 @@ const translationState = {
 let lastTranslationUiSnapshotKey = "";
 let sourceReviewUi = null;
 let formattingReviewUi = null;
+let ordinaryLayoutUi = null;
 
 function applyActionFailureFeedback(
   error,
@@ -995,6 +998,7 @@ function collectTranslationSaveValues() {
     total_tokens: fieldValue("translation-total-tokens"),
     rate_per_word: fieldValue("translation-rate-per-word"),
     expected_total: fieldValue("translation-expected-total"),
+    expected_total_mode: fieldValue("translation-total-mode"),
     amount_paid: fieldValue("translation-amount-paid"),
     api_cost: fieldValue("translation-api-cost"),
     estimated_api_cost: fieldValue("translation-estimated-api-cost"),
@@ -1114,7 +1118,7 @@ function blankSaveSeed() {
     api_cost: 0,
     estimated_api_cost: "",
     quality_risk_score: "",
-    profit: 0,
+    profit: null,
     pdf_path: null,
     output_docx: null,
     partial_docx: null,
@@ -1205,6 +1209,8 @@ export function closeTranslationCompletionDrawer() {
 }
 
 export function getTranslationUiSnapshot() {
+  const layoutState = ordinaryLayoutUi?.controller.snapshot();
+  const layoutView = layoutState?.view || translationState.currentJob?.ordinary_layout || null;
   const review = currentArabicReviewState();
   const recovery = deriveTranslationRecoveryState(translationState.currentJob);
   const sourceCard = currentSourceCardState();
@@ -1216,6 +1222,11 @@ export function getTranslationUiSnapshot() {
     currentJobStatus: translationState.currentJob?.status || "",
     currentJobId: translationState.currentJobId || "",
     currentJobHasSaveSeed: Boolean(translationState.currentJob?.result?.save_seed),
+    ordinaryLayout: layoutView,
+    ordinaryLayoutReady: !layoutState?.busy && !layoutState?.pending
+      && (!layoutView || layoutView.status === "unprepared"
+        || (layoutState?.verified === true && Boolean(layoutView.delivery)
+          && !layoutView.stale && !layoutView.delivery.stale)),
     hasCompletionSurface: hasTranslationCompletionSurface(),
     completionDrawerOpen: translationState.completionDrawerOpen,
     currentRowId: translationState.currentRowId || null,
@@ -1370,6 +1381,7 @@ function renderArabicReviewCard() {
 }
 
 function syncTranslationCompletionSurface() {
+  ordinaryLayoutUi?.update();
   const available = hasTranslationCompletionSurface();
   const openButton = qs("translation-open-completion");
   const formShell = qs("translation-completion-form-shell");
@@ -1513,20 +1525,35 @@ function applyTranslationSeed(seed, { rowId = null } = {}) {
   setFieldValue("translation-estimated-api-cost", resolved.estimated_api_cost ?? "");
   setFieldValue("translation-quality-risk-score", resolved.quality_risk_score ?? "");
   setFieldValue("translation-profit", resolved.profit ?? "");
+  setFieldValue("translation-total-mode", rowId && !translationState.currentJobId ? "manual" : "auto");
+  refreshTranslationFinance();
   collapseTranslationCompletionSections();
   syncTranslationCompletionSurface();
 }
 
+function refreshTranslationFinance() {
+  updateTranslationFinance({
+    mode: qs("translation-total-mode"), words: qs("translation-word-count"),
+    rate: qs("translation-rate-per-word"), total: qs("translation-expected-total"),
+    profit: qs("translation-profit"), note: qs("translation-profit-note"),
+  });
+}
+
+function currentTranslationMetricsOwner() {
+  const view = ordinaryLayoutUi?.controller.snapshot().view || translationState.currentJob?.ordinary_layout;
+  return JSON.stringify([appState.runtimeMode, appState.workspaceId, translationState.currentJobId,
+    translationState.currentRowId, currentTranslationCompletionKey(), view?.baseline_id,
+    view?.generation, view?.delivery_generation, view?.delivery?.selection_id]);
+}
+
 async function refreshCurrentTranslationMetrics() {
+  const owner = currentTranslationMetricsOwner();
   const jobId = translationState.currentJobId;
-  const rowId = translationState.currentRowId;
-  const completionKey = currentTranslationCompletionKey();
   if (!jobId || translationState.currentJob?.status !== "completed") {
     return;
   }
   const payload = await fetchJson(`/api/translation/jobs/${jobId}`, appState);
-  if (translationState.currentJobId !== jobId || translationState.currentRowId !== rowId
-      || currentTranslationCompletionKey() !== completionKey) {
+  if (currentTranslationMetricsOwner() !== owner) {
     throw new Error("The active translation changed while refreshing its word count.");
   }
   const job = payload.normalized_payload?.job;
@@ -1537,26 +1564,10 @@ async function refreshCurrentTranslationMetrics() {
   if (!seed) {
     return;
   }
-  const values = collectTranslationSaveValues();
-  const number = (value) => Number(String(value).replace(",", "."));
-  const money = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
-  const previousTotal = number(values.expected_total);
-  const previousSeed = translationState.currentSeed || {};
-  let expectedTotal = previousTotal;
-  if (number(values.word_count) !== Number(seed.word_count)) {
-    if (previousTotal === money(number(values.rate_per_word) * number(values.word_count))
-        || previousTotal === Number(previousSeed.expected_total)) {
-      expectedTotal = money(number(values.rate_per_word) * Number(seed.word_count));
-      setFieldValue("translation-expected-total", expectedTotal);
-    }
-    const paid = number(values.amount_paid);
-    const cost = number(values.api_cost);
-    if (number(values.profit) === money((paid || previousTotal) - cost)
-        || number(values.profit) === Number(previousSeed.profit)) {
-      setFieldValue("translation-profit", money((paid || expectedTotal) - cost));
-    }
-  }
   setFieldValue("translation-word-count", seed.word_count);
+  setFieldValue("translation-api-cost", seed.api_cost ?? "");
+  setFieldValue("translation-estimated-api-cost", seed.estimated_api_cost ?? "");
+  refreshTranslationFinance();
   translationState.currentSeed = { ...translationState.currentSeed, ...seed };
   translationState.currentJob = job;
   syncTranslationCompletionSurface();
@@ -1841,8 +1852,23 @@ export function getCurrentTranslationJobId() {
   return translationState.currentJobId || "";
 }
 
+function currentTranslationDeliveryFields() {
+  const state = ordinaryLayoutUi?.controller.snapshot();
+  const view = state?.view || translationState.currentJob?.ordinary_layout;
+  if (state?.pending || state?.busy) {
+    throw new Error("Finish or recover the current layout action before saving.");
+  }
+  if (!view || view.status === "unprepared") return {};
+  if (!view.delivery || view.stale || view.delivery.stale || state?.verified !== true) {
+    throw new Error("Review source layout and choose the current copy for delivery before saving.");
+  }
+  return {baseline_id:view.baseline_id,expected_delivery_generation:view.delivery_generation};
+}
+
 export async function collectCurrentTranslationSaveValues() {
+  currentTranslationDeliveryFields();
   await refreshCurrentTranslationMetrics();
+  currentTranslationDeliveryFields();
   return collectTranslationSaveValues();
 }
 
@@ -2371,6 +2397,8 @@ async function handleTranslationSave() {
     throw new Error(currentArabicReviewState().message || "Review the Arabic document in Word before you save the case record.");
   }
   await refreshCurrentTranslationMetrics();
+  refreshTranslationFinance();
+  const deliveryFields = currentTranslationDeliveryFields();
   const payload = await fetchJson("/api/translation/save-row", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2380,12 +2408,14 @@ async function handleTranslationSave() {
       row_id: translationState.currentRowId,
       job_id: translationState.currentJobId || "",
       completion_key: currentTranslationCompletionKey(),
+      ...deliveryFields,
     }),
   });
   translationState.currentRowId = payload.saved_result.row_id;
   for (const key of ["word_count", "expected_total", "profit"]) {
-    setFieldValue(`translation-${key.replaceAll("_", "-")}`, payload.normalized_payload[key]);
+    setFieldValue(`translation-${key.replaceAll("_", "-")}`, payload.normalized_payload[key] ?? "");
   }
+  refreshTranslationFinance();
   setFieldValue("translation-row-id", payload.saved_result.row_id);
   setPanelStatus("translation-save", "ok", `Saved case record #${payload.saved_result.row_id}.`);
   setDiagnostics("translation-save", payload, { hint: `Saved case record #${payload.saved_result.row_id}.`, open: false });
@@ -2408,6 +2438,28 @@ function sourceCardClickIsInteractive(target) {
 }
 
 export function initializeTranslationUi() {
+  ordinaryLayoutUi = mountOrdinaryLayoutReview({
+    root: qs("translation-ordinary-layout"),
+    getScope: () => ({runtimeMode:appState.runtimeMode,workspaceId:appState.workspaceId}),
+    getJob: () => translationState.currentJob,
+    contentReviewBlocked: currentArabicReviewIsBlocking,
+    onDeliveryChange: (delivery, view) => {
+      if (translationState.currentJob) translationState.currentJob.ordinary_layout = view;
+      setFieldValue("translation-word-count", delivery.word_count);
+      setFieldValue("translation-api-cost", "");
+      setFieldValue("translation-estimated-api-cost", "");
+      refreshTranslationFinance();
+      notifyTranslationUiStateChanged();
+      const owner = currentTranslationMetricsOwner();
+      refreshCurrentTranslationMetrics().catch((error) => {
+        if (currentTranslationMetricsOwner() !== owner) return;
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation-save", diagnosticsSlot: "translation-save",
+          fallback: "The selected copy's API cost could not be refreshed. Refresh it before saving.",
+        });
+      });
+    },
+  });
   formattingReviewUi = mountFormattingReview({
     root: qs("translation-formatting-review-panel"),
     prepareButton: qs("translation-formatting-review-prepare"),
@@ -2676,6 +2728,9 @@ export function initializeTranslationUi() {
       }
     });
   });
+  for (const id of ["translation-word-count", "translation-rate-per-word", "translation-total-mode"]) {
+    for (const event of ["input", "change"]) qs(id)?.addEventListener(event, refreshTranslationFinance);
+  }
   qs("translation-arabic-review-open")?.addEventListener("click", async () => {
     await runWithBusy(["translation-arabic-review-open"], { "translation-arabic-review-open": "Opening..." }, async () => {
       try {

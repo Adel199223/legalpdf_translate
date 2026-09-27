@@ -13,6 +13,11 @@ import pytest
 from legalpdf_translate.word_pdf_script import build_pdf_script
 
 
+# Covers PowerShell startup, Add-Type compilation, and the synthetic helper.
+# Production helper deadlines and native-operation guards remain unchanged.
+_FAKE_HELPER_TIMEOUT_SECONDS = 60
+
+
 def _script(tmp_path: Path) -> str:
     return build_pdf_script(
         tmp_path / "João's staged source.docx",
@@ -429,7 +434,8 @@ def _run_fake_helper(tmp_path: Path, scenario: str, *, export: bool = True):
     result = subprocess.run(
         [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand",
          base64.b64encode(runner.encode("utf-16-le")).decode("ascii")],
-        input=wrapped, capture_output=True, text=True, encoding="utf-8", timeout=20, check=False,
+        input=wrapped, capture_output=True, text=True, encoding="utf-8",
+        timeout=_FAKE_HELPER_TIMEOUT_SECONDS, check=False,
     )
     assert state_path.exists(), result.stderr
     state = json.loads(state_path.read_text(encoding="utf-8"))

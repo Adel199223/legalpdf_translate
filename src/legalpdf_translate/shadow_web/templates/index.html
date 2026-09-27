@@ -968,7 +968,7 @@
                     </div>
                     <div class="field field-wide">
                       <label for="settings-default-rate-json">Default rates by language</label>
-                      <textarea id="settings-default-rate-json" rows="4" placeholder='{"EN":0.08,"FR":0.08,"AR":0.09}'></textarea>
+                      <textarea id="settings-default-rate-json" rows="4" placeholder='{"EN":0.027,"FR":0.027,"AR":0.027}'></textarea>
                       <p class="field-hint">Use this advanced field to set default per-language rates when fee details should start filled in automatically.</p>
                     </div>
                   </div>
@@ -1627,6 +1627,7 @@
                 <button type="button" id="translation-arabic-review-continue-without-changes">Continue without changes</button>
               </div>
             </div>
+            <section id="translation-ordinary-layout" class="result-card hidden" aria-label="Source layout and delivery"></section>
             <div id="translation-gmail-step-card" class="result-card hidden">
               <div class="result-header">
                 <div>
@@ -1747,33 +1748,41 @@
 
                 <details class="shell-collapsible field-wide" id="translation-save-amounts-section">
                   <summary>
-                    <span>Amounts (EUR)</span>
-                    <span class="details-hint">Rate, totals, API-cost, and profit fields.</span>
+                    <span>Fees and API costs</span>
+                    <span class="details-hint">Fees in EUR; API costs in USD.</span>
                   </summary>
                   <div class="shell-collapsible-body form-grid compact-grid">
                     <div class="field">
-                      <label for="translation-rate-per-word">Rate / Word</label>
-                      <input id="translation-rate-per-word" type="number" min="0" step="0.01">
+                      <label for="translation-rate-per-word">Rate / Word (EUR)</label>
+                      <input id="translation-rate-per-word" type="number" min="0" step="any">
                     </div>
                     <div class="field">
-                      <label for="translation-expected-total">Expected Total</label>
+                      <label for="translation-total-mode">Fee calculation</label>
+                      <select id="translation-total-mode">
+                        <option value="auto">Calculate from words × rate</option>
+                        <option value="manual">Set total manually</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="translation-expected-total">Expected Total (EUR)</label>
                       <input id="translation-expected-total" type="number" min="0" step="0.01">
                     </div>
                     <div class="field">
-                      <label for="translation-amount-paid">Amount Paid</label>
+                      <label for="translation-amount-paid">Amount Paid (EUR)</label>
                       <input id="translation-amount-paid" type="number" min="0" step="0.01">
                     </div>
                     <div class="field">
-                      <label for="translation-api-cost">API Cost</label>
-                      <input id="translation-api-cost" type="number" min="0" step="0.01">
+                      <label for="translation-api-cost">API Cost (USD)</label>
+                      <input id="translation-api-cost" type="number" min="0" step="any">
                     </div>
                     <div class="field">
-                      <label for="translation-estimated-api-cost">Estimated API Cost</label>
-                      <input id="translation-estimated-api-cost" type="number" min="0" step="0.01">
+                      <label for="translation-estimated-api-cost">Estimated API Cost (USD)</label>
+                      <input id="translation-estimated-api-cost" type="number" min="0" step="any">
                     </div>
                     <div class="field">
-                      <label for="translation-profit">Profit</label>
-                      <input id="translation-profit" type="number" step="0.01">
+                      <label for="translation-profit">Historical profit (unverified)</label>
+                      <input id="translation-profit" type="number" step="any" readonly>
+                      <p class="field-hint" id="translation-profit-note">Profit is not calculated across EUR and USD.</p>
                     </div>
                   </div>
                 </details>
@@ -1811,6 +1820,23 @@
                 <label for="gmail-batch-final-output-filename">Final DOCX filename</label>
                 <input id="gmail-batch-final-output-filename" type="text" placeholder="Optional filename for the final Gmail DOCX">
               </div>
+              <fieldset id="gmail-fee-options" class="field-wide form-grid compact-grid">
+                <legend>Fee document wording</legend>
+                <div class="field field-wide">
+                  <label for="gmail-fee-recipient">Recipient text (optional override)</label>
+                  <textarea id="gmail-fee-recipient" rows="2" maxlength="1000" placeholder="Leave blank to address the named institution"></textarea>
+                  <p class="field-hint">These choices apply to this batch's fee document only.</p>
+                </div>
+                <div class="field field-wide checkbox-field">
+                  <label><input id="gmail-fee-include-declaration" type="checkbox"> Include an unsigned translator declaration</label>
+                  <p class="field-hint">Use when requested. Review the wording and sign the document yourself if required.</p>
+                </div>
+                <div id="gmail-fee-declaration-field" class="field field-wide" hidden>
+                  <label for="gmail-fee-declaration">Declaration wording</label>
+                  <textarea id="gmail-fee-declaration" rows="4" maxlength="4000" disabled>Comprometo-me, por minha honra, a desempenhar conscienciosamente as funções de tradutor que me são confiadas no presente processo.</textarea>
+                  <p class="field-hint">The document includes a blank signature line.</p>
+                </div>
+              </fieldset>
               <div class="form-actions drawer-action-row">
                 <button type="button" class="ghost-button hidden" id="gmail-batch-finalize-report">Generate finalization report</button>
                 <button type="submit" class="primary-button" id="gmail-batch-finalize-run">Create Gmail reply</button>
@@ -1982,7 +2008,7 @@
                   </div>
                   <div class="field">
                     <label for="rate-per-word">Rate / Word</label>
-                    <input id="rate-per-word" name="rate_per_word" type="number" step="0.01" min="0">
+                    <input id="rate-per-word" name="rate_per_word" type="number" step="any" min="0">
                   </div>
                   <div class="field">
                     <label for="expected-total">Expected Total</label>
@@ -1993,8 +2019,8 @@
                     <input id="amount-paid" name="amount_paid" type="number" step="0.01" min="0">
                   </div>
                   <div class="field">
-                    <label for="api-cost">API Cost</label>
-                    <input id="api-cost" name="api_cost" type="number" step="0.01" min="0">
+                    <label for="api-cost">API Cost (USD)</label>
+                    <input id="api-cost" name="api_cost" type="number" step="any" min="0">
                   </div>
                   <div class="field">
                     <label for="profit">Profit</label>

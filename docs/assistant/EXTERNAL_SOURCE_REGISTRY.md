@@ -1,5 +1,11 @@
 # External Source Registry
 
+## Two unsent translation repeats — 2026-09-27
+
+Rechecked the official [GPT-5.2 model page](https://developers.openai.com/api/docs/models/gpt-5.2) for the [two-job retest](exec_plans/active/2026-09-27_two_latest_unsent_retest.md). Standard USD per million tokens remains 1.75 input, 0.175 cached input and 14 output. The page lists a 400,000-token context, 128,000 maximum output tokens, high reasoning effort and snapshot `gpt-5.2-2025-12-11`.
+
+The fresh task preserves the existing provider-enforced 32,000-output limit and conservative 400,000-input reservation bound, giving a maximum reservation of USD1.148 per request. Reservations settle sequentially against reported usage; they are not expected charges. The lifetime ceiling remains USD15, with USD6.65216805 historical known spend and the unresolved USD0.119 hold preserved. The new allowance cannot exceed USD8.22883195. No saved model/default promotion or reconciliation of the old unknown charge follows from this source check. The exact registry beforeimage is preserved privately under `two_latest_unsent_retest_20260927_01/docs_beforeimages_01/`.
+
 ## Test performance tooling — 2026-09-26
 
 Official sources checked for the [test performance plan](exec_plans/active/2026-09-26_test_performance.md):
@@ -158,3 +164,17 @@ request; the existing key/model/effort/defaults are unchanged.
 |---|---|---|---|
 | https://developers.openai.com/api/docs/models/gpt-5.2 | Private frozen-caller capacity proposal | Reconfirmed USD/million 1.75 input, 0.175 cached input, 14 output, 400000 context, 128000 maximum output and high effort. Full-capacity input plus unchanged 24000 inclusive output reserves USD1.036 per call without cache discount; this is a conditional bound, not actual cost or account availability. | 2026-09-11 |
 | https://developers.openai.com/api/reference/python/resources/responses/methods/create | Private exact-request and tier guards | Explicit default requests standard pricing; actual returned tier may differ and must be accounted. Output cap includes visible and reasoning tokens. Private requests retain store=false; no ordinary model/tier/default change. | 2026-09-11 |
+
+### Ordinary layout and semantic fidelity verification — 2026-09-27
+
+Official public sources were read after inspecting the local client and accounting
+contracts. No private source text, credentials or provider request was sent in
+this verification. These references support implementation decisions, not
+visual/translation acceptance or authority to replay any earlier operation.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-5.2 | Ordinary source-layout suggestion policy | Reconfirmed standard USD/million rates: input1.75, cached0.175, output14; context400000, output capacity128000, image input, Responses and structured output. The existing alias/snapshot pair remains5.2/2025-12-11. Full input capacity plus a separate8000 output limit gives our conservative USD0.812 page reservation; this is not measured cost or an account-availability guarantee. | 2026-09-27 |
+| https://developers.openai.com/api/docs/guides/images-vision | Layout image inputs | Current5.2 detail modes use2048-pixel maximum dimension and6144 patches; multiplier1.2. Image tokens are billed and count toward input limits. The implementation uses full context capacity as its reservation bound, not a hand-counted text/image approximation. | 2026-09-27 |
+| https://developers.openai.com/api/docs/guides/structured-outputs | Bounded style-only proposal schema | Reverified base-model support for numeric minimum/maximum and array minItems/maxItems; the guide excludes these additional bounds for fine-tuned models. Root must be an object, not anyOf; supported nested anyOf branches require all fields and additionalProperties:false. Local branches align heading role with level1-3/nullable size1-24 and nonheading roles with level0/null size; local bounds cover spacing0-72pt, columns2-3, widths10-90percent, gutter0-36pt and four normalized bbox values. Application checks still enforce width sums, exact paragraph coverage/order, protected spans and wording. No provider or rendered acceptance follows from schema validity. | 2026-09-27 |
+| https://developers.openai.com/api/reference/python/resources/responses/methods/create | Per-purpose request and accounting | Explicit default requests standard processing; returned service tier may differ and remains validated. Omitted tier uses auto. store=false is explicit for this separate operation; it does not modify saved translation defaults. | 2026-09-27 |

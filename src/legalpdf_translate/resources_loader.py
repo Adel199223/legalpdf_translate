@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from .translation_fidelity import FIDELITY_GUIDANCE
 from .types import TargetLang
 
 
@@ -34,4 +35,4 @@ def load_system_instructions(target_lang: TargetLang) -> str:
     else:
         filename = "system_instructions_ar.txt"
     path = resources_dir / filename
-    return path.read_text(encoding="utf-8")
+    return path.read_text(encoding="utf-8").rstrip() + "\n\n" + FIDELITY_GUIDANCE + "\n"

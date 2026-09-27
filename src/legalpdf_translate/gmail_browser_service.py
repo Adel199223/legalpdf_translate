@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from hashlib import sha1
+from hashlib import sha1, sha256
 import json
 from pathlib import Path
 import re
@@ -529,6 +529,13 @@ def _message_signature(result: GmailMessageLoadResult) -> str:
     return sha1(raw.encode("utf-8")).hexdigest()
 
 
+def _verify_confirmed_delivery_hashes(session: GmailBatchSession) -> None:
+    for item in session.confirmed_items:
+        if item.delivery_sha256 and (not item.staged_translated_docx_path.is_file()
+                or sha256(item.staged_translated_docx_path.read_bytes()).hexdigest() != item.delivery_sha256):
+            raise ValueError("The confirmed Gmail attachment changed; preserve it and review a fresh batch.")
+
+
 def _serialize_confirmed_item(item: GmailBatchConfirmedItem) -> dict[str, Any]:
     durable_path = _path_text(item.translated_docx_path)
     staged_path = _path_text(item.staged_translated_docx_path)
@@ -551,6 +558,9 @@ def _serialize_confirmed_item(item: GmailBatchConfirmedItem) -> dict[str, Any]:
         "case_city": item.case_city,
         "court_email": item.court_email,
         "consistency_signature": list(item.consistency_signature),
+        "delivery_sha256": item.delivery_sha256,
+        "delivery_generation": item.delivery_generation,
+        "delivery_selection_id": item.delivery_selection_id,
     }
 
 
@@ -2074,6 +2084,9 @@ class GmailBrowserSessionManager:
         job_id: str,
         form_values: Mapping[str, Any],
         row_id: object | None = None,
+        ordinary_layout_manager: Any = None,
+        baseline_id: str | None = None,
+        expected_delivery_generation: int | None = None,
     ) -> dict[str, Any]:
         workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
         session = workspace.batch_session
@@ -2088,6 +2101,8 @@ class GmailBrowserSessionManager:
             raise ValueError("Only completed translation jobs can be confirmed for Gmail batch attachments.")
         if str(job.get("status", "") or "") != "completed":
             raise ValueError("The selected browser translation job is not complete yet.")
+        if job.get("runtime_mode", runtime_mode) != runtime_mode or job.get("workspace_id", workspace_id) != workspace_id:
+            raise ValueError("The selected translation job belongs to another workspace.")
         current_attachment = session.downloaded_attachments[workspace.current_batch_index]
         config = job.get("config", {}) if isinstance(job.get("config"), dict) else {}
         source_path = _clean_text(config.get("source_path"))
@@ -2096,24 +2111,64 @@ class GmailBrowserSessionManager:
         start_page = int(config.get("start_page", current_attachment.start_page) or current_attachment.start_page)
         if start_page != int(current_attachment.start_page):
             raise ValueError("The selected translation job used a different Gmail attachment start page.")
+        gmail_binding = config.get("gmail_batch_context")
+        if isinstance(gmail_binding, Mapping):
+            expected_binding = {"session_id": session.session_id, "message_id": session.intake_context.message_id,
+                "thread_id": session.intake_context.thread_id, "attachment_id": current_attachment.candidate.attachment_id}
+            if any(gmail_binding.get(key) != value for key, value in expected_binding.items()):
+                raise ValueError("The selected translation job belongs to another Gmail intake session.")
+        target_language = _clean_text(job.get("result", {}).get("save_seed", {}).get("target_lang") or config.get("target_lang"))
+        if target_language and target_language != session.selected_target_lang:
+            raise ValueError("The selected translation job uses a different target language.")
+        delivery = None
+        freeze_nonce = None
+        if ordinary_layout_manager is not None:
+            from .ordinary_layout_integration import delivery_job_snapshot
+            state = ordinary_layout_manager.state(job_id)
+            freeze_nonce = (sha256(f"{session.session_id}:{workspace.current_batch_index}:{job_id}".encode()).hexdigest()[:32]
+                if state["status"] != "unprepared" else None)
+            job, delivery = delivery_job_snapshot(ordinary_layout_manager, job, mutation=True,
+                baseline_id=baseline_id, expected_delivery_generation=expected_delivery_generation)
         result = job.get("result", {}) if isinstance(job.get("result"), dict) else {}
         save_seed = result.get("save_seed")
         if not isinstance(save_seed, dict):
             raise ValueError("The selected translation job does not have a Save-to-Job-Log seed yet.")
-        from .translation_service import save_translation_row, translation_job_docx_path
+        from .translation_service import save_translation_row, translation_job_docx_path, validate_translation_row
+        from .ordinary_layout_integration import owned_form_values
 
         translated_docx_path = translation_job_docx_path(job)
         if not translated_docx_path.exists():
             raise ValueError(f"Translated DOCX not found: {translated_docx_path}")
+        delivery_hash = sha256(translated_docx_path.read_bytes()).hexdigest()
+        if delivery is not None and delivery_hash != delivery.sha256:
+            raise ValueError("ordinary_layout_delivery_changed")
+        validated_form = owned_form_values(job, form_values)
+        _, prospective = validate_translation_row(job_log_db_path=job_log_db_path, form_values=validated_form,
+            seed_payload=save_seed, row_id=row_id, word_count_docx=translated_docx_path,
+            owned_run_id=save_seed.get("run_id"))
+        prospective_signature = gmail_batch_consistency_signature(
+            case_number=_clean_text(prospective.get("case_number")), case_entity=_clean_text(prospective.get("case_entity")),
+            case_city=_clean_text(prospective.get("case_city")), court_email=_clean_text(prospective.get("court_email")))
+        if session.consistency_signature is not None and session.consistency_signature != prospective_signature:
+            raise ValueError("Selected attachments did not resolve to the same confirmed reply metadata.")
+        if delivery is not None:
+            locked = ordinary_layout_manager.resolve_delivery(job_id, expected_delivery_generation, freeze_nonce,
+                require_settled=True)
+            if locked.sha256 != delivery_hash:
+                raise ValueError("ordinary_layout_delivery_changed")
+            delivery = locked
         staged_docx = stage_gmail_batch_translated_docx(session=session, translated_docx_path=translated_docx_path)
+        if sha256(staged_docx.read_bytes()).hexdigest() != delivery_hash:
+            raise ValueError("ordinary_layout_staged_delivery_changed")
         # The saved fee metrics must describe the exact bytes attached to the draft.
         save_response = save_translation_row(
             settings_path=settings_path,
             job_log_db_path=job_log_db_path,
-            form_values=dict(form_values),
+            form_values=validated_form,
             seed_payload=save_seed,
             row_id=row_id,
             word_count_docx=staged_docx,
+            owned_run_id=save_seed.get("run_id"),
         )
         saved_result = dict(save_response.get("saved_result", {}))
         run_dir_text = _clean_text(result.get("run_dir")) or _clean_text(job.get("artifacts", {}).get("run_dir"))
@@ -2130,6 +2185,9 @@ class GmailBrowserSessionManager:
             case_entity=_clean_text(saved_result.get("case_entity")),
             case_city=_clean_text(saved_result.get("case_city")),
             court_email=_clean_text(saved_result.get("court_email")),
+            delivery_sha256=delivery_hash,
+            delivery_generation=delivery.generation if delivery is not None else None,
+            delivery_selection_id=delivery.selection_id if delivery is not None else "",
         )
         signature = confirmed_item.consistency_signature
         if session.consistency_signature is None:
@@ -2171,7 +2229,24 @@ class GmailBrowserSessionManager:
         profile_id: str | None,
         build_sha: str = "",
         asset_version: str = "",
+        recipient_block: str = "",
+        include_translator_declaration: bool = False,
+        translator_declaration_text: str = "",
     ) -> dict[str, Any]:
+        from .honorarios_docx import validate_translation_honorarios_options
+
+        document_options = validate_translation_honorarios_options(
+            recipient_block=recipient_block,
+            include_translator_declaration=include_translator_declaration,
+            translator_declaration_text=translator_declaration_text,
+        )
+        workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
+        session = workspace.batch_session
+        if session is None:
+            raise ValueError("No Gmail translation batch is active in this workspace.")
+        if session.draft_created or session.finalization_state == "draft_ready" or session.status == "draft_ready":
+            raise ValueError("This Gmail batch already has its final draft; open the existing draft.")
+        _verify_confirmed_delivery_hashes(session)
         preflight_response = self.preflight_batch_finalization(
             runtime_mode=runtime_mode,
             workspace_id=workspace_id,
@@ -2233,6 +2308,7 @@ class GmailBrowserSessionManager:
             case_entity=signature[1],
             case_city=signature[2],
             profile=profile,
+            **document_options,
         )
         effective_output_dir = (session.effective_output_dir or Path.cwd()).expanduser().resolve()
         effective_output_dir.mkdir(parents=True, exist_ok=True)
@@ -2334,6 +2410,7 @@ class GmailBrowserSessionManager:
                 "capability_flags": build_gmail_browser_capability_flags(settings_path=settings_path),
             }
 
+        _verify_confirmed_delivery_hashes(session)
         translated_docxs = validate_translated_docx_artifacts_for_gmail_draft(
             translated_docxs=[item.staged_translated_docx_path for item in session.confirmed_items],
             honorarios_pdf=Path(_clean_text(pdf_export.get("pdf_path"))).expanduser().resolve(),

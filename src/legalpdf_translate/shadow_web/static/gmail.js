@@ -91,6 +91,7 @@ import {
   renderGmailInputValueInto,
 } from "./gmail_control_ui.js";
 import { renderGmailBatchFinalizeSurfaceInto } from "./gmail_finalize_ui.js";
+import { readGmailFeeOptions, renderGmailFeeOptions } from "./gmail_fee_options.js";
 import { renderGmailReportActionInto } from "./gmail_report_ui.js";
 import {
   buildGmailBrowserFailureHintPresentation,
@@ -1014,6 +1015,16 @@ function closeBatchFinalizeDrawer() {
   setBatchFinalizeDrawerOpen(false);
 }
 
+function gmailFeeOptionNodes() {
+  return {
+    group: qs("gmail-fee-options"),
+    recipient: qs("gmail-fee-recipient"),
+    include: qs("gmail-fee-include-declaration"),
+    declaration: qs("gmail-fee-declaration"),
+    declarationField: qs("gmail-fee-declaration-field"),
+  };
+}
+
 function renderBatchFinalizeSurface(activeSession = null) {
   const nodes = {
     status: qs("gmail-batch-finalize-status"),
@@ -1035,6 +1046,12 @@ function renderBatchFinalizeSurface(activeSession = null) {
     batchFinalizePreflightInFlight: gmailState.batchFinalizePreflightInFlight,
   });
   const provenance = currentGmailBuildProvenance();
+  renderGmailFeeOptions(gmailFeeOptionNodes(), {
+    ownerKey: `${appState.runtimeMode || ""}:${appState.workspaceId || ""}:${surfaceState.session?.session_id || ""}`,
+    editable: Boolean(surfaceState.session?.session_id)
+      && !surfaceState.recoveredOnly
+      && !["finalizing", "draft_ready"].includes(surfaceState.finalizationState),
+  });
   const outputFolder = fieldValue("gmail-output-dir") || gmailState.bootstrap?.defaults?.default_output_dir || "Use default folder";
   const presentation = buildGmailBatchFinalizeSurfacePresentation({
     ...surfaceState,
@@ -1854,6 +1871,7 @@ async function refreshBatchFinalizePreflight({ forceRefresh = false } = {}) {
 }
 
 async function confirmCurrentTranslation() {
+  const ownerMode = appState.runtimeMode, ownerWorkspace = appState.workspaceId;
   const translationUi = translationUiSnapshot();
   const confirmationGate = buildGmailTranslationConfirmationGatePresentation({
     translationUi,
@@ -1863,15 +1881,37 @@ async function confirmCurrentTranslation() {
     throw new Error(confirmationGate.message);
   }
   const jobId = confirmationGate.jobId;
+  if (translationUi.ordinaryLayoutReady === false) {
+    throw new Error("Review source layout and choose the current copy for delivery before saving this attachment.");
+  }
   const formValues = await gmailState.hooks.collectCurrentTranslationSaveValues?.() || {};
+  if (appState.runtimeMode !== ownerMode || appState.workspaceId !== ownerWorkspace) {
+    throw new Error("The active workspace changed while preparing confirmation.");
+  }
+  const currentUi = translationUiSnapshot();
+  const currentGate = buildGmailTranslationConfirmationGatePresentation({
+    translationUi: currentUi,
+    jobId: gmailState.hooks.getCurrentTranslationJobId?.() || "",
+  });
+  if (currentGate.blocked || currentGate.jobId !== jobId) {
+    throw new Error(currentGate.message || "The active translation changed while preparing confirmation.");
+  }
+  const layout = currentUi.ordinaryLayout;
+  if (currentUi.ordinaryLayoutReady === false
+      || (layout?.status && layout.status !== "unprepared"
+        && (!layout.delivery || layout.stale || layout.delivery.stale))) {
+    throw new Error("Review source layout and choose the current copy for delivery before saving this attachment.");
+  }
   const payload = await fetchJson("/api/gmail/batch/confirm-current", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(buildGmailConfirmCurrentTranslationRequestPayload({
       jobId,
-      completionKey: translationUi.arabicReviewCompletionKey || "",
+      completionKey: currentUi.arabicReviewCompletionKey || "",
       formValues,
       rowId: qs("translation-row-id")?.value || null,
+      baselineId: layout?.baseline_id || null,
+      expectedDeliveryGeneration: layout?.delivery_generation ?? null,
     })),
   });
   gmailState.activeSession = payload.normalized_payload.active_session || null;
@@ -1923,6 +1963,7 @@ async function finalizeBatch() {
     body: JSON.stringify(buildGmailBatchFinalizeRequestPayload({
       profileId: qs("profile-id")?.value || "",
       outputFilename: fieldValue("gmail-batch-final-output-filename") || fieldValue("gmail-final-output-filename"),
+      ...readGmailFeeOptions(gmailFeeOptionNodes()),
     })),
   });
   gmailState.activeSession = payload.normalized_payload.active_session || null;
@@ -2193,6 +2234,23 @@ export function initializeGmailUi(hooks) {
         fallback: "Attachment preview failed.",
       },
     });
+  });
+
+  // Preparing from Enter/requestSubmit can occur before the editor blurs.
+  // Keep the selection model current without replacing the active control or
+  // normalizing its visible value midway through typing. Change still commits
+  // displayed normalization and refreshes the other editor/preview below.
+  qs("gmail-attachment-list")?.addEventListener("input", (event) => {
+    const startPage = event.target.closest("[data-attachment-start-page]");
+    if (startPage) {
+      updateAttachmentStartPage(startPage.dataset.attachmentStartPage, startPage.value);
+    }
+  });
+  qs("gmail-review-detail")?.addEventListener("input", (event) => {
+    const startPage = event.target.closest("[data-detail-start-page]");
+    if (startPage) {
+      updateAttachmentStartPage(startPage.dataset.detailStartPage, startPage.value);
+    }
   });
 
   qs("gmail-attachment-list")?.addEventListener("change", (event) => {
@@ -2554,6 +2612,7 @@ export function initializeGmailUi(hooks) {
       },
     });
   });
+  qs("gmail-fee-include-declaration")?.addEventListener("change", () => renderBatchFinalizeSurface());
   qs("gmail-close-batch-finalize-drawer")?.addEventListener("click", closeBatchFinalizeDrawer);
   qs("gmail-batch-finalize-drawer-backdrop")?.addEventListener("click", (event) => {
     if (event.target === qs("gmail-batch-finalize-drawer-backdrop")) {

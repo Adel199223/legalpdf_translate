@@ -6760,7 +6760,7 @@ def test_count_words_from_output_artifacts_falls_back_to_pages_dir(tmp_path: Pat
     )
 
 
-def test_build_seed_from_run_uses_docx_word_count_for_expected_total_and_profit(tmp_path: Path) -> None:
+def test_build_seed_from_run_uses_docx_word_count_and_leaves_cross_currency_profit_unset(tmp_path: Path) -> None:
     pages_dir = tmp_path / "pages"
     pages_dir.mkdir()
     (pages_dir / "page_0001.txt").write_text("one two three four five", encoding="utf-8")
@@ -6781,7 +6781,8 @@ def test_build_seed_from_run_uses_docx_word_count_for_expected_total_and_profit(
 
     assert seed.word_count == 5
     assert seed.expected_total == 0.5
-    assert seed.profit == 0.25
+    assert seed.api_cost == 0.25
+    assert seed.profit is None
 
 
 def test_prepare_joblog_seed_uses_ranked_court_email_suggestion_when_no_exact_email(tmp_path: Path, monkeypatch) -> None:
@@ -6969,6 +6970,7 @@ def test_save_to_joblog_dialog_saves_new_run_metric_fields(monkeypatch, tmp_path
         word_count_edit=_FakeEdit("1000"),
         rate_edit=_FakeEdit("0.08"),
         expected_total_edit=_FakeEdit("80"),
+        total_mode_combo=SimpleNamespace(currentData=lambda: "auto"),
         amount_paid_edit=_FakeEdit("0"),
         api_cost_edit=_FakeEdit("2.50"),
         profit_edit=_FakeEdit("77.50"),
@@ -7008,6 +7010,8 @@ def test_save_to_joblog_dialog_saves_new_run_metric_fields(monkeypatch, tmp_path
     assert captured_payload["estimated_api_cost"] == 2.9
     assert captured_payload["quality_risk_score"] == 0.44
     assert captured_payload["api_cost"] == 2.5
+    assert captured_payload["expected_total"] == 80.0
+    assert captured_payload["profit"] is None
     assert captured_payload["court_email"] == "court@example.pt"
     assert callback_state == {"called": True, "accepted": True}
 
@@ -7087,6 +7091,7 @@ def test_save_to_joblog_dialog_interpretation_save_returns_saved_result_without_
         word_count_edit=_FakeEdit(""),
         rate_edit=_FakeEdit(""),
         expected_total_edit=_FakeEdit(""),
+        total_mode_combo=SimpleNamespace(currentData=lambda: "manual"),
         amount_paid_edit=_FakeEdit("0"),
         api_cost_edit=_FakeEdit("0"),
         profit_edit=_FakeEdit("0"),
@@ -7217,6 +7222,7 @@ def test_save_to_joblog_dialog_edit_mode_updates_existing_row(monkeypatch, tmp_p
         word_count_edit=_FakeEdit("1666"),
         rate_edit=_FakeEdit("0.09"),
         expected_total_edit=_FakeEdit("149.94"),
+        total_mode_combo=SimpleNamespace(currentData=lambda: "manual"),
         amount_paid_edit=_FakeEdit("100"),
         api_cost_edit=_FakeEdit("2.50"),
         profit_edit=_FakeEdit("97.50"),
@@ -7257,6 +7263,8 @@ def test_save_to_joblog_dialog_edit_mode_updates_existing_row(monkeypatch, tmp_p
     assert updated["word_count"] == 1666
     assert updated["case_number"] == "XYZ-2"
     assert updated["run_id"] == "run-edited"
+    assert updated["expected_total"] == 149.94
+    assert updated["profit"] == seed.profit == 77.5
     assert callback_state == {"called": True, "accepted": True}
     assert fake._saved_result is not None
     assert fake._saved_result.row_id == 77

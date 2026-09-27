@@ -13,6 +13,7 @@ import re
 from typing import Any, Callable, Mapping, Sequence
 
 from .formatting_support import fingerprint
+from .translation_fidelity import FIDELITY_GUIDANCE
 from .types import TargetLang
 
 PROTOCOL_VERSION = "legal_blocks_v2"
@@ -137,7 +138,7 @@ def structured_response_format() -> dict[str, Any]:
 
 def structured_system_instructions(lang: TargetLang | str) -> str:
     code = lang.value if isinstance(lang, TargetLang) else str(lang).upper()
-    return _COMMON + _LANGUAGE[code]
+    return _COMMON + _LANGUAGE[code] + "\n\n" + FIDELITY_GUIDANCE
 
 
 def build_structured_page_prompt(

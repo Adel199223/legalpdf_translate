@@ -50,6 +50,7 @@ from .ocr_engine import (
 )
 from .openai_client import OpenAIResponsesClient, resolve_openai_key_with_source
 from .output_paths import require_writable_output_dir
+from .pricing import translation_fee_eur
 from .review_export import export_review_queue
 from .run_report import build_run_report_markdown
 from .run_workspace_lock import RunWorkspaceBusy
@@ -298,6 +299,12 @@ def _default_output_dir_text(gui_settings: Mapping[str, Any], outputs_dir: Path)
 
 
 def _translation_raw_values(form_values: Mapping[str, Any], *, seed: JobLogSeed) -> dict[str, str]:
+    def numeric_value(name: str, fallback: object) -> str:
+        value = form_values.get(name)
+        if value is None or str(value).strip() == "":
+            value = fallback
+        return "" if value is None else str(value).strip()
+
     translation_date = str(
         form_values.get("translation_date", "") or seed.translation_date or seed.completed_at[:10]
     ).strip()
@@ -316,20 +323,19 @@ def _translation_raw_values(form_values: Mapping[str, Any], *, seed: JobLogSeed)
         "lang": str(form_values.get("lang", "") or seed.lang).strip().upper(),
         "target_lang": str(form_values.get("target_lang", "") or seed.target_lang).strip().upper(),
         "run_id": str(form_values.get("run_id", "") or seed.run_id).strip(),
-        "pages": str(form_values.get("pages", "") or seed.pages).strip(),
-        "word_count": str(form_values.get("word_count", "") or seed.word_count).strip(),
+        "pages": numeric_value("pages", seed.pages),
+        "word_count": numeric_value("word_count", seed.word_count),
         "total_tokens": str(form_values.get("total_tokens", "") or (seed.total_tokens or "")).strip(),
-        "rate_per_word": str(form_values.get("rate_per_word", "") or seed.rate_per_word).strip(),
-        "expected_total": str(form_values.get("expected_total", "") or seed.expected_total).strip(),
-        "amount_paid": str(form_values.get("amount_paid", "") or seed.amount_paid).strip(),
-        "api_cost": str(form_values.get("api_cost", "") or seed.api_cost).strip(),
-        "estimated_api_cost": str(
-            form_values.get("estimated_api_cost", "") or (seed.estimated_api_cost or "")
-        ).strip(),
+        "rate_per_word": numeric_value("rate_per_word", seed.rate_per_word),
+        "expected_total": numeric_value("expected_total", seed.expected_total),
+        "amount_paid": numeric_value("amount_paid", seed.amount_paid),
+        "api_cost": numeric_value("api_cost", seed.api_cost),
+        "estimated_api_cost": numeric_value("estimated_api_cost", seed.estimated_api_cost),
         "quality_risk_score": str(
             form_values.get("quality_risk_score", "") or (seed.quality_risk_score or "")
         ).strip(),
-        "profit": str(form_values.get("profit", "") or seed.profit).strip(),
+        "profit": "" if seed.profit is None else str(seed.profit),
+        "expected_total_mode": str(form_values.get("expected_total_mode", "") or "").strip(),
     }
 
 
@@ -736,7 +742,6 @@ def _build_translation_seed_from_run_summary(
     seed.quality_risk_score = _coerce_float_or_none(metrics.get("quality_risk_score"))
     if seed.estimated_api_cost is not None:
         seed.api_cost = float(seed.estimated_api_cost)
-        seed.profit = round(seed.expected_total - seed.api_cost, 2)
 
     try:
         from .metadata_autofill import (
@@ -889,34 +894,29 @@ def refresh_completed_translation_metrics(job: Mapping[str, Any]) -> dict[str, A
     if not isinstance(seed, dict):
         return refreshed
     seed["word_count"] = reviewed_translation_word_count(translation_job_docx_path(job))
-    seed["expected_total"] = round(float(seed.get("rate_per_word", 0)) * seed["word_count"], 2)
-    seed["profit"] = round(float(seed.get("amount_paid", 0) or seed["expected_total"]) - float(seed.get("api_cost", 0)), 2)
+    seed["expected_total"] = translation_fee_eur(seed["word_count"], seed.get("rate_per_word", 0))
+    seed["profit"] = None
     return refreshed
 
 
-def _refresh_saved_word_count(payload: dict[str, Any], word_count: int, *, seed: JobLogSeed) -> None:
+def _refresh_saved_word_count(payload: dict[str, Any], word_count: int, *, seed: JobLogSeed,
+                              total_mode: str = "") -> None:
     previous_count = payload["word_count"]
-    if previous_count == word_count:
-        return
     previous_total = payload["expected_total"]
-    calculated_profit = round((payload["amount_paid"] or previous_total) - payload["api_cost"], 2)
-    # Non-calculated amounts are explicit operator edits and remain unchanged.
-    if previous_total in (round(payload["rate_per_word"] * previous_count, 2), seed.expected_total):
-        payload["expected_total"] = round(payload["rate_per_word"] * word_count, 2)
-    if payload["profit"] in (calculated_profit, seed.profit):
-        payload["profit"] = round((payload["amount_paid"] or payload["expected_total"]) - payload["api_cost"], 2)
+    # Explicit mode is authoritative, including when the submitted count is current.
+    # Older clients retain the previous derived-versus-manual amount heuristic.
+    if total_mode == "auto" or (not total_mode and previous_count != word_count and previous_total in (
+            translation_fee_eur(previous_count, payload["rate_per_word"]), seed.expected_total)):
+        payload["expected_total"] = translation_fee_eur(word_count, payload["rate_per_word"])
     payload["word_count"] = word_count
 
 
-def save_translation_row(
-    *,
-    settings_path: Path,
-    job_log_db_path: Path,
-    form_values: Mapping[str, Any],
-    seed_payload: Mapping[str, Any] | None = None,
-    row_id: int | None = None,
-    word_count_docx: Path | None = None,
-) -> dict[str, Any]:
+def validate_translation_row(
+    *, job_log_db_path: Path, form_values: Mapping[str, Any],
+    seed_payload: Mapping[str, Any] | None = None, row_id: int | None = None,
+    word_count_docx: Path | None = None, owned_run_id: str | None = None,
+) -> tuple[JobLogSeed, dict[str, Any]]:
+    """Validate prospective save values without changing a DB, settings or files."""
     seed = _hydrate_translation_seed_payload(seed_payload)
     raw_values = _translation_raw_values(form_values, seed=seed)
     payload = normalize_joblog_payload(
@@ -927,10 +927,48 @@ def save_translation_row(
         include_transport_sentence_in_honorarios_checked=True,
     )
     if word_count_docx is not None:
-        _refresh_saved_word_count(payload, reviewed_translation_word_count(word_count_docx), seed=seed)
+        _refresh_saved_word_count(payload, reviewed_translation_word_count(word_count_docx), seed=seed,
+                                 total_mode=raw_values["expected_total_mode"])
+
+    if row_id is not None and owned_run_id is not None:
+        import sqlite3
+        database = job_log_db_path.expanduser().resolve()
+        if not database.is_file():
+            raise ValueError("The saved translation record no longer exists.")
+        try:
+            with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as conn:
+                conn.row_factory = sqlite3.Row
+                prior = conn.execute("SELECT run_id, target_lang FROM job_runs WHERE id = ?", (int(row_id),)).fetchone()
+        except sqlite3.Error as exc:
+            raise ValueError("The saved translation record could not be verified.") from exc
+        if prior is None:
+            raise ValueError("The saved translation record no longer exists.")
+        if owned_run_id is not None and (prior["run_id"] != owned_run_id or prior["target_lang"] != seed.target_lang):
+            raise ValueError("The saved record does not belong to this completed translation.")
+    return seed, payload
+
+
+def save_translation_row(
+    *,
+    settings_path: Path,
+    job_log_db_path: Path,
+    form_values: Mapping[str, Any],
+    seed_payload: Mapping[str, Any] | None = None,
+    row_id: int | None = None,
+    word_count_docx: Path | None = None,
+    owned_run_id: str | None = None,
+) -> dict[str, Any]:
+    seed, payload = validate_translation_row(job_log_db_path=job_log_db_path, form_values=form_values,
+        seed_payload=seed_payload, row_id=row_id, word_count_docx=word_count_docx, owned_run_id=owned_run_id)
 
     with closing(open_job_log(job_log_db_path)) as conn:
         if row_id is not None:
+            prior = conn.execute("SELECT profit, run_id, target_lang FROM job_runs WHERE id = ?", (int(row_id),)).fetchone()
+            if prior is None:
+                raise ValueError("The saved translation record no longer exists.")
+            if owned_run_id is not None and (prior["run_id"] != owned_run_id or prior["target_lang"] != seed.target_lang):
+                raise ValueError("The saved record does not belong to this completed translation.")
+            payload["profit"] = prior["profit"]
             update_job_run(conn, row_id=int(row_id), values=payload)
             if seed.output_docx is not None or seed.partial_docx is not None:
                 update_job_run_output_paths(
@@ -941,6 +979,7 @@ def save_translation_row(
                 )
             saved_row_id = int(row_id)
         else:
+            payload["profit"] = None
             insert_payload = {
                 "completed_at": seed.completed_at or datetime.now().replace(microsecond=0).isoformat(),
                 **payload,
@@ -1119,6 +1158,7 @@ def _translation_result_payload(
     payload: dict[str, Any] = {
         "success": bool(summary.success),
         "run_dir": str(summary.run_dir.expanduser().resolve()),
+        "source_sha256": str(getattr(run_state, "pdf_fingerprint", "") or ""),
         "run_status": str(getattr(run_state, "run_status", "") or ""),
         "halt_reason": str(getattr(run_state, "halt_reason", "") or ""),
         "completed_pages": int(summary.completed_pages),
@@ -1182,6 +1222,8 @@ class _ManagedTranslationJob:
     _reviewed_source_loader: Callable[[], Any] | None = field(default=None, repr=False)
     _reviewed_settings_path: Path | None = field(default=None, repr=False)
     _reviewed_formatting_records: dict[str, str] = field(default_factory=dict, repr=False)
+    _ordinary_baseline: dict[str, Any] = field(default_factory=dict, repr=False)
+    _completed_accountant: Any = field(default=None, repr=False)
 
 
 class TranslationJobManager:
@@ -1236,7 +1278,7 @@ class TranslationJobManager:
             "diagnostics": dict(job.diagnostics_payload),
             "logs": list(job.log_tail),
             "artifacts": deepcopy(job.artifacts_payload),
-            "result": dict(job.result_payload),
+            "result": deepcopy(job.result_payload),
             "actions": self._job_actions(job),
         }
 
@@ -1367,11 +1409,115 @@ class TranslationJobManager:
                 job.result_payload = dict(result)
             if artifacts is not None:
                 job.artifacts_payload = dict(artifacts)
+            job._completed_accountant = getattr(job._workflow, "_dispatch_accounting", None)
+            if status == "completed" and job.job_kind in {"translate", "rebuild"}:
+                try:
+                    self._capture_ordinary_baseline(job)
+                except Exception:
+                    # A local review setup failure cannot erase completed paid work.
+                    job.diagnostics_payload["ordinary_layout_warning"] = "ordinary_layout_original_snapshot_unavailable"
             job._workflow = None
             job.updated_at = _utc_now_iso()
             reservation_key = job._reservation_key
         if reservation_key:
             self._release_reservation(reservation_key, job_id)
+
+    def _capture_ordinary_baseline(self, job: _ManagedTranslationJob) -> None:
+        """Preserve provider output before the browser exposes interactive editing."""
+        from .saved_docx_layout_service import _read as bounded_read
+        if job._ordinary_baseline or job._config is None:
+            return
+        output = translation_job_docx_path(self._snapshot(job))
+        source = job._config.pdf_path.expanduser().resolve()
+        if not is_pdf_source(source):
+            return
+        raw = bounded_read(output, 32 * 1024 * 1024)
+        source_raw = bounded_read(source, 64 * 1024 * 1024)
+        if not 0 < len(raw) <= 32 * 1024 * 1024 or not 0 < len(source_raw) <= 64 * 1024 * 1024:
+            raise ValueError("ordinary_layout_snapshot_size")
+        source_hash = hashlib.sha256(source_raw).hexdigest()
+        expected_source = job.result_payload.get("source_sha256")
+        if expected_source and expected_source != source_hash:
+            raise ValueError("ordinary_layout_completed_source_changed")
+        folder = Path(job.result_payload["run_dir"]) / "ordinary_layout_originals" / job.job_id
+        folder.mkdir(parents=True, exist_ok=False)
+        original = folder / "provider.docx"
+        with original.open("xb") as handle:
+            handle.write(raw)
+        try:
+            mapping = json.loads(bounded_read(output.with_suffix(".source_map.json"), 8 * 1024 * 1024))
+            if not isinstance(mapping, dict):
+                mapping = {}
+        except (ValueError, OSError):
+            mapping = {}
+        pages = tuple(int(page["source_page_number"]) for page in mapping.get("pages", []))
+        if not pages:
+            config = job._config
+            end = config.end_page or get_source_page_count(source)
+            if config.max_pages is not None:
+                end = min(end, config.start_page + config.max_pages - 1)
+            pages = tuple(range(config.start_page, end + 1))
+        job._ordinary_baseline = {"original_path": str(original), "original_sha256": hashlib.sha256(raw).hexdigest(),
+            "source_sha256": source_hash, "source_path": str(source),
+            "output_path": str(output), "selected_pages": pages, "mapping": mapping}
+
+    def trusted_ordinary_layout_job(self, job_id: str, *, runtime_mode: str, workspace_id: str):
+        """Resolve bytes and source associations exclusively from the owned completed job."""
+        from .ordinary_layout_contracts import OrdinaryLayoutJob, fail
+        from .saved_docx_layout import inspect_docx
+        from .saved_docx_layout_service import _read as bounded_read
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if (job is None or job.runtime_mode != runtime_mode or job.workspace_id != workspace_id
+                    or job.status != "completed" or job.job_kind not in {"translate", "rebuild"}
+                    or not job._ordinary_baseline):
+                fail("job_unavailable", 404)
+            baseline = deepcopy(job._ordinary_baseline)
+            seed = deepcopy(job.result_payload.get("save_seed", {}))
+            run_id = str(seed.get("run_id") or Path(job.result_payload["run_dir"]).name)
+            language = str(seed.get("target_lang") or job.config_payload["target_lang"])
+        source = bounded_read(Path(baseline["source_path"]), 64 * 1024 * 1024)
+        original = bounded_read(Path(baseline["original_path"]), 32 * 1024 * 1024)
+        reviewed = bounded_read(Path(baseline["output_path"]), 32 * 1024 * 1024)
+        if (hashlib.sha256(source).hexdigest() != baseline["source_sha256"]
+                or hashlib.sha256(original).hexdigest() != baseline["original_sha256"]):
+            fail("original_changed", 409)
+        groups = {}
+        mapping = baseline["mapping"]
+        # Paragraph edits can retain server-owned source associations only while
+        # paragraph order/control tokens are unchanged. Never infer from counts alone.
+        current = inspect_docx(reviewed, language)
+        prior = inspect_docx(original, language)
+        if len(current["paragraphs"]) == len(prior["paragraphs"]) and all(
+                (a["text"], a["has_page_break"]) == (b["text"], b["has_page_break"])
+                for a, b in zip(current["paragraphs"], prior["paragraphs"])):
+            owners = {}
+            if mapping.get("docx_sha256") == baseline["original_sha256"]:
+                for page in mapping.get("pages", []):
+                    number = page["source_page_number"]
+                    for block in page.get("blocks", []):
+                        location = block.get("location", {})
+                        if location.get("kind") == "body_paragraph":
+                            index = location.get("paragraph_index")
+                            if type(index) is int and 0 <= index < len(current["paragraphs"]):
+                                owners.setdefault(index, set()).add(number)
+                last = None
+                for index, row in enumerate(current["paragraphs"]):
+                    if len(owners.get(index, set())) == 1:
+                        last = next(iter(owners[index]))
+                    elif row["has_page_break"] and last is not None and not row["text"].strip("\f\n\r\t "):
+                        owners[index] = {last}
+                if len(owners) == len(current["paragraphs"]) and all(len(v) == 1 for v in owners.values()):
+                    for index, row in enumerate(current["paragraphs"]):
+                        groups.setdefault(next(iter(owners[index])), []).append(row["id"])
+                    if [pid for page in sorted(groups) for pid in groups[page]] != [p["id"] for p in current["paragraphs"]]:
+                        groups = {}
+        return OrdinaryLayoutJob(job_id=job_id, mode=runtime_mode, workspace_id=workspace_id, run_id=run_id,
+            source_pdf=source, reviewed_docx=reviewed, original_docx=original, target_lang=language,
+            selected_pages=tuple(baseline["selected_pages"]), binding={"job_id": job_id, "run_id": run_id,
+                "source_sha256": baseline["source_sha256"], "original_sha256": baseline["original_sha256"]},
+            page_groups={p: tuple(ids) for p, ids in groups.items()},
+            mapping_docx_sha256=hashlib.sha256(reviewed).hexdigest() if groups else "")
 
     def _start_job(
         self,
@@ -1699,6 +1845,10 @@ class TranslationJobManager:
                 raise ValueError("Translation job not found.")
             if artifact_kind == "output_docx":
                 candidate = job.artifacts_payload.get("output_docx")
+            elif artifact_kind == "original_output_docx":
+                candidate = job._ordinary_baseline.get("original_path")
+                if candidate and hashlib.sha256(Path(candidate).read_bytes()).hexdigest() != job._ordinary_baseline["original_sha256"]:
+                    raise ValueError("The preserved original artifact changed.")
             elif artifact_kind == "partial_docx":
                 candidate = job.artifacts_payload.get("partial_docx")
             elif artifact_kind == "run_summary":
