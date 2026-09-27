@@ -4,6 +4,7 @@ import {
   buildActionFailureClientMarker,
 } from "./action_feedback_presentation.js";
 import { runStagedBootstrap } from "./bootstrap_hydration.js";
+import { mountSavedDocxLayout } from "./saved_docx_layout_ui.js";
 import { runWithBusy } from "./busy_ui.js";
 import {
   appState,
@@ -3356,6 +3357,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setClientHydrationMarker("warming");
   renderShellVisibility();
   wireEvents();
+  mountSavedDocxLayout({ root: document.getElementById("saved-docx-layout-editor"), getScope: () => appState });
   initializeTranslationUi();
   initializeGmailUi({
     applyInterpretationSeed,

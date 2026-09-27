@@ -25,6 +25,8 @@ from legalpdf_translate.browser_arabic_review import ArabicDocxReviewManager, jo
 from legalpdf_translate.browser_source_review import BrowserSourceReviewManager
 from legalpdf_translate.browser_formatting_review import BrowserFormattingReviewManager
 from legalpdf_translate.shadow_web.formatting_review_api import DisabledFormattingReviews, FormattingReviewRoutes
+from legalpdf_translate.saved_docx_layout_service import SavedDocxLayoutService
+from legalpdf_translate.shadow_web.saved_docx_layout_api import SavedDocxLayoutRoutes, default_saved_docx_layout_root
 from legalpdf_translate.browser_gmail_bridge import BrowserLiveBridgeSyncResult, BrowserLiveGmailBridgeManager
 from legalpdf_translate.browser_pdf_bundle import (
     browser_pdf_bundle_manifest_path,
@@ -193,6 +195,8 @@ class BrowserAppServices:
     native_host_state: Callable[..., dict[str, Any]]
     source_reviews_factory: Callable[[Any], Any] | None = None
     formatting_reviews_factory: Callable[[Any], Any] | None = None
+    saved_docx_layout_factory: Callable[..., Any] | None = None
+    saved_docx_layout_root: Callable[..., Path] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1364,6 +1368,8 @@ def default_browser_app_services() -> BrowserAppServices:
         native_host_state=lambda **kwargs: inspect_edge_native_host(**kwargs),
         source_reviews_factory=lambda jobs: BrowserSourceReviewManager(jobs),
         formatting_reviews_factory=lambda jobs: BrowserFormattingReviewManager(jobs),
+        saved_docx_layout_factory=SavedDocxLayoutService,
+        saved_docx_layout_root=default_saved_docx_layout_root,
     )
 
 
@@ -1451,6 +1457,8 @@ def offline_browser_app_services(*, state_root: Path) -> BrowserAppServices:
         native_host_state=lambda **_kwargs: _offline_native_host_state(),
         source_reviews_factory=DisabledSourceReviews,
         formatting_reviews_factory=DisabledFormattingReviews,
+        saved_docx_layout_factory=SavedDocxLayoutService,
+        saved_docx_layout_root=lambda *, mode, **_kwargs: isolated_root / "data" / ("live-request" if mode == RUNTIME_MODE_LIVE else "shadow"),
     )
 
 
@@ -1523,6 +1531,7 @@ def create_shadow_app(
     app.state.shadow_context = shadow_context
     app.state.source_review_routes = SourceReviewRoutes(app, context_for=_context, target_for=_active_target)
     app.state.formatting_review_routes = FormattingReviewRoutes(app, context_for=_context, target_for=_active_target)
+    app.state.saved_docx_layout_routes = SavedDocxLayoutRoutes(app, context_for=_context)
 
     @app.get("/static-build/{asset_version}/{asset_path:path}", name="static_build")
     async def versioned_static_asset(asset_version: str, asset_path: str) -> Response:
