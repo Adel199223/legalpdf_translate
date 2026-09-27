@@ -53,6 +53,12 @@ _NUMERIC_SLASH_RUN_RE = re.compile(r"(?<![\w/\[\]+\\@#-])[0-9]+/[0-9]+(?![\w/\[\
 _PHONE_TRIPLET_RUN_RE = re.compile(
     r"(?<![\w\[\]+\\@#-])[0-9]{3} [0-9]{3} [0-9]{3}(?![\w\[\]+\\@#-])"
 )
+_ARABIC_FOLIO_NUMBER = r"(?:[0-9]{1,6}|\[\[[0-9]{1,6}\]\]|\u2066\[\[[0-9]{1,6}\]\]\u2069)"
+_ARABIC_FOLIO_LINE_RE = re.compile(
+    rf"[ \u00a0]*(?:الصفحة|صفحة|ص\.?)"
+    rf"[ \u00a0]+{_ARABIC_FOLIO_NUMBER}[ \u00a0]+من[ \u00a0]+{_ARABIC_FOLIO_NUMBER}"
+    r"[ \u00a0]*(?:\r\n|\n|\r)?"
+)
 
 
 @dataclass(frozen=True)
@@ -471,6 +477,16 @@ def _segment_rtl_placeholder_aware_runs(
         return pieces, "rtl" in kinds and "ltr" in kinds
     pieces: list[tuple[str, str]] = []
     for line in text.splitlines(keepends=True):
+        # A complete Arabic "page N of M" line is one Arabic phrase. Separate
+        # LTR embeddings around its digits can scatter the folio in Word. This
+        # closed grammar does not infer a folio inside prose or identifiers.
+        # Honor explicitly retained direction controls instead of overriding
+        # their scopes; the ordinary stripping policy can remove numeric LRI/PDI.
+        if (_ARABIC_FOLIO_LINE_RE.fullmatch(line)
+                and (strip_bidi_controls or not any(ord(char) in _BIDI_CONTROL_CODEPOINTS for char in line))):
+            folio = unwrap_internal_placeholders(line)
+            pieces.append(("rtl", sanitize_bidi_controls(folio) if strip_bidi_controls else folio))
+            continue
         visible = sanitize_bidi_controls(unwrap_internal_placeholders(line))
         kinds = {_classify_directional_char(char) for char in visible}
         if "ltr" in kinds and "rtl" not in kinds:

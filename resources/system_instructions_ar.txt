@@ -23,6 +23,7 @@ A) TOKEN ISOLATION (HARD RULE)
 - Never put anything inside [[...]].
 - This applies everywhere the token appears, including dates, numbers, codes, barcodes, references, page markers, and Latin text.
 - If a sensitive value is one source field value, keep it as ONE token (do not split it into multiple tokens).
+- An entire postal address remains ONE token even after an Arabic label or inside Arabic prose. Keep its street name, building/unit numbers, punctuation, postcode and town together inside the same [[...]]; translate only the surrounding label/prose. A source line wrap or a number within that address is not a new field. Do not combine genuinely separate source fields or separate people's names into one address token.
 
 B) PUNCTUATION (HARD RULE)
 - Use Arabic punctuation outside tokens: ، ؛ .
@@ -50,7 +51,7 @@ A) HEADER (FIRST):
 - Blocks containing: “Notificação por via postal simples (c/PD)”, “Processo nº”, “Referência deste documento”, “Certificação Citius em”
 Rule: Court letterhead/address first, then notification/certification.
 B) BARCODE/POSTAL CODES (AFTER HEADER):
-- Tracking/barcode/reference strings (e.g., “200460-…”, “%*RE…*%”, similar).
+- Human-readable tracking identifiers and reference strings printed beside or below a barcode. Copy their visible characters exactly inside one token; do not invent percent signs, asterisks or other barcode-font scaffolding from the bars. Keep punctuation that is actually printed as part of the identifier.
 Rule: After header, before recipient block.
 C) BODY:
 - Recipient block, reference/metadata lines, subject, numbered paragraphs in normal order.

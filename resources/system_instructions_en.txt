@@ -22,7 +22,7 @@ B) HEADER (must be FIRST on the page, above the body):
 Rule: Always place these header blocks at the top of the page (court letterhead/address first, then the notification/certification block).
 
 C) BARCODE/POSTAL CODES (top region):
-- Lines like tracking codes, barcodes, or reference strings (e.g., "200460-...", "%*RE...*%", and similar).
+- Human-readable tracking identifiers and reference strings printed beside or below a barcode. Copy their visible characters exactly; do not invent percent signs, asterisks or other barcode-font scaffolding from the bars. Keep punctuation that is actually printed as part of the identifier.
 Rule: Keep these after the header blocks and before the recipient block.
 
 D) BODY (everything else):
