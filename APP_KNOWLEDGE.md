@@ -1,5 +1,9 @@
 # APP_KNOWLEDGE
 
+## Reproducible development setup — 2026-09-29
+
+Python development setup uses the tracked `.python-version` (3.11.9), uv 0.12.20 and `uv.lock`, seeded from the existing working Windows package versions. The setup script and Windows CI share the locked installation path. Routine setup keeps extras and checks native exit codes, interpreter version, imports and dependency compatibility; explicit recreation preserves the previous environment and restores it on failure. See README and the [setup plan](docs/assistant/exec_plans/completed/2026-09-29_reproducible_uv_setup.md) for isolated reconstruction evidence and local adoption status. No application behavior, provider settings or live environment replacement follows from this tooling work.
+
 This file is canonical for app-level architecture and status. Source code is final truth when documentation conflicts. Read this overview first; consult a specific module, user guide or current plan next instead of loading the historical acceptance corpus.
 
 ## Current build and status

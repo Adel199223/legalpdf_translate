@@ -28,6 +28,8 @@ The later user-approved connection fix resolved current Gmail draft/read permiss
 
 The test-performance update is locally validated and approved for publication: Quick passed 87 tests in a 16.202-second wrapper; selected Full passed 659 in 838.559 seconds. The four-worker complete run passed the same ordered 6,717 baseline cases plus 37 runner tests in 537.941 seconds versus 1,835.010 seconds: 3.411x in one local comparison, with short Quick/tool checks overlapping the baseline. Selected-tier counts remain separate; no hosted-CI timing is established. See [VALIDATION.md](VALIDATION.md) for exact coverage and rerun-artifact rules.
 
+Development setup now has a tracked Python 3.11.9 pin and uv dependency lock, with checked local/Windows CI setup and preserved-environment recovery. The [canonical architecture overview](../../APP_KNOWLEDGE.md) and [setup plan](exec_plans/completed/2026-09-29_reproducible_uv_setup.md) own the scope and reconstruction evidence; application behavior and the working live environment remain separate.
+
 Docs Sync has standing user authorization for useful scoped maintenance; do not ask again. Historical acceptance tokens and budget checkpoints remain evidence, not new authority. See the [dated former bridge](history/2026-09-16_front_doors/APP_KNOWLEDGE_BRIDGE.md) only when its detail is needed.
 
 The dormant roadmap state in [SESSION_RESUME](SESSION_RESUME.md) routes to the active roadmap tracker only when one exists; issue memory is not roadmap history. For listener ownership, test isolation and handoff/run/finalization, use [harness isolation and diagnostics](workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md) (`docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`).

@@ -1,5 +1,15 @@
 # External Source Registry
 
+## Locked Python setup — 2026-09-29
+
+Primary sources verified on 2026-09-29:
+
+- [uv resolution](https://docs.astral.sh/uv/concepts/resolution/): temporary constraints seed the installed versions; re-locking without upgrade preserves compatible existing selections. The temporary constraints were removed from project metadata after seeding.
+- [uv locking and syncing](https://docs.astral.sh/uv/concepts/projects/sync/): lock checks reject stale inputs, locked sync prevents lock updates, and inexact sync retains unrelated installed packages. Actual reconstruction and matching package versions are local test evidence, not facts established by the documentation.
+- [setup-uv](https://github.com/astral-sh/setup-uv): the official action example identifies v10.1.0 at `bec219d24cd3e171d82865faccec33120bb574f4` and supports explicit tool versions and lock-based cache inputs. The Windows jobs pin uv 0.12.20 and retain existing required job/shard contracts.
+
+Python 3.11.9 and package/build versions are the observed working baseline. They are deliberately preserved; no translation model, saved provider configuration, native policy or dependency upgrade follows.
+
 ## Two unsent translation repeats — 2026-09-27
 
 Rechecked the official [GPT-5.2 model page](https://developers.openai.com/api/docs/models/gpt-5.2) for the [two-job retest](exec_plans/active/2026-09-27_two_latest_unsent_retest.md). Standard USD per million tokens remains 1.75 input, 0.175 cached input and 14 output. The page lists a 400,000-token context, 128,000 maximum output tokens, high reasoning effort and snapshot `gpt-5.2-2025-12-11`.

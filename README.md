@@ -17,28 +17,27 @@ Windows-first Python app with a primary local browser interface, a secondary Qt/
 
 ## Requirements
 - Windows 11
-- Python 3.11 (recommended)
+- Python 3.11.9 (tracked in `.python-version`)
+- uv 0.12.20 (tracked in `pyproject.toml`)
 - OpenAI API key
 
 ## Beginner Safe Setup (Recommended)
-Use the recovery-safe setup script. It creates `.venv311`, installs dependencies, and verifies Python health.
+Use the locked setup script. It creates `.venv311`, installs the exact versions in the tracked `uv.lock`, and checks Python, imports and dependency compatibility. Local setup and Windows CI use the same inputs. The lock was seeded from the working Windows environment; routine setup does not upgrade dependencies or rewrite the lock.
 
 ```powershell
+winget install --id astral-sh.uv --exact --version 0.12.20 --scope user
 powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1
 . .\.venv311\Scripts\Activate.ps1
 copy .env.example .env
 ```
 
-## Manual Setup
-```powershell
-cd legalpdf_translate
-py -3.11 -m venv .venv311
-.venv311\Scripts\Activate.ps1
-pip install --upgrade pip
-pip install -e .
-pip install -e .[dev]
-copy .env.example .env
-```
+The script requires the pinned Python to be installed and does not download or change Python automatically. Existing `.venv311` environments keep extra packages. If their Python differs from the pin, setup stops and requests an explicit rebuild.
+
+To test reconstruction separately, use `-VenvName .venv-rebuild`. Environment names must be `.venv`-prefixed directory names within this checkout; paths and linked directories are rejected. The script restores its temporary environment setting and working directory when it finishes.
+
+`-Recreate` preserves the previous environment as a sibling `.backup-*` directory. If replacement fails, it restores the previous environment and retains the incomplete candidate as `.failed-*`. Save and close app work before deliberately rebuilding an environment used by a running app. Do not remove retained environments until their contents are accounted for.
+
+The ignored `requirements_freeze.txt` is an older local snapshot, not the supported installation input. Dependency upgrades are separate changes: update the lock deliberately and validate a fresh environment before adopting them. Keep the current Python/package combination during ordinary setup.
 
 Set `OPENAI_API_KEY` in `.env` or environment.
 
@@ -63,9 +62,9 @@ python -m legalpdf_translate.shadow_web.server --open
 The browser app is the normal day-to-day interface. The Qt shell remains supported as a secondary fallback, and the CLI remains available for scripted or batch work.
 
 ## If Python/Pytest Suddenly Breaks
-If you see import errors like `html.entities` or `idna` during `pip`/`pytest`, your machine Python install is corrupted.
+If imports fail, first check the project's environment and recorded error. An import failure alone does not prove the machine Python installation is corrupted.
 
-Run:
+For a deliberate rebuild from the tracked lock, run:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate
 . .\.venv311\Scripts\Activate.ps1

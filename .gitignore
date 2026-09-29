@@ -4,6 +4,7 @@
 # virtualenv / python cache
 .venv/
 .venv311/
+.venv*/
 __pycache__/
 *.pyc
 .pytest_cache/
