@@ -8,6 +8,14 @@ This is the roadmap anchor file for `resume master plan`, `where did we leave of
 
 **Dormant roadmap state:** no active roadmap currently open on this worktree. New scoped work uses normal ExecPlan flow. Older stage tokens and completed campaigns do not create new work.
 
+## Completed Python setup and authorized publication — 2026-09-29
+
+The [reproducible uv setup](exec_plans/completed/2026-09-29_reproducible_uv_setup.md) is implemented and adopted locally. Its original authoring branch is `feat/uv-python-setup-20260929`, checkout `C:/Users/FA507/Documents/Codex/2026-09-29/i-would-like-you-to-go/work/legalpdf-uv`, based on main `3bbff4b9f0748262c120d51ed8d8deffed3b2932`, containing the approved floor `4e9d20e`. Daily use remains canonical main at `C:/Users/FA507/.codex/legalpdf_translate`.
+
+Fresh reconstruction matches Python 3.11.9 and all 57 working package versions. The 22 setup regressions, Quick (93 cases/two expected deselections), required selected Full (1,389 executions/nine expected intake deselections), compilation and docs/hygiene pass. Application source and the existing canonical environment remain intact.
+
+The user subsequently authorized commit/push. Follow the standard PR, green exact-head CI, merge and cleanup lifecycle; the chat task's `work/uv-publication-01/publication_receipt.json` owns terminal published/applied identity. If complete, no setup or publication action remains. If absent, inspect the feature PR and current main before resuming. No provider/native/Gmail work, dependency upgrade or environment rebuild is implied. Earlier scopes below remain historical evidence.
+
 ## Current scoped task and authoritative worktree — 2026-09-27
 
 Implementation and qualified acceptance for [future-translation workflow fixes](exec_plans/completed/2026-09-27_future_translation_workflow_fixes.md) are complete. The user's continuous goal covered significant issues for future translations, including EUR0.027 per word for Arabic, English and French. Authoring used `C:/Users/FA507/.codex/worktrees/word-startup-readiness/legalpdf_translate`, branch `codex/two-latest-unsent-retest-20260927`, with PR311/main as the original base. Full05 passed1,134 selected cases/nine expected deselections in785.750seconds with598 frozen source/test/script hashes unchanged. All final EN/FR/AR native pages, source/output review, delivery selection and isolated case saves have qualified acceptance; paid/native operations and runtimes are retired/consumed.

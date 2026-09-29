@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools==82.0.1", "wheel==0.47.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,7 @@ name = "legalpdf-translate"
 version = "0.1.0"
 description = "Windows desktop app for page-by-page legal PDF translation to DOCX."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
   "openai>=2.36.0,<3",
   "typing_extensions>=4.12.2",
@@ -25,7 +25,10 @@ dependencies = [
 authors = [{ name = "LegalPDF Translate" }]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0", "pyinstaller>=6.0.0", "pdf2image>=1.17.0", "httpx>=0.28.1,<0.29"]
+dev = ["pytest>=8.0.0", "pyinstaller>=6.0.0", "pdf2image>=1.17.0", "httpx>=0.28.1,<0.29", "pip>=26.1.1", "setuptools>=82.0.1", "wheel>=0.47.0"]
+
+[tool.uv]
+required-version = "==0.12.20"
 
 [project.scripts]
 legalpdf-translate = "legalpdf_translate.cli:main"

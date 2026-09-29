@@ -31,6 +31,7 @@ Ask before executing any of the following:
 - Do not create full repo ZIPs or review bundles unless explicitly requested.
 
 ## Validation Defaults
+- Setup uses tracked `.python-version`, `uv.lock` and `scripts/setup_python311_env.ps1`. Keep existing package versions during routine work; do not run unlocked pip installs, `uv lock --upgrade`, or recreate a live environment merely to validate a change. Test reconstruction in an isolated checkout/environment first. `-Recreate` preserves/restores the previous environment.
 - Use `.\.venv311\Scripts\python.exe` for pytest. Do not use bare/global Python for project tests.
 - Standard docs/product validation:
   - `.\.venv311\Scripts\python.exe -m pytest -q <targeted tests>`
