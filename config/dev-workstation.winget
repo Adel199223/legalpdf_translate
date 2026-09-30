@@ -1,0 +1,44 @@
+{
+  "$schema": "https://aka.ms/configuration-dsc-schema/0.2",
+  "properties": {
+    "configurationVersion": "0.2.0",
+    "resources": [
+      {
+        "resource": "Microsoft.WinGet.DSC/WinGetPackage",
+        "id": "git",
+        "directives": { "description": "Git for Windows tested development baseline", "version": "1.12.440", "allowPrerelease": false },
+        "settings": { "Id": "Git.Git", "Source": "winget", "Version": "2.54.0", "Ensure": "Present", "MatchOption": "Equals", "UseLatest": false, "InstallMode": "Silent" }
+      },
+      {
+        "resource": "Microsoft.WinGet.DSC/WinGetPackage",
+        "id": "uv",
+        "directives": { "description": "Project-pinned uv; does not install or change Python", "version": "1.12.440", "allowPrerelease": false },
+        "settings": { "Id": "astral-sh.uv", "Source": "winget", "Version": "0.12.20", "Ensure": "Present", "MatchOption": "Equals", "UseLatest": false, "InstallMode": "Silent" }
+      },
+      {
+        "resource": "Microsoft.WinGet.DSC/WinGetPackage",
+        "id": "node",
+        "directives": { "description": "Node used by browser JavaScript regression probes", "version": "1.12.440", "allowPrerelease": false },
+        "settings": { "Id": "OpenJS.NodeJS.LTS", "Source": "winget", "Version": "24.14.0", "Ensure": "Present", "MatchOption": "Equals", "UseLatest": false, "InstallMode": "Silent" }
+      },
+      {
+        "resource": "Microsoft.WinGet.DSC/WinGetPackage",
+        "id": "dart",
+        "directives": { "description": "Standalone Dart SDK used by repository tooling validators", "version": "1.12.440", "allowPrerelease": false },
+        "settings": { "Id": "Google.DartSDK", "Source": "winget", "Version": "3.11.0", "Ensure": "Present", "MatchOption": "Equals", "UseLatest": false, "InstallMode": "Silent" }
+      },
+      {
+        "resource": "Microsoft.WinGet.DSC/WinGetPackage",
+        "id": "gh",
+        "directives": { "description": "GitHub CLI development convenience; does not configure credentials", "version": "1.12.440", "allowPrerelease": false },
+        "settings": { "Id": "GitHub.cli", "Source": "winget", "Version": "2.91.0", "Ensure": "Present", "MatchOption": "Equals", "UseLatest": false, "InstallMode": "Silent" }
+      },
+      {
+        "resource": "Microsoft.WinGet.DSC/WinGetPackage",
+        "id": "rg",
+        "directives": { "description": "Native ripgrep for repository searches", "version": "1.12.440", "allowPrerelease": false },
+        "settings": { "Id": "BurntSushi.ripgrep.MSVC", "Source": "winget", "Version": "15.1.0", "Ensure": "Present", "MatchOption": "Equals", "UseLatest": false, "InstallMode": "Silent" }
+      }
+    ]
+  }
+}

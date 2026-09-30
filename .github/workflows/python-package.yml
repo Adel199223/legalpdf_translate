@@ -23,6 +23,12 @@ jobs:
         with:
           python-version-file: .python-version
 
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+
       - name: Setup uv
         uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
@@ -30,8 +36,21 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
+      - name: Read Dart version
+        id: dart_version
+        shell: powershell
+        run: |
+          $version = (Get-Content -LiteralPath .dart-version -Raw).Trim()
+          "sdk=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1
+        with:
+          sdk: ${{ steps.dart_version.outputs.sdk }}
+
+      - name: Validate tracked workstation recipe
+        shell: powershell
+        run: ./scripts/check_dev_workstation.ps1 -ConfigurationOnly
 
       - name: Install locked environment
         shell: powershell
@@ -56,7 +75,7 @@ jobs:
         run: .\.venv311\Scripts\python.exe -m compileall src tests
 
       - name: Targeted Core Regressions
-        run: .\.venv311\Scripts\python.exe -m pytest -q --durations=10 tests/test_cli_flags.py tests/test_workflow_parallel.py tests/test_run_report.py tests/test_python_setup.py
+        run: .\.venv311\Scripts\python.exe -m pytest -q --durations=10 tests/test_cli_flags.py tests/test_workflow_parallel.py tests/test_run_report.py tests/test_python_setup.py tests/test_dev_workstation.py tests/test_dev_workstation_ci.py
 
   python_shards:
     name: Python 3.11 shard ${{ matrix.shard }}
@@ -73,6 +92,12 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version-file: .python-version
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
 
       - name: Setup uv
         uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
@@ -165,8 +190,16 @@ jobs:
         with:
           python-version-file: .python-version
 
+      - name: Read Dart version
+        id: dart_version
+        shell: bash
+        run: |
+          printf 'sdk=%s\n' "$(tr -d '\r\n' < .dart-version)" >> "$GITHUB_OUTPUT"
+
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1
+        with:
+          sdk: ${{ steps.dart_version.outputs.sdk }}
 
       - name: Validate Agent Docs
         run: dart run tooling/validate_agent_docs.dart
