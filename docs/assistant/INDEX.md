@@ -93,6 +93,11 @@
 ## Use when local Python is broken
 - `scripts/setup_python311_env.ps1`: rebuilds a clean `.venv311` with project dependencies.
 
+## Development workstation setup
+- [WORKSTATION_SETUP.md](WORKSTATION_SETUP.md): read-only readiness checks, pinned Node/Dart inputs, tailored WinGet recipe and manual Windows/Word prerequisites.
+- `scripts/check_dev_workstation.ps1`: validates tracked configuration and existing tool versions without installing or repairing anything.
+- `config/dev-workstation.json` and `config/dev-workstation.winget`: observed development baseline and exact-version provisioning recipe, separate from the locked Python environment.
+
 ## Legacy supplemental deep docs
 - `docs/assistant/API_PROMPTS.md`
 - `docs/assistant/PROMPTS_KNOWLEDGE.md`

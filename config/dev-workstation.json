@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "verifiedOn": "2026-09-30",
+  "platform": "Windows 11 x64",
+  "wingetMinimumVersion": "1.12.440",
+  "configurationPowerShellMinimumVersion": "7.2",
+  "wingetDscVersion": "1.12.440",
+  "versions": {
+    "python": "3.11.9",
+    "uv": "0.12.20",
+    "node": "24.14.0",
+    "dart": "3.11.0",
+    "git": "2.54.0.windows.1",
+    "gh": "2.91.0",
+    "rg": "15.1.0",
+    "pwsh": "7.6.1"
+  },
+  "packages": [
+    { "tool": "git", "id": "Git.Git", "version": "2.54.0" },
+    { "tool": "uv", "id": "astral-sh.uv", "version": "0.12.20" },
+    { "tool": "node", "id": "OpenJS.NodeJS.LTS", "version": "24.14.0" },
+    { "tool": "dart", "id": "Google.DartSDK", "version": "3.11.0" },
+    { "tool": "gh", "id": "GitHub.cli", "version": "2.91.0" },
+    { "tool": "rg", "id": "BurntSushi.ripgrep.MSVC", "version": "15.1.0" }
+  ]
+}

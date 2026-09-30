@@ -1,5 +1,9 @@
 # APP_KNOWLEDGE
 
+## Reproducible workstation recipe — 2026-09-30
+
+The workstation setup adds a read-only checker and exact-version WinGet recipe for Git, uv, Node, Dart, GitHub CLI and ripgrep. Python 3.11.9, uv 0.12.20, `uv.lock` and the existing environment setup/recovery behavior are preserved. `.node-version` (24.14.0) and `.dart-version` (3.11.0) supply the tested runtime baseline to local checks and CI. See [WORKSTATION_SETUP.md](docs/assistant/WORKSTATION_SETUP.md) for entry points and Windows/Word/manual requirements. Initial delivery was isolated and uncommitted in `feat/reproducible-workstation-20260930`. The user subsequently authorized both publication/merge and workstation application; current progress belongs to [HANDOFF.md](docs/assistant/HANDOFF.md), with exact outcomes in the retained publication/application receipt. Offline checks alone do not establish hosted CI or provisioning success.
+
 ## Reproducible development setup — 2026-09-29
 
 Python development setup uses the tracked `.python-version` (3.11.9), uv 0.12.20 and `uv.lock`, seeded from the existing working Windows package versions. The setup script and Windows CI share the locked installation path. Routine setup keeps extras and checks native exit codes, interpreter version, imports and dependency compatibility; explicit recreation preserves the previous environment and restores it on failure. See README and the [setup plan](docs/assistant/exec_plans/completed/2026-09-29_reproducible_uv_setup.md) for isolated reconstruction evidence and local adoption status. No application behavior, provider settings or live environment replacement follows from this tooling work.

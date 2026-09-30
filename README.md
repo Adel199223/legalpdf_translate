@@ -22,6 +22,14 @@ Windows-first Python app with a primary local browser interface, a secondary Qt/
 - OpenAI API key
 
 ## Beginner Safe Setup (Recommended)
+For development with Codex, first see the [workstation setup guide](docs/assistant/WORKSTATION_SETUP.md). It provides a tailored exact-version WinGet recipe and a read-only checker while preserving the locked Python setup. Node 24.14.0 and Dart 3.11.0 are tracked in `.node-version` and `.dart-version` and shared with CI.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_dev_workstation.ps1
+```
+
+Use `-ConfigurationOnly` to check recipe/pin consistency without probing tools, or `-AsJson` for structured results. These checks do not install software, change services or create an environment. Actual workstation provisioning is a separate reviewed operation; Word and Gmail setup remain manual.
+
 Use the locked setup script. It creates `.venv311`, installs the exact versions in the tracked `uv.lock`, and checks Python, imports and dependency compatibility. Local setup and Windows CI use the same inputs. The lock was seeded from the working Windows environment; routine setup does not upgrade dependencies or rewrite the lock.
 
 ```powershell

@@ -8,13 +8,19 @@ This is the roadmap anchor file for `resume master plan`, `where did we leave of
 
 **Dormant roadmap state:** no active roadmap currently open on this worktree. New scoped work uses normal ExecPlan flow. Older stage tokens and completed campaigns do not create new work.
 
+## Workstation publication and application — 2026-09-30
+
+The [workstation implementation](exec_plans/completed/2026-09-30_reproducible_workstation_setup.md) completed local delivery from canonical main `90485237c00b95aa9744b32aa4684d16ec06e100`. The user explicitly selected **Both** when asked whether to publish/merge the files or apply setup to this PC. The [publication/application plan](exec_plans/completed/2026-09-30_workstation_publication_and_application.md) closes the corrected stable-version checking and successful local recipe application. Follow the standard commit/publish workflow for any remaining exact-head CI, merge, canonical application or cleanup in `C:/Users/FA507/.codex/worktrees/reproducible-workstation/legalpdf_translate`, branch `feat/reproducible-workstation-20260930`; those remaining operations must not be inferred from local plan completion.
+
+The terminal receipt in `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/workstation_setup_20260930_01/publication_01/publication_receipt.json` owns exact committed, PR/check, merged/applied and tool-installation identities. Preserve it outside the worktree before archival. If that receipt is complete, no setup or publication action remains. Offline/local validation is not proof of hosted CI or installer success. Existing Python 3.11.9, uv 0.12.20, locked packages and live app data remain protected; no dependency upgrade, WSL/Docker activation, provider, Word or Gmail operation is authorized by this scope.
+
 ## Completed Python setup and authorized publication — 2026-09-29
 
 The [reproducible uv setup](exec_plans/completed/2026-09-29_reproducible_uv_setup.md) is implemented and adopted locally. Its original authoring branch is `feat/uv-python-setup-20260929`, checkout `C:/Users/FA507/Documents/Codex/2026-09-29/i-would-like-you-to-go/work/legalpdf-uv`, based on main `3bbff4b9f0748262c120d51ed8d8deffed3b2932`, containing the approved floor `4e9d20e`. Daily use remains canonical main at `C:/Users/FA507/.codex/legalpdf_translate`.
 
 Fresh reconstruction matches Python 3.11.9 and all 57 working package versions. The 22 setup regressions, Quick (93 cases/two expected deselections), required selected Full (1,389 executions/nine expected intake deselections), compilation and docs/hygiene pass. Application source and the existing canonical environment remain intact.
 
-The user subsequently authorized commit/push. Follow the standard PR, green exact-head CI, merge and cleanup lifecycle; the chat task's `work/uv-publication-01/publication_receipt.json` owns terminal published/applied identity. If complete, no setup or publication action remains. If absent, inspect the feature PR and current main before resuming. No provider/native/Gmail work, dependency upgrade or environment rebuild is implied. Earlier scopes below remain historical evidence.
+The user subsequently authorized commit/push, and PR #313 is merged at `90485237c00b95aa9744b32aa4684d16ec06e100`, verified by local/fetched main history. The chat task's `work/uv-publication-01/publication_receipt.json` owns its prior exact hosted checks/application evidence; do not replay the merged publication. If complete, no setup or publication action remains. If absent, inspect the feature PR and current main before resuming. No provider/native/Gmail work, dependency upgrade or environment rebuild is implied. Earlier scopes below remain historical evidence.
 
 ## Current scoped task and authoritative worktree — 2026-09-27
 
