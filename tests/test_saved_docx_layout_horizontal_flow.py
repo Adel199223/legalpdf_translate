@@ -46,7 +46,7 @@ def test_ar_physical_cells_merge_only_contiguous_overlapping_boxes_and_preserve_
 @pytest.mark.parametrize("lang", ["EN", "FR"])
 def test_other_languages_keep_flow_without_ar_horizontal_containers(lang):
     built = writer.build_unreviewed_docx(*automatic(lang))
-    assert built.source_map["writer_version"] == writer.AUTOMATIC_MODERN_WRITER_VERSION
+    assert built.source_map["writer_version"] == writer.AUTOMATIC_SEPARATED_WRITER_VERSION
     assert "derived_horizontal_plan" not in built.source_map
 
 

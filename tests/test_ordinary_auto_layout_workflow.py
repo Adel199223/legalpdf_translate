@@ -469,7 +469,17 @@ def test_rich_nonfirst_page_breaks_columns_exact_fragments_and_combined_save_cos
         with ZipFile(BytesIO(raw.original_docx)) as original, ZipFile(BytesIO(download.content)) as rendered:
             assert original.namelist() == rendered.namelist()
             assert all(original.read(name) == rendered.read(name)
-                       for name in original.namelist() if name != "word/document.xml")
+                       for name in original.namelist() if name not in {"word/document.xml", "word/settings.xml"})
+            original_settings = etree.fromstring(original.read("word/settings.xml"))
+            rendered_settings = etree.fromstring(rendered.read("word/settings.xml"))
+            compatibility = rendered_settings.findall(".//" + W + "compatSetting")
+            modes = [node for node in compatibility if node.get(W + "name") == "compatibilityMode"]
+            assert len(modes) == 1 and modes[0].get(W + "val") == "15"
+            for settings in (original_settings, rendered_settings):
+                for node in list(settings.findall(".//" + W + "compatSetting")):
+                    if node.get(W + "name") == "compatibilityMode":
+                        node.getparent().remove(node)
+            assert etree.tostring(original_settings, method="c14n") == etree.tostring(rendered_settings, method="c14n")
             root = etree.fromstring(rendered.read("word/document.xml"))
         rows = candidate.source_map["paragraphs"]
         assert [row["paragraph_id"] for row in rows] == [row.id for row in snapshot.paragraphs]

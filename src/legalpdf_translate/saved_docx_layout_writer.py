@@ -14,6 +14,7 @@ WRITER_VERSION = "saved_docx_layout_writer_v1"
 HORIZONTAL_WRITER_VERSION = "saved_docx_layout_writer_ar_horizontal_v2"
 PARTITION_WRITER_VERSION = "saved_docx_layout_writer_partitions_v3"
 AUTOMATIC_MODERN_WRITER_VERSION = "saved_docx_layout_writer_automatic_modern_v4"
+AUTOMATIC_SEPARATED_WRITER_VERSION = "saved_docx_layout_writer_automatic_separated_v5"
 W = model.W
 _P_ORDER = ("pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl",
     "numPr", "suppressLineNumbers", "pBdr", "shd", "tabs", "suppressAutoHyphens", "kinsoku",
@@ -323,7 +324,7 @@ def _horizontal_plan(original_root, snapshot, pages, decisions):
     return plan
 
 
-def _assemble(original_root, snapshot, decisions, *, horizontal_plan=None):
+def _assemble(original_root, snapshot, decisions, *, horizontal_plan=None, separate_body_tables=False):
     root = deepcopy(original_root)
     body = root[0]
     section = deepcopy(body[-1])
@@ -394,6 +395,14 @@ def _assemble(original_root, snapshot, decisions, *, horizontal_plan=None):
         anchor = _empty()
         body.append(anchor)
         structural.append(anchor)
+    if separate_body_tables:
+        # Word merges adjacent body tables on save. Only new v5 candidates
+        # receive a visible-layout-neutral, owned one-point separator.
+        for previous, following in zip(list(body), list(body)[1:]):
+            if previous.tag == W + "tbl" and following.tag == W + "tbl":
+                separator = _empty()
+                body.insert(body.index(following), separator)
+                structural.append(separator)
     body.append(section)
     tree = root.getroottree()
     locations = {identifier: ([tree.getpath(p) for p in paragraph] if isinstance(paragraph, list)
@@ -589,16 +598,17 @@ def validate_built_docx(docx_bytes: bytes, source_map: dict, *, original_docx: b
     output, _ = model._package(docx_bytes)
     version = source_map.get("writer_version")
     partitioned = decisions["version"] == model.PARTITION_DECISIONS_VERSION
-    modern = version == AUTOMATIC_MODERN_WRITER_VERSION
+    separated = version == AUTOMATIC_SEPARATED_WRITER_VERSION
+    modern = version in {AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION}
     if (version not in {WRITER_VERSION, HORIZONTAL_WRITER_VERSION, PARTITION_WRITER_VERSION,
-                       AUTOMATIC_MODERN_WRITER_VERSION}
+                       AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION}
             or (modern and require_review)
             or (version == PARTITION_WRITER_VERSION and not partitioned)
-            or (partitioned and version not in {PARTITION_WRITER_VERSION, AUTOMATIC_MODERN_WRITER_VERSION})):
+            or (partitioned and version not in {PARTITION_WRITER_VERSION, AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION})):
         model._fail("unsupported_writer_version")
     horizontal = (snapshot["target_lang"] == "AR" and
         (version == HORIZONTAL_WRITER_VERSION and not require_review
-         or version in {PARTITION_WRITER_VERSION, AUTOMATIC_MODERN_WRITER_VERSION}))
+         or version in {PARTITION_WRITER_VERSION, AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION}))
     expected_parts = dict(original)
     if modern:
         expected_parts["word/settings.xml"] = _expected_modern_settings(original["word/settings.xml"])
@@ -609,17 +619,21 @@ def validate_built_docx(docx_bytes: bytes, source_map: dict, *, original_docx: b
     actual_root = model._xml(output["word/document.xml"])
     if horizontal:
         plan = _horizontal_plan(original_root, snapshot, pages, decisions)
-    elif version in {WRITER_VERSION, PARTITION_WRITER_VERSION, AUTOMATIC_MODERN_WRITER_VERSION}:
+    elif version in {WRITER_VERSION, PARTITION_WRITER_VERSION, AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION}:
         plan = None
     else:
         model._fail("unsupported_writer_version")
-    expected_root, locations, structural = _assemble(original_root, snapshot, decisions, horizontal_plan=plan)
+    expected_root, locations, structural = _assemble(original_root, snapshot, decisions,
+        horizontal_plan=plan, separate_body_tables=separated)
     expected_map = _source_map(snapshot, pages, decisions, locations, structural, docx_bytes,
                                require_review=require_review, horizontal_plan=plan, writer_version=version)
     if source_map != expected_map:
         model._fail("source_map_mismatch")
     if actual_root.tag != W + "document" or len(actual_root) != 1 or actual_root[0].tag != W + "body":
         model._fail("invalid_output_structure")
+    if separated and any(a.tag == b.tag == W + "tbl"
+                         for a, b in zip(actual_root[0], list(actual_root[0])[1:])):
+        model._fail("output_adjacent_body_tables")
     actual_paragraphs = list(actual_root[0].iter(W + "p"))
     located, owned = [], set()
     originals = {row["id"]: p for row, p in zip(snapshot["paragraphs"], list(original_root[0])[:-1])}
@@ -692,6 +706,8 @@ def _source_map(snapshot, pages, decisions, locations, structural, raw, *, write
         mapping["derived_horizontal_plan"] = deepcopy(horizontal_plan)
         mapping["derived_horizontal_plan_sha256"] = model._sha(model._canonical(horizontal_plan))
         mapping["structural_paragraph_qualification"] = "empty_spacer_cells_and_table_separation_anchors"
+    if writer_version == AUTOMATIC_SEPARATED_WRITER_VERSION:
+        mapping["structural_paragraph_qualification"] = "empty_spacer_cells_and_explicit_adjacent_body_table_separators_v5"
     if decisions["version"] == model.PARTITION_DECISIONS_VERSION:
         mapping["paragraph_partitions_sha256"] = model._sha(model._canonical(decisions["paragraph_partitions"]))
         mapping["partition_geometry_basis"] = "inherited_parent_source_association_not_precise_child_geometry"
@@ -746,12 +762,13 @@ def build_unreviewed_docx(docx_bytes: bytes, snapshot: dict, pages: list,
         plan = _horizontal_plan(original_root, snapshot, pages, checked) if snapshot["target_lang"] == "AR" else None
         members = dict(members)
         members["word/settings.xml"] = _modern_compatibility_settings(members["word/settings.xml"])
-        root, locations, structural = _assemble(original_root, snapshot, checked, horizontal_plan=plan)
+        root, locations, structural = _assemble(original_root, snapshot, checked, horizontal_plan=plan,
+                                                separate_body_tables=True)
         xml = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
         raw = _write(members, infos, xml)
         mapping = _source_map(snapshot, pages, checked, locations, structural, raw,
                               require_review=False, horizontal_plan=plan,
-                              writer_version=AUTOMATIC_MODERN_WRITER_VERSION)
+                              writer_version=AUTOMATIC_SEPARATED_WRITER_VERSION)
         validate_built_docx(raw, mapping, original_docx=docx_bytes, snapshot=snapshot,
                             pages=pages, decisions=checked, require_review=False)
         return SavedDocxLayoutArtifact(raw, mapping)

@@ -33,7 +33,7 @@ def test_new_automatic_candidates_use_mode15_preserve_package_and_parts(lang, pa
     args = packet(lang) if partitioned else automatic(lang)
     raw, snapshot, pages, decisions = args
     artifact = writer.build_unreviewed_docx(*args)
-    assert artifact.source_map["writer_version"] == writer.AUTOMATIC_MODERN_WRITER_VERSION
+    assert artifact.source_map["writer_version"] == writer.AUTOMATIC_SEPARATED_WRITER_VERSION
     assert modes(settings(artifact.docx_bytes)) == ["15"]
     with ZipFile(io.BytesIO(raw)) as before, ZipFile(io.BytesIO(artifact.docx_bytes)) as after:
         assert before.namelist() == after.namelist()
@@ -128,3 +128,88 @@ def test_frozen_historical_v1_v2_v3_artifacts_verify_exactly(index):
     assert hashlib.sha256(model._canonical(row["source_map"])).hexdigest() == row["source_map_sha256"]
     writer.validate_built_docx(output, row["source_map"], original_docx=original,
         snapshot=row["snapshot"], pages=row["pages"], decisions=row["decisions"], require_review=False)
+
+
+@pytest.mark.parametrize("lang", ["EN", "FR", "AR"])
+def test_frozen_v4_adjacent_tables_remain_valid_without_new_separators(lang):
+    fixture = json.loads((Path(__file__).parent / "fixtures/saved_docx_layout_historical_v4.json").read_bytes())
+    row = next(case for case in fixture["cases"] if case["lang"] == lang)
+    original = base64.b64decode(row["original_docx_b64"])
+    stream = io.BytesIO()
+    with ZipFile(io.BytesIO(original)) as source, ZipFile(stream, "w") as target:
+        for info in source.infolist():
+            value = (base64.b64decode(row["output_parts_b64"][info.filename])
+                     if info.filename in row["output_parts_b64"] else source.read(info.filename))
+            target.writestr(info, value)
+    output = stream.getvalue()
+    assert hashlib.sha256(output).hexdigest() == row["output_docx_sha256"]
+    assert row["source_map"]["writer_version"] == writer.AUTOMATIC_MODERN_WRITER_VERSION
+    writer.validate_built_docx(output, row["source_map"], original_docx=original,
+        snapshot=row["snapshot"], pages=row["pages"], decisions=row["decisions"], require_review=False)
+
+
+def adjacent_packet(lang, panels=False):
+    from tests.test_saved_docx_layout_writer import packet as column_packet
+    raw, snapshot, pages, decisions = column_packet(lang)
+    decisions["review"].update(document_reviewed=False, pages_reviewed=[], reviewer="", note="")
+    if panels:
+        ids = [row["id"] for row in snapshot["paragraphs"]]
+        decisions["bands"] = [{"kind": "flow", "groups": [
+            {"paragraph_ids": [identifier], "panel": True} for identifier in ids[:-1]] + [
+            {"paragraph_ids": ids[-1:], "panel": False}]}]
+    return raw, snapshot, pages, decisions
+
+
+@pytest.mark.parametrize("lang", ["EN", "FR", "AR"])
+@pytest.mark.parametrize("panels", [False, True])
+def test_v5_only_separates_direct_body_tables_not_nested_cells(lang, panels):
+    args = adjacent_packet(lang, panels)
+    artifact = writer.build_unreviewed_docx(*args)
+    with ZipFile(io.BytesIO(artifact.docx_bytes)) as package:
+        root = etree.fromstring(package.read("word/document.xml"))
+    body = root[0]
+    assert not any(a.tag == b.tag == model.W + "tbl" for a, b in zip(body, list(body)[1:]))
+    assert artifact.source_map["writer_version"] == writer.AUTOMATIC_SEPARATED_WRITER_VERSION
+    assert artifact.source_map["structural_paragraph_qualification"].endswith("_v5")
+    separators = [node for node in body if node.tag == model.W + "p"
+                  and node.getprevious() is not None and node.getnext() is not None
+                  and node.getprevious().tag == node.getnext().tag == model.W + "tbl"]
+    assert len(separators) == (4 if panels else 1)
+    for separator in separators:
+        shape = lambda node: [(child.tag, dict(child.attrib), child.text, child.tail)
+                              for child in node.iter()]
+        assert shape(separator) == shape(writer._empty())
+        assert root.getroottree().getpath(separator) in artifact.source_map["structural_paragraphs"]
+    writer.validate_built_docx(artifact.docx_bytes, artifact.source_map, original_docx=args[0],
+        snapshot=args[1], pages=args[2], decisions=args[3], require_review=False)
+
+
+@pytest.mark.parametrize("damage", ["remove", "move", "text", "hidden"])
+def test_v5_separator_damage_is_rejected_without_ownership_waiver(damage):
+    args = adjacent_packet("EN")
+    artifact = writer.build_unreviewed_docx(*args)
+    def corrupt(root):
+        body = root[0]
+        separator = next(node for node in body if node.tag == model.W + "p"
+            and node.getprevious() is not None and node.getnext() is not None
+            and node.getprevious().tag == node.getnext().tag == model.W + "tbl")
+        if damage == "remove": body.remove(separator)
+        elif damage == "move": body.remove(separator); body.insert(0, separator)
+        else:
+            run = etree.SubElement(separator, model.W + "r")
+            if damage == "text": etree.SubElement(run, model.W + "t").text = "Unauthorized"
+            else: etree.SubElement(etree.SubElement(run, model.W + "rPr"), model.W + "vanish")
+    changed = changed_part(artifact.docx_bytes, "word/document.xml", corrupt)
+    with pytest.raises(model.SavedDocxLayoutError):
+        writer.validate_built_docx(changed, artifact.source_map, original_docx=args[0],
+            snapshot=args[1], pages=args[2], decisions=args[3], require_review=False)
+
+
+def test_v5_independent_adjacency_guard_does_not_trust_builder(monkeypatch):
+    assemble = writer._assemble
+    def broken(*args, **kwargs):
+        kwargs["separate_body_tables"] = False
+        return assemble(*args, **kwargs)
+    monkeypatch.setattr(writer, "_assemble", broken)
+    with pytest.raises(model.SavedDocxLayoutError, match="output_adjacent_body_tables"):
+        writer.build_unreviewed_docx(*adjacent_packet("FR"))

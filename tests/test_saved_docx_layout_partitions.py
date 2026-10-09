@@ -32,7 +32,7 @@ def packet(lang="EN"):
 def test_exact_unicode_ranges_sibling_order_properties_and_source_map(lang):
     raw, snapshot, pages, dec = packet(lang)
     built = writer.build_unreviewed_docx(raw, snapshot, pages, dec)
-    assert built.source_map["writer_version"] == writer.AUTOMATIC_MODERN_WRITER_VERSION
+    assert built.source_map["writer_version"] == writer.AUTOMATIC_SEPARATED_WRITER_VERSION
     assert len(built.source_map["paragraphs"]) == 2
     parts = built.source_map["paragraphs"][0]["parts"]
     assert [p["part_id"] for p in parts] == ["p000001.part001", "p000001.part002", "p000001.part003"]
