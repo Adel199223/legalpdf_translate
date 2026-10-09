@@ -310,6 +310,67 @@ def _canonical_flow_groups(bands, ids):
     return result
 
 
+def _canonical_columns_rows(bands, ids, choices):
+    """Separate source rows only when whole existing column groups prove order."""
+    try:
+        flattened = [pid for band in bands for pid in _ids(band)]
+    except (TypeError, KeyError):
+        return bands
+    if flattened == ids:
+        return bands
+    if (any(type(pid) is not str for pid in flattened)
+            or len(flattened) != len(ids) or len(set(flattened)) != len(ids)
+            or set(flattened) != set(ids)):
+        return bands
+    ordinal = {pid: index for index, pid in enumerate(ids)}
+    boxes = {choice["paragraph_id"]: choice["bbox"] for choice in choices}
+    result = []
+    for band in bands:
+        owned = _ids(band)
+        if band.get("kind") != "columns" or owned == sorted(owned, key=ordinal.get):
+            result.append(band)
+            continue
+        cells = band.get("cells")
+        if type(cells) is not list or len(cells) not in {2, 3}:
+            return bands
+        if any(type(cell) is not dict or type(cell.get("groups")) is not list for cell in cells):
+            return bands
+        count = len(cells[0]["groups"])
+        if count < 2 or any(len(cell["groups"]) != count for cell in cells):
+            return bands
+        for cell in cells:
+            for group in cell["groups"]:
+                if (type(group) is not dict or type(group.get("panel")) is not bool
+                        or type(group.get("paragraph_ids")) is not list or not group["paragraph_ids"]):
+                    return bands
+                positions = [ordinal[pid] for pid in group["paragraph_ids"]]
+                if positions != list(range(positions[0], positions[0] + len(positions))):
+                    return bands
+        start, end = min(ordinal[pid] for pid in owned), max(ordinal[pid] for pid in owned) + 1
+        row_order = [pid for row in range(count) for cell in cells
+                     for pid in cell["groups"][row]["paragraph_ids"]]
+        if row_order != ids[start:end]:
+            return bands
+        previous_bottom = None
+        for row in range(count):
+            row_ids = [pid for cell in cells for pid in cell["groups"][row]["paragraph_ids"]]
+            row_boxes = [boxes[pid] for pid in row_ids]
+            if any(type(box) is not list or len(box) != 4
+                    or any(type(v) not in {int, float} or not 0 <= v <= 1 for v in box)
+                    or box[0] >= box[2] or box[1] >= box[3] for box in row_boxes):
+                return bands
+            top, bottom = min(box[1] for box in row_boxes), max(box[3] for box in row_boxes)
+            if previous_bottom is not None and previous_bottom > top:
+                return bands
+            previous_bottom = bottom
+        for row in range(count):
+            split = deepcopy(band)
+            for cell in split["cells"]:
+                cell["groups"] = [cell["groups"][row]]
+            result.append(split)
+    return result if [pid for band in result for pid in _ids(band)] == ids else bands
+
+
 def normalize_proposals(snapshot, view, proposals):
     decisions = deepcopy(view["decisions"])
     by_id = {row["paragraph_id"]: index for index, row in enumerate(decisions["paragraphs"])}
@@ -365,6 +426,7 @@ def normalize_proposals(snapshot, view, proposals):
                 fail("page_break_requires_flow")
             decisions["paragraphs"][by_id[row["paragraph_id"]]] = row
         bands = _canonical_flow_groups(proposal["bands"], ids)
+        bands = _canonical_columns_rows(bands, ids, proposal["paragraphs"])
         try:
             if [pid for band in bands for pid in _ids(band)] != ids:
                 fail("proposal_coverage")

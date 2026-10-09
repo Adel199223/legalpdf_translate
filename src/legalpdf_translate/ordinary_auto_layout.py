@@ -63,7 +63,8 @@ def _direct_revalidation(root: Path, result: dict, policy: dict) -> bool:
     if has_capacity and has_direct:
         fail("automatic_recovery_predecessor_changed", 409)
     return has_direct or (not has_capacity
-        and result.get("error_code") == "ordinary_layout_page_break_requires_flow"
+        and result.get("error_code") in {"ordinary_layout_page_break_requires_flow",
+                                       "ordinary_layout_proposal_coverage"}
         and policy.get("max_output_tokens") == 32000
         and policy.get("timeout_seconds") == 480.0)
 
@@ -192,7 +193,10 @@ def _retained_continuation(manager, root: Path, identity: dict, predecessor: dic
     result = verified_record(operation / "result.json")
     policy = verified_record(operation / "intent.json")["request"]["policy"]
     allowed_errors = {"ordinary_layout_proposal_coverage", "ordinary_layout_invalid_proposal_decisions"} if parent_direct else {"ordinary_layout_page_break_requires_flow"}
-    if result.get("error_code") not in allowed_errors or policy.get("max_output_tokens") != 32000:
+    if direct:
+        allowed_errors.add("ordinary_layout_proposal_coverage")
+    if (result.get("error_code") not in allowed_errors or policy.get("max_output_tokens") != 32000
+            or direct and policy.get("timeout_seconds") != 480.0):
         fail("automatic_retained_response_unavailable", 409)
     journal = _read_record(operation / "accounting" / "dispatch_accounting.json")
     begins = [e for e in journal["events"] if e.get("event") == "begin"]

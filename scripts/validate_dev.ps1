@@ -232,6 +232,7 @@ $fullExtraCommands = @(
         Executable = $venvPython
         Arguments = @("-m", "pytest", "-q", "--durations=10",
             "tests/test_ordinary_layout_contracts.py", "tests/test_ordinary_layout_service.py",
+            "tests/test_ordinary_layout_columns_rows.py",
             "tests/test_ordinary_edited_revision.py",
             "tests/test_ordinary_layout_partition_contracts.py",
             "tests/test_ordinary_layout_partition_browser.py",
