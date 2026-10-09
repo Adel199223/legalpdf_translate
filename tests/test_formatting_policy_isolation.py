@@ -5,6 +5,8 @@ were explicitly refreshed for the authorized 2026-09-27 source-fidelity guidance
 readable tracking identifiers and atomic Arabic addresses. These small snapshots
 never read git, another checkout, real credentials or provider services. Future
 deliberate policy changes must refresh them explicitly, never as a formatting side effect.
+The EN snapshot alone was refreshed for the authorized 2026-10-10 source-bound
+acronym and contextual payment-restitution guidance; FR/AR remain unchanged.
 """
 from __future__ import annotations
 
@@ -35,7 +37,7 @@ from legalpdf_translate.types import (
 
 
 _INSTRUCTION_SHA256 = {
-    "EN": "7afa9ba0da4377123e8d61749a3e772a9606402de117f4b9862d097033c91ebf",
+    "EN": "d6c1ac6e4991769b8b0c9a90a6a8acc34c3ef0d9afb9f89c47e1686d655d7c45",
     "FR": "f3f379fe5e76b4a99370dcfb91aa1354095d7653ae3e344c5eab3bdb340ee864",
     "AR": "77cc634234f5d94839139b70f509d8fede83edaa352447c6fbc0c041b6793678",
 }
