@@ -8,6 +8,8 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -222,15 +224,31 @@ def load_shadow_runtime_metadata(path: Path) -> dict[str, Any] | None:
 
 def write_shadow_runtime_metadata(path: Path, payload: dict[str, Any]) -> Path:
     resolved = path.expanduser().resolve()
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     resolved.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = resolved.with_suffix(".tmp")
-    temp_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    temp_path.replace(resolved)
-    return resolved
-
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=resolved.parent,
+            prefix=resolved.name + ".", suffix=".tmp", delete=False,
+        ) as temporary:
+            temp_path = Path(temporary.name)
+            temporary.write(serialized)
+        for attempt in range(5):
+            try:
+                temp_path.replace(resolved)
+                return resolved
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05)
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                # Cleanup must not mask the original publication exception.
+                pass
 
 def clear_shadow_runtime_metadata(path: Path) -> None:
     resolved = path.expanduser().resolve()
