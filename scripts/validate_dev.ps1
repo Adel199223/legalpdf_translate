@@ -235,6 +235,8 @@ $fullExtraCommands = @(
             "tests/test_gmail_confirmation_prevalidation.py",
             "tests/test_ordinary_auto_layout_integration.py",
             "tests/test_ordinary_auto_layout_recovery.py",
+            "tests/test_ordinary_layout_retained_continuation.py",
+            "tests/test_ordinary_layout_zero_spacing.py",
             "tests/test_ordinary_auto_layout_workflow.py",
             "tests/test_browser_pdf_text_bundle.py",
             "tests/test_ordinary_accounting_policy.py")

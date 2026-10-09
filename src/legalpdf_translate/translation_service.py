@@ -1321,6 +1321,16 @@ class TranslationJobManager:
         }
 
     def _snapshot(self, job: _ManagedTranslationJob) -> dict[str, Any]:
+        diagnostics = dict(job.diagnostics_payload)
+        if self._job_actions(job).get("recover_layout"):
+            try:
+                from .ordinary_layout_accounting import verified_page_ceiling
+                diagnostics["layout_recovery_quote"] = {"available": True,
+                    "max_page_cost_usd": str(verified_page_ceiling()), "currency": "USD",
+                    "paid_operation": True, "prior_charges_retained": True}
+            except Exception:
+                diagnostics["layout_recovery_quote"] = {"available": False,
+                    "reason": "ordinary_layout_current_quote_unavailable"}
         return {
             "job_id": job.job_id,
             "job_kind": job.job_kind,
@@ -1332,7 +1342,7 @@ class TranslationJobManager:
             "status_text": job.status_text,
             "config": dict(job.config_payload),
             "progress": dict(job.progress_payload),
-            "diagnostics": dict(job.diagnostics_payload),
+            "diagnostics": diagnostics,
             "logs": list(job.log_tail),
             "artifacts": deepcopy(job.artifacts_payload),
             "result": deepcopy(job.result_payload),

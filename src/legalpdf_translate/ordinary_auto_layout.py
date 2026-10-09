@@ -53,7 +53,7 @@ def _recovery_folder(root: Path) -> Path:
     return storage._mkdir(root / "recoveries" / "layout_capacity_v2")
 
 
-def _failed_predecessor(manager, root: Path, identity: dict, old_policy: str) -> dict:
+def _failed_predecessor(manager, root: Path, identity: dict, old_policy: str, *, expected_identity=None, completed_marker=None) -> dict:
     """Prove the old dispatch is final and billed before a new paid operation."""
     if not valid_automatic_layout_policy(old_policy):
         fail("automatic_recovery_predecessor_invalid", 409)
@@ -61,7 +61,7 @@ def _failed_predecessor(manager, root: Path, identity: dict, old_policy: str) ->
     if not intent_path.is_file() or not pointer_path.is_file() or (root / "candidate.json").exists():
         fail("automatic_recovery_predecessor_unavailable", 409)
     old_intent = _read_record(intent_path)
-    expected = dict(identity, policy_fingerprint=old_policy.split(":", 1)[1])
+    expected = expected_identity or dict(identity, policy_fingerprint=old_policy.split(":", 1)[1])
     if old_intent != expected:
         fail("automatic_recovery_predecessor_changed", 409)
     pointer = _read_record(pointer_path)
@@ -76,7 +76,9 @@ def _failed_predecessor(manager, root: Path, identity: dict, old_policy: str) ->
     origin_folder = manager.service.root / origin
     operation = origin_folder / "baselines" / baseline_id / "suggestions" / operation_nonce
     result_path, summary_path = operation / "result.json", operation / "accounting_summary.json"
-    completed_marker = root / "recoveries" / "layout_capacity_v2" / "candidate.json"
+    completed_marker = completed_marker or root / "recoveries" / "layout_revalidation_v1" / "candidate.json"
+    if not completed_marker.is_file():
+        completed_marker = root / "recoveries" / "layout_capacity_v2" / "candidate.json"
     completed = _read_record(completed_marker) if completed_marker.is_file() else None
     if not result_path.is_file() or not summary_path.is_file():
         fail("automatic_recovery_predecessor_unsettled", 409)
@@ -148,6 +150,62 @@ def _failed_predecessor(manager, root: Path, identity: dict, old_policy: str) ->
         "baseline_id": baseline_id, "operation_nonce": operation_nonce}
 
 
+def _retained_continuation(manager, root: Path, identity: dict, predecessor: dict):
+    """Admit one settled failed successor; never reuse a partial SDK response."""
+    prior_root = root / "recoveries" / "layout_capacity_v2"
+    prior_identity = _read_record(prior_root / "intent.json")
+    expected = dict(identity, policy_fingerprint=prior_identity.get("policy_fingerprint"),
+                    recovery_predecessor=predecessor)
+    if prior_identity != expected:
+        fail("automatic_recovery_predecessor_changed", 409)
+    prior = _failed_predecessor(manager, prior_root, identity,
+        ORDINARY_AUTO_LAYOUT_POLICY + ":" + prior_identity["policy_fingerprint"],
+        expected_identity=expected,
+        completed_marker=root / "recoveries" / "layout_revalidation_v1" / "candidate.json")
+    from .ordinary_layout_service import _read as verified_record
+    from .ordinary_layout_contracts import decode, normalize_proposals
+    from .saved_docx_layout import inspect_docx
+    operation = manager.service.root / prior["origin_job_id"] / "baselines" / prior["baseline_id"] / "suggestions" / prior["operation_nonce"]
+    result = verified_record(operation / "result.json")
+    policy = verified_record(operation / "intent.json")["request"]["policy"]
+    if result.get("error_code") != "ordinary_layout_page_break_requires_flow" or policy.get("max_output_tokens") != 32000:
+        fail("automatic_retained_response_unavailable", 409)
+    journal = _read_record(operation / "accounting" / "dispatch_accounting.json")
+    begins = [e for e in journal["events"] if e.get("event") == "begin"]
+    finishes = [e for e in journal["events"] if e.get("event") == "finish"]
+    if (not begins or len(begins) != len(finishes)
+            or len({e.get("page_number") for e in begins}) != len(begins)):
+        fail("automatic_retained_response_unsettled", 409)
+    view = manager.service.state(prior["origin_job_id"])["review"]
+    # The origin may have retired after Resume. Read its immutable reviewed
+    # baseline, whose source/raw ownership was verified above.
+    reviewed = storage._read(operation.parent.parent / "reviewed.docx", storage.DOCX_MAX_BYTES)
+    snapshot = inspect_docx(reviewed, identity["target_lang"])
+    retained = {}
+    for begin in begins:
+        page = begin.get("page_number")
+        finish = next((e for e in finishes if e.get("call_id") == begin.get("call_id")), None)
+        if (page not in identity["selected_pages"] or begin.get("purpose") != "layout_suggestion"
+                or begin.get("attempt") != 1 or begin.get("bounds", {}).get("max_output_tokens") != 32000
+                or not finish or finish.get("outcome") != "succeeded"
+                or finish.get("cost_status") != "available" or finish.get("cost_usd") is None
+                or not finish.get("response_id") or finish.get("error_code") is not None):
+            fail("automatic_retained_response_unsettled", 409)
+        raw = storage._read(operation / f"page-{page:04d}.response.json", 2 * 1024 * 1024)
+        proposal = decode(raw)
+        if type(proposal) is not dict or proposal.get("page_number") != page:
+            fail("automatic_retained_response_invalid", 409)
+        normalize_proposals(snapshot, view, [proposal])
+        retained[page] = {"raw": raw, "origin": {"version": "ordinary_retained_proposal_v1",
+            "source_page_number": page, "response_sha256": hashlib.sha256(raw).hexdigest(),
+            "predecessor": prior, "original_policy_fingerprint": prior_identity["policy_fingerprint"],
+            "provider_call_id": begin["call_id"], "locally_revalidated": True}}
+    # Missing means genuinely never sent, not a lost or unusable response.
+    if any((operation / f"page-{p:04d}.response.json").exists() for p in identity["selected_pages"] if p not in retained):
+        fail("automatic_retained_response_changed", 409)
+    return prior, retained
+
+
 def _read_record(path: Path) -> dict:
     from .ordinary_layout_contracts import decode
     value = decode(storage._read(path, 8 * 1024 * 1024))
@@ -160,17 +218,24 @@ def _operation_costs(manager, origin: str, identity: dict) -> dict:
     costs = manager.layout_costs(origin)
     if not costs["complete"]:
         fail("accounting_unsettled", 409)
-    predecessor = identity.get("recovery_predecessor")
-    if predecessor and predecessor["origin_job_id"] != origin:
-        prior = Decimal(predecessor["known_cost_usd"])
+    predecessors = [identity[k] for k in ("recovery_predecessor", "revalidation_predecessor") if k in identity]
+    inherited = [p for p in predecessors if p["origin_job_id"] != origin]
+    if inherited:
+        prior = sum((Decimal(p["known_cost_usd"]) for p in inherited), Decimal(0))
         new = Decimal(costs["known_cost_usd"])
         costs = {"cost_usd": str(prior + new), "known_cost_usd": str(prior + new),
-            "complete": True, "operations": costs["operations"] + 1,
+            "complete": True, "operations": costs["operations"] + len(inherited),
             "predecessor_cost_usd": str(prior), "recovery_cost_usd": str(new)}
     return costs
 
 
 def _reused_candidate(manager, folder: Path, identity: dict, record: dict, job) -> dict:
+    if identity.get("retained_pages"):
+        pointer = _read_record(folder / "operation.json")
+        if pointer.get("retained_pages") != identity["retained_pages"] or pointer.get("identity_sha256") != hashlib.sha256(encode(identity)).hexdigest():
+            fail("automatic_retained_response_changed", 409)
+        operation = manager.service.root / pointer["origin_job_id"] / "baselines" / pointer["baseline_id"] / "suggestions" / pointer["operation_nonce"]
+        _verified_retained_pages(operation, identity["retained_pages"])
     if (record.get("identity") != identity or type(record.get("review_id")) is not str
             or type(record.get("candidate_id")) is not str
             or type(record.get("origin_job_id")) is not str):
@@ -209,11 +274,25 @@ def _reused_candidate(manager, folder: Path, identity: dict, record: dict, job) 
         "delivery_kind": "automatic_unreviewed", "reviewed": False,
         "reused_durable_candidate": True, "layout_costs": record["layout_costs"],
         **({"recovery_predecessor": identity["recovery_predecessor"]}
-           if "recovery_predecessor" in identity else {})}
+           if "recovery_predecessor" in identity else {}),
+        **({"revalidation_predecessor": identity["revalidation_predecessor"]}
+           if "revalidation_predecessor" in identity else {})}
+
+
+def _verified_retained_pages(operation: Path, expected: dict) -> None:
+    """Copied responses remain bound to their immutable prior operation."""
+    from .ordinary_layout_service import _read as verified_record
+    names = {f"page-{int(p):04d}.retained.json" for p in expected}
+    if {p.name for p in operation.glob("*.retained.json")} != names:
+        fail("automatic_retained_response_changed", 409)
+    for page, origin in expected.items():
+        if (verified_record(operation / f"page-{int(page):04d}.retained.json") != origin
+                or hashlib.sha256(storage._read(operation / f"page-{int(page):04d}.response.json", 2 * 1024 * 1024)).hexdigest() != origin["response_sha256"]):
+            fail("automatic_retained_response_changed", 409)
 
 
 def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, operation_nonce: str,
-                       selected_pages: tuple[int, ...], policy: str) -> dict:
+                       selected_pages: tuple[int, ...], policy: str, *, retained_pages=None) -> dict:
     """Record hashes and settled usage, never private source/target text."""
     from .saved_docx_layout_service import _read as bounded_read
     image_hashes = {page: hashlib.sha256(manager.service.saved.image(review_id, page)).hexdigest()
@@ -221,15 +300,20 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
     pages = []
     with manager.service.scope(job_id) as folder:
         operation = folder / "baselines" / baseline_id / "suggestions" / operation_nonce
+        _verified_retained_pages(operation, retained_pages or {})
         intent = bounded_read(operation / "intent.json", 8 * 1024 * 1024)
         summary = bounded_read(operation / "accounting_summary.json", 8 * 1024 * 1024)
         from .ordinary_layout_service import _read as verified_record
         request_policy = verified_record(operation / "intent.json")["request"]["policy"]
         for page in selected_pages:
             response = bounded_read(operation / f"page-{page:04d}.response.json", 2 * 1024 * 1024)
-            pages.append({"source_page_number": page,
+            row = {"source_page_number": page,
                 "source_image_sha256": image_hashes[page],
-                "response_sha256": hashlib.sha256(response).hexdigest()})
+                "response_sha256": hashlib.sha256(response).hexdigest()}
+            retained_path = operation / f"page-{page:04d}.retained.json"
+            if retained_path.exists():
+                row["retained_origin"] = verified_record(retained_path)
+            pages.append(row)
     return {"version": "ordinary_auto_layout_evidence_v1", "document_reviewed": False,
         "rendered_layout_acceptance": "not_evaluated", "policy_fingerprint": policy.split(":", 1)[1],
         "operation_nonce": operation_nonce, "intent_sha256": hashlib.sha256(intent).hexdigest(),
@@ -253,6 +337,7 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int]) -
             return
         intent = verified_record(operation / "intent.json")
         summary = verified_record(operation / "accounting_summary.json")
+        _verified_retained_pages(operation, pointer.get("retained_pages", {}))
         if (intent.get("baseline_id") != baseline_id or intent.get("review_id") != pointer["review_id"]
                 or intent.get("operation_nonce") != operation_nonce
                 or intent.get("request", {}).get("expected_generation") != initial
@@ -261,8 +346,8 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int]) -
                 or summary.get("cost_usd") is None
                 or summary.get("unknown_cost_count") != 0
                 or summary.get("in_flight_count") != 0
-                or summary.get("provider_dispatch_count") != len(selected_pages)
-                or summary.get("attempt_count") != len(selected_pages)):
+                or summary.get("provider_dispatch_count") != len(selected_pages) - len(pointer.get("retained_pages", {}))
+                or summary.get("attempt_count") != summary.get("provider_dispatch_count")):
             return
         proposals = []
         for page in selected_pages:
@@ -323,7 +408,8 @@ def _finish_saved_proposals(manager, folder: Path, identity: dict, pointer: dict
     review_id = pointer["review_id"]
     policy_hash = identity["policy_fingerprint"]
     if (pointer.get("identity_sha256") != hashlib.sha256(encode(identity)).hexdigest()
-            or pointer.get("selected_pages") != identity["selected_pages"]):
+            or pointer.get("selected_pages") != identity["selected_pages"]
+            or pointer.get("retained_pages", {}) != identity.get("retained_pages", {})):
         fail("automatic_operation_identity_changed", 409)
     if cancel_requested(job.job_id):
         fail("automatic_layout_cancelled", 409)
@@ -341,7 +427,7 @@ def _finish_saved_proposals(manager, folder: Path, identity: dict, pointer: dict
             or review["generation"] != outcome["generation"]):
         fail("automatic_generation_changed", 409)
     evidence = _proposal_evidence(manager, origin, baseline_id, review_id, operation_nonce,
-        tuple(identity["selected_pages"]), frozen_policy)
+        tuple(identity["selected_pages"]), frozen_policy, retained_pages=identity.get("retained_pages", {}))
     manager.service.saved.attach_ordinary_binding(review_id, raw_map,
         tuple(identity["selected_pages"]), policy_hash, evidence,
         expected_generation=review["generation"])
@@ -385,7 +471,9 @@ def _finish_saved_proposals(manager, folder: Path, identity: dict, pointer: dict
         "source_map_sha256": built["source_map_sha256"], "policy_fingerprint": policy_hash,
         "delivery_kind": artifact.kind, "reviewed": False, "layout_costs": costs,
         **({"recovery_predecessor": identity["recovery_predecessor"]}
-           if "recovery_predecessor" in identity else {})}
+           if "recovery_predecessor" in identity else {}),
+        **({"revalidation_predecessor": identity["revalidation_predecessor"]}
+           if "revalidation_predecessor" in identity else {})}
 
 
 def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
@@ -417,12 +505,24 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
     identity.update(raw_source_map_sha256=mapped.raw_source_map_sha256,
                     raw_snapshot_fingerprint=mapped.fingerprint, policy_fingerprint=policy_hash)
     root = _durable_folder(baseline)
+    retained = {}
     if recovery_old_policy is not None:
         if frozen_policy != frozen_automatic_layout_policy():
             fail("automatic_policy_changed", 409)
         predecessor = _failed_predecessor(manager, root, identity, recovery_old_policy)
-        identity["recovery_predecessor"] = predecessor
         folder = _recovery_folder(root)
+        if (folder / "operation.json").exists() and not (folder / "candidate.json").exists():
+            pointer = _read_record(folder / "operation.json")
+            old_operation = manager.service.root / pointer["origin_job_id"] / "baselines" / pointer["baseline_id"] / "suggestions" / pointer["operation_nonce"]
+            if (old_operation / "result.json").exists():
+                from .ordinary_layout_service import _read as verified_record
+                failed = verified_record(old_operation / "result.json")
+                if failed.get("status") == "failed" and failed.get("error_code") == "ordinary_layout_page_break_requires_flow":
+                    prior, retained = _retained_continuation(manager, root, identity, predecessor)
+                    identity["revalidation_predecessor"] = prior
+                    identity["retained_pages"] = {str(p): r["origin"] for p, r in retained.items()}
+                    folder = storage._mkdir(root / "recoveries" / "layout_revalidation_v1")
+        identity["recovery_predecessor"] = predecessor
         if (not (folder / "candidate.json").is_file()
                 and (manager.service.root / job_id).is_dir()):
             # A resumed job may have acquired its own delivery selection even
@@ -463,9 +563,12 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
     if recovery_old_policy is None:
         accounting.authorize_automatic(job, policy_hash)
     else:
-        accounting.authorize_recovery(job, policy_hash,
-            identity["recovery_predecessor"]["known_cost_usd"])
-    prepare_nonce = _nonce("automatic_recovery_prepare" if recovery_old_policy is not None else "automatic_prepare",
+        prior_cost = Decimal(identity["recovery_predecessor"]["known_cost_usd"])
+        if retained:
+            prior_cost += Decimal(identity["revalidation_predecessor"]["known_cost_usd"])
+        accounting.authorize_recovery(job, policy_hash, str(prior_cost),
+            missing_pages=[p for p in job.selected_pages if p not in retained] if retained else None)
+    prepare_nonce = _nonce("automatic_revalidation_prepare" if retained else "automatic_recovery_prepare" if recovery_old_policy is not None else "automatic_prepare",
         {"job_id": job_id, "raw_snapshot": mapped.fingerprint, "policy": policy_hash,
          **({"predecessor": identity["recovery_predecessor"]["result_sha256"]}
             if recovery_old_policy is not None else {})})
@@ -474,7 +577,7 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
         fail("automatic_layout_cancelled", 409)
     baseline_id = prepared["baseline_id"]
     generation = prepared["generation"]
-    operation_nonce = _nonce("automatic_recovery_suggest" if recovery_old_policy is not None else "automatic_suggest", {"job_id": job_id,
+    operation_nonce = _nonce("automatic_revalidation_suggest" if retained else "automatic_recovery_suggest" if recovery_old_policy is not None else "automatic_suggest", {"job_id": job_id,
         "baseline_id": baseline_id, "generation": generation,
         "raw_snapshot": mapped.fingerprint, "policy": policy_hash,
         **({"predecessor": identity["recovery_predecessor"]["result_sha256"]}
@@ -483,6 +586,8 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
         "origin_job_id": job_id, "baseline_id": baseline_id,
         "review_id": prepared["review"]["review_id"], "initial_generation": generation,
         "operation_nonce": operation_nonce, "selected_pages": list(job.selected_pages)}
+    if retained:
+        pointer["retained_pages"] = identity["retained_pages"]
     with run_workspace_slot(folder):
         pointer_path = folder / "operation.json"
         if pointer_path.exists():
@@ -495,7 +600,8 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
             expected_baseline_id=baseline_id)
         fail("automatic_layout_cancelled", 409)
     outcome = manager.suggest(job_id, generation, operation_nonce, list(job.selected_pages),
-        expected_baseline_id=baseline_id, external_cancel_requested=cancel_requested)
+        expected_baseline_id=baseline_id, external_cancel_requested=cancel_requested,
+        retained_proposals=retained)
     if (outcome.get("status") != "applied_unreviewed"
             or outcome.get("completed_pages") != list(job.selected_pages)
             or not outcome.get("accounting", {}).get("complete")):
@@ -509,7 +615,10 @@ def cancel_automatic_layout(manager, accounting, job_id: str, *, recovery: bool 
     baseline = accounting.jobs.trusted_ordinary_baseline_identity(job_id,
         runtime_mode=manager.mode, workspace_id=manager.workspace_id)
     root = _durable_folder(baseline)
-    pointer_path = (_recovery_folder(root) if recovery else root) / "operation.json"
+    folder = _recovery_folder(root) if recovery else root
+    if recovery and (root / "recoveries" / "layout_revalidation_v1" / "operation.json").exists():
+        folder = root / "recoveries" / "layout_revalidation_v1"
+    pointer_path = folder / "operation.json"
     if not pointer_path.exists():
         return
     pointer = _read_record(pointer_path)
@@ -532,6 +641,8 @@ def verified_recovery_layout_costs(manager, job: dict, current: dict) -> dict:
     trusted = manager._job(job["job_id"])
     root = Path(job["result"]["run_dir"]).expanduser().resolve() / "ordinary_auto_layout"
     recovery = root / "recoveries" / "layout_capacity_v2"
+    if automatic.get("revalidation_predecessor"):
+        recovery = root / "recoveries" / "layout_revalidation_v1"
     marker = _read_record(recovery / "candidate.json")
     identity = marker.get("identity")
     if (type(identity) is not dict or identity.get("recovery_predecessor") != predecessor
@@ -569,13 +680,34 @@ def verified_recovery_layout_costs(manager, job: dict, current: dict) -> dict:
             raise ValueError
     except (ValueError, KeyError):
         fail("automatic_recovery_accounting_changed", 409)
-    inherited = origin != marker["origin_job_id"]
-    if not inherited and present < prior:
+    predecessors = [predecessor]
+    extra = automatic.get("revalidation_predecessor")
+    if extra:
+        if identity.get("revalidation_predecessor") != extra:
+            fail("automatic_recovery_identity_changed", 409)
+        extra_origin = identifier(extra.get("origin_job_id"))
+        extra_operation = manager.service.root / extra_origin / "baselines" / nonce(extra.get("baseline_id")) / "suggestions" / nonce(extra.get("operation_nonce"))
+        extra_root = root / "recoveries" / "layout_capacity_v2"
+        extra_paths = {"intent_sha256": extra_root / "intent.json", "pointer_sha256": extra_root / "operation.json",
+            "result_sha256": extra_operation / "result.json",
+            "accounting_summary_sha256": extra_operation / "accounting_summary.json",
+            "accounting_journal_sha256": extra_operation / "accounting" / "dispatch_accounting.json"}
+        if any(hashlib.sha256(storage._read(p, 8 * 1024 * 1024)).hexdigest() != extra[k] for k, p in extra_paths.items()):
+            fail("automatic_recovery_predecessor_changed", 409)
+        extra_summary = verified_record(extra_paths["accounting_summary_sha256"])
+        if (extra_summary.get("coverage_status") != "complete" or extra_summary.get("unknown_cost_count") != 0
+                or extra_summary.get("in_flight_count") != 0 or str(extra_summary.get("cost_usd")) != extra.get("known_cost_usd")):
+            fail("automatic_recovery_predecessor_unsettled", 409)
+        predecessors.append(extra)
+    inherited = [p for p in predecessors if p["origin_job_id"] != marker["origin_job_id"]]
+    inherited_cost = sum((Decimal(p["known_cost_usd"]) for p in inherited), Decimal(0))
+    included_cost = sum((Decimal(p["known_cost_usd"]) for p in predecessors if p not in inherited), Decimal(0))
+    if present < included_cost:
         fail("automatic_recovery_accounting_changed", 409)
-    total = prior + present if inherited else present
+    total = inherited_cost + present
     if marker.get("layout_costs", {}).get("cost_usd") != str(total):
         fail("automatic_recovery_accounting_changed", 409)
     return {"cost_usd": str(total), "known_cost_usd": str(total), "complete": True,
-        "operations": current["operations"] + (1 if inherited else 0),
-        "predecessor_cost_usd": str(prior),
-        "recovery_cost_usd": str(present if inherited else present - prior)}
+        "operations": current["operations"] + len(inherited),
+        "predecessor_cost_usd": str(inherited_cost + included_cost),
+        "recovery_cost_usd": str(present - included_cost)}

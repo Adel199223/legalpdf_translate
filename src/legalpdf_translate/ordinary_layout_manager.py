@@ -28,7 +28,8 @@ column positions or change wording. For headings paired on the same source row, 
 space_before_pt so their top edges align unless the source clearly shows an offset.
 Use normalized image coordinates for broad honest source regions; bbox null means uncertain.
 Do not invent missing content, logos, barcodes, signatures or source provenance. Preserve existing
-fonts and bidi. Page-break paragraphs must stay body/inherit with no added styles and plain flow.
+fonts and bidi. Page-break paragraphs must stay body/inherit with no added styles and plain flow,
+outside columns and panels. Their space_before_pt and space_after_pt must be null or numeric zero.
 Only role heading may use heading_level 1, 2 or 3 and heading_size_pt null or 1–24 points.
 Every other role, including institution, requires heading_level 0 and heading_size_pt null;
 use source-supported bold or alignment without promoting an institution to a heading for size.
@@ -119,7 +120,7 @@ class OrdinaryLayoutManager:
 
     @public
     def suggest(self, job_id, expected_generation, operation_nonce, page_numbers, *, expected_baseline_id,
-                external_cancel_requested=None):
+                external_cancel_requested=None, retained_proposals=None):
         nonce(operation_nonce); nonce(expected_baseline_id); generation(expected_generation)
         if (type(page_numbers) is not list or not page_numbers or any(type(n) is not int for n in page_numbers)
                 or sorted(set(page_numbers)) != page_numbers or not all(1 <= n <= 100 for n in page_numbers)):
@@ -142,6 +143,18 @@ class OrdinaryLayoutManager:
         if view["generation"] != expected_generation:
             fail("generation_conflict", 409)
         ids_by_page = {page: page_ids(view, page) for page in page_numbers}
+        # Server-only continuation input: validate every retained response before
+        # constructing an accountant or reserving a missing-page request.
+        retained_proposals = retained_proposals or {}
+        if type(retained_proposals) is not dict or not set(retained_proposals) <= set(page_numbers):
+            fail("retained_proposal_invalid", 409)
+        for page, retained in retained_proposals.items():
+            if type(retained) is not dict or set(retained) != {"raw", "origin"} or type(retained["raw"]) is not bytes:
+                fail("retained_proposal_invalid", 409)
+            proposal = decode(retained["raw"])
+            if type(proposal) is not dict or proposal.get("page_number") != page:
+                fail("retained_proposal_invalid", 409)
+            normalize_proposals(inspect_docx(job.reviewed_docx, job.target_lang), view, [proposal])
         if Decimal(policy.max_page_cost_usd) * len(page_numbers) > Decimal(policy.max_operation_cost_usd):
             fail("operation_cost_limit", 409)
         operation, intent, fresh = self.service.begin_suggestion(job_id, expected_generation, operation_nonce,
@@ -173,6 +186,13 @@ class OrdinaryLayoutManager:
                         expected_baseline_id=expected_baseline_id)
                 if self.service.cancellation_requested(job_id, operation_nonce):
                     break
+                if page in retained_proposals:
+                    retained = retained_proposals[page]
+                    storage._atomic(operation / f"page-{page:04d}.response.json", retained["raw"])
+                    _write(operation / f"page-{page:04d}.retained.json", retained["origin"])
+                    proposals.append(decode(retained["raw"]))
+                    result["completed_pages"].append(page)
+                    continue
                 current = self.service.assert_current(self._job(job_id))
                 if current["baseline_id"] != expected_baseline_id:
                     fail("baseline_stale", 409)

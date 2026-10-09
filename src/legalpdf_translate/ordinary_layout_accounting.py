@@ -75,13 +75,15 @@ class OrdinaryLayoutAccounting:
     def _budget(self, job, accountant, folder):
         if accountant.hard_budget:
             return accountant.budget_context
-        recovery = folder / "recovery_capacity_v2"
+        recovery = folder / "revalidation_capacity_v1"
+        if not (recovery / "authorization.json").is_file():
+            recovery = folder / "recovery_capacity_v2"
         recovery_receipt = recovery / "authorization.json"
         if recovery_receipt.is_file():
             record = decode(recovery_receipt.read_bytes())
             if record["binding"] != dict(job.binding):
                 fail("budget_binding_changed", 409)
-            key = (job.job_id, "recovery_capacity_v2")
+            key = (job.job_id, recovery.name)
             if key not in self._budgets:
                 self._budgets[key] = ReservationBudget(recovery / "budget.json",
                     cap_usd=record["cap_usd"], identity=record["identity"], create=False)
@@ -107,6 +109,8 @@ class OrdinaryLayoutAccounting:
             with self._lock:
                 budget = self._budget(job, accountant, folder)
             recovery_receipt = folder / "recovery_capacity_v2" / "authorization.json"
+            if (folder / "revalidation_capacity_v1" / "authorization.json").is_file():
+                recovery_receipt = folder / "revalidation_capacity_v1" / "authorization.json"
             recovery_record = decode(recovery_receipt.read_bytes()) if recovery_receipt.is_file() else None
             prior = money(recovery_record["prior_layout_cost_usd"]) if recovery_record else Decimal(0)
             base.update(translation_cost_usd=str(cost), minimum_cap_usd=str(cost + prior + PAGE_CEILING),
@@ -188,7 +192,7 @@ class OrdinaryLayoutAccounting:
             self._budgets[job.job_id] = budget
         return self.state(job)
 
-    def authorize_recovery(self, job, policy_fingerprint: str, prior_layout_cost_usd: str):
+    def authorize_recovery(self, job, policy_fingerprint: str, prior_layout_cost_usd: str, *, missing_pages=None):
         """Reserve a new explicit operation while retaining known predecessor spend."""
         ceiling = verified_page_ceiling()
         prior = money(prior_layout_cost_usd)
@@ -197,8 +201,11 @@ class OrdinaryLayoutAccounting:
             if accountant.budget_context is None:
                 fail("durable_accounting_required", 503)
             return self.state(job)
-        folder = folder / "recovery_capacity_v2"
-        cap = cost + prior + ceiling * len(job.selected_pages)
+        if missing_pages is not None and (type(missing_pages) is not list or not set(missing_pages) <= set(job.selected_pages)
+                or sorted(set(missing_pages)) != missing_pages):
+            fail("invalid_page_selection", 409)
+        folder = folder / ("revalidation_capacity_v1" if missing_pages is not None else "recovery_capacity_v2")
+        cap = cost + prior + ceiling * len(missing_pages if missing_pages is not None else job.selected_pages)
         identity = {"job_id": job.job_id, "run_id": job.run_id, "binding": dict(job.binding),
             "original_accounting_identity": accountant.run_identity,
             "automatic_recovery_policy_fingerprint": policy_fingerprint,
@@ -207,6 +214,9 @@ class OrdinaryLayoutAccounting:
             "cap_usd": str(cap), "translation_cost_usd": str(cost),
             "prior_layout_cost_usd": str(prior), "binding": dict(job.binding),
             "identity": identity, "authorization_kind": "server_owned_explicit_recovery_ceiling"}
+        if missing_pages is not None:
+            identity["missing_pages"] = missing_pages
+            record["missing_pages"] = missing_pages
         with self._lock:
             receipt = folder / "authorization.json"
             if receipt.exists():
@@ -223,7 +233,7 @@ class OrdinaryLayoutAccounting:
             budget.reserve("layout-predecessor-settled", prior, {"kind": "prior_completed_layout"})
             budget.finalize("layout-predecessor-settled", prior, {"cost_usd": str(prior)})
             atomic_json(receipt, record)
-            self._budgets[(job.job_id, "recovery_capacity_v2")] = budget
+            self._budgets[(job.job_id, folder.name)] = budget
         return self.state(job)
 
     def policy(self, job):

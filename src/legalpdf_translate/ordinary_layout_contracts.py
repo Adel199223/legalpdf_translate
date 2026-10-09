@@ -277,7 +277,8 @@ def normalize_proposals(snapshot, view, proposals):
             baseline = snapshot["paragraphs"][by_id[row["paragraph_id"]]]
             if baseline["has_page_break"] and any((row["role"] != "body", row["heading_level"] != 0,
                     row["bold"], row["italic"], row["underline"], row["emphasis"], row["alignment"] != "inherit",
-                    row["space_before_pt"] is not None, row["space_after_pt"] is not None)):
+                    not (row["space_before_pt"] is None or type(row["space_before_pt"]) in {int, float} and row["space_before_pt"] == 0),
+                    not (row["space_after_pt"] is None or type(row["space_after_pt"]) in {int, float} and row["space_after_pt"] == 0))):
                 fail("page_break_requires_flow")
             decisions["paragraphs"][by_id[row["paragraph_id"]]] = row
         bands = proposal["bands"]

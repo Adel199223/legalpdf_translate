@@ -18,7 +18,8 @@ export function deriveTranslationActionState(job = null, options = {}) {
   };
   const activeJob = isActiveTranslationJobStatus(job?.status);
   const jobId = String(job?.job_id || normalizedOptions.currentJobId || "").trim();
-  const layoutQuote = String(job?.ordinary_layout?.suggestion_capability?.max_page_cost_usd || "").trim();
+  const recoveryQuote = job?.diagnostics?.layout_recovery_quote;
+  const layoutQuote = String(recoveryQuote?.available ? recoveryQuote.max_page_cost_usd || "" : "").trim();
   const boundedLayoutQuote = /^\d+(?:\.\d{1,9})?$/.test(layoutQuote) ? Number(layoutQuote) : NaN;
   const canStart = Boolean(sourceState.ready && !activeJob);
   let helperText = "Choose a PDF or image to enable Start Translate.";
@@ -46,7 +47,8 @@ export function deriveTranslationActionState(job = null, options = {}) {
     resumeEnabled: Boolean(jobId && job?.actions?.resume),
     recoverLayoutEnabled: Boolean(jobId && job?.actions?.recover_layout),
     recoverLayoutLabel: Number.isFinite(boundedLayoutQuote) && boundedLayoutQuote > 0
-      ? `Recover Source Layout (up to USD${layoutQuote}/page)` : "Recover Source Layout",
+      ? `Recover Source Layout (paid; up to USD${layoutQuote}/page; prior charges remain)`
+      : job?.actions?.recover_layout ? "Recover Source Layout (current price bound unavailable)" : "Recover Source Layout",
     rebuildEnabled: Boolean(jobId && job?.actions?.rebuild),
   };
 }
