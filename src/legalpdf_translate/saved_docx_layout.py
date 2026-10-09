@@ -531,6 +531,25 @@ def _phrase_edge(text, offset):
     return True
 
 
+def _emphasis_end_edge(text, offset):
+    if _phrase_edge(text, offset):
+        return True
+    if not 0 < offset < len(text):
+        return False
+    # Emphasis may stop before a completed closing-punctuation cluster. This
+    # does not authorize paragraph cuts or punctuation inside identifiers.
+    visible = offset - 1
+    while visible >= 0 and unicodedata.category(text[visible])[0] == "M":
+        visible -= 1
+    if visible < 0 or unicodedata.category(text[visible])[0] not in {"L", "N"}:
+        return False
+    closing = ",;:.!?)]}»›’”\"'،؛؟。！？、，；："
+    end = offset
+    while end < len(text) and text[end] in closing:
+        end += 1
+    return end > offset and (end == len(text) or text[end].isspace())
+
+
 def _emphasis(row, spans):
     if type(spans) is not list or len(spans) > 1000:
         _fail("invalid_emphasis_spans")
@@ -546,7 +565,7 @@ def _emphasis(row, spans):
                 or not any(span[k] for k in ("bold", "italic", "underline"))):
             _fail("invalid_emphasis_spans")
         previous = end
-        if (not _phrase_edge(row["text"], start) or not _phrase_edge(row["text"], end)
+        if (not _phrase_edge(row["text"], start) or not _emphasis_end_edge(row["text"], end)
                 or any(a < cut < b for a, b in ranges for cut in (start, end))
                 or any(t["kind"] != "t" and start < t["end"] and end > t["start"] for t in row["tokens"])):
             _fail("unsafe_emphasis_boundary")

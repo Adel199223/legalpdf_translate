@@ -17,8 +17,8 @@ from tests.test_ordinary_auto_layout_recovery import offline
 from tests.test_ordinary_auto_layout_workflow import _app, _source, _start, _wait
 
 
-@pytest.mark.parametrize('resume,cancel,select_raw', [(False,False,False),(True,False,False),(False,True,False),(True,False,True)])
-def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path, monkeypatch, resume, cancel,select_raw):
+@pytest.mark.parametrize('resume,cancel,select_raw,second', [(False,False,False,False),(True,False,False,False),(False,True,False,False),(True,False,True,False),(False,False,False,True),(True,False,False,True)])
+def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path, monkeypatch, resume, cancel,select_raw,second):
     source,output=tmp_path/'source.pdf',tmp_path/'output'
     output.mkdir(); _source(source,('digital',)*7)
     pages=(3,4,5,6,7)
@@ -102,6 +102,29 @@ def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path
             assert all(p.read_bytes()==data for p,data in protected.items())
             return
         assert len(translation_sdk.requests)==5
+        if second:
+            def previous_order_guard(snapshot,view,proposals):
+                if proposals[0]['page_number']==5: fail('proposal_coverage')
+                return normalize(snapshot,view,proposals)
+            with monkeypatch.context() as old:
+                old.setattr(manager_module,'normalize_proposals',previous_order_guard)
+                assert client.post(f'/api/translation/jobs/{job_id}/layout/recover'+scope).status_code==200
+                failed=_wait(jobs,job_id)
+            assert failed['result']['automatic_layout']['status']=='raw_fallback'
+            assert sent==[3,4,5]
+            direct_folder=root/'recoveries/layout_direct_revalidation_v1'
+            direct_pointer=json.loads((direct_folder/'operation.json').read_bytes())
+            direct_op=manager.service.root/direct_pointer['origin_job_id']/'baselines'/direct_pointer['baseline_id']/'suggestions'/direct_pointer['operation_nonce']
+            direct_cost=Decimal(str(_read(direct_op/'accounting_summary.json')['cost_usd']))
+            direct_protected={p:p.read_bytes() for p in direct_op.rglob('*') if p.is_file() and p.suffix!='.lock'}
+            for path in (direct_op/'page-0003.retained.json',direct_op/'accounting_summary.json'):
+                original_bytes=path.read_bytes();path.write_bytes(b'{}')
+                assert client.post(f'/api/translation/jobs/{job_id}/layout/recover'+scope).status_code==200
+                _wait(jobs,job_id); assert sent==[3,4,5]
+                path.write_bytes(original_bytes)
+            if resume:
+                job_id=_start(client,source,output,'EN',start=3,end=7,image_mode='off',page_breaks=True,resume=True)
+                _wait(jobs,job_id)
         assert client.post(f'/api/translation/jobs/{job_id}/layout/recover'+scope).status_code==200
         if cancel:
             assert entered.wait(20)
@@ -116,25 +139,41 @@ def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path
         result=_wait(jobs,job_id)
         assert result['result']['automatic_layout']['status']=='automatic_unreviewed',result['result']['automatic_layout']
         assert sent==[3,4,5,6,7] and len(translation_sdk.requests)==5
-        folder=root/'recoveries/layout_direct_revalidation_v1'
+        folder=root/'recoveries'/('layout_revalidation_v1' if second else 'layout_direct_revalidation_v1')
         identity=json.loads((folder/'intent.json').read_bytes())
-        assert 'recovery_predecessor' in identity and 'revalidation_predecessor' not in identity
-        assert set(identity['retained_pages'])=={'3','4'}
+        assert 'recovery_predecessor' in identity
+        assert ('revalidation_predecessor' in identity)==second
+        assert set(identity['retained_pages'])==({'3','4','5'} if second else {'3','4'})
         pointer=json.loads((folder/'operation.json').read_bytes())
         new_op=manager.service.root/job_id/'baselines'/pointer['baseline_id']/'suggestions'/pointer['operation_nonce']
         for page in (3,4):
             assert (new_op/f'page-{page:04d}.response.json').read_bytes()==protected[old_op/f'page-{page:04d}.response.json']
             assert _read(new_op/f'page-{page:04d}.retained.json')['predecessor']==identity['recovery_predecessor']
         summary=_read(new_op/'accounting_summary.json')
-        assert summary['provider_dispatch_count']==3 and summary['in_flight_count']==0
+        assert summary['provider_dispatch_count']==(2 if second else 3) and summary['in_flight_count']==0
+        if second:
+            assert (new_op/'page-0005.response.json').read_bytes()==direct_protected[direct_op/'page-0005.response.json']
+            assert _read(new_op/'page-0005.retained.json')['predecessor']==identity['revalidation_predecessor']
+            assert all(p.read_bytes()==data for p,data in direct_protected.items())
         new_cost=Decimal(str(summary['cost_usd']))
         shown=client.get(f'/api/translation/jobs/{job_id}'+scope).json()['normalized_payload']['job']
         budget=shown['ordinary_layout']['budget']
-        authorization=json.loads((run/'ordinary_layout_budget'/job_id/'revalidation_capacity_v1/authorization.json').read_bytes())
-        assert authorization['missing_pages']==[5,6,7]
-        assert Decimal(budget['cap_usd'])-Decimal(budget['translation_cost_usd'])-Decimal(budget['prior_layout_cost_usd'])==Decimal('3.444')
-        assert Decimal(shown['layout_costs']['cost_usd'])==old_cost+new_cost
-        assert shown['layout_costs']['operations']==2
+        authorization_path=run/'ordinary_layout_budget'/job_id/('revalidation_capacity_v2' if second else 'revalidation_capacity_v1')/'authorization.json'
+        authorization=json.loads(authorization_path.read_bytes())
+        if second:
+            authorization_bytes=authorization_path.read_bytes()
+            for bad in (dict(authorization,missing_pages=[7]),
+                        dict(authorization,direct_continuation_identity_sha256='malformed')):
+                authorization_path.write_text(json.dumps(bad),encoding='utf-8')
+                broken=client.get(f'/api/translation/jobs/{job_id}'+scope).json()['normalized_payload']['job']
+                assert broken['ordinary_layout']['budget']['reason']=='ordinary_layout_budget_binding_changed'
+                assert sent==[3,4,5,6,7]
+                authorization_path.write_bytes(authorization_bytes)
+        assert authorization['missing_pages']==([6,7] if second else [5,6,7])
+        assert Decimal(budget['cap_usd'])-Decimal(budget['translation_cost_usd'])-Decimal(budget['prior_layout_cost_usd'])==Decimal('2.296' if second else '3.444')
+        total_layout=old_cost+new_cost+(direct_cost if second else Decimal(0))
+        assert Decimal(shown['layout_costs']['cost_usd'])==total_layout
+        assert shown['layout_costs']['operations']==(3 if second else 2)
         download=client.get(f'/api/translation/jobs/{job_id}/artifact/output_docx'+scope)
         assert download.status_code==200 and sha256(download.content).hexdigest()==shown['delivery']['sha256']
         saved=client.post('/api/translation/save-row',json={'mode':'shadow','workspace_id':'fictional','job_id':job_id,
@@ -142,7 +181,7 @@ def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path
             'form_values':{**shown['result']['save_seed'],'rate_per_word':'.027','expected_total_mode':'auto'}})
         assert saved.status_code==200,saved.text
         translation_cost=Decimal(str(jobs.get_job(job_id)['result']['save_seed']['api_cost']))
-        assert Decimal(str(saved.json()['normalized_payload']['api_cost']))==translation_cost+old_cost+new_cost
+        assert Decimal(str(saved.json()['normalized_payload']['api_cost']))==translation_cost+total_layout
         assert client.post(f'/api/translation/jobs/{job_id}/layout/recover'+scope).status_code==200
         assert sent==[3,4,5,6,7]
         after_id=_start(client,source,output,'EN',start=3,end=7,image_mode='off',page_breaks=True,resume=True)

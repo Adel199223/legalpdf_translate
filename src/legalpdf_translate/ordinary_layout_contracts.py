@@ -280,6 +280,36 @@ def _resolve_partition_anchors(proposal, snapshot, ids):
     return resolved
 
 
+def _canonical_flow_groups(bands, ids):
+    """Restore only complete whole plain-flow intervals to immutable raw order."""
+    if (type(bands) is not list or len(bands) != 1 or type(bands[0]) is not dict
+            or bands[0].get("kind") != "flow"):
+        return bands
+    groups = bands[0].get("groups")
+    if type(groups) is not list or not groups:
+        return bands
+    ordinal = {pid: index for index, pid in enumerate(ids)}
+    intervals = []
+    for group in groups:
+        if type(group) is not dict or group.get("panel") is not False:
+            return bands
+        owned = group.get("paragraph_ids")
+        if type(owned) is not list or not owned or any(type(pid) is not str or pid not in ordinal for pid in owned):
+            return bands
+        positions = [ordinal[pid] for pid in owned]
+        if positions != list(range(positions[0], positions[0] + len(positions))):
+            return bands
+        intervals.append((positions[0], group))
+    flattened = [pid for group in groups for pid in group["paragraph_ids"]]
+    if len(flattened) != len(ids) or len(set(flattened)) != len(ids) or set(flattened) != set(ids):
+        return bands
+    if flattened == ids:
+        return bands
+    result = deepcopy(bands)
+    result[0]["groups"] = [deepcopy(group) for _, group in sorted(intervals, key=lambda item: item[0])]
+    return result
+
+
 def normalize_proposals(snapshot, view, proposals):
     decisions = deepcopy(view["decisions"])
     by_id = {row["paragraph_id"]: index for index, row in enumerate(decisions["paragraphs"])}
@@ -334,7 +364,7 @@ def normalize_proposals(snapshot, view, proposals):
                     not (row["space_after_pt"] is None or type(row["space_after_pt"]) in {int, float} and row["space_after_pt"] == 0))):
                 fail("page_break_requires_flow")
             decisions["paragraphs"][by_id[row["paragraph_id"]]] = row
-        bands = proposal["bands"]
+        bands = _canonical_flow_groups(proposal["bands"], ids)
         try:
             if [pid for band in bands for pid in _ids(band)] != ids:
                 fail("proposal_coverage")

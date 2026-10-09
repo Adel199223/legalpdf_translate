@@ -167,13 +167,16 @@ def _failed_predecessor(manager, root: Path, identity: dict, old_policy: str, *,
         "baseline_id": baseline_id, "operation_nonce": operation_nonce}
 
 
-def _retained_continuation(manager, root: Path, identity: dict, predecessor: dict, *, direct=False):
+def _retained_continuation(manager, root: Path, identity: dict, predecessor: dict, *, direct=False,
+                           parent_direct=False, inherited=None):
     """Admit a settled normalization failure; never reuse a partial SDK response."""
-    prior_root = root if direct else root / "recoveries" / "layout_capacity_v2"
+    prior_root = root if direct else root / "recoveries" / ("layout_direct_revalidation_v1" if parent_direct else "layout_capacity_v2")
     prior_identity = _read_record(prior_root / "intent.json")
     expected = dict(identity, policy_fingerprint=prior_identity.get("policy_fingerprint"))
     if not direct:
         expected["recovery_predecessor"] = predecessor
+    if parent_direct:
+        expected["retained_pages"] = {str(p): r["origin"] for p, r in inherited.items()}
     if prior_identity != expected:
         fail("automatic_recovery_predecessor_changed", 409)
     prior = _failed_predecessor(manager, prior_root, identity,
@@ -188,7 +191,8 @@ def _retained_continuation(manager, root: Path, identity: dict, predecessor: dic
     operation = manager.service.root / prior["origin_job_id"] / "baselines" / prior["baseline_id"] / "suggestions" / prior["operation_nonce"]
     result = verified_record(operation / "result.json")
     policy = verified_record(operation / "intent.json")["request"]["policy"]
-    if result.get("error_code") != "ordinary_layout_page_break_requires_flow" or policy.get("max_output_tokens") != 32000:
+    allowed_errors = {"ordinary_layout_proposal_coverage", "ordinary_layout_invalid_proposal_decisions"} if parent_direct else {"ordinary_layout_page_break_requires_flow"}
+    if result.get("error_code") not in allowed_errors or policy.get("max_output_tokens") != 32000:
         fail("automatic_retained_response_unavailable", 409)
     journal = _read_record(operation / "accounting" / "dispatch_accounting.json")
     begins = [e for e in journal["events"] if e.get("event") == "begin"]
@@ -201,11 +205,18 @@ def _retained_continuation(manager, root: Path, identity: dict, predecessor: dic
     # baseline, whose source/raw ownership was verified above.
     reviewed = storage._read(operation.parent.parent / "reviewed.docx", storage.DOCX_MAX_BYTES)
     snapshot = inspect_docx(reviewed, identity["target_lang"])
-    retained = {}
+    retained = dict(inherited or {})
+    if parent_direct:
+        # Inherited pages are not new journal calls. Prove their exact copied
+        # bytes and origin markers against the independently revalidated parent.
+        for page, record in retained.items():
+            if (storage._read(operation / f"page-{page:04d}.response.json", 2 * 1024 * 1024) != record["raw"]
+                    or verified_record(operation / f"page-{page:04d}.retained.json") != record["origin"]):
+                fail("automatic_retained_response_changed", 409)
     for begin in begins:
         page = begin.get("page_number")
         finish = next((e for e in finishes if e.get("call_id") == begin.get("call_id")), None)
-        if (page not in identity["selected_pages"] or begin.get("purpose") != "layout_suggestion"
+        if (page in retained or page not in identity["selected_pages"] or begin.get("purpose") != "layout_suggestion"
                 or begin.get("attempt") != 1 or begin.get("bounds", {}).get("max_output_tokens") != 32000
                 or not finish or finish.get("outcome") != "succeeded"
                 or finish.get("cost_status") != "available" or finish.get("cost_usd") is None
@@ -532,6 +543,7 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
                     raw_snapshot_fingerprint=mapped.fingerprint, policy_fingerprint=policy_hash)
     root = _durable_folder(baseline)
     retained = {}
+    direct = False
     if recovery_old_policy is not None:
         if frozen_policy != frozen_automatic_layout_policy():
             fail("automatic_policy_changed", 409)
@@ -550,14 +562,22 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
             folder = storage._mkdir(root / "recoveries" / "layout_direct_revalidation_v1")
         else:
             folder = _recovery_folder(root)
-        if not direct and (folder / "operation.json").exists() and not (folder / "candidate.json").exists():
+        if (folder / "operation.json").exists() and not (folder / "candidate.json").exists():
             pointer = _read_record(folder / "operation.json")
             old_operation = manager.service.root / pointer["origin_job_id"] / "baselines" / pointer["baseline_id"] / "suggestions" / pointer["operation_nonce"]
             if (old_operation / "result.json").exists():
                 from .ordinary_layout_service import _read as verified_record
                 failed = verified_record(old_operation / "result.json")
-                if failed.get("status") == "failed" and failed.get("error_code") == "ordinary_layout_page_break_requires_flow":
-                    prior, retained = _retained_continuation(manager, root, identity, predecessor)
+                errors = {"ordinary_layout_proposal_coverage", "ordinary_layout_invalid_proposal_decisions"} if direct else {"ordinary_layout_page_break_requires_flow"}
+                if failed.get("status") == "failed" and failed.get("error_code") in errors:
+                    # The existing second successor now also admits one failed
+                    # direct child. Preserve original origins and charge each
+                    # predecessor once; no recursive recovery chain is created.
+                    original_retained = retained
+                    parent_identity = dict(identity)
+                    parent_identity.pop("retained_pages", None)
+                    prior, retained = _retained_continuation(manager, root, parent_identity, predecessor,
+                        parent_direct=direct, inherited=original_retained if direct else None)
                     identity["revalidation_predecessor"] = prior
                     identity["retained_pages"] = {str(p): r["origin"] for p, r in retained.items()}
                     folder = storage._mkdir(root / "recoveries" / "layout_revalidation_v1")
@@ -606,9 +626,13 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
         if "revalidation_predecessor" in identity:
             prior_cost += Decimal(identity["revalidation_predecessor"]["known_cost_usd"])
         accounting.authorize_recovery(job, policy_hash, str(prior_cost),
-            missing_pages=[p for p in job.selected_pages if p not in retained] if retained else None)
+            missing_pages=[p for p in job.selected_pages if p not in retained] if retained else None,
+            **({"direct_continuation_identity_sha256": hashlib.sha256(encode(identity)).hexdigest()}
+               if direct and "revalidation_predecessor" in identity else {}))
     prepare_nonce = _nonce("automatic_revalidation_prepare" if retained else "automatic_recovery_prepare" if recovery_old_policy is not None else "automatic_prepare",
         {"job_id": job_id, "raw_snapshot": mapped.fingerprint, "policy": policy_hash,
+         **({"direct_predecessor": identity["revalidation_predecessor"]["result_sha256"]}
+            if direct and "revalidation_predecessor" in identity else {}),
          **({"predecessor": identity["recovery_predecessor"]["result_sha256"]}
             if recovery_old_policy is not None else {})})
     prepared = manager.prepare(job_id, prepare_nonce)
@@ -619,6 +643,8 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
     operation_nonce = _nonce("automatic_revalidation_suggest" if retained else "automatic_recovery_suggest" if recovery_old_policy is not None else "automatic_suggest", {"job_id": job_id,
         "baseline_id": baseline_id, "generation": generation,
         "raw_snapshot": mapped.fingerprint, "policy": policy_hash,
+        **({"direct_predecessor": identity["revalidation_predecessor"]["result_sha256"]}
+           if direct and "revalidation_predecessor" in identity else {}),
         **({"predecessor": identity["recovery_predecessor"]["result_sha256"]}
            if recovery_old_policy is not None else {})})
     pointer = {"identity_sha256": hashlib.sha256(encode(identity)).hexdigest(),
@@ -655,10 +681,10 @@ def cancel_automatic_layout(manager, accounting, job_id: str, *, recovery: bool 
         runtime_mode=manager.mode, workspace_id=manager.workspace_id)
     root = _durable_folder(baseline)
     folder = _recovery_folder(root) if recovery else root
-    if recovery and (root / "recoveries" / "layout_revalidation_v1" / "operation.json").exists():
-        folder = root / "recoveries" / "layout_revalidation_v1"
     if recovery and (root / "recoveries" / "layout_direct_revalidation_v1" / "operation.json").exists():
         folder = root / "recoveries" / "layout_direct_revalidation_v1"
+    if recovery and (root / "recoveries" / "layout_revalidation_v1" / "operation.json").exists():
+        folder = root / "recoveries" / "layout_revalidation_v1"
     pointer_path = folder / "operation.json"
     if not pointer_path.exists():
         return
@@ -731,6 +757,9 @@ def verified_recovery_layout_costs(manager, job: dict, current: dict) -> dict:
         extra_origin = identifier(extra.get("origin_job_id"))
         extra_operation = manager.service.root / extra_origin / "baselines" / nonce(extra.get("baseline_id")) / "suggestions" / nonce(extra.get("operation_nonce"))
         extra_root = root / "recoveries" / "layout_capacity_v2"
+        direct_root = root / "recoveries" / "layout_direct_revalidation_v1"
+        if (direct_root / "intent.json").is_file() and hashlib.sha256(storage._read(direct_root / "intent.json", 8 * 1024 * 1024)).hexdigest() == extra["intent_sha256"]:
+            extra_root = direct_root
         extra_paths = {"intent_sha256": extra_root / "intent.json", "pointer_sha256": extra_root / "operation.json",
             "result_sha256": extra_operation / "result.json",
             "accounting_summary_sha256": extra_operation / "accounting_summary.json",

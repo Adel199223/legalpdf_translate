@@ -75,7 +75,9 @@ class OrdinaryLayoutAccounting:
     def _budget(self, job, accountant, folder):
         if accountant.hard_budget:
             return accountant.budget_context
-        recovery = folder / "revalidation_capacity_v1"
+        recovery = folder / "revalidation_capacity_v2"
+        if not (recovery / "authorization.json").is_file():
+            recovery = folder / "revalidation_capacity_v1"
         if not (recovery / "authorization.json").is_file():
             recovery = folder / "recovery_capacity_v2"
         recovery_receipt = recovery / "authorization.json"
@@ -83,10 +85,26 @@ class OrdinaryLayoutAccounting:
             record = decode(recovery_receipt.read_bytes())
             if record["binding"] != dict(job.binding):
                 fail("budget_binding_changed", 409)
+            if recovery.name == "revalidation_capacity_v2":
+                digest = record.get("direct_continuation_identity_sha256")
+                missing = record.get("missing_pages")
+                if (type(digest) is not str or len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest)
+                        or record["identity"].get("direct_continuation_identity_sha256") != digest
+                        or type(missing) is not list or any(type(page) is not int for page in missing)
+                        or sorted(set(missing)) != missing or not set(missing) <= set(job.selected_pages)
+                        or record["identity"].get("missing_pages") != missing
+                        or record["identity"].get("prior_layout_cost_usd") != record.get("prior_layout_cost_usd")
+                        or money(record["cap_usd"]) != money(record["translation_cost_usd"])
+                           + money(record["prior_layout_cost_usd"]) + PAGE_CEILING * len(missing)):
+                    fail("budget_binding_changed", 409)
             key = (job.job_id, recovery.name)
             if key not in self._budgets:
                 self._budgets[key] = ReservationBudget(recovery / "budget.json",
                     cap_usd=record["cap_usd"], identity=record["identity"], create=False)
+            if recovery.name == "revalidation_capacity_v2" and (
+                    self._budgets[key].identity != record["identity"]
+                    or self._budgets[key].cap_usd != money(record["cap_usd"])):
+                fail("budget_binding_changed", 409)
             return self._budgets[key]
         if job.job_id in self._budgets:
             return self._budgets[job.job_id]
@@ -111,6 +129,8 @@ class OrdinaryLayoutAccounting:
             recovery_receipt = folder / "recovery_capacity_v2" / "authorization.json"
             if (folder / "revalidation_capacity_v1" / "authorization.json").is_file():
                 recovery_receipt = folder / "revalidation_capacity_v1" / "authorization.json"
+            if (folder / "revalidation_capacity_v2" / "authorization.json").is_file():
+                recovery_receipt = folder / "revalidation_capacity_v2" / "authorization.json"
             recovery_record = decode(recovery_receipt.read_bytes()) if recovery_receipt.is_file() else None
             prior = money(recovery_record["prior_layout_cost_usd"]) if recovery_record else Decimal(0)
             base.update(translation_cost_usd=str(cost), minimum_cap_usd=str(cost + prior + PAGE_CEILING),
@@ -192,10 +212,16 @@ class OrdinaryLayoutAccounting:
             self._budgets[job.job_id] = budget
         return self.state(job)
 
-    def authorize_recovery(self, job, policy_fingerprint: str, prior_layout_cost_usd: str, *, missing_pages=None):
+    def authorize_recovery(self, job, policy_fingerprint: str, prior_layout_cost_usd: str, *, missing_pages=None,
+                           direct_continuation_identity_sha256=None):
         """Reserve a new explicit operation while retaining known predecessor spend."""
         ceiling = verified_page_ceiling()
         prior = money(prior_layout_cost_usd)
+        if direct_continuation_identity_sha256 is not None and (missing_pages is None
+                or type(direct_continuation_identity_sha256) is not str
+                or len(direct_continuation_identity_sha256) != 64
+                or any(c not in '0123456789abcdef' for c in direct_continuation_identity_sha256)):
+            fail("budget_binding_changed", 409)
         accountant, folder, cost = self._source(job)
         if accountant.hard_budget:
             if accountant.budget_context is None:
@@ -204,7 +230,8 @@ class OrdinaryLayoutAccounting:
         if missing_pages is not None and (type(missing_pages) is not list or not set(missing_pages) <= set(job.selected_pages)
                 or sorted(set(missing_pages)) != missing_pages):
             fail("invalid_page_selection", 409)
-        folder = folder / ("revalidation_capacity_v1" if missing_pages is not None else "recovery_capacity_v2")
+        folder = folder / ("revalidation_capacity_v2" if direct_continuation_identity_sha256 is not None
+                           else "revalidation_capacity_v1" if missing_pages is not None else "recovery_capacity_v2")
         cap = cost + prior + ceiling * len(missing_pages if missing_pages is not None else job.selected_pages)
         identity = {"job_id": job.job_id, "run_id": job.run_id, "binding": dict(job.binding),
             "original_accounting_identity": accountant.run_identity,
@@ -217,6 +244,9 @@ class OrdinaryLayoutAccounting:
         if missing_pages is not None:
             identity["missing_pages"] = missing_pages
             record["missing_pages"] = missing_pages
+        if direct_continuation_identity_sha256 is not None:
+            identity["direct_continuation_identity_sha256"] = direct_continuation_identity_sha256
+            record["direct_continuation_identity_sha256"] = direct_continuation_identity_sha256
         with self._lock:
             receipt = folder / "authorization.json"
             if receipt.exists():

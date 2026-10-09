@@ -38,7 +38,9 @@ Every other role, including institution, requires heading_level 0 and heading_si
 use source-supported bold or alignment without promoting an institution to a heading for size.
 Spacing must be null or 0–72 points. Columns have 2–3 cells, widths of 10–90 percent each
 summing to 100, and a gutter of 0–36 points. Every cell and group must contain paragraph IDs.
-Use codepoint offsets only at phrase/whitespace boundaries for emphasis. Source-supported
+Use codepoint offsets only at phrase/whitespace boundaries for emphasis; a complete phrase
+may end immediately before closing punctuation followed by whitespace or text end.
+Never cut inside identifiers, numbers, protected literals or punctuation-linked words. Source-supported
 columns may use successive bands with identical widths and gutters: for saved heading-left,
 heading-right, body-left, body-right order, place the headings in one band and the bodies in the
 next. Preserve exact global order and the source pairing. When no such ordered grouping fits,

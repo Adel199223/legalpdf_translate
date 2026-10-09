@@ -243,6 +243,7 @@ $fullExtraCommands = @(
             "tests/test_ordinary_auto_layout_recovery.py",
             "tests/test_ordinary_layout_retained_continuation.py",
             "tests/test_ordinary_layout_direct_continuation.py",
+            "tests/test_ordinary_layout_order_emphasis.py",
             "tests/test_ordinary_layout_zero_spacing.py",
             "tests/test_ordinary_auto_layout_workflow.py",
             "tests/test_browser_pdf_text_bundle.py",
