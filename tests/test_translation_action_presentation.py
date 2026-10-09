@@ -114,6 +114,8 @@ console.log(JSON.stringify({
         "cancelEnabled": False,
         "resumeEnabled": False,
         "rebuildEnabled": False,
+        "recoverLayoutEnabled": False,
+        "recoverLayoutLabel": "Recover Source Layout",
     }
     assert results["cases"]["nullSafe"] == results["cases"]["idle"]
 
