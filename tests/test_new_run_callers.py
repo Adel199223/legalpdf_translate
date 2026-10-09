@@ -59,7 +59,7 @@ def offline(tmp_path, monkeypatch):
     class VerifiedDate(date):
         @classmethod
         def today(cls):
-            return cls(2026, 9, 10)
+            return cls(2026, 10, 9)
     monkeypatch.setattr(policy_module, "date", VerifiedDate)
     assert Path(workflow_module.__file__).resolve().is_relative_to(Path(__file__).resolve().parents[1] / "src")
     def forbidden(*args, **kwargs):
@@ -143,7 +143,7 @@ def assert_completed(fixture, structured):
     # Actual caller defaults must wire the shared immutable accounting policy;
     # this fixture substitutes provider/environment only, never accounting_factory.
     assert workflow._accounting_factory is None
-    assert workflow._dispatch_accounting.pricing_snapshot.snapshot_id == "openai_public_standard_2026_09_10"
+    assert workflow._dispatch_accounting.pricing_snapshot.snapshot_id == "openai_public_standard_2026_10_09"
     assert workflow._dispatch_accounting.request_limits("openai", "translation", "gpt-5.2")["billing_scope"] == "openai_public_api"
     state = load_run_state(workflow._last_paths.run_state_path)
     assert state.run_status == "completed", state.to_dict()
