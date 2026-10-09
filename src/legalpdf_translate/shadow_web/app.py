@@ -1566,10 +1566,25 @@ def create_shadow_app(
                 return
             manager = ordinary_layouts.manager_for_context(
                 shadow_context, job["runtime_mode"], job["workspace_id"])
-            cancel_automatic_layout(manager, ordinary_layouts._accounting, job_id)
+            cancel_automatic_layout(manager, ordinary_layouts._accounting, job_id,
+                recovery=translation_jobs.automatic_layout_recovery_active(job_id))
+
+        def _recover_automatic_ordinary_layout(job_id: str, old_policy: str):
+            from legalpdf_translate.ordinary_auto_layout import frozen_automatic_layout_policy, run_automatic_layout
+            job = translation_jobs.get_job(job_id)
+            if not job:
+                raise ValueError("ordinary_auto_layout_job_unavailable")
+            manager = ordinary_layouts.manager_for_context(
+                shadow_context, job["runtime_mode"], job["workspace_id"])
+            return run_automatic_layout(manager, ordinary_layouts._accounting, job_id,
+                frozen_automatic_layout_policy(),
+                cancel_requested=translation_jobs.automatic_layout_cancel_requested,
+                begin_publication=translation_jobs.begin_automatic_layout_publication,
+                recovery_old_policy=old_policy)
 
         translation_jobs.set_automatic_layout_runner(_run_automatic_ordinary_layout)
         translation_jobs.set_automatic_layout_cancel(_cancel_automatic_ordinary_layout)
+        translation_jobs.set_automatic_layout_recovery_runner(_recover_automatic_ordinary_layout)
 
     @app.post("/api/translation/jobs/{job_id}/layout/budget")
     async def api_ordinary_layout_budget(request: Request, job_id: str):
@@ -3189,6 +3204,20 @@ def create_shadow_app(
                 },
             )
         )
+
+    @app.post("/api/translation/jobs/{job_id}/layout/recover")
+    async def api_translation_layout_recover(request: Request, job_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        if _owned_translation_job(context, target, job_id) is None:
+            return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
+        try:
+            job = context.translation_jobs.recover_layout_job(job_id=job_id)
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, {"status": "ok",
+            "normalized_payload": {"job": job}, "diagnostics": {},
+            "capability_flags": build_translation_capability_flags(settings_path=target.data_paths.settings_path)}))
 
     @app.post("/api/translation/jobs/{job_id}/rebuild")
     async def api_translation_job_rebuild(request: Request, job_id: str) -> JSONResponse:

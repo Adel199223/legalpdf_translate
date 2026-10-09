@@ -225,6 +225,12 @@ class OrdinaryLayoutManager:
             if type(code) is not str or not re.fullmatch(r"[a-z][a-z0-9_]{0,120}", code):
                 code = "proposal_failed"
             result["error_code"] = code
+            from .openai_client import ApiCallError
+            if isinstance(exc, ApiCallError):
+                result["provider_response_status"] = exc.response_status or "unknown"
+                if exc.incomplete_reason in {"max_output_tokens", "content_filter", "steered", "unknown"}:
+                    result["provider_incomplete_reason"] = exc.incomplete_reason
+                result["provider_refused"] = bool(exc.refused)
         finally:
             if isinstance(accountant, DispatchAccounting):
                 try:

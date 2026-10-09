@@ -1231,6 +1231,7 @@ class _ManagedTranslationJob:
     _rebuild_origin_job_id: str | None = field(default=None, repr=False)
     _automatic_layout_cancel_requested: bool = field(default=False, repr=False)
     _automatic_layout_publication_started: bool = field(default=False, repr=False)
+    _automatic_layout_recovery_active: bool = field(default=False, repr=False)
 
 
 class TranslationJobManager:
@@ -1255,6 +1256,7 @@ class TranslationJobManager:
             self._workflow_accounting["accounting_policy"] = accounting_policy
         self._automatic_layout_runner = automatic_layout_runner
         self._automatic_layout_cancel = None
+        self._automatic_layout_recovery_runner = None
 
     def set_automatic_layout_runner(self, runner: Callable[[str, str], Mapping[str, Any]]) -> None:
         """Attach the browser-owned runner before jobs start; tests may inject a bounded fake."""
@@ -1269,6 +1271,16 @@ class TranslationJobManager:
         if not callable(callback) or self._automatic_layout_cancel is not None:
             raise ValueError("ordinary_auto_layout_cancel_unavailable")
         self._automatic_layout_cancel = callback
+
+    def set_automatic_layout_recovery_runner(self, runner: Callable[[str, str], Mapping[str, Any]]) -> None:
+        if not callable(runner) or self._automatic_layout_recovery_runner is not None:
+            raise ValueError("ordinary_auto_layout_recovery_runner_unavailable")
+        self._automatic_layout_recovery_runner = runner
+
+    def automatic_layout_recovery_active(self, job_id: str) -> bool:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return bool(job and job._automatic_layout_recovery_active)
 
     def automatic_layout_cancel_requested(self, job_id: str) -> bool:
         with self._lock:
@@ -1291,6 +1303,11 @@ class TranslationJobManager:
                 or status == "formatting" and not job._automatic_layout_cancel_requested
                     and not job._automatic_layout_publication_started),
             "resume": job.job_kind == "translate" and status in {"failed", "cancelled"},
+            "recover_layout": (job.job_kind == "translate" and status == "completed"
+                and bool(job._config and job._ordinary_auto_layout_policy and job._ordinary_baseline)
+                and isinstance(job.result_payload.get("automatic_layout"), dict)
+                and job.result_payload["automatic_layout"].get("status") == "raw_fallback"
+                and self._automatic_layout_recovery_runner is not None),
             "rebuild": job.job_kind == "translate" and status in {"completed", "failed", "cancelled"},
             "review_export": job.job_kind == "translate" and bool(job.result_payload.get("review_queue")),
             "save_row": job.job_kind == "translate" and isinstance(job.result_payload.get("save_seed"), dict),
@@ -1516,6 +1533,7 @@ class TranslationJobManager:
             job.diagnostics_payload["automatic_layout"] = {"status": state["status"],
                 **({"reason": state["reason"]} if state.get("reason") else {})}
             job.status = "completed"
+            job._automatic_layout_recovery_active = False
             job.updated_at = _utc_now_iso()
             reservation_key = job._reservation_key
         if reservation_key:
@@ -2058,6 +2076,48 @@ class TranslationJobManager:
             settings_path=settings_path,
             **reviewed_options,
         )
+
+    def recover_layout_job(self, *, job_id: str) -> dict[str, Any]:
+        """Explicit layout-only successor of a completed checkpoint Resume."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.job_kind != "translate":
+                raise ValueError("Translation job is unavailable for layout recovery.")
+            if job.status == "formatting" and job._automatic_layout_recovery_active:
+                return self._snapshot(job)
+            automatic = job.result_payload.get("automatic_layout")
+            if (job.status == "completed" and isinstance(automatic, dict)
+                    and automatic.get("status") == "automatic_unreviewed"
+                    and automatic.get("recovery_predecessor")):
+                return self._snapshot(job)
+            if (not self._job_actions(job)["recover_layout"] or not job._ordinary_auto_layout_policy
+                    or self._automatic_layout_recovery_runner is None):
+                raise ValueError("A completed raw translation with unresolved layout is required for recovery.")
+            reservation_key = job._reservation_key
+            self._reserve(reservation_key)
+            self._claim_reservation(reservation_key, job_id)
+            old_policy = job._ordinary_auto_layout_policy
+            job._automatic_layout_cancel_requested = False
+            job._automatic_layout_publication_started = False
+            job._automatic_layout_recovery_active = True
+            job.status = "formatting"
+            job.status_text = "Recovering source layout from the completed translation..."
+            job.updated_at = _utc_now_iso()
+            snapshot = self._snapshot(job)
+
+        def _run_recovery() -> None:
+            try:
+                result = self._automatic_layout_recovery_runner(job_id, old_policy)
+                self._finish_automatic_layout(job_id, result)
+            except Exception as exc:
+                code = getattr(exc, "code", "automatic_layout_recovery_unavailable")
+                if type(code) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,120}", code) is None:
+                    code = "automatic_layout_recovery_unavailable"
+                self._finish_automatic_layout(job_id, None, code)
+
+        thread = threading.Thread(target=_run_recovery, name=f"translation-layout-recovery-{job_id}", daemon=True)
+        thread.start()
+        return snapshot
 
     def rebuild_job(self, *, job_id: str, settings_path: Path) -> dict[str, Any]:
         with self._lock:

@@ -113,6 +113,9 @@ def delivery_job_snapshot(manager, job, *, mutation=False, baseline_id=None,
     snapshot["delivery"] = {"generation": artifact.generation, "selection_id": artifact.selection_id,
         "sha256": artifact.sha256, "word_count": artifact.word_count, "kind": artifact.kind, "frozen": artifact.frozen}
     costs = manager.layout_costs(job["job_id"])
+    if isinstance(automatic, dict) and automatic.get("recovery_predecessor"):
+        from .ordinary_auto_layout import verified_recovery_layout_costs
+        costs = verified_recovery_layout_costs(manager, job, costs)
     snapshot["layout_costs"] = costs
     if costs["operations"]:
         original_cost = seed.get("estimated_api_cost")

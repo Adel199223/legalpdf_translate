@@ -57,7 +57,7 @@ def test_two_physical_pages_publish_unreviewed_default_and_reuse_without_dispatc
     policy = frozen_automatic_layout_policy()
     calls = []
     manager_slot = {}
-    budget = ReservationBudget(tmp_path / "budget.json", cap_usd="2",
+    budget = ReservationBudget(tmp_path / "budget.json", cap_usd="3",
                                identity={"fixture": "two-page-auto"})
     accounting_args = layout_accounting_policy().accounting_arguments()
 
@@ -113,7 +113,7 @@ def test_two_physical_pages_publish_unreviewed_default_and_reuse_without_dispatc
         manager = OrdinaryLayoutManager(tmp_path / "app", mode="shadow", workspace_id="fixture",
             job_resolver=lambda _: jobs[job_id], provider_factory=provider,
             accounting_factory=accountant,
-            suggestion_policy=LayoutSuggestionPolicy("gpt-5.2", ".812", "1.624"))
+            suggestion_policy=LayoutSuggestionPolicy("gpt-5.2", "1.148", "2.296"))
         manager_slot["manager"] = manager
         return manager
 

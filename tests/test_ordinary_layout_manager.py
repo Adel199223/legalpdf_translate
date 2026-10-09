@@ -267,7 +267,7 @@ def test_layout_timeout_reaches_sdk_once_and_unknown_cost_remains_held(tmp_path,
     assert result["retry_dispatch_allowed"] is False
     assert len(paid.calls) == 1
     request = paid.calls[0]
-    assert 230 < request["timeout"] <= 240
+    assert 470 < request["timeout"] <= 480
     assert request["max_output_tokens"] == 8000 and request["reasoning"] == {"effort": "high"}
     assert case.manager.state(case.job.job_id)["generation"] == case.view["generation"]
     before = paid.budget.status()

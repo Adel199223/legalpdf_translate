@@ -1015,6 +1015,8 @@ function syncTranslationPrimaryActionState() {
     analyzeButton: qs("translation-analyze"),
     cancelButton: qs("translation-cancel"),
     resumeButton: qs("translation-resume-btn"),
+    recoverLayoutButton: qs("translation-layout-recover"),
+    recoverLayoutNote: qs("translation-layout-recovery-note"),
     rebuildButton: qs("translation-rebuild"),
   }, actionState);
   sourceReviewUi?.sync();
@@ -1901,6 +1903,8 @@ function renderTranslationPreparedState() {
     reviewExport: qs("translation-review-export"),
     cancelButton: qs("translation-cancel"),
     resumeButton: qs("translation-resume-btn"),
+    recoverLayoutButton: qs("translation-layout-recover"),
+    recoverLayoutNote: qs("translation-layout-recovery-note"),
     rebuildButton: qs("translation-rebuild"),
   });
   notifyTranslationUiStateChanged();
@@ -2355,6 +2359,21 @@ async function handleResume(jobId = translationState.currentJobId) {
   await refreshTranslationHistory();
 }
 
+async function handleLayoutRecovery(jobId = translationState.currentJobId) {
+  if (!String(jobId || "").trim()) {
+    throw new Error("No completed translation job is available for source layout recovery.");
+  }
+  const payload = await fetchJson(`/api/translation/jobs/${jobId}/layout/recover`, appState, {
+    method: "POST",
+  });
+  setDiagnostics("translation", payload, {
+    hint: "Layout recovery started from the retained translation; no translation is being resent.",
+    open: false,
+  });
+  renderTranslationJob(payload.normalized_payload.job || null);
+  await refreshTranslationHistory();
+}
+
 async function handleRebuild(jobId = translationState.currentJobId) {
   if (!String(jobId || "").trim()) {
     throw new Error("No translation job is available to rebuild.");
@@ -2673,6 +2692,18 @@ export function initializeTranslationUi() {
           panelSlot: "translation",
           diagnosticsSlot: "translation",
           fallback: "Resume failed.",
+        });
+      }
+    });
+  });
+  qs("translation-layout-recover")?.addEventListener("click", async () => {
+    await runWithBusy(["translation-layout-recover"], { "translation-layout-recover": "Recovering..." }, async () => {
+      try {
+        closeTranslationCompletionDrawer();
+        await handleLayoutRecovery();
+      } catch (error) {
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation", diagnosticsSlot: "translation", fallback: "Layout recovery failed.",
         });
       }
     });

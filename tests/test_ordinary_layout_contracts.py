@@ -140,15 +140,19 @@ def test_writer_still_rejects_invalid_layout_bounds_and_cross_field_constraints(
         normalize_proposals(inspect_docx(case.job.reviewed_docx, "EN"), view, [value])
 
 
-def test_layout_policy_has_finite_four_minute_default_without_increasing_dispatch_bounds():
-    policy = LayoutSuggestionPolicy("gpt-5.2", ".812", "2.436")
-    assert policy.public() == {"model": "gpt-5.2", "max_page_cost_usd": "0.812",
-        "max_operation_cost_usd": "2.436", "max_output_tokens": 8000,
-        "timeout_seconds": 240.0, "effort": "high"}
+def test_layout_policy_has_finite_eight_minute_default_and_retains_old_explicit_bound():
+    policy = LayoutSuggestionPolicy("gpt-5.2", "1.148", "3.444")
+    assert policy.public() == {"model": "gpt-5.2", "max_page_cost_usd": "1.148",
+        "max_operation_cost_usd": "3.444", "max_output_tokens": 32000,
+        "timeout_seconds": 480.0, "effort": "high"}
+    old = LayoutSuggestionPolicy("gpt-5.2", ".812", "2.436", max_output_tokens=8000,
+        timeout_seconds=240.0)
+    assert old.public()["max_output_tokens"] == 8000
+    assert old.public()["timeout_seconds"] == 240.0
     assert LayoutSuggestionPolicy("gpt-5.2", ".812", "2.436", timeout_seconds=90).public()["timeout_seconds"] == 90
 
 
-@pytest.mark.parametrize("timeout", [4.99, 240.01, float("inf"), float("nan"), True, "240"])
+@pytest.mark.parametrize("timeout", [4.99, 480.01, float("inf"), float("nan"), True, "480"])
 def test_layout_policy_rejects_unbounded_or_invalid_timeout(timeout):
     with pytest.raises(OrdinaryLayoutError, match="paid_policy_unavailable"):
         LayoutSuggestionPolicy("gpt-5.2", ".812", "2.436", timeout_seconds=timeout).public()

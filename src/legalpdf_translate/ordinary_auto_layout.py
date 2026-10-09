@@ -10,6 +10,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+from decimal import Decimal
 
 from .ordinary_layout_contracts import encode, fail
 from .run_workspace_lock import run_workspace_slot
@@ -47,6 +48,106 @@ def _durable_folder(identity: dict) -> Path:
     return storage._mkdir(run_dir / "ordinary_auto_layout")
 
 
+def _recovery_folder(root: Path) -> Path:
+    """One explicit successor for this checkpoint, independent of job IDs."""
+    return storage._mkdir(root / "recoveries" / "layout_capacity_v2")
+
+
+def _failed_predecessor(manager, root: Path, identity: dict, old_policy: str) -> dict:
+    """Prove the old dispatch is final and billed before a new paid operation."""
+    if not valid_automatic_layout_policy(old_policy):
+        fail("automatic_recovery_predecessor_invalid", 409)
+    intent_path, pointer_path = root / "intent.json", root / "operation.json"
+    if not intent_path.is_file() or not pointer_path.is_file() or (root / "candidate.json").exists():
+        fail("automatic_recovery_predecessor_unavailable", 409)
+    old_intent = _read_record(intent_path)
+    expected = dict(identity, policy_fingerprint=old_policy.split(":", 1)[1])
+    if old_intent != expected:
+        fail("automatic_recovery_predecessor_changed", 409)
+    pointer = _read_record(pointer_path)
+    if (pointer.get("identity_sha256") != hashlib.sha256(encode(old_intent)).hexdigest()
+            or pointer.get("selected_pages") != identity["selected_pages"]):
+        fail("automatic_recovery_predecessor_changed", 409)
+    from .ordinary_layout_contracts import identifier, nonce
+    from .ordinary_layout_service import _read as verified_record
+    origin = identifier(pointer.get("origin_job_id"))
+    baseline_id = nonce(pointer.get("baseline_id"))
+    operation_nonce = nonce(pointer.get("operation_nonce"))
+    origin_folder = manager.service.root / origin
+    operation = origin_folder / "baselines" / baseline_id / "suggestions" / operation_nonce
+    result_path, summary_path = operation / "result.json", operation / "accounting_summary.json"
+    completed_marker = root / "recoveries" / "layout_capacity_v2" / "candidate.json"
+    completed = _read_record(completed_marker) if completed_marker.is_file() else None
+    if not result_path.is_file() or not summary_path.is_file():
+        fail("automatic_recovery_predecessor_unsettled", 409)
+    with manager.service.scope(origin) as scoped:
+        selections = manager.service._selections(scoped)
+        if completed is None and ((scoped / "automatic.json").exists()
+                or (scoped / "frozen.json").exists() or selections):
+            fail("automatic_recovery_predecessor_selected", 409)
+        if completed is not None and ((scoped / "automatic.json").exists()
+                or (scoped / "frozen.json").exists() or selections):
+            if (completed.get("origin_job_id") != origin
+                    or not (scoped / "automatic.json").exists()):
+                fail("automatic_recovery_predecessor_selected", 409)
+            automatic = verified_record(scoped / "automatic.json")
+            if automatic.get("candidate_id") != completed.get("candidate_id"):
+                fail("automatic_recovery_predecessor_selected", 409)
+    operation_intent = verified_record(operation / "intent.json")
+    result, summary = verified_record(result_path), verified_record(summary_path)
+    from .ordinary_layout_contracts import decode
+    from .usage_accounting import _state_fingerprint, _summarize
+    journal_path = operation / "accounting" / "dispatch_accounting.json"
+    journal = decode(storage._read(journal_path, 8 * 1024 * 1024))
+    if (type(journal) is not dict or journal.get("fingerprint") != _state_fingerprint(journal)
+            or journal.get("run_identity", {}).get("job_id") != origin
+            or journal.get("run_identity", {}).get("operation_nonce") != operation_nonce
+            or journal.get("run_identity", {}).get("binding", {}).get("source_sha256") != identity["source_pdf_sha256"]
+            or journal.get("run_identity", {}).get("binding", {}).get("original_sha256") != identity["raw_docx_sha256"]
+            or not isinstance(journal.get("events"), list)
+            or _summarize(journal["events"], historical_incomplete=journal.get("historical_incomplete", False),
+                pricing_snapshot=journal.get("pricing_snapshot")) != summary):
+        fail("automatic_recovery_predecessor_unsettled", 409)
+    binding = operation_intent.get("identity", {}).get("binding", {})
+    if (operation_intent.get("operation_nonce") != operation_nonce
+            or operation_intent.get("baseline_id") != baseline_id
+            or operation_intent.get("review_id") != pointer.get("review_id")
+            or operation_intent.get("request", {}).get("expected_generation") != pointer.get("initial_generation")
+            or operation_intent.get("request", {}).get("page_numbers") != identity["selected_pages"]
+            or operation_intent.get("identity", {}).get("run_id") != identity["run_id"]
+            or operation_intent.get("identity", {}).get("mode") != identity["runtime_mode"]
+            or operation_intent.get("identity", {}).get("workspace_id") != identity["workspace_id"]
+            or binding.get("source_sha256") != identity["source_pdf_sha256"]
+            or binding.get("original_sha256") != identity["raw_docx_sha256"]
+            or (operation_intent.get("request", {}).get("policy", {}).get("max_output_tokens"),
+                operation_intent.get("request", {}).get("policy", {}).get("timeout_seconds"))
+                not in {(8000, 240.0), (32000, 480.0)}):
+        fail("automatic_recovery_predecessor_changed", 409)
+    if (result.get("status") != "failed" or result.get("applied_unreviewed")
+            or result.get("retry_dispatch_allowed") is not False
+            or result.get("accounting", {}).get("cost_usd") != summary.get("cost_usd")
+            or result.get("accounting", {}).get("known_cost_usd") != summary.get("known_cost_usd")
+            or summary.get("coverage_status") != "complete"
+            or summary.get("cost_usd") is None or summary.get("unknown_cost_count") != 0
+            or summary.get("in_flight_count") != 0
+            or type(summary.get("provider_dispatch_count")) is not int
+            or summary["provider_dispatch_count"] < 1):
+        fail("automatic_recovery_predecessor_unsettled", 409)
+    try:
+        cost = Decimal(str(summary["cost_usd"]))
+        if not cost.is_finite() or cost < 0 or cost != Decimal(str(summary["known_cost_usd"])):
+            raise ValueError
+    except (ValueError, TypeError, KeyError):
+        fail("automatic_recovery_predecessor_unsettled", 409)
+    return {"intent_sha256": hashlib.sha256(storage._read(intent_path, 8 * 1024 * 1024)).hexdigest(),
+        "pointer_sha256": hashlib.sha256(storage._read(pointer_path, 8 * 1024 * 1024)).hexdigest(),
+        "result_sha256": hashlib.sha256(storage._read(result_path, 8 * 1024 * 1024)).hexdigest(),
+        "accounting_summary_sha256": hashlib.sha256(storage._read(summary_path, 8 * 1024 * 1024)).hexdigest(),
+        "accounting_journal_sha256": hashlib.sha256(storage._read(journal_path, 8 * 1024 * 1024)).hexdigest(),
+        "known_cost_usd": str(cost), "origin_job_id": origin,
+        "baseline_id": baseline_id, "operation_nonce": operation_nonce}
+
+
 def _read_record(path: Path) -> dict:
     from .ordinary_layout_contracts import decode
     value = decode(storage._read(path, 8 * 1024 * 1024))
@@ -55,10 +156,26 @@ def _read_record(path: Path) -> dict:
     return value
 
 
+def _operation_costs(manager, origin: str, identity: dict) -> dict:
+    costs = manager.layout_costs(origin)
+    if not costs["complete"]:
+        fail("accounting_unsettled", 409)
+    predecessor = identity.get("recovery_predecessor")
+    if predecessor and predecessor["origin_job_id"] != origin:
+        prior = Decimal(predecessor["known_cost_usd"])
+        new = Decimal(costs["known_cost_usd"])
+        costs = {"cost_usd": str(prior + new), "known_cost_usd": str(prior + new),
+            "complete": True, "operations": costs["operations"] + 1,
+            "predecessor_cost_usd": str(prior), "recovery_cost_usd": str(new)}
+    return costs
+
+
 def _reused_candidate(manager, folder: Path, identity: dict, record: dict, job) -> dict:
     if (record.get("identity") != identity or type(record.get("review_id")) is not str
             or type(record.get("candidate_id")) is not str
             or type(record.get("origin_job_id")) is not str):
+        fail("automatic_candidate_changed", 409)
+    if record.get("layout_costs") != _operation_costs(manager, record["origin_job_id"], identity):
         fail("automatic_candidate_changed", 409)
     candidate = manager.service.saved.verified_unreviewed_candidate(
         record["review_id"], record["candidate_id"])
@@ -90,7 +207,9 @@ def _reused_candidate(manager, folder: Path, identity: dict, record: dict, job) 
         "source_map_sha256": candidate.source_map_sha256,
         "policy_fingerprint": candidate.policy_fingerprint,
         "delivery_kind": "automatic_unreviewed", "reviewed": False,
-        "reused_durable_candidate": True, "layout_costs": record["layout_costs"]}
+        "reused_durable_candidate": True, "layout_costs": record["layout_costs"],
+        **({"recovery_predecessor": identity["recovery_predecessor"]}
+           if "recovery_predecessor" in identity else {})}
 
 
 def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, operation_nonce: str,
@@ -237,9 +356,7 @@ def _finish_saved_proposals(manager, folder: Path, identity: dict, pointer: dict
         expected_generation=review["generation"], policy_fingerprint=policy_hash)
     artifact = manager.service.resolve_delivery(origin, 0)
     candidate = manager.service.saved.verified_unreviewed_candidate(review_id, built["candidate_id"])
-    costs = manager.layout_costs(origin)
-    if not costs["complete"]:
-        fail("accounting_unsettled", 409)
+    costs = _operation_costs(manager, origin, identity)
     with run_workspace_slot(folder):
         copy_path = folder / "output.docx"
         if copy_path.exists():
@@ -266,11 +383,14 @@ def _finish_saved_proposals(manager, folder: Path, identity: dict, pointer: dict
         "sha256": artifact.sha256,
         "word_count": artifact.word_count, "candidate_id": built["candidate_id"],
         "source_map_sha256": built["source_map_sha256"], "policy_fingerprint": policy_hash,
-        "delivery_kind": artifact.kind, "reviewed": False, "layout_costs": costs}
+        "delivery_kind": artifact.kind, "reviewed": False, "layout_costs": costs,
+        **({"recovery_predecessor": identity["recovery_predecessor"]}
+           if "recovery_predecessor" in identity else {})}
 
 
 def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
-                         *, cancel_requested=None, begin_publication=None) -> dict:
+                         *, cancel_requested=None, begin_publication=None,
+                         recovery_old_policy: str | None = None) -> dict:
     """Run the included bounded layout stage against a pinned ordinary job."""
     if not valid_automatic_layout_policy(frozen_policy):
         fail("automatic_policy_invalid", 409)
@@ -296,7 +416,25 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
         "raw_source_map_bytes_sha256", "selected_pages", "target_lang", "runtime_mode", "workspace_id")}
     identity.update(raw_source_map_sha256=mapped.raw_source_map_sha256,
                     raw_snapshot_fingerprint=mapped.fingerprint, policy_fingerprint=policy_hash)
-    folder = _durable_folder(baseline)
+    root = _durable_folder(baseline)
+    if recovery_old_policy is not None:
+        if frozen_policy != frozen_automatic_layout_policy():
+            fail("automatic_policy_changed", 409)
+        predecessor = _failed_predecessor(manager, root, identity, recovery_old_policy)
+        identity["recovery_predecessor"] = predecessor
+        folder = _recovery_folder(root)
+        if (not (folder / "candidate.json").is_file()
+                and (manager.service.root / job_id).is_dir()):
+            # A resumed job may have acquired its own delivery selection even
+            # though the failed origin remains unselected. Never buy layout
+            # pages for an output the operator has already selected.
+            with manager.service.scope(job_id) as current_folder:
+                if (manager.service._selections(current_folder)
+                        or (current_folder / "frozen.json").exists()
+                        or (current_folder / "automatic.json").exists()):
+                    fail("automatic_recovery_predecessor_selected", 409)
+    else:
+        folder = root
     recover_pointer = None
     with run_workspace_slot(folder):
         intent_path = folder / "intent.json"
@@ -322,17 +460,25 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
         fail("automatic_layout_cancelled", 409)
     if frozen_policy != frozen_automatic_layout_policy():
         fail("automatic_policy_changed", 409)
-    accounting.authorize_automatic(job, policy_hash)
-    prepare_nonce = _nonce("automatic_prepare", {"job_id": job_id,
-        "raw_snapshot": mapped.fingerprint, "policy": policy_hash})
+    if recovery_old_policy is None:
+        accounting.authorize_automatic(job, policy_hash)
+    else:
+        accounting.authorize_recovery(job, policy_hash,
+            identity["recovery_predecessor"]["known_cost_usd"])
+    prepare_nonce = _nonce("automatic_recovery_prepare" if recovery_old_policy is not None else "automatic_prepare",
+        {"job_id": job_id, "raw_snapshot": mapped.fingerprint, "policy": policy_hash,
+         **({"predecessor": identity["recovery_predecessor"]["result_sha256"]}
+            if recovery_old_policy is not None else {})})
     prepared = manager.prepare(job_id, prepare_nonce)
     if cancel_requested(job_id):
         fail("automatic_layout_cancelled", 409)
     baseline_id = prepared["baseline_id"]
     generation = prepared["generation"]
-    operation_nonce = _nonce("automatic_suggest", {"job_id": job_id,
+    operation_nonce = _nonce("automatic_recovery_suggest" if recovery_old_policy is not None else "automatic_suggest", {"job_id": job_id,
         "baseline_id": baseline_id, "generation": generation,
-        "raw_snapshot": mapped.fingerprint, "policy": policy_hash})
+        "raw_snapshot": mapped.fingerprint, "policy": policy_hash,
+        **({"predecessor": identity["recovery_predecessor"]["result_sha256"]}
+           if recovery_old_policy is not None else {})})
     pointer = {"identity_sha256": hashlib.sha256(encode(identity)).hexdigest(),
         "origin_job_id": job_id, "baseline_id": baseline_id,
         "review_id": prepared["review"]["review_id"], "initial_generation": generation,
@@ -358,11 +504,12 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
         cancel_requested, begin_publication)
 
 
-def cancel_automatic_layout(manager, accounting, job_id: str) -> None:
+def cancel_automatic_layout(manager, accounting, job_id: str, *, recovery: bool = False) -> None:
     """Bridge an active browser Cancel to the durable page-boundary marker."""
     baseline = accounting.jobs.trusted_ordinary_baseline_identity(job_id,
         runtime_mode=manager.mode, workspace_id=manager.workspace_id)
-    pointer_path = _durable_folder(baseline) / "operation.json"
+    root = _durable_folder(baseline)
+    pointer_path = (_recovery_folder(root) if recovery else root) / "operation.json"
     if not pointer_path.exists():
         return
     pointer = _read_record(pointer_path)
@@ -370,3 +517,65 @@ def cancel_automatic_layout(manager, accounting, job_id: str) -> None:
         return  # A reused operation has no new page dispatch to cancel.
     manager.service.cancel_suggestion(job_id, pointer["operation_nonce"],
         pointer["initial_generation"], expected_baseline_id=pointer["baseline_id"])
+
+
+def verified_recovery_layout_costs(manager, job: dict, current: dict) -> dict:
+    """Add a failed predecessor's known charge once, from immutable files."""
+    automatic = job.get("result", {}).get("automatic_layout", {})
+    predecessor = automatic.get("recovery_predecessor")
+    if type(predecessor) is not dict or not current.get("complete"):
+        fail("automatic_recovery_accounting_unsettled", 409)
+    from .ordinary_layout_contracts import identifier, nonce
+    origin = identifier(predecessor.get("origin_job_id"))
+    baseline_id = nonce(predecessor.get("baseline_id"))
+    operation_nonce = nonce(predecessor.get("operation_nonce"))
+    trusted = manager._job(job["job_id"])
+    root = Path(job["result"]["run_dir"]).expanduser().resolve() / "ordinary_auto_layout"
+    recovery = root / "recoveries" / "layout_capacity_v2"
+    marker = _read_record(recovery / "candidate.json")
+    identity = marker.get("identity")
+    if (type(identity) is not dict or identity.get("recovery_predecessor") != predecessor
+            or identity.get("source_pdf_sha256") != trusted.binding["source_sha256"]
+            or identity.get("raw_docx_sha256") != hashlib.sha256(trusted.original_docx).hexdigest()
+            or identity.get("raw_source_map_sha256") != trusted.binding["raw_source_map_sha256"]
+            or identity.get("run_id") != trusted.run_id
+            or identity.get("target_lang") != trusted.target_lang
+            or identity.get("selected_pages") != list(trusted.selected_pages)
+            or identity.get("runtime_mode") != trusted.mode
+            or identity.get("workspace_id") != trusted.workspace_id
+            or (marker.get("origin_job_id") != job["job_id"]
+                and not (manager.service.state(job["job_id"]).get("automatic_alias")
+                    and manager.service.state(job["job_id"]).get("delivery", {}).get("artifact_id")
+                        == marker.get("candidate_id")))):
+        fail("automatic_recovery_identity_changed", 409)
+    operation = manager.service.root / origin / "baselines" / baseline_id / "suggestions" / operation_nonce
+    paths = {"intent_sha256": root / "intent.json", "pointer_sha256": root / "operation.json",
+        "result_sha256": operation / "result.json",
+        "accounting_summary_sha256": operation / "accounting_summary.json",
+        "accounting_journal_sha256": operation / "accounting" / "dispatch_accounting.json"}
+    if any(hashlib.sha256(storage._read(path, 8 * 1024 * 1024)).hexdigest() != predecessor[key]
+           for key, path in paths.items()):
+        fail("automatic_recovery_predecessor_changed", 409)
+    from .ordinary_layout_service import _read as verified_record
+    summary = verified_record(paths["accounting_summary_sha256"])
+    if (summary.get("coverage_status") != "complete" or summary.get("unknown_cost_count") != 0
+            or summary.get("in_flight_count") != 0
+            or str(summary.get("cost_usd")) != predecessor.get("known_cost_usd")):
+        fail("automatic_recovery_predecessor_unsettled", 409)
+    try:
+        prior = Decimal(predecessor["known_cost_usd"])
+        present = Decimal(current["known_cost_usd"])
+        if not prior.is_finite() or not present.is_finite() or prior < 0 or present < 0:
+            raise ValueError
+    except (ValueError, KeyError):
+        fail("automatic_recovery_accounting_changed", 409)
+    inherited = origin != marker["origin_job_id"]
+    if not inherited and present < prior:
+        fail("automatic_recovery_accounting_changed", 409)
+    total = prior + present if inherited else present
+    if marker.get("layout_costs", {}).get("cost_usd") != str(total):
+        fail("automatic_recovery_accounting_changed", 409)
+    return {"cost_usd": str(total), "known_cost_usd": str(total), "complete": True,
+        "operations": current["operations"] + (1 if inherited else 0),
+        "predecessor_cost_usd": str(prior),
+        "recovery_cost_usd": str(present if inherited else present - prior)}

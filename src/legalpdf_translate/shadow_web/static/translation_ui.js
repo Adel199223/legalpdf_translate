@@ -87,6 +87,8 @@ export function renderTranslationPrimaryActionsInto(nodes = {}, actionState = {}
     analyzeButton,
     cancelButton,
     resumeButton,
+    recoverLayoutButton,
+    recoverLayoutNote,
     rebuildButton,
   } = nodes || {};
 
@@ -105,6 +107,14 @@ export function renderTranslationPrimaryActionsInto(nodes = {}, actionState = {}
   if (resumeButton) {
     resumeButton.disabled = !actionState.resumeEnabled;
   }
+  if (recoverLayoutButton) {
+    recoverLayoutButton.disabled = !actionState.recoverLayoutEnabled;
+    setText(recoverLayoutButton, actionState.recoverLayoutLabel || "Recover Source Layout");
+    recoverLayoutButton.classList.toggle("hidden", !actionState.recoverLayoutEnabled);
+  }
+  if (recoverLayoutNote) {
+    recoverLayoutNote.classList.toggle("hidden", !actionState.recoverLayoutEnabled);
+  }
   if (rebuildButton) {
     rebuildButton.disabled = !actionState.rebuildEnabled;
   }
@@ -117,6 +127,8 @@ export function renderTranslationPreparedControlsInto(nodes = {}) {
     reviewExport,
     cancelButton,
     resumeButton,
+    recoverLayoutButton,
+    recoverLayoutNote,
     rebuildButton,
   } = nodes || {};
 
@@ -132,6 +144,13 @@ export function renderTranslationPreparedControlsInto(nodes = {}) {
   }
   if (resumeButton) {
     resumeButton.disabled = true;
+  }
+  if (recoverLayoutButton) {
+    recoverLayoutButton.disabled = true;
+    recoverLayoutButton.classList.add("hidden");
+  }
+  if (recoverLayoutNote) {
+    recoverLayoutNote.classList.add("hidden");
   }
   if (rebuildButton) {
     rebuildButton.disabled = true;
