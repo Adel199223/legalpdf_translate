@@ -118,7 +118,8 @@ class OrdinaryLayoutManager:
         return self.state(job_id)
 
     @public
-    def suggest(self, job_id, expected_generation, operation_nonce, page_numbers, *, expected_baseline_id):
+    def suggest(self, job_id, expected_generation, operation_nonce, page_numbers, *, expected_baseline_id,
+                external_cancel_requested=None):
         nonce(operation_nonce); nonce(expected_baseline_id); generation(expected_generation)
         if (type(page_numbers) is not list or not page_numbers or any(type(n) is not int for n in page_numbers)
                 or sorted(set(page_numbers)) != page_numbers or not all(1 <= n <= 100 for n in page_numbers)):
@@ -167,6 +168,9 @@ class OrdinaryLayoutManager:
                 fail("bounded_provider_required", 503)
             started = time.monotonic()
             for page in page_numbers:
+                if external_cancel_requested and external_cancel_requested(job_id):
+                    self.service.cancel_suggestion(job_id, operation_nonce, expected_generation,
+                        expected_baseline_id=expected_baseline_id)
                 if self.service.cancellation_requested(job_id, operation_nonce):
                     break
                 current = self.service.assert_current(self._job(job_id))
@@ -181,6 +185,9 @@ class OrdinaryLayoutManager:
                 image = self.service.saved.image(view["review_id"], page)
                 prompt = encode({"version": PROPOSAL_VERSION, "page_number": page, "target_lang": job.target_lang,
                                  "paragraphs": rows}).decode("utf-8")
+                if external_cancel_requested and external_cancel_requested(job_id):
+                    self.service.cancel_suggestion(job_id, operation_nonce, expected_generation,
+                        expected_baseline_id=expected_baseline_id)
                 if self.service.cancellation_requested(job_id, operation_nonce):
                     break
                 with accounting_context(accountant, purpose="layout_suggestion", page_number=page):
@@ -277,6 +284,10 @@ class OrdinaryLayoutManager:
         state = self.service.state(job_id)
         if state["status"] == "unprepared":
             return {"cost_usd": "0", "known_cost_usd": "0", "complete": True, "operations": 0}
+        if state.get("automatic_alias"):
+            with self.service.scope(job_id) as folder:
+                alias = _read(folder / "alias.json")
+            return self.layout_costs(alias["origin_job_id"])
         known, complete, count = Decimal(0), True, 0
         with self.service.scope(job_id) as folder:
             for baseline in _directories(folder / "baselines"):

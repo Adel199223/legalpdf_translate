@@ -50,6 +50,15 @@ def _read(path):
     return value["payload"]
 
 
+def _put_immutable(path, raw):
+    """Finish an interrupted local publication only if every retained byte agrees."""
+    if path.exists():
+        if storage._read(path, max(len(raw), 1)) != raw:
+            fail("automatic_candidate_changed", 409)
+    else:
+        storage._atomic(path, raw)
+
+
 def _records(folder):
     if not folder.exists():
         return []
@@ -58,6 +67,16 @@ def _records(folder):
     if len(files) > MAX_RECORDS * 2:
         fail("record_limit", 413)
     return [p for p in sorted(files) if re.fullmatch(r"[a-f0-9]{32}\.json", p.name)]
+
+
+def _edited_records(folder):
+    if not folder.exists():
+        return []
+    storage._direct(folder, directory=True)
+    rows = sorted(folder.glob("[0-9][0-9][0-9][0-9][0-9][0-9].json"))
+    if len(rows) > MAX_RECORDS or any(p.name != f"{index:06d}.json" for index, p in enumerate(rows, 1)):
+        fail("record_changed", 409)
+    return rows
 
 
 def _directories(folder):
@@ -155,6 +174,18 @@ class OrdinaryLayoutService:
         view = self.saved.read(manifest["review_id"])
         rows = self._selections(folder)
         selection = deepcopy(rows[-1]) if rows else None
+        automatic = _read(folder / "automatic.json") if (folder / "automatic.json").exists() else None
+        edited = self._latest_edited(folder)
+        if automatic is not None and not selection:
+            active = edited or automatic
+            selection = {"version": VERSION, "selection_id": active.get("revision_id", automatic["candidate_id"]),
+                "generation": 0, "baseline_id": automatic["baseline_id"],
+                "kind": "automatic_unreviewed_edited" if edited else "automatic_unreviewed",
+                "sha256": active["sha256"],
+                "word_count": active["word_count"], "review_generation": automatic["review_generation"],
+                "artifact_id": automatic["candidate_id"], "stale": False,
+                "document_reviewed": False, "rendered_layout_acceptance": "not_evaluated",
+                "word_edit_qualified": bool(edited)}
         frozen = _read(folder / "frozen.json") if (folder / "frozen.json").exists() else None
         if selection:
             selection["stale"] = selection["baseline_id"] != baseline.name or (not frozen and
@@ -165,7 +196,328 @@ class OrdinaryLayoutService:
                 "selected_pages": manifest["identity"]["selected_pages"],
                 "output_reviews": [_read(p) for p in _records(baseline / "acceptances")],
                 "suggestions": [_read(p) for p in _records(baseline / "suggestion_results")],
-                "preparation_nonce": manifest["prepare_nonce"]}
+                "preparation_nonce": manifest["prepare_nonce"],
+                "automatic_candidate": automatic, "edited_revision": edited}
+
+    def _latest_edited(self, folder):
+        records = _edited_records(folder / "edited_revisions")
+        return _read(records[-1]) if records else None
+
+    def _verified_edited(self, folder, manifest, automatic, record):
+        candidate = self._verified_automatic(folder, manifest, automatic)
+        if (set(record) != {"version", "revision_id", "candidate_id", "candidate_sha256",
+                "source_map_sha256", "review_generation", "sha256", "word_count",
+                "document_reviewed", "rendered_layout_acceptance", "word_edit_qualified"}
+                or record["version"] != VERSION
+                or record["document_reviewed"] is not False
+                or record["rendered_layout_acceptance"] != "not_evaluated"
+                or record["word_edit_qualified"] is not True
+                or record["candidate_id"] != automatic["candidate_id"]
+                or record["candidate_sha256"] != automatic["sha256"]
+                or record["source_map_sha256"] != automatic["source_map_sha256"]
+                or record["review_generation"] != automatic["review_generation"]):
+            fail("edited_revision_stale", 409)
+        revision_id = nonce(record["revision_id"])
+        raw = storage._read(folder / "edited_revisions" / revision_id / "output.docx", storage.DOCX_MAX_BYTES)
+        working = storage._read(folder / "automatic" / "working.docx", storage.DOCX_MAX_BYTES)
+        if (digest(raw) != record["sha256"]
+                or revision_id != digest(automatic["candidate_id"].encode("ascii") + raw)[:32]
+                or not (folder / "frozen.json").exists() and working != raw):
+            fail("edited_revision_stale", 409)
+        from .ordinary_edited_revision import qualify_edited_docx
+        qualify_edited_docx(candidate.docx_bytes, raw)
+        if count_words_from_docx(folder / "edited_revisions" / revision_id / "output.docx") != record["word_count"]:
+            fail("edited_revision_stale", 409)
+        return record
+
+    def _alias_view(self, job_id, record):
+        origin = record["origin_job_id"]
+        if origin == job_id:
+            fail("automatic_alias_changed", 409)
+        with self.scope(origin) as source:
+            baseline, manifest = self._baseline(source)
+            current = self._view(source)
+            automatic = _read(source / "automatic.json")
+            candidate = self._verified_automatic(source, manifest, automatic)
+            if current["delivery"] is None or current["delivery"]["kind"] not in {
+                    "automatic_unreviewed", "automatic_unreviewed_edited"}:
+                fail("automatic_alias_rebase_required", 409)
+            if current["delivery"]["kind"] == "automatic_unreviewed_edited":
+                self._verified_edited(source, manifest, automatic, self._latest_edited(source))
+            if (baseline.name != record["baseline_id"]
+                    or automatic["candidate_id"] != record["candidate_id"]
+                    or current["generation"] != record["review_generation"]
+                    or current["delivery"]["sha256"] != record["delivery_sha256"]
+                    or current["delivery"]["selection_id"] != record["selection_id"]
+                    or current["delivery"]["kind"] != record["kind"]):
+                fail("automatic_alias_rebase_required", 409)
+            view = deepcopy(current)
+        alias_folder = self.folder(job_id)
+        if _edited_records(alias_folder / "alias_edits"):
+            edited = self._verified_alias_edited(alias_folder, record, candidate)
+            view["delivery"].update(kind="automatic_unreviewed_edited",
+                selection_id=edited["revision_id"], sha256=edited["sha256"],
+                word_count=edited["word_count"])
+        frozen_path = alias_folder / "frozen.json"
+        view["frozen"] = frozen_path.exists()
+        if frozen_path.exists():
+            frozen = _read(frozen_path)
+            if frozen.get("generation") != 0 or frozen.get("sha256") != view["delivery"]["sha256"]:
+                fail("delivery_frozen", 409)
+        view["job_id"] = job_id
+        view["automatic_alias"] = True
+        view["editor_rebase_required"] = True
+        return view
+
+    def _verified_alias_edited(self, folder, alias, candidate):
+        rows = _edited_records(folder / "alias_edits")
+        if not rows:
+            fail("edited_revision_stale", 409)
+        edited = _read(rows[-1])
+        revision_id = edited.get("revision_id")
+        nonce(revision_id)
+        raw = storage._read(folder / "alias_edits" / revision_id / "output.docx", storage.DOCX_MAX_BYTES)
+        from .ordinary_edited_revision import qualify_edited_docx
+        qualify_edited_docx(candidate.docx_bytes, raw)
+        count = count_words_from_docx(folder / "alias_edits" / revision_id / "output.docx")
+        expected = {"version": VERSION, "revision_id": digest(alias["candidate_id"].encode("ascii") + raw)[:32],
+            "candidate_id": alias["candidate_id"], "candidate_sha256": candidate.docx_sha256,
+            "origin_delivery_sha256": alias["delivery_sha256"], "sha256": digest(raw),
+            "word_count": count, "document_reviewed": False,
+            "rendered_layout_acceptance": "not_evaluated", "word_edit_qualified": True}
+        if edited != expected:
+            fail("edited_revision_stale", 409)
+        return edited
+
+    @public
+    def adopt_automatic_alias(self, job, origin_job_id, candidate_id):
+        """Bind a rebuilt browser job to the same verified paid run artifact."""
+        current_identity = job_identity(job, self.mode, self.workspace_id)
+        identifier(origin_job_id); nonce(candidate_id)
+        if origin_job_id == job.job_id:
+            return self.state(job.job_id)
+        with self.scope(origin_job_id) as source:
+            baseline, manifest = self._baseline(source)
+            automatic = _read(source / "automatic.json")
+            self._verified_automatic(source, manifest, automatic)
+            old_identity = manifest["identity"]
+            if (automatic["candidate_id"] != candidate_id
+                    or any(current_identity[key] != old_identity[key] for key in (
+                        "run_id", "mode", "workspace_id", "source_sha256", "original_sha256",
+                        "target_lang", "selected_pages"))
+                    or current_identity["binding"].get("raw_source_map_sha256") !=
+                        old_identity["binding"].get("raw_source_map_sha256")):
+                fail("automatic_alias_identity_changed", 409)
+            current = self._view(source)
+            if current["delivery"] is None or current["delivery"]["kind"] not in {
+                    "automatic_unreviewed", "automatic_unreviewed_edited"}:
+                fail("automatic_alias_rebase_required", 409)
+            if current["delivery"]["kind"] == "automatic_unreviewed_edited":
+                self._verified_edited(source, manifest, automatic, self._latest_edited(source))
+            record = {"version": VERSION, "job_identity": current_identity,
+                "origin_job_id": origin_job_id, "baseline_id": baseline.name,
+                "candidate_id": candidate_id, "review_generation": current["generation"],
+                "delivery_sha256": current["delivery"]["sha256"],
+                "selection_id": current["delivery"]["selection_id"],
+                "kind": current["delivery"]["kind"]}
+        with self.scope(job.job_id, create=True) as folder:
+            if (folder / "prepared").exists():
+                fail("automatic_alias_conflict", 409)
+            path = folder / "alias.json"
+            if path.exists():
+                if _read(path) != record:
+                    fail("automatic_alias_conflict", 409)
+            else:
+                _write(path, record)
+        return self._alias_view(job.job_id, record)
+
+    @public
+    def automatic_review_copy(self, job_id):
+        with self.scope(job_id) as folder:
+            if (folder / "alias.json").exists():
+                record = _read(folder / "alias.json")
+                self._alias_view(job_id, record)
+                delivered = self.resolve_delivery(record["origin_job_id"], 0)
+                copy = folder / "automatic" / "working.docx"
+                if not copy.exists():
+                    storage._mkdir(folder / "automatic")
+                    _put_immutable(copy, storage._read(delivered.path, storage.DOCX_MAX_BYTES))
+                return copy
+            baseline, manifest = self._baseline(folder)
+            record = _read(folder / "automatic.json")
+            if record["baseline_id"] != baseline.name:
+                fail("automatic_candidate_stale", 409)
+            candidate = self._verified_automatic(folder, manifest, record)
+            copy = folder / "automatic" / "working.docx"
+            if not copy.exists():
+                _put_immutable(copy, candidate.docx_bytes)
+            return copy
+
+    @public
+    def adopt_automatic_word_edit(self, job_id, *, without_changes=False):
+        """Commit a reviewed Word working copy as a separate unreviewed revision."""
+        with self.scope(job_id) as folder:
+            if (folder / "alias.json").exists():
+                record = _read(folder / "alias.json")
+                view = self._alias_view(job_id, record)
+                if view["frozen"]:
+                    working = storage._read(folder / "automatic" / "working.docx", storage.DOCX_MAX_BYTES)
+                    if digest(working) != view["delivery"]["sha256"]:
+                        fail("delivery_frozen", 409)
+                    return view
+                delivered = self.resolve_delivery(record["origin_job_id"], 0)
+                working_path = folder / "automatic" / "working.docx"
+                working = storage._read(working_path, storage.DOCX_MAX_BYTES)
+                if digest(working) == view["delivery"]["sha256"]:
+                    return view
+                if without_changes:
+                    fail("edited_revision_changes_detected", 409)
+                with self.scope(record["origin_job_id"]) as source:
+                    _, manifest = self._baseline(source)
+                    automatic = _read(source / "automatic.json")
+                    candidate = self._verified_automatic(source, manifest, automatic)
+                from .ordinary_edited_revision import qualify_edited_docx
+                qualify_edited_docx(candidate.docx_bytes, working)
+                count = count_words_from_docx(working_path)
+                if type(count) is not int or count <= 0:
+                    fail("delivery_empty", 409)
+                revision_id = digest(record["candidate_id"].encode("ascii") + working)[:32]
+                edited = {"version": VERSION, "revision_id": revision_id,
+                    "candidate_id": record["candidate_id"], "candidate_sha256": candidate.docx_sha256,
+                    "origin_delivery_sha256": record["delivery_sha256"], "sha256": digest(working),
+                    "word_count": count, "document_reviewed": False,
+                    "rendered_layout_acceptance": "not_evaluated", "word_edit_qualified": True}
+                records = _edited_records(folder / "alias_edits")
+                if len(records) >= MAX_RECORDS:
+                    fail("record_limit", 413)
+                destination = storage._mkdir(folder / "alias_edits" / revision_id)
+                _put_immutable(destination / "output.docx", working)
+                _write(folder / "alias_edits" / f"{len(records)+1:06d}.json", edited)
+                self._verified_alias_edited(folder, record, candidate)
+                return self._alias_view(job_id, record)
+            baseline, manifest = self._baseline(folder)
+            automatic = _read(folder / "automatic.json")
+            if automatic["baseline_id"] != baseline.name or self._selections(folder):
+                fail("edited_revision_rebase_required", 409)
+            candidate = self._verified_automatic(folder, manifest, automatic)
+            working_path = folder / "automatic" / "working.docx"
+            working = storage._read(working_path, storage.DOCX_MAX_BYTES)
+            frozen = folder / "frozen.json"
+            if frozen.exists():
+                prior = self._latest_edited(folder)
+                accepted_sha = prior["sha256"] if prior else automatic["sha256"]
+                frozen_record = _read(frozen)
+                if frozen_record.get("generation") != 0 or frozen_record.get("sha256") != accepted_sha:
+                    fail("delivery_frozen", 409)
+                if digest(working) != accepted_sha:
+                    fail("delivery_frozen", 409)
+                return self._view(folder)
+            if working == candidate.docx_bytes:
+                return self._view(folder)
+            if without_changes:
+                fail("edited_revision_changes_detected", 409)
+            from .ordinary_edited_revision import qualify_edited_docx
+            qualify_edited_docx(candidate.docx_bytes, working)
+            count = count_words_from_docx(working_path)
+            if type(count) is not int or count <= 0:
+                fail("delivery_empty", 409)
+            records = _edited_records(folder / "edited_revisions")
+            revision_id = digest(automatic["candidate_id"].encode("ascii") + working)[:32]
+            record = {"version": VERSION, "revision_id": revision_id,
+                "candidate_id": automatic["candidate_id"], "candidate_sha256": automatic["sha256"],
+                "source_map_sha256": automatic["source_map_sha256"],
+                "review_generation": automatic["review_generation"],
+                "sha256": digest(working), "word_count": count,
+                "document_reviewed": False, "rendered_layout_acceptance": "not_evaluated",
+                "word_edit_qualified": True}
+            if records and _read(records[-1]) == record:
+                self._verified_edited(folder, manifest, automatic, record)
+                return self._view(folder)
+            if len(records) >= MAX_RECORDS:
+                fail("record_limit", 413)
+            destination = storage._mkdir(folder / "edited_revisions" / revision_id)
+            _put_immutable(destination / "output.docx", working)
+            record_path = folder / "edited_revisions" / f"{len(records)+1:06d}.json"
+            _write(record_path, record)
+            self._verified_edited(folder, manifest, automatic, record)
+            return self._view(folder)
+
+    def _verified_automatic(self, folder, manifest, record):
+        candidate = self.saved.verified_unreviewed_candidate(manifest["review_id"], record["candidate_id"])
+        identity = manifest["identity"]
+        if (candidate.review_id != manifest["review_id"]
+                or candidate.generation != record["review_generation"]
+                or candidate.current_generation != record["review_generation"]
+                or candidate.source_pdf_sha256 != identity["source_sha256"]
+                or candidate.raw_docx_sha256 != identity["original_sha256"]
+                or candidate.raw_source_map_sha256 != identity["binding"].get("raw_source_map_sha256")
+                or list(candidate.selected_pages) != identity["selected_pages"]
+                or candidate.target_lang != identity["target_lang"]
+                or candidate.policy_fingerprint != record["policy_fingerprint"]
+                or candidate.docx_sha256 != record["sha256"]
+                or candidate.source_map_sha256 != record["source_map_sha256"]
+                or candidate.receipt.get("document_reviewed") is not False
+                or candidate.receipt.get("rendered_layout_acceptance") != "not_evaluated"):
+            fail("automatic_candidate_stale", 409)
+        raw = storage._read(folder / "automatic" / "output.docx", storage.DOCX_MAX_BYTES)
+        if digest(raw) != record["sha256"] or raw != candidate.docx_bytes:
+            fail("automatic_candidate_changed", 409)
+        mapped = storage._read(folder / "automatic" / "source_map.json", 8 * 1024 * 1024)
+        receipt = storage._read(folder / "automatic" / "receipt.json", 8 * 1024 * 1024)
+        if (digest(mapped) != record["source_map_sha256"] or mapped != encode(candidate.source_map)
+                or digest(receipt) != record["receipt_sha256"] or receipt != encode(candidate.receipt)):
+            fail("automatic_candidate_changed", 409)
+        return candidate
+
+    @public
+    def publish_automatic_candidate(self, job_id, *, expected_baseline_id, operation_nonce,
+                                    candidate_id, expected_generation, policy_fingerprint):
+        nonce(expected_baseline_id); nonce(operation_nonce); nonce(candidate_id)
+        generation(expected_generation)
+        if type(policy_fingerprint) is not str or re.fullmatch(r"[a-f0-9]{64}", policy_fingerprint) is None:
+            fail("invalid_policy_fingerprint")
+        with self.scope(job_id) as folder:
+            baseline, manifest = self._baseline(folder)
+            if baseline.name != expected_baseline_id or (folder / "frozen.json").exists():
+                fail("baseline_stale", 409)
+            operation = baseline / "suggestions" / operation_nonce
+            if not operation.exists():
+                fail("suggestion_not_found", 404)
+            result = _read(operation / "result.json")
+            if result.get("status") != "applied_unreviewed" or result.get("generation") != expected_generation:
+                fail("automatic_proposal_unavailable", 409)
+            self._require_settled(folder)
+            record_path = folder / "automatic.json"
+            if record_path.exists():
+                record = _read(record_path)
+                if (record["baseline_id"] != baseline.name or record["operation_nonce"] != operation_nonce
+                        or record["candidate_id"] != candidate_id or record["review_generation"] != expected_generation
+                        or record["policy_fingerprint"] != policy_fingerprint):
+                    fail("automatic_candidate_conflict", 409)
+                self._verified_automatic(folder, manifest, record)
+                return self._view(folder)
+            if self._selections(folder):
+                fail("delivery_already_selected", 409)
+            candidate = self.saved.verified_unreviewed_candidate(manifest["review_id"], candidate_id)
+            record = {"version": VERSION, "baseline_id": baseline.name,
+                "operation_nonce": operation_nonce, "candidate_id": candidate_id,
+                "review_generation": expected_generation, "policy_fingerprint": policy_fingerprint,
+                "sha256": candidate.docx_sha256, "source_map_sha256": candidate.source_map_sha256,
+                "receipt_sha256": digest(encode(candidate.receipt)),
+                "word_count": 0, "document_reviewed": False,
+                "rendered_layout_acceptance": "not_evaluated"}
+            destination = storage._mkdir(folder / "automatic")
+            _put_immutable(destination / "output.docx", candidate.docx_bytes)
+            _put_immutable(destination / "working.docx", candidate.docx_bytes)
+            _put_immutable(destination / "source_map.json", encode(candidate.source_map))
+            _put_immutable(destination / "receipt.json", encode(candidate.receipt))
+            count = count_words_from_docx(destination / "output.docx")
+            if type(count) is not int or count <= 0:
+                fail("delivery_empty")
+            record["word_count"] = count
+            self._verified_automatic(folder, manifest, record)
+            _write(record_path, record)
+            return self._view(folder)
 
     @public
     def state(self, job_id):
@@ -174,6 +526,8 @@ class OrdinaryLayoutService:
             return {"job_id": job_id, "status": "unprepared", "generation": 0,
                     "delivery_generation": 0, "delivery": None, "review": None, "frozen": None}
         with self.scope(job_id) as folder:
+            if (folder / "alias.json").exists():
+                return self._alias_view(job_id, _read(folder / "alias.json"))
             return self._view(folder)
 
     @public
@@ -233,6 +587,11 @@ class OrdinaryLayoutService:
     def assert_current(self, job, *, allow_frozen_review_change=False):
         identity = job_identity(job, self.mode, self.workspace_id)
         with self.scope(job.job_id) as folder:
+            if (folder / "alias.json").exists():
+                record = _read(folder / "alias.json")
+                if identity != record["job_identity"]:
+                    fail("automatic_alias_identity_changed", 409)
+                return self._alias_view(job.job_id, record)
             _, manifest = self._baseline(folder)
             expected = deepcopy(manifest["identity"])
             if allow_frozen_review_change and (folder / "frozen.json").exists():
@@ -337,10 +696,45 @@ class OrdinaryLayoutService:
 
     @public
     def resolve_delivery(self, job_id, expected_delivery_generation, freeze_nonce=None, *, require_settled=False):
-        generation(expected_delivery_generation)
+        generation(expected_delivery_generation, zero=True)
         if freeze_nonce is not None:
             nonce(freeze_nonce)
         with self.scope(job_id) as folder:
+            if (folder / "alias.json").exists():
+                record = _read(folder / "alias.json")
+                view = self._alias_view(job_id, record)
+                if expected_delivery_generation != 0 or view["delivery"]["stale"]:
+                    fail("delivery_stale", 409)
+                original = self.resolve_delivery(record["origin_job_id"], 0,
+                    require_settled=require_settled)
+                if (original.sha256 != record["delivery_sha256"]
+                        or original.selection_id != record["selection_id"]
+                        or original.kind != record["kind"]):
+                    fail("automatic_alias_rebase_required", 409)
+                if _edited_records(folder / "alias_edits"):
+                    edited = _read(_edited_records(folder / "alias_edits")[-1])
+                    selected_path = folder / "alias_edits" / edited["revision_id"] / "output.docx"
+                    selected_sha = edited["sha256"]
+                    selected_count = edited["word_count"]
+                    selected_id = edited["revision_id"]
+                    selected_kind = "automatic_unreviewed_edited"
+                else:
+                    selected_path = original.path
+                    selected_sha = original.sha256
+                    selected_count = original.word_count
+                    selected_id = original.selection_id
+                    selected_kind = original.kind
+                frozen = folder / "frozen.json"
+                if freeze_nonce:
+                    frozen_record = {"freeze_nonce": freeze_nonce, "generation": 0,
+                        "sha256": selected_sha}
+                    if frozen.exists() and _read(frozen) != frozen_record:
+                        fail("delivery_frozen", 409)
+                    if not frozen.exists():
+                        _write(frozen, frozen_record)
+                return DeliveryArtifact(job_id, original.run_id, selected_path, selected_sha,
+                    selected_count, original.target_lang, original.source_sha256, 0,
+                    selected_id, selected_kind, frozen.exists())
             baseline, manifest = self._baseline(folder)
             if freeze_nonce or require_settled:
                 self._require_settled(folder)
@@ -348,6 +742,47 @@ class OrdinaryLayoutService:
             row = view["delivery"]
             if row is None or row["generation"] != expected_delivery_generation or row["stale"]:
                 fail("delivery_stale", 409)
+            if row["kind"] == "automatic_unreviewed":
+                automatic = _read(folder / "automatic.json")
+                self._verified_automatic(folder, manifest, automatic)
+                path = folder / "automatic" / "output.docx"
+                frozen = folder / "frozen.json"
+                if freeze_nonce:
+                    record = {"freeze_nonce": freeze_nonce, "generation": 0, "sha256": automatic["sha256"]}
+                    if frozen.exists() and _read(frozen) != record:
+                        fail("delivery_frozen", 409)
+                    if not frozen.exists():
+                        _write(frozen, record)
+                if frozen.exists():
+                    frozen_record = _read(frozen)
+                    if frozen_record.get("generation") != 0 or frozen_record.get("sha256") != automatic["sha256"]:
+                        fail("delivery_frozen", 409)
+                identity = manifest["identity"]
+                return DeliveryArtifact(job_id, identity["run_id"], path, automatic["sha256"],
+                    automatic["word_count"], identity["target_lang"], identity["source_sha256"],
+                    0, automatic["candidate_id"], "automatic_unreviewed", (folder / "frozen.json").exists())
+            if row["kind"] == "automatic_unreviewed_edited":
+                automatic = _read(folder / "automatic.json")
+                edited = self._latest_edited(folder)
+                if edited is None:
+                    fail("edited_revision_stale", 409)
+                self._verified_edited(folder, manifest, automatic, edited)
+                path = folder / "edited_revisions" / edited["revision_id"] / "output.docx"
+                frozen = folder / "frozen.json"
+                if freeze_nonce:
+                    record = {"freeze_nonce": freeze_nonce, "generation": 0, "sha256": edited["sha256"]}
+                    if frozen.exists() and _read(frozen) != record:
+                        fail("delivery_frozen", 409)
+                    if not frozen.exists():
+                        _write(frozen, record)
+                if frozen.exists():
+                    frozen_record = _read(frozen)
+                    if frozen_record.get("generation") != 0 or frozen_record.get("sha256") != edited["sha256"]:
+                        fail("delivery_frozen", 409)
+                identity = manifest["identity"]
+                return DeliveryArtifact(job_id, identity["run_id"], path, edited["sha256"],
+                    edited["word_count"], identity["target_lang"], identity["source_sha256"],
+                    0, edited["revision_id"], "automatic_unreviewed_edited", frozen.exists())
             if row["kind"] == "reviewed" and not view["frozen"]:
                 self._artifact(manifest, row["artifact_id"], row["review_generation"])
             frozen = folder / "frozen.json"
@@ -483,9 +918,14 @@ class OrdinaryLayoutService:
                 if _read(operation / "result.json") != result:
                     fail("receipt_changed", 409)
                 return result
-            _write(operation / "result.json", result)
             summaries = storage._mkdir(baseline / "suggestion_results")
-            _write(summaries / (operation_nonce + ".json"), result)
+            summary_path = summaries / (operation_nonce + ".json")
+            if summary_path.exists():
+                if _read(summary_path) != result:
+                    fail("receipt_changed", 409)
+            _write(operation / "result.json", result)
+            if not summary_path.exists():
+                _write(summary_path, result)
             return result
 
     @public

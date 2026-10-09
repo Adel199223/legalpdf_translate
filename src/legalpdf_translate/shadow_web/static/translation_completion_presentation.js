@@ -43,6 +43,7 @@ export function normalizeArabicReviewState(value) {
 }
 
 export function hasTranslationSaveSeedData(saveSeed = {}, { currentRowId = null, job = null } = {}) {
+  if (job?.job_kind && job.job_kind !== "translate") return false;
   const seed = saveSeed && typeof saveSeed === "object" ? saveSeed : {};
   return Boolean(
     currentRowId
@@ -132,10 +133,10 @@ export function deriveTranslationCompletionPresentation(options = {}) {
   } else if (rebuildCompleted) {
     drawerStatus = "DOCX rebuild complete. Review the translated DOCX and download the refreshed file here.";
     resultTitle = "Translated DOCX refreshed.";
-    resultCopy = "Review the refreshed translated DOCX and download it when you are ready.";
+    resultCopy = "Review and download this copy. Return to the original translation job to save the case record.";
     resultChipLabel = "Ready";
     resultChipTone = "ok";
-    saveStatus = "The translated DOCX was rebuilt. Review it here before you save the case record.";
+    saveStatus = "Return to the original translation job to save the case record.";
   } else if (translationCompleted || hasSaveSeed) {
     drawerStatus = "Translation complete. Review the translated document, then save the case record if everything looks right.";
     resultTitle = "Translation complete.";
@@ -150,6 +151,12 @@ export function deriveTranslationCompletionPresentation(options = {}) {
     saveStatus = review.message || "Review the Arabic document in Word before you save the case record.";
   } else if (review.required && review.resolved && (translationCompleted || hasSaveSeed)) {
     saveStatus = "Arabic document review is complete. Save the case record when you are ready.";
+  }
+  const coverageNotice = String(job?.diagnostics?.source_coverage_notice || "").trim();
+  if (translationCompleted && !rowLoaded && coverageNotice) {
+    drawerStatus = `${drawerStatus} ${coverageNotice}`;
+    resultCopy = `${resultCopy} ${coverageNotice}`;
+    saveStatus = `${saveStatus} ${coverageNotice}`;
   }
 
   const gmailAttachmentReady = Boolean(gmailBatchContext || gmailStep.visible);

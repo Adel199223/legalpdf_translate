@@ -20,6 +20,10 @@ class BrowserOrdinaryLayouts:
 
     def manager_for(self, request, mode, workspace_id):
         context = self.context_for(request)
+        return self.manager_for_context(context, mode, workspace_id)
+
+    def manager_for_context(self, context, mode, workspace_id):
+        """Resolve the same owned manager for browser and background completion."""
         key = (mode, workspace_id)
         with self._lock:
             if key not in self._managers:
@@ -33,11 +37,9 @@ class BrowserOrdinaryLayouts:
                     job = context.translation_jobs.get_job(job_id)
                     if (not job or job.get("runtime_mode") != mode or job.get("workspace_id") != workspace_id):
                         fail("job_unavailable", 404)
-                    from .browser_arabic_review import job_requires_arabic_review
-                    existing = self._managers.get(key)
-                    frozen = existing is not None and existing.service.state(job_id).get("frozen")
-                    if job_requires_arabic_review(job) and not frozen:
-                        context.arabic_reviews.require_resolved(runtime_mode=mode, workspace_id=workspace_id, job=job)
+                    # Reading the completed, unreviewed layout and downloading
+                    # its owned copy must work while Arabic Word review is
+                    # pending. Save/Gmail mutations retain their review gate.
                     return context.translation_jobs.trusted_ordinary_layout_job(job_id,
                         runtime_mode=mode, workspace_id=workspace_id)
 
@@ -77,6 +79,20 @@ def delivery_job_snapshot(manager, job, *, mutation=False, baseline_id=None,
     snapshot = deepcopy(job)
     state = manager.state(job["job_id"])
     snapshot["ordinary_layout"] = state
+    automatic = job.get("result", {}).get("automatic_layout", {})
+    if isinstance(automatic, dict) and automatic.get("status") == "raw_fallback" and state.get("delivery") is None:
+        # A failed or uncertain layout request must not make the paid
+        # translation disappear. Expose only the pinned raw DOCX, while Save
+        # remains unresolved until the formatting failure is addressed.
+        if mutation:
+            fail("automatic_layout_unresolved", 409)
+        trusted = manager._job(job["job_id"])
+        from .saved_docx_layout_service import _read as bounded_read, DOCX_MAX_BYTES
+        from .translation_service import translation_job_docx_path
+        raw_path = translation_job_docx_path(job)
+        if bounded_read(raw_path, DOCX_MAX_BYTES) != trusted.original_docx:
+            fail("original_changed", 409)
+        return snapshot, None
     if state["status"] == "unprepared":
         if baseline_id is not None or expected_delivery_generation is not None or freeze_nonce:
             fail("delivery_unprepared", 409)

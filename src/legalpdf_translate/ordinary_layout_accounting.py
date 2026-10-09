@@ -15,14 +15,29 @@ MODEL = "gpt-5.2"
 ACTUAL_MODEL = "gpt-5.2-2025-12-11"
 
 
+def verified_page_ceiling() -> Decimal:
+    """Recompute the hard reservation from the fresh published price and bounds."""
+    args = layout_accounting_policy().accounting_arguments()
+    pricing = args["pricing_snapshot"]
+    if pricing is None:
+        fail("pricing_reference_expired", 503)
+    limit = args["dispatch_limits"][f"openai:layout_suggestion:{MODEL}"]
+    rate = pricing["models"][f"openai:{MODEL}|default|openai_public_api|USD"]
+    amount = (Decimal(str(limit["max_input_tokens"])) * Decimal(str(rate["input_per_1m"]))
+              + Decimal(str(limit["max_output_tokens"])) * Decimal(str(rate["output_per_1m"]))) / Decimal(1_000_000)
+    if amount != PAGE_CEILING:
+        fail("paid_policy_bound_mismatch", 503)
+    return amount
+
+
 def layout_accounting_policy():
     from .accounting_policy import OrdinaryAccountingPolicy
     source = "https://developers.openai.com/api/docs/models/gpt-5.2"
     rates = {"input_per_1m": 1.75, "cached_input_per_1m": .175, "output_per_1m": 14,
         "provider": "openai", "pricing_model": MODEL, "service_tier": "default",
         "billing_scope": "openai_public_api", "currency": "USD", "source_url": source}
-    policy = OrdinaryAccountingPolicy.from_mapping(pricing={"snapshot_id": "layout_standard_2026_09_27",
-        "verified_at": "2026-09-27", "source": source,
+    policy = OrdinaryAccountingPolicy.from_mapping(pricing={"snapshot_id": "layout_standard_2026_10_09",
+        "verified_at": "2026-10-09", "source": source,
         "models": {f"openai:{name}|default|openai_public_api|USD": {**rates, "pricing_model": name}
                    for name in (MODEL, ACTUAL_MODEL)}},
         limits={f"openai:layout_suggestion:{MODEL}": {"requested_model": MODEL,
@@ -31,10 +46,10 @@ def layout_accounting_policy():
             "allowed_base_urls": ["https://api.openai.com/v1"], "max_input_tokens": 400000,
             "max_image_input_tokens": 10000, "max_image_count": 1, "image_bound_verified": True,
             "image_bound_source_url": "https://developers.openai.com/api/docs/guides/images-vision",
-            "image_bound_verified_at": "2026-09-27",
+            "image_bound_verified_at": "2026-10-09",
             "image_bound_basis": "GPT-5.2 high detail: at most 6144 patches x 1.2; rounded upward below 10000 tokens",
-            "max_output_tokens": 8000, "bound_source_url": source, "bound_verified_at": "2026-09-27"}})
-    return OrdinaryAccountingPolicy(policy._pricing_json, policy._limits_json, date(2026, 9, 27))
+            "max_output_tokens": 8000, "bound_source_url": source, "bound_verified_at": "2026-10-09"}})
+    return OrdinaryAccountingPolicy(policy._pricing_json, policy._limits_json, date(2026, 10, 9))
 
 
 class OrdinaryLayoutAccounting:
@@ -46,7 +61,7 @@ class OrdinaryLayoutAccounting:
     def _source(self, job):
         with self.jobs._lock:
             record = self.jobs._jobs.get(job.job_id)
-            if record is None or record.status != "completed":
+            if record is None or record.status not in {"completed", "formatting"}:
                 fail("accounting_unavailable", 409)
             accountant = record._completed_accountant
             folder = Path(record.result_payload["run_dir"]) / "ordinary_layout_budget" / job.job_id
@@ -124,15 +139,46 @@ class OrdinaryLayoutAccounting:
             self._budgets[job.job_id] = budget
         return self.state(job)
 
+    def authorize_automatic(self, job, policy_fingerprint: str):
+        """Bound the fresh job's included layout stage without claiming user review."""
+        ceiling = verified_page_ceiling()
+        accountant, folder, cost = self._source(job)
+        if accountant.hard_budget:
+            if accountant.budget_context is None:
+                fail("durable_accounting_required", 503)
+            return self.state(job)
+        cap = cost + ceiling * len(job.selected_pages)
+        identity = {"job_id": job.job_id, "run_id": job.run_id, "binding": dict(job.binding),
+            "original_accounting_identity": accountant.run_identity,
+            "automatic_policy_fingerprint": policy_fingerprint}
+        record = {"authorization_nonce": "automatic_source_layout_v1", "cap_usd": str(cap),
+            "translation_cost_usd": str(cost), "binding": dict(job.binding), "identity": identity,
+            "authorization_kind": "server_owned_fresh_job_ceiling"}
+        with self._lock:
+            receipt = folder / "authorization.json"
+            if receipt.exists():
+                if decode(receipt.read_bytes()) != record:
+                    fail("budget_already_authorized", 409)
+                return self.state(job)
+            try:
+                folder.mkdir(parents=True, exist_ok=False)
+            except FileExistsError:
+                fail("budget_authorization_incomplete", 409)
+            budget = ReservationBudget(folder / "budget.json", cap_usd=cap, identity=identity)
+            budget.reserve("translation-settled", cost, {"kind": "prior_completed_translation"})
+            budget.finalize("translation-settled", cost, {"cost_usd": str(cost)})
+            atomic_json(receipt, record)
+            self._budgets[job.job_id] = budget
+        return self.state(job)
+
     def policy(self, job):
         accountant, folder, _ = self._source(job)
         with self._lock:
             budget = self._budget(job, accountant, folder)
         if budget is None or getattr(budget, "blocked", False):
             fail("budget_authorization_required", 409)
-        if layout_accounting_policy().accounting_arguments()["pricing_snapshot"] is None:
-            fail("pricing_reference_expired", 503)
-        return LayoutSuggestionPolicy(MODEL, str(PAGE_CEILING), str(PAGE_CEILING * len(job.selected_pages)))
+        ceiling = verified_page_ceiling()
+        return LayoutSuggestionPolicy(MODEL, str(ceiling), str(ceiling * len(job.selected_pages)))
 
     def accountant(self, job, operation_nonce, operation_dir, policy):
         accountant, folder, _ = self._source(job)

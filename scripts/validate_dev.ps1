@@ -222,7 +222,8 @@ $fullExtraCommands = @(
         Arguments = @("-m", "pytest", "-q", "--durations=10",
             "tests/test_saved_docx_layout.py", "tests/test_saved_docx_layout_writer.py",
             "tests/test_saved_docx_layout_service.py", "tests/test_shadow_web_saved_docx_layout_api.py",
-            "tests/test_saved_docx_layout_browser_state.py")
+            "tests/test_saved_docx_layout_browser_state.py",
+            "tests/test_ordinary_auto_layout_artifacts.py")
     },
     @{
         Executable = $venvPython
@@ -231,7 +232,11 @@ $fullExtraCommands = @(
             "tests/test_ordinary_layout_manager.py", "tests/test_ordinary_layout_delivery_integration.py",
             "tests/test_shadow_web_ordinary_layout_api.py", "tests/test_ordinary_layout_browser_state.py",
             "tests/test_ordinary_layout_parent_races.py", "tests/test_gmail_layout_confirmation_browser.py",
-            "tests/test_gmail_confirmation_prevalidation.py")
+            "tests/test_gmail_confirmation_prevalidation.py",
+            "tests/test_ordinary_auto_layout_integration.py",
+            "tests/test_ordinary_auto_layout_workflow.py",
+            "tests/test_browser_pdf_text_bundle.py",
+            "tests/test_ordinary_accounting_policy.py")
     },
     @{
         Executable = $venvPython

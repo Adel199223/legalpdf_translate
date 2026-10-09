@@ -129,9 +129,9 @@ def test_existing_hard_cap_cannot_be_replaced_and_unknown_cost_blocks(tmp_path, 
 
 def test_verified_pricing_reference_expires_against_actual_future_date():
     policy = layout_accounting_policy()
-    assert policy.accounting_arguments(today=date(2026, 9, 27))["pricing_snapshot"] is not None
-    assert policy.accounting_arguments(today=date(2026, 10, 28))["pricing_snapshot"] is None
-    assert policy.accounting_arguments(today=date(2026, 9, 26))["pricing_snapshot"] is None
+    assert policy.accounting_arguments(today=date(2026, 10, 9))["pricing_snapshot"] is not None
+    assert policy.accounting_arguments(today=date(2026, 11, 10))["pricing_snapshot"] is None
+    assert policy.accounting_arguments(today=date(2026, 10, 8))["pricing_snapshot"] is None
 
 
 def test_job_bound_save_cannot_update_another_historical_run(tmp_path, monkeypatch):

@@ -22,7 +22,7 @@ def enable_paid(case, *, response_kind="valid", cap="3"):
     calls, accountants = [], []
     policy = LayoutSuggestionPolicy("gpt-5.2", ".4", "1")
     budget = ReservationBudget(case.root.parent / "shared_budget.json", cap_usd=cap, identity={"fixture": "shared"})
-    pricing = ordinary_accounting_policy().accounting_arguments(today=date(2026, 9, 27))["pricing_snapshot"]
+    pricing = ordinary_accounting_policy().accounting_arguments(today=date(2026, 10, 9))["pricing_snapshot"]
     limits = {"requested_model": "gpt-5.2", "allowed_actual_models": ["gpt-5.2"],
         "allowed_actual_service_tiers": ["default"], "requested_service_tier": "default",
         "billing_scope": "openai_public_api", "currency": "USD", "allowed_base_urls": ["https://api.openai.com/v1"],

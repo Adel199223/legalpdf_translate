@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from .browser_pdf_bundle import (
     browser_pdf_bundle_page_count,
     browser_pdf_bundle_page_image_path,
+    browser_pdf_bundle_page_text,
 )
 from .types import OcrMode
 
@@ -94,7 +95,11 @@ def get_source_page_count(path: Path) -> int:
 def extract_ordered_source_text(path: Path, page_index: int, *, preserve_structure: bool = False) -> "OrderedPageText":
     if is_pdf_source(path):
         if source_has_browser_pdf_bundle(path):
-            return _blank_ordered_page_text()
+            evidence = browser_pdf_bundle_page_text(path, page_index + 1)
+            if evidence is None:
+                return _blank_ordered_page_text()
+            from .browser_pdf_text import ordered_browser_page_text
+            return ordered_browser_page_text(evidence, preserve_structure=preserve_structure)
         from .pdf_text_order import extract_ordered_page_text
 
         return extract_ordered_page_text(path, page_index, **({"preserve_structure": True} if preserve_structure else {}))

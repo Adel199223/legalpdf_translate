@@ -389,19 +389,24 @@ def _independent_paragraph_check(original, actual, original_row, choice, context
 
 
 def validate_built_docx(docx_bytes: bytes, source_map: dict, *, original_docx: bytes,
-                        snapshot: dict, pages: list, decisions: dict) -> None:
+                        snapshot: dict, pages: list, decisions: dict,
+                        require_review: bool = True) -> None:
     """Reparse independently, check ownership/content, then exact approved scaffold."""
     actual_snapshot = model.inspect_docx(original_docx, snapshot["target_lang"])
     if actual_snapshot != snapshot:
         model._fail("snapshot_identity_mismatch")
-    decisions = model.validate_decisions(snapshot, pages, decisions, require_review=True)
+    decisions = model.validate_decisions(snapshot, pages, decisions, require_review=require_review)
+    if not require_review and (decisions["review"]["document_reviewed"]
+                               or decisions["review"]["pages_reviewed"]):
+        model._fail("automatic_review_claim")
     original, _, original_root, _, context = model._load_docx(original_docx)
     output, _ = model._package(docx_bytes)
     if set(output) != set(original) or any(output[n] != original[n] for n in original if n != "word/document.xml"):
         model._fail("unaffected_package_changed")
     actual_root = model._xml(output["word/document.xml"])
     expected_root, locations, structural = _assemble(original_root, snapshot, decisions)
-    expected_map = _source_map(snapshot, pages, decisions, locations, structural, docx_bytes)
+    expected_map = _source_map(snapshot, pages, decisions, locations, structural, docx_bytes,
+                               require_review=require_review)
     if source_map != expected_map:
         model._fail("source_map_mismatch")
     if actual_root.tag != W + "document" or len(actual_root) != 1 or actual_root[0].tag != W + "body":
@@ -438,11 +443,12 @@ def validate_built_docx(docx_bytes: bytes, source_map: dict, *, original_docx: b
         model._fail("output_layout_changed")
 
 
-def _source_map(snapshot, pages, decisions, locations, structural, raw):
-    return {"version": model.VERSION, "writer_version": WRITER_VERSION,
+def _source_map(snapshot, pages, decisions, locations, structural, raw, *, require_review=True):
+    mapping = {"version": model.VERSION, "writer_version": WRITER_VERSION,
         "docx_sha256": model._sha(raw), "input_docx_sha256": snapshot["docx_sha256"],
         "decisions_sha256": model._sha(model._canonical(decisions)), "target_lang": snapshot["target_lang"],
-        "geometry_basis": "reviewed_image_regions_not_ocr", "rendered_layout_acceptance": "not_evaluated",
+        "geometry_basis": "reviewed_image_regions_not_ocr" if require_review else "model_proposal_unreviewed",
+        "rendered_layout_acceptance": "not_evaluated",
         "rendered_page_count": None, "exact_text_preserved": True, "logical_order_preserved": True,
         "source_character_coverage": "not_proven", "source_pages": deepcopy(pages),
         "review": deepcopy(decisions["review"]), "structural_paragraphs": structural,
@@ -451,6 +457,9 @@ def _source_map(snapshot, pages, decisions, locations, structural, raw):
             for c in decisions["paragraphs"]],
         "qualifications": [{"paragraph_id": c["paragraph_id"], "reason": c["unmapped_reason"]}
                            for c in decisions["paragraphs"] if not c["regions"]]}
+    if not require_review:
+        mapping["document_reviewed"] = False
+    return mapping
 
 
 def build_docx(docx_bytes: bytes, snapshot: dict, pages: list, decisions: dict) -> SavedDocxLayoutArtifact:
@@ -465,6 +474,30 @@ def build_docx(docx_bytes: bytes, snapshot: dict, pages: list, decisions: dict) 
         raw = _write(members, infos, xml)
         mapping = _source_map(snapshot, pages, checked, locations, structural, raw)
         validate_built_docx(raw, mapping, original_docx=docx_bytes, snapshot=snapshot, pages=pages, decisions=checked)
+        return SavedDocxLayoutArtifact(raw, mapping)
+    except model.SavedDocxLayoutError:
+        raise
+    except (TypeError, ValueError, KeyError, IndexError, OverflowError, AttributeError, etree.XPathError):
+        model._fail("invalid_saved_docx_writer_input")
+
+
+def build_unreviewed_docx(docx_bytes: bytes, snapshot: dict, pages: list,
+                          decisions: dict) -> SavedDocxLayoutArtifact:
+    """Build the same editable layout with explicit unreviewed provenance."""
+    try:
+        if model.inspect_docx(docx_bytes, snapshot["target_lang"]) != snapshot:
+            model._fail("snapshot_identity_mismatch")
+        checked = model.validate_decisions(snapshot, pages, decisions, require_review=False)
+        if checked["review"]["document_reviewed"] or checked["review"]["pages_reviewed"]:
+            model._fail("automatic_review_claim")
+        members, infos, original_root, _, _ = model._load_docx(docx_bytes)
+        root, locations, structural = _assemble(original_root, snapshot, checked)
+        xml = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+        raw = _write(members, infos, xml)
+        mapping = _source_map(snapshot, pages, checked, locations, structural, raw,
+                              require_review=False)
+        validate_built_docx(raw, mapping, original_docx=docx_bytes, snapshot=snapshot,
+                            pages=pages, decisions=checked, require_review=False)
         return SavedDocxLayoutArtifact(raw, mapping)
     except model.SavedDocxLayoutError:
         raise

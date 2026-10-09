@@ -877,7 +877,10 @@ def reviewed_translation_word_count(docx_path: Path) -> int:
 def translation_job_docx_path(job: Mapping[str, Any]) -> Path:
     result = job.get("result", {})
     seed = result.get("save_seed") if isinstance(result, Mapping) else None
-    if job.get("status") != "completed" or job.get("job_kind") != "translate" or not isinstance(seed, Mapping):
+    automatic = result.get("automatic_layout") if isinstance(result, Mapping) else None
+    eligible_kind = job.get("job_kind") == "translate" or (job.get("job_kind") == "rebuild"
+        and isinstance(automatic, Mapping) and automatic.get("status") == "automatic_unreviewed")
+    if job.get("status") != "completed" or not eligible_kind or not isinstance(seed, Mapping):
         raise ValueError("A completed translation with a Save-to-Job-Log seed is required.")
     path = seed.get("output_docx") or seed.get("partial_docx")
     if not path:
@@ -1224,6 +1227,10 @@ class _ManagedTranslationJob:
     _reviewed_formatting_records: dict[str, str] = field(default_factory=dict, repr=False)
     _ordinary_baseline: dict[str, Any] = field(default_factory=dict, repr=False)
     _completed_accountant: Any = field(default=None, repr=False)
+    _ordinary_auto_layout_policy: str | None = field(default=None, repr=False)
+    _rebuild_origin_job_id: str | None = field(default=None, repr=False)
+    _automatic_layout_cancel_requested: bool = field(default=False, repr=False)
+    _automatic_layout_publication_started: bool = field(default=False, repr=False)
 
 
 class TranslationJobManager:
@@ -1234,6 +1241,7 @@ class TranslationJobManager:
         *,
         accounting_factory: Callable[..., Any] | None = None,
         accounting_policy: OrdinaryAccountingPolicy | None = None,
+        automatic_layout_runner: Callable[[str, str], Mapping[str, Any]] | None = None,
     ) -> None:
         self._lock = threading.RLock()
         self._jobs: dict[str, _ManagedTranslationJob] = {}
@@ -1245,11 +1253,43 @@ class TranslationJobManager:
             self._workflow_accounting["accounting_factory"] = accounting_factory
         if accounting_policy is not None:
             self._workflow_accounting["accounting_policy"] = accounting_policy
+        self._automatic_layout_runner = automatic_layout_runner
+        self._automatic_layout_cancel = None
+
+    def set_automatic_layout_runner(self, runner: Callable[[str, str], Mapping[str, Any]]) -> None:
+        """Attach the browser-owned runner before jobs start; tests may inject a bounded fake."""
+        if not callable(runner) or self._automatic_layout_runner is not None:
+            raise ValueError("ordinary_auto_layout_runner_unavailable")
+        with self._lock:
+            if self._jobs:
+                raise ValueError("ordinary_auto_layout_runner_late")
+            self._automatic_layout_runner = runner
+
+    def set_automatic_layout_cancel(self, callback: Callable[[str], None]) -> None:
+        if not callable(callback) or self._automatic_layout_cancel is not None:
+            raise ValueError("ordinary_auto_layout_cancel_unavailable")
+        self._automatic_layout_cancel = callback
+
+    def automatic_layout_cancel_requested(self, job_id: str) -> bool:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return bool(job and job._automatic_layout_cancel_requested)
+
+    def begin_automatic_layout_publication(self, job_id: str) -> bool:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if (job is None or job.status != "formatting"
+                    or job._automatic_layout_cancel_requested):
+                return False
+            job._automatic_layout_publication_started = True
+            return True
 
     def _job_actions(self, job: _ManagedTranslationJob) -> dict[str, bool]:
         status = job.status
         return {
-            "cancel": job.job_kind == "translate" and status in {"queued", "running", "cancel_requested"},
+            "cancel": (job.job_kind == "translate" and status in {"queued", "running", "cancel_requested"}
+                or status == "formatting" and not job._automatic_layout_cancel_requested
+                    and not job._automatic_layout_publication_started),
             "resume": job.job_kind == "translate" and status in {"failed", "cancelled"},
             "rebuild": job.job_kind == "translate" and status in {"completed", "failed", "cancelled"},
             "review_export": job.job_kind == "translate" and bool(job.result_payload.get("review_queue")),
@@ -1305,7 +1345,7 @@ class TranslationJobManager:
             owner = self._reservations.get(reservation_key)
             if owner:
                 existing = self._jobs.get(owner)
-                if existing is not None and existing.status in {"queued", "running", "cancel_requested"}:
+                if existing is not None and existing.status in {"queued", "running", "cancel_requested", "formatting"}:
                     raise ValueError(
                         "A browser translation workflow is already active for this run folder: "
                         + reservation_key
@@ -1378,13 +1418,29 @@ class TranslationJobManager:
             job = self._jobs.get(job_id)
             if job is None:
                 return False
-            workflow = job._workflow
-            if workflow is None or job.job_kind != "translate" or job.status not in {"queued", "running"}:
-                return False
-            job.status = "cancel_requested"
-            job.status_text = "Cancellation requested"
-            job.updated_at = _utc_now_iso()
-        workflow.cancel()
+            if job.status == "formatting":
+                if job._automatic_layout_cancel_requested or job._automatic_layout_publication_started:
+                    return False
+                job._automatic_layout_cancel_requested = True
+                job.status_text = "Stopping source layout after the current page..."
+                job.updated_at = _utc_now_iso()
+                callback = self._automatic_layout_cancel
+                workflow = None
+            else:
+                callback = None
+                workflow = job._workflow
+                if workflow is None or job.job_kind != "translate" or job.status not in {"queued", "running"}:
+                    return False
+                job.status = "cancel_requested"
+                job.status_text = "Cancellation requested"
+                job.updated_at = _utc_now_iso()
+        if callback is not None:
+            try:
+                callback(job_id)
+            except Exception:
+                pass  # The job-level intent still stops pre-dispatch/publication.
+        if workflow is not None:
+            workflow.cancel()
         return True
 
     def _mark_finished(
@@ -1410,7 +1466,7 @@ class TranslationJobManager:
             if artifacts is not None:
                 job.artifacts_payload = dict(artifacts)
             job._completed_accountant = getattr(job._workflow, "_dispatch_accounting", None)
-            if status == "completed" and job.job_kind in {"translate", "rebuild"}:
+            if status in {"completed", "formatting"} and job.job_kind in {"translate", "rebuild"}:
                 try:
                     self._capture_ordinary_baseline(job)
                 except Exception:
@@ -1419,17 +1475,132 @@ class TranslationJobManager:
             job._workflow = None
             job.updated_at = _utc_now_iso()
             reservation_key = job._reservation_key
+        if reservation_key and status != "formatting":
+            self._release_reservation(reservation_key, job_id)
+
+    def _finish_automatic_layout(self, job_id: str, result: Mapping[str, Any] | None,
+                                 error_code: str | None = None) -> None:
+        """Complete the ordinary job without losing the immutable raw baseline."""
+        with self._lock:
+            job = self._jobs[job_id]
+            if job.status != "formatting":
+                raise ValueError("ordinary_auto_layout_state_changed")
+            state = dict(result or {})
+            output = state.get("output_path")
+            if output:
+                path = Path(output).expanduser().resolve()
+                from .saved_docx_layout_service import _read as bounded_read
+                raw = bounded_read(path, 32 * 1024 * 1024)
+                if hashlib.sha256(raw).hexdigest() != state.get("sha256"):
+                    raise ValueError("ordinary_auto_layout_candidate_changed")
+                job.artifacts_payload["output_docx"] = str(path)
+                job.result_payload.setdefault("artifacts", {})["output_docx"] = str(path)
+                seed = job.result_payload.get("save_seed")
+                if isinstance(seed, dict):
+                    seed["output_docx"] = str(path)
+                    if type(state.get("word_count")) is int:
+                        seed["word_count"] = state["word_count"]
+                job.status_text = "Translation and automatic layout complete; review the unreviewed DOCX"
+                state["status"] = "automatic_unreviewed"
+            else:
+                job.status_text = ("Translation complete; source layout stopped after cancellation"
+                    if job._automatic_layout_cancel_requested else
+                    "Translation complete; automatic layout needs attention")
+                state = {"status": "raw_fallback", "reason": error_code or state.get("reason") or "automatic_layout_unavailable"}
+            if job._ordinary_auto_layout_policy and job.config_payload.get("image_mode") == "off":
+                notice = ("Page images were off; coverage is limited to extractable text. "
+                          "Visible text in drawings or images can be missing.")
+                job.diagnostics_payload["source_coverage_notice"] = notice
+                job.status_text = f"{job.status_text}. {notice}"
+            job.result_payload["automatic_layout"] = state
+            job.diagnostics_payload["automatic_layout"] = {"status": state["status"],
+                **({"reason": state["reason"]} if state.get("reason") else {})}
+            job.status = "completed"
+            job.updated_at = _utc_now_iso()
+            reservation_key = job._reservation_key
         if reservation_key:
             self._release_reservation(reservation_key, job_id)
+
+    def _reuse_proven_ordinary_baseline(self, job: _ManagedTranslationJob, output: Path, source: Path) -> bool:
+        """Reuse exact pinned raw/map bytes after a byte-equivalent local repack.
+
+        ZIP container metadata may change on rebuild/resume. Every member byte,
+        writer ownership entry, source and frozen policy must still agree.
+        """
+        from io import BytesIO
+        from zipfile import ZipFile
+        from .ordinary_layout_contracts import identifier
+        from .saved_docx_layout_service import _read as bounded_read
+        run_dir = Path(job.result_payload["run_dir"]).expanduser().resolve()
+        intent_path = run_dir / "ordinary_auto_layout" / "intent.json"
+        pointer_path = run_dir / "ordinary_auto_layout" / "operation.json"
+        if not intent_path.exists() or not pointer_path.exists():
+            return False
+        intent = json.loads(bounded_read(intent_path, 8 * 1024 * 1024))
+        pointer = json.loads(bounded_read(pointer_path, 8 * 1024 * 1024))
+        origin = identifier(pointer["origin_job_id"])
+        retained = run_dir / "ordinary_layout_originals" / origin
+        original_path = retained / "provider.docx"
+        mapping_path = retained / "provider.source_map.json"
+        old_raw = bounded_read(original_path, 32 * 1024 * 1024)
+        old_map_bytes = bounded_read(mapping_path, 8 * 1024 * 1024)
+        new_raw = bounded_read(output, 32 * 1024 * 1024)
+        new_map = json.loads(bounded_read(output.with_suffix(".source_map.json"), 8 * 1024 * 1024))
+        old_map = json.loads(old_map_bytes)
+        def members(raw):
+            with ZipFile(BytesIO(raw)) as package:
+                names = package.namelist()
+                if len(names) > 1024 or len(names) != len(set(names)):
+                    raise ValueError("ordinary_auto_layout_rebuild_package_changed")
+                return {name: hashlib.sha256(package.read(name)).hexdigest() for name in names}
+        policy = job._ordinary_auto_layout_policy or ""
+        source_hash = hashlib.sha256(bounded_read(source, 64 * 1024 * 1024)).hexdigest()
+        seed = job.result_payload.get("save_seed") or {}
+        if (not isinstance(intent, dict) or not isinstance(pointer, dict)
+                or not isinstance(old_map, dict) or not isinstance(new_map, dict)
+                or intent.get("run_id") != seed.get("run_id")
+                or intent.get("runtime_mode") != job.runtime_mode
+                or intent.get("workspace_id") != job.workspace_id
+                or intent.get("target_lang") != job.config_payload["target_lang"]
+                or intent.get("policy_fingerprint") != policy.split(":", 1)[-1]
+                or intent.get("source_pdf_sha256") != source_hash
+                or intent.get("raw_docx_sha256") != hashlib.sha256(old_raw).hexdigest()
+                or intent.get("raw_source_map_bytes_sha256") != hashlib.sha256(old_map_bytes).hexdigest()
+                or old_map.get("docx_sha256") != hashlib.sha256(old_raw).hexdigest()
+                or new_map.get("docx_sha256") != hashlib.sha256(new_raw).hexdigest()
+                or members(old_raw) != members(new_raw)):
+            raise ValueError("ordinary_auto_layout_rebuild_identity_changed")
+        old_map["docx_sha256"] = new_map["docx_sha256"] = "verified-equivalent"
+        if old_map != new_map:
+            raise ValueError("ordinary_auto_layout_rebuild_ownership_changed")
+        pages = tuple(page["source_page_number"] for page in old_map["pages"])
+        if list(pages) != intent.get("selected_pages"):
+            raise ValueError("ordinary_auto_layout_rebuild_page_selection_changed")
+        job._ordinary_baseline = {"original_path": str(original_path),
+            "original_sha256": hashlib.sha256(old_raw).hexdigest(),
+            "source_sha256": source_hash, "source_path": str(source),
+            "output_path": str(original_path), "selected_pages": pages,
+            "mapping": json.loads(old_map_bytes),
+            "mapping_sha256": hashlib.sha256(old_map_bytes).hexdigest(),
+            "mapping_path": str(mapping_path)}
+        return True
 
     def _capture_ordinary_baseline(self, job: _ManagedTranslationJob) -> None:
         """Preserve provider output before the browser exposes interactive editing."""
         from .saved_docx_layout_service import _read as bounded_read
         if job._ordinary_baseline or job._config is None:
             return
-        output = translation_job_docx_path(self._snapshot(job))
+        # Formatting is a post-translation state: the public completed-job
+        # accessor deliberately rejects it, while the raw seed is already
+        # durable and must be captured before automatic layout can replace it.
+        seed = job.result_payload.get("save_seed")
+        if not isinstance(seed, dict) or not seed.get("output_docx"):
+            raise ValueError("ordinary_layout_completed_output_unavailable")
+        output = Path(str(seed["output_docx"])).expanduser().resolve()
         source = job._config.pdf_path.expanduser().resolve()
         if not is_pdf_source(source):
+            return
+        if job._ordinary_auto_layout_policy and self._reuse_proven_ordinary_baseline(job, output, source):
             return
         raw = bounded_read(output, 32 * 1024 * 1024)
         source_raw = bounded_read(source, 64 * 1024 * 1024)
@@ -1444,12 +1615,17 @@ class TranslationJobManager:
         original = folder / "provider.docx"
         with original.open("xb") as handle:
             handle.write(raw)
+        mapping_raw = b""
         try:
-            mapping = json.loads(bounded_read(output.with_suffix(".source_map.json"), 8 * 1024 * 1024))
+            mapping_raw = bounded_read(output.with_suffix(".source_map.json"), 8 * 1024 * 1024)
+            mapping = json.loads(mapping_raw)
             if not isinstance(mapping, dict):
                 mapping = {}
         except (ValueError, OSError):
             mapping = {}
+        map_copy = folder / "provider.source_map.json"
+        with map_copy.open("xb") as handle:
+            handle.write(mapping_raw)
         pages = tuple(int(page["source_page_number"]) for page in mapping.get("pages", []))
         if not pages:
             config = job._config
@@ -1459,7 +1635,9 @@ class TranslationJobManager:
             pages = tuple(range(config.start_page, end + 1))
         job._ordinary_baseline = {"original_path": str(original), "original_sha256": hashlib.sha256(raw).hexdigest(),
             "source_sha256": source_hash, "source_path": str(source),
-            "output_path": str(output), "selected_pages": pages, "mapping": mapping}
+            "output_path": str(output), "selected_pages": pages, "mapping": mapping,
+            "mapping_sha256": hashlib.sha256(mapping_raw).hexdigest() if mapping_raw else "",
+            "mapping_path": str(map_copy)}
 
     def trusted_ordinary_layout_job(self, job_id: str, *, runtime_mode: str, workspace_id: str):
         """Resolve bytes and source associations exclusively from the owned completed job."""
@@ -1469,7 +1647,7 @@ class TranslationJobManager:
         with self._lock:
             job = self._jobs.get(job_id)
             if (job is None or job.runtime_mode != runtime_mode or job.workspace_id != workspace_id
-                    or job.status != "completed" or job.job_kind not in {"translate", "rebuild"}
+                    or job.status not in {"completed", "formatting"} or job.job_kind not in {"translate", "rebuild"}
                     or not job._ordinary_baseline):
                 fail("job_unavailable", 404)
             baseline = deepcopy(job._ordinary_baseline)
@@ -1484,40 +1662,67 @@ class TranslationJobManager:
             fail("original_changed", 409)
         groups = {}
         mapping = baseline["mapping"]
-        # Paragraph edits can retain server-owned source associations only while
-        # paragraph order/control tokens are unchanged. Never infer from counts alone.
+        # Exact writer OOXML locations, rather than target wording or paragraph
+        # counts, own physical source-page associations. Unmapped controls stay
+        # unassigned; nonempty ambiguous text fails closed in the pure binder.
         current = inspect_docx(reviewed, language)
         prior = inspect_docx(original, language)
-        if len(current["paragraphs"]) == len(prior["paragraphs"]) and all(
-                (a["text"], a["has_page_break"]) == (b["text"], b["has_page_break"])
-                for a, b in zip(current["paragraphs"], prior["paragraphs"])):
-            owners = {}
-            if mapping.get("docx_sha256") == baseline["original_sha256"]:
-                for page in mapping.get("pages", []):
-                    number = page["source_page_number"]
-                    for block in page.get("blocks", []):
-                        location = block.get("location", {})
-                        if location.get("kind") == "body_paragraph":
-                            index = location.get("paragraph_index")
-                            if type(index) is int and 0 <= index < len(current["paragraphs"]):
-                                owners.setdefault(index, set()).add(number)
-                last = None
-                for index, row in enumerate(current["paragraphs"]):
-                    if len(owners.get(index, set())) == 1:
-                        last = next(iter(owners[index]))
-                    elif row["has_page_break"] and last is not None and not row["text"].strip("\f\n\r\t "):
-                        owners[index] = {last}
-                if len(owners) == len(current["paragraphs"]) and all(len(v) == 1 for v in owners.values()):
-                    for index, row in enumerate(current["paragraphs"]):
-                        groups.setdefault(next(iter(owners[index])), []).append(row["id"])
-                    if [pid for page in sorted(groups) for pid in groups[page]] != [p["id"] for p in current["paragraphs"]]:
-                        groups = {}
+        if (mapping.get("docx_sha256") == baseline["original_sha256"]
+                and len(current["paragraphs"]) == len(prior["paragraphs"]) and all(
+                    (a["text"], a["has_page_break"]) == (b["text"], b["has_page_break"])
+                    for a, b in zip(current["paragraphs"], prior["paragraphs"]))):
+            from .ordinary_auto_layout_artifacts import bind_raw_page_map, OrdinaryAutoArtifactError
+            raw_map = bounded_read(Path(baseline["mapping_path"]), 8 * 1024 * 1024)
+            if hashlib.sha256(raw_map).hexdigest() != baseline["mapping_sha256"]:
+                fail("page_mapping_stale", 409)
+            try:
+                snapshot = bind_raw_page_map(original, mapping,
+                    source_pdf_sha256=baseline["source_sha256"],
+                    selected_pages=tuple(baseline["selected_pages"]), target_lang=language)
+                groups = snapshot.page_ids
+            except OrdinaryAutoArtifactError:
+                # Historical/manual layouts may lack a complete writer map.
+                # They remain editable but cannot claim source-page seeding.
+                groups = {}
         return OrdinaryLayoutJob(job_id=job_id, mode=runtime_mode, workspace_id=workspace_id, run_id=run_id,
             source_pdf=source, reviewed_docx=reviewed, original_docx=original, target_lang=language,
             selected_pages=tuple(baseline["selected_pages"]), binding={"job_id": job_id, "run_id": run_id,
-                "source_sha256": baseline["source_sha256"], "original_sha256": baseline["original_sha256"]},
+                "source_sha256": baseline["source_sha256"], "original_sha256": baseline["original_sha256"],
+                "raw_source_map_sha256": hashlib.sha256(json.dumps(mapping, sort_keys=True,
+                    ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")).hexdigest()},
             page_groups={p: tuple(ids) for p, ids in groups.items()},
             mapping_docx_sha256=hashlib.sha256(reviewed).hexdigest() if groups else "")
+
+    def trusted_ordinary_raw_map(self, job_id: str, *, runtime_mode: str, workspace_id: str) -> dict[str, Any]:
+        """Return the exact retained writer map after checking its immutable bytes."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if (job is None or job.runtime_mode != runtime_mode or job.workspace_id != workspace_id
+                    or job.status not in {"formatting", "completed"} or not job._ordinary_baseline):
+                raise ValueError("ordinary_auto_layout_job_unavailable")
+            baseline = deepcopy(job._ordinary_baseline)
+        from .saved_docx_layout_service import _read as bounded_read
+        raw = bounded_read(Path(baseline["mapping_path"]), 8 * 1024 * 1024)
+        if hashlib.sha256(raw).hexdigest() != baseline["mapping_sha256"]:
+            raise ValueError("ordinary_auto_layout_map_changed")
+        return json.loads(raw)
+
+    def trusted_ordinary_baseline_identity(self, job_id: str, *, runtime_mode: str,
+                                            workspace_id: str) -> dict[str, Any]:
+        """Expose only content-free bytes and run identities for durable re-entry."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if (job is None or job.runtime_mode != runtime_mode or job.workspace_id != workspace_id
+                    or job.status not in {"formatting", "completed"} or not job._ordinary_baseline):
+                raise ValueError("ordinary_auto_layout_job_unavailable")
+            base = job._ordinary_baseline
+            return {"job_id": job_id, "run_dir": str(job.result_payload["run_dir"]),
+                "run_id": str(job.result_payload.get("save_seed", {}).get("run_id") or Path(job.result_payload["run_dir"]).name),
+                "source_pdf_sha256": base["source_sha256"], "raw_docx_sha256": base["original_sha256"],
+                "raw_source_map_bytes_sha256": base["mapping_sha256"],
+                "selected_pages": list(base["selected_pages"]),
+                "target_lang": job.config_payload["target_lang"],
+                "runtime_mode": runtime_mode, "workspace_id": workspace_id}
 
     def _start_job(
         self,
@@ -1529,6 +1734,7 @@ class TranslationJobManager:
         settings_path: Path,
         reviewed_source_context: Any = None,
         reviewed_source_loader: Callable[[], Any] | None = None,
+        rebuild_origin_job_id: str | None = None,
     ) -> dict[str, Any]:
         if reviewed_source_context is not None:
             from .ordinary_reviewed_source import OrdinaryReviewedSourceContext
@@ -1570,6 +1776,7 @@ class TranslationJobManager:
             _reviewed_source_context=reviewed_source_context,
             _reviewed_source_loader=reviewed_source_loader,
             _reviewed_settings_path=settings_path.expanduser().resolve() if reviewed_source_context is not None else None,
+            _rebuild_origin_job_id=rebuild_origin_job_id,
         )
         with self._lock:
             self._jobs[job_id] = record
@@ -1586,7 +1793,8 @@ class TranslationJobManager:
                         raise ValueError("ordinary_source_review_job_context_changed")
                 gui_settings = load_gui_settings_from_path(settings_path)
                 if job_kind == "translate":
-                    max_retries = int(gui_settings.get("perf_max_transport_retries", 4) or 4)
+                    retries_setting = gui_settings.get("perf_max_transport_retries", 4)
+                    max_retries = 4 if retries_setting is None else int(retries_setting)
                     backoff_cap = float(gui_settings.get("perf_backoff_cap_seconds", 12.0) or 12.0)
                     client = None if selected_context is not None else OpenAIResponsesClient(
                         max_transport_retries=max_retries,
@@ -1595,15 +1803,39 @@ class TranslationJobManager:
                     )
                     from .workflow import TranslationWorkflow
 
+                    from .translation_policy import resolve_ordinary_auto_layout_policy, resolve_translation_protocol
+                    auto_policy = resolve_ordinary_auto_layout_policy(
+                        protocol=resolve_translation_protocol(),
+                        fresh_browser_job=not config.resume and self._automatic_layout_runner is not None,
+                        reviewed_source=selected_context is not None)
+                    if auto_policy and self._automatic_layout_runner is None:
+                        raise ValueError("ordinary_auto_layout_runner_unavailable")
+                    if auto_policy:
+                        from .ordinary_layout_accounting import verified_page_ceiling
+                        per_page = None
+                        try:
+                            per_page = verified_page_ceiling()
+                            progress_text = ("Translating; automatic source layout follows "
+                                f"(up to USD{per_page} per selected page)")
+                        except Exception:
+                            progress_text = "Translating; automatic source layout reference needs renewal"
+                        with self._lock:
+                            self._jobs[job_id]._ordinary_auto_layout_policy = auto_policy
+                            self._jobs[job_id].diagnostics_payload["automatic_layout"] = {
+                                "status": "planned", "policy": auto_policy.split(":", 1)[0],
+                                "max_page_cost_usd": str(per_page) if per_page is not None else None}
+                    else:
+                        progress_text = "Translating..."
                     workflow = TranslationWorkflow(
                         client=client,
                         log_callback=lambda message: self._append_log(job_id, message),
                         progress_callback=lambda idx, total, status: self._update_progress(job_id, idx, total, status),
                         gui_settings=gui_settings,
                         **self._workflow_accounting,
+                        ordinary_auto_layout_policy=auto_policy,
                         **({"reviewed_source_context": selected_context} if selected_context is not None else {}),
                     )
-                    self._mark_running(job_id, workflow, "Translating...")
+                    self._mark_running(job_id, workflow, progress_text)
                     summary = workflow.run(config)
                     payload = _translation_result_payload(summary=summary, config=config, settings_path=settings_path)
                     status = "completed"
@@ -1615,17 +1847,36 @@ class TranslationJobManager:
                         elif str(summary.error or "") == "authentication_failure":
                             status = "failed"
                             status_text = "OpenAI authentication failed"
+                        elif str(summary.error or "") == "source_unavailable":
+                            status = "failed"
+                            status_text = "Source text is unavailable. Enable page images or OCR, then retry."
+                        elif str(summary.error or "") == "source_image_unavailable":
+                            status = "failed"
+                            status_text = "The required full-page image is unavailable. Retry the source upload before translating."
                         else:
                             status = "failed"
                             status_text = f"Translation failed ({summary.error or 'runtime_failure'})"
+                    auto_policy = workflow._ordinary_auto_layout_policy if summary.success else None
+                    if auto_policy:
+                        with self._lock:
+                            self._jobs[job_id]._ordinary_auto_layout_policy = auto_policy
                     self._mark_finished(
                         job_id=job_id,
-                        status=status,
-                        status_text=status_text,
+                        status="formatting" if auto_policy else status,
+                        status_text="Formatting source layout..." if auto_policy else status_text,
                         diagnostics={"kind": "translate"},
                         result=payload,
                         artifacts=payload.get("artifacts", {}),
                     )
+                    if auto_policy:
+                        try:
+                            auto_result = self._automatic_layout_runner(job_id, auto_policy)
+                            self._finish_automatic_layout(job_id, auto_result)
+                        except Exception as exc:
+                            code = getattr(exc, "code", "automatic_layout_unavailable")
+                            if type(code) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,120}", code) is None:
+                                code = "automatic_layout_unavailable"
+                            self._finish_automatic_layout(job_id, None, code)
                     return
 
                 if job_kind == "analyze":
@@ -1671,6 +1922,38 @@ class TranslationJobManager:
                     config.target_lang,
                     gmail_batch_context=config.gmail_batch_context,
                 ).run_dir
+                rebuilt_artifacts = _artifacts_payload_for_rebuild(run_dir=run_dir, output_docx=output_docx)
+                with self._lock:
+                    parent = self._jobs.get(record._rebuild_origin_job_id or "")
+                    prior = deepcopy(parent.result_payload) if parent is not None else {}
+                prior_auto = prior.get("automatic_layout") if isinstance(prior, dict) else None
+                prior_policy = parent._ordinary_auto_layout_policy if parent is not None else None
+                if (self._automatic_layout_runner is not None and isinstance(prior_auto, dict)
+                        and prior_auto.get("status") == "automatic_unreviewed" and prior_policy):
+                    seed = prior.get("save_seed")
+                    if not isinstance(seed, dict) or str(prior.get("run_dir")) != str(run_dir):
+                        raise ValueError("ordinary_auto_layout_rebuild_identity_changed")
+                    with self._lock:
+                        self._jobs[job_id]._ordinary_auto_layout_policy = prior_policy
+                    seed = deepcopy(seed)
+                    seed["output_docx"] = str(output_docx.expanduser().resolve())
+                    prior.pop("automatic_layout", None)
+                    prior["save_seed"] = seed
+                    prior["artifacts"] = deepcopy(rebuilt_artifacts)
+                    prior["rebuild"] = {"docx_path": str(output_docx.expanduser().resolve()),
+                        "run_dir": str(run_dir.expanduser().resolve()), "reuse_verified": True}
+                    self._mark_finished(job_id=job_id, status="formatting",
+                        status_text="Reusing source layout...", diagnostics={"kind": "rebuild"},
+                        result=prior, artifacts=rebuilt_artifacts)
+                    try:
+                        self._finish_automatic_layout(job_id,
+                            self._automatic_layout_runner(job_id, prior_policy))
+                    except Exception as exc:
+                        code = getattr(exc, "code", "automatic_layout_unavailable")
+                        if type(code) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,120}", code) is None:
+                            code = "automatic_layout_unavailable"
+                        self._finish_automatic_layout(job_id, None, code)
+                    return
                 self._mark_finished(
                     job_id=job_id,
                     status="completed",
@@ -1682,7 +1965,7 @@ class TranslationJobManager:
                             "run_dir": str(run_dir.expanduser().resolve()),
                         }
                     },
-                    artifacts=_artifacts_payload_for_rebuild(run_dir=run_dir, output_docx=output_docx),
+                    artifacts=rebuilt_artifacts,
                 )
             except Exception as exc:  # noqa: BLE001
                 self._mark_finished(
@@ -1796,6 +2079,7 @@ class TranslationJobManager:
             workspace_id=workspace_id,
             config=config,
             settings_path=settings_path,
+            rebuild_origin_job_id=job_id,
             **reviewed_options,
         )
 

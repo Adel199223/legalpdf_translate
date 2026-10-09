@@ -203,6 +203,7 @@ function installEnvironment(url) {
   const documentListeners = new Map();
   const fetchCalls = [];
   const fetchQueue = [];
+  const scheduledTimeouts = [];
 
   function getElement(id) {
     if (!elements.has(id)) {
@@ -255,7 +256,8 @@ function installEnvironment(url) {
     dispatchEvent() {},
     addEventListener() {},
     removeEventListener() {},
-    setTimeout() {
+    setTimeout(_callback, delay) {
+      scheduledTimeouts.push(delay);
       return 1;
     },
     clearTimeout() {},
@@ -303,6 +305,7 @@ function installEnvironment(url) {
   return {
     elements,
     fetchCalls,
+    scheduledTimeouts,
     enqueueFetch(handler) {
       fetchQueue.push(handler);
     },
@@ -882,6 +885,20 @@ const results = {};
       "Page 5 failed",
     ],
   });
+}
+
+{
+  const scenario = await setupScenario("formatting-active");
+  scenario.translationModule.renderTranslationJob({
+    job_id: "tx-formatting-1", job_kind: "translate", status: "formatting",
+    status_text: "Formatting translated pages", actions: { cancel: true },
+    config: { source_path: "C:/tmp/gmail.pdf", source_filename: "gmail.pdf", target_lang: "EN", start_page: 1 },
+    progress: { selected_index: 1, selected_total: 1 },
+  });
+  results.formattingActive = {
+    snapshot: scenario.translationModule.getTranslationUiSnapshot(),
+    scheduledTimeouts: scenario.env.scheduledTimeouts,
+  };
 }
 
 {
@@ -1540,6 +1557,15 @@ console.log(JSON.stringify(results));
 @functools.lru_cache(maxsize=1)
 def _probe_results() -> dict[str, object]:
     return _run_translation_browser_state_probe()
+
+
+def test_formatting_job_remains_active_for_polling_cancel_and_start_guard() -> None:
+    state = _probe_results()["formattingActive"]
+    snapshot = state["snapshot"]
+    assert snapshot["currentJobStatus"] == "formatting"
+    assert snapshot["translationStartDisabled"] is True
+    assert snapshot["translationCancelDisabled"] is False
+    assert 1500 in state["scheduledTimeouts"]
 
 
 def test_edited_docx_refresh_preserves_saved_row_case_fields_and_explicit_amounts() -> None:

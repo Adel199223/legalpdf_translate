@@ -162,7 +162,7 @@ function hasPreparedTranslationLaunch() {
 }
 
 function isActiveTranslationJobStatus(status) {
-  return ["queued", "running", "cancel_requested"].includes(String(status || "").trim());
+  return ["queued", "running", "cancel_requested", "formatting"].includes(String(status || "").trim());
 }
 
 // Fresh Gmail prepares should replace stale terminal workspace jobs instead of
@@ -1487,7 +1487,9 @@ function translationStatusSummary(job) {
       : job.status_text || "DOCX rebuild is running.";
   }
   if (job.status === "completed") {
-    return "Translation complete. Review the translated document, then save the case record if everything looks right.";
+    const notice = String(job?.diagnostics?.source_coverage_notice || "").trim();
+    const base = "Translation complete. Review the translated document, then save the case record if everything looks right.";
+    return notice ? `${base} ${notice}` : base;
   }
   if (job.status === "cancel_requested") {
     return "Cancellation requested. Waiting for the current page task to stop cleanly.";
@@ -2066,7 +2068,7 @@ function renderTranslationJob(job) {
   }
   syncTranslationCompletionSurface();
   maybeAutoOpenTranslationCompletion(job);
-  if (job && ["queued", "running", "cancel_requested"].includes(job.status)) {
+  if (job && isActiveTranslationJobStatus(job.status)) {
     stopPolling();
     translationState.pollTimer = window.setTimeout(pollCurrentJob, 1500);
   } else {

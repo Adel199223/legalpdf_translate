@@ -13,6 +13,18 @@ from pathlib import Path
 
 DEFAULT_TRANSLATION_PROTOCOL = "legacy_text_v1"
 SUPPORTED_TRANSLATION_PROTOCOLS = frozenset({"legacy_text_v1", "legal_blocks_v2"})
+ORDINARY_AUTO_LAYOUT_POLICY = "source_image_unreviewed_v1"
+
+
+def resolve_ordinary_auto_layout_policy(*, protocol: str, fresh_browser_job: bool,
+                                        reviewed_source: bool = False) -> str | None:
+    """Freeze an internal formatting choice without changing translation transport."""
+    if protocol not in SUPPORTED_TRANSLATION_PROTOCOLS:
+        raise ValueError("Unsupported internal translation protocol.")
+    if fresh_browser_job and not reviewed_source and protocol == DEFAULT_TRANSLATION_PROTOCOL:
+        from .ordinary_auto_layout import frozen_automatic_layout_policy
+        return frozen_automatic_layout_policy()
+    return None
 
 
 def resolve_translation_protocol(
