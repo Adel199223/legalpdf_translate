@@ -371,6 +371,44 @@ def _canonical_columns_rows(bands, ids, choices):
     return result if [pid for band in result for pid in _ids(band)] == ids else bands
 
 
+def _generated_emphasis(row, spans):
+    """Drop only optional word-interior endpoints; never repair unsafe literals."""
+    from .saved_docx_layout import _phrase_edge, _emphasis_end_edge, _protected_ranges
+    if type(spans) is not list or len(spans) > 1000:
+        fail("invalid_proposal_decisions")
+    if not spans:
+        return []
+    previous = 0
+    for span in spans:
+        if (type(span) is not dict or set(span) != {"start", "end", "bold", "italic", "underline"}
+                or type(span["start"]) is not int or type(span["end"]) is not int
+                or not previous <= span["start"] < span["end"] <= len(row["text"])
+                or any(type(span[k]) is not bool for k in ("bold", "italic", "underline"))
+                or not any(span[k] for k in ("bold", "italic", "underline"))):
+            fail("invalid_proposal_decisions")
+        previous = span["end"]
+    try:
+        ranges = _protected_ranges(row)
+    except ValueError:
+        fail("invalid_proposal_decisions")
+    retained = []
+    def word_interior(offset):
+        return (0 < offset < len(row["text"])
+                and all(unicodedata.category(char)[0] in {"L", "M", "N"}
+                        for char in row["text"][offset - 1:offset + 1]))
+    for span in spans:
+        start, end = span["start"], span["end"]
+        if (any(a < cut < b for a, b in ranges for cut in (start, end))
+                or any(token["kind"] != "t" and start < token["end"] and end > token["start"] for token in row["tokens"])):
+            fail("invalid_proposal_decisions")
+        valid_start, valid_end = _phrase_edge(row["text"], start), _emphasis_end_edge(row["text"], end)
+        if (not valid_start and not word_interior(start)) or (not valid_end and not word_interior(end)):
+            fail("invalid_proposal_decisions")
+        if valid_start and valid_end:
+            retained.append(deepcopy(span))
+    return retained
+
+
 def normalize_proposals(snapshot, view, proposals):
     decisions = deepcopy(view["decisions"])
     by_id = {row["paragraph_id"]: index for index, row in enumerate(decisions["paragraphs"])}
@@ -413,6 +451,7 @@ def normalize_proposals(snapshot, view, proposals):
                 "Suggested source box is empty or reversed; operator source association is required."
                 if unusable_box else "Source association requires operator review." if box is None else "")
             baseline = snapshot["paragraphs"][by_id[row["paragraph_id"]]]
+            row["emphasis"] = _generated_emphasis(baseline, row["emphasis"])
             has_visible_text = any(token["kind"] == "t" and any(
                 not char.isspace() and unicodedata.category(char)[0] in {"L", "N", "P", "S"}
                 for char in token["text"]) for token in baseline["tokens"])

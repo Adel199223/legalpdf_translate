@@ -193,6 +193,10 @@ $baselineCommands = @(
 $fullExtraCommands = @(
     @{
         Executable = $venvPython
+        Arguments = @("-m", "pytest", "-q", "--durations=10", "tests/test_shadow_runtime_metadata_atomic.py")
+    },
+    @{
+        Executable = $venvPython
         Arguments = @("-m", "pytest", "-q", "--durations=10", "tests/test_gmail_review_state.py")
     },
     @{
@@ -233,6 +237,7 @@ $fullExtraCommands = @(
         Arguments = @("-m", "pytest", "-q", "--durations=10",
             "tests/test_ordinary_layout_contracts.py", "tests/test_ordinary_layout_service.py",
             "tests/test_ordinary_layout_columns_rows.py",
+            "tests/test_ordinary_generated_emphasis.py",
             "tests/test_ordinary_edited_revision.py",
             "tests/test_ordinary_layout_partition_contracts.py",
             "tests/test_ordinary_layout_partition_browser.py",

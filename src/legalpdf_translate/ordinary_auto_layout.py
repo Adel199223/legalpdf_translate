@@ -64,7 +64,8 @@ def _direct_revalidation(root: Path, result: dict, policy: dict) -> bool:
         fail("automatic_recovery_predecessor_changed", 409)
     return has_direct or (not has_capacity
         and result.get("error_code") in {"ordinary_layout_page_break_requires_flow",
-                                       "ordinary_layout_proposal_coverage"}
+                                       "ordinary_layout_proposal_coverage",
+                                       "ordinary_layout_invalid_proposal_decisions"}
         and policy.get("max_output_tokens") == 32000
         and policy.get("timeout_seconds") == 480.0)
 
@@ -195,6 +196,7 @@ def _retained_continuation(manager, root: Path, identity: dict, predecessor: dic
     allowed_errors = {"ordinary_layout_proposal_coverage", "ordinary_layout_invalid_proposal_decisions"} if parent_direct else {"ordinary_layout_page_break_requires_flow"}
     if direct:
         allowed_errors.add("ordinary_layout_proposal_coverage")
+        allowed_errors.add("ordinary_layout_invalid_proposal_decisions")
     if (result.get("error_code") not in allowed_errors or policy.get("max_output_tokens") != 32000
             or direct and policy.get("timeout_seconds") != 480.0):
         fail("automatic_retained_response_unavailable", 409)

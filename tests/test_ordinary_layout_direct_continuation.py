@@ -17,8 +17,8 @@ from tests.test_ordinary_auto_layout_recovery import offline
 from tests.test_ordinary_auto_layout_workflow import _app, _source, _start, _wait
 
 
-@pytest.mark.parametrize('resume,cancel,select_raw,second', [(False,False,False,False),(True,False,False,False),(False,True,False,False),(True,False,True,False),(False,False,False,True),(True,False,False,True)])
-def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path, monkeypatch, resume, cancel,select_raw,second):
+@pytest.mark.parametrize('resume,cancel,select_raw,second,old_error', [(False,False,False,False,'page_break_requires_flow'),(True,False,False,False,'page_break_requires_flow'),(False,True,False,False,'page_break_requires_flow'),(True,False,True,False,'page_break_requires_flow'),(False,False,False,True,'page_break_requires_flow'),(True,False,False,True,'page_break_requires_flow'),pytest.param(False,False,False,False,'invalid_proposal_decisions',id='retained-invalid-decisions')])
+def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path, monkeypatch, resume, cancel,select_raw,second,old_error):
     source,output=tmp_path/'source.pdf',tmp_path/'output'
     output.mkdir(); _source(source,('digital',)*7)
     pages=(3,4,5,6,7)
@@ -55,7 +55,7 @@ def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path
         manager.provider_factory=provider
         normalize=manager_module.normalize_proposals
         def previous_break_guard(snapshot,view,proposals):
-            if proposals[0]['page_number']==4: fail('page_break_requires_flow')
+            if proposals[0]['page_number']==4: fail(old_error)
             return normalize(snapshot,view,proposals)
         with monkeypatch.context() as old:
             old.setattr(manager_module,'normalize_proposals',previous_break_guard)
@@ -66,7 +66,7 @@ def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path
         run=Path(first['result']['run_dir']); root=run/'ordinary_auto_layout'
         old_pointer=json.loads((root/'operation.json').read_bytes())
         old_op=manager.service.root/original/'baselines'/old_pointer['baseline_id']/'suggestions'/old_pointer['operation_nonce']
-        assert _read(old_op/'result.json')['error_code']=='ordinary_layout_page_break_requires_flow'
+        assert _read(old_op/'result.json')['error_code']=='ordinary_layout_'+old_error
         old_cost=Decimal(str(_read(old_op/'accounting_summary.json')['cost_usd']))
         protected={p:p.read_bytes() for p in old_op.rglob('*') if p.is_file() and p.suffix!='.lock'}
         protected.update({p:p.read_bytes() for p in (root/'intent.json',root/'operation.json')})

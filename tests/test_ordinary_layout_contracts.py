@@ -46,7 +46,7 @@ def test_rejects_injected_text_identity_geometry_or_attestation(tmp_path, monkey
     elif mutation == "order": value["bands"][0]["cells"].reverse()
     elif mutation == "box": value["paragraphs"][0]["bbox"] = [-1, 0, 1, 1]
     elif mutation == "role": value["paragraphs"][0]["role"] = "invented"
-    elif mutation == "bad_span": value["paragraphs"][0]["emphasis"] = [{"start": 1, "end": 3, "bold": True, "italic": False, "underline": False}]
+    elif mutation == "bad_span": value["paragraphs"][0]["emphasis"] = [{"start": 1, "end": 999999, "bold": True, "italic": False, "underline": False}]
     elif mutation == "review": value["document_reviewed"] = True
     with pytest.raises(OrdinaryLayoutError):
         normalize_proposals(inspect_docx(case.job.reviewed_docx, "EN"), view, [value])
