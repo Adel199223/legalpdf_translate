@@ -86,6 +86,17 @@ Do not promote one-off local/project-specific issues into the global Codex boots
 
 ## Active Entries
 
+### ordinary-source-structure-flattening
+
+- Title: Plain-text ordinary output loses source layout before Word assembly.
+- First observed 2026-09-26; reconfirmed 2026-10-03; repeat count 2; status `open`, operational trigger.
+- Symptoms: seven retained-body-wording reproductions become zero-table, one-section paragraph streams; native French diagnostic loses columns/sidebar and heading emphasis despite equal page counts.
+- Cause: the legacy transport lacks source role/region associations, and assembly truthfully falls back to paragraph roles. Optional reviewed formatting does not automatically establish fresh ordinary source binding.
+- Existing mitigation: explicit reviewed source/saved-Word formatting. The references are user-reported ChatGPT 6 Pro outputs, with accepted manual Arabic RTL/right alignment. This audit does not establish a regression of the accepted optional workflows.
+- Proposed repair: bounded fresh digital-source acquisition before dispatch, existing structured IDs and region writer, honest unsupported-source review. Keep defaults, resumes and paid operations separately gated.
+- Affected docs: APP_KNOWLEDGE, HANDOFF, VALIDATION and the October 3 audit plan. Docs Sync added these current qualifications because of this issue. Bootstrap relevance `none`.
+- Evidence: private `sent_structure_audit_20261003_01/reproductions/legacy_writer_01/structural_comparison_01.json`, `analysis/audit_older/legacy_comparison.json` and `stage1_receipt.json`; September 26 completed source-layout plan.
+
 ### fictional-powershell-outer-timeout
 
 - Title: Synthetic PowerShell startup and compilation exceed a nonsemantic outer test cap.

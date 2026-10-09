@@ -1,5 +1,22 @@
 # External Source Registry
 
+## Ordinary translation structure accounting — 2026-10-09
+
+Official OpenAI references were rechecked for the fresh ordinary post-translation
+layout policy. This updates only the bundled future-run price and capacity
+snapshot; each existing run retains its recorded catalog and actual returned
+model, tier and usage still require reconciliation.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-5.2 | GPT-5.2 public standard accounting | USD per million tokens: 1.75 input, 0.175 cached input, 14 output. Documented context is 400,000 tokens and maximum output is 128,000. Image input and Responses are supported. The ordinary layout reservation remains a conservative USD0.812 for a full 400,000 input tokens and a separate 8,000-output limit; it is neither expected nor measured cost. | 2026-10-09 |
+| https://developers.openai.com/api/docs/guides/images-vision | Source-image layout request bound | GPT-5.2 low/high/auto image handling documents a 2,048-pixel maximum dimension and 6,144-patch budget. The project retains its 10,000 image-token accounting bound; actual billing remains response-dependent. | 2026-10-09 |
+| https://developers.openai.com/api/docs/guides/structured-outputs | Strict layout proposal schema | Structured Outputs requires `additionalProperties: false` and supports numeric minimum/maximum in the applicable base-model schema. Local validation separately enforces exact paragraph coverage, ordering and safe phrase cuts. | 2026-10-09 |
+
+No app model, effort, service tier, endpoint or saved default changes follow from
+this public-source refresh. Expired future-run references must produce a visible
+preflight/fallback state rather than silently certifying an unformatted output.
+
 ## Reproducible workstation recipe — 2026-09-30
 
 Official primary sources verified on 2026-09-30:
