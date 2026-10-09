@@ -8,12 +8,14 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import unicodedata
 from typing import Any, Mapping
 
 from .saved_docx_layout import inspect_docx, validate_decisions
 
 VERSION = "ordinary_layout_v1"
 PROPOSAL_VERSION = "ordinary_layout_proposal_v1"
+PROPOSAL_VERSION_V2 = "ordinary_layout_proposal_v2"
 MAX_PAGE_PARAGRAPHS = 200
 MAX_PAGE_CODEPOINTS = 32_000
 MAX_OUTPUT_TOKENS = 32000
@@ -230,10 +232,13 @@ def proposal_schema(page_number, ids):
         _object({**presentation, "role": {"type": "string",
                 "enum": ["institution", "reference", "recipient", "body", "list", "signature", "source_folio"]},
             "heading_level": {"type": "integer", "enum": [0]}, "heading_size_pt": {"type": "null"}})]}
-    return {"type": "json_schema", "strict": True, "name": "ordinary_source_layout_v1", "schema": _object({
-        "version": {"type": "string", "enum": [PROPOSAL_VERSION]}, "page_number": {"type": "integer", "enum": [page_number]},
+    return {"type": "json_schema", "strict": True, "name": "ordinary_source_layout_v2", "schema": _object({
+        "version": {"type": "string", "enum": [PROPOSAL_VERSION_V2]}, "page_number": {"type": "integer", "enum": [page_number]},
         "paragraphs": {"type": "array", "items": choice, "minItems": len(ids), "maxItems": len(ids)},
-        "bands": {"type": "array", "items": {"anyOf": [flow, columns]}, "minItems": 1, "maxItems": len(ids)}})}
+        "bands": {"type": "array", "items": {"anyOf": [flow, columns]}, "minItems": 1, "maxItems": len(ids)},
+        "paragraph_partitions": {"type": "array", "maxItems": len(ids), "items": _object({
+            "paragraph_id": pid, "split_before": {"type": "array", "minItems": 1, "maxItems": 7,
+                "items": {"type": "string", "minLength": 1, "maxLength": 160}}})}})}
 
 
 def _ids(band):
@@ -241,19 +246,61 @@ def _ids(band):
     return [i for g in groups for i in g["paragraph_ids"]]
 
 
+def _resolve_partition_anchors(proposal, snapshot, ids):
+    """Convert unique literal starts; the saved model validates cut semantics."""
+    partitions = proposal.get("paragraph_partitions", [])
+    if type(partitions) is not list or len(partitions) > len(ids):
+        fail("invalid_proposal_partitions")
+    rows = {row["id"]: row for row in snapshot["paragraphs"]}
+    resolved, seen = [], []
+    for item in partitions:
+        if type(item) is not dict or set(item) != {"paragraph_id", "split_before"}:
+            fail("invalid_proposal_partitions")
+        pid, anchors = item["paragraph_id"], item["split_before"]
+        if (type(pid) is not str or pid not in ids or pid in seen
+                or type(anchors) is not list or not 1 <= len(anchors) <= 7
+                or any(type(anchor) is not str or not 1 <= len(anchor) <= 160
+                       or not anchor.strip() for anchor in anchors)):
+            fail("invalid_proposal_partitions")
+        text = rows[pid]["text"]
+        offsets = []
+        for anchor in anchors:
+            offset = text.find(anchor)
+            if offset < 0 or text.find(anchor, offset + 1) >= 0:
+                fail("proposal_partition_anchor_ambiguous")
+            offsets.append(offset)
+        if offsets != sorted(set(offsets)):
+            fail("proposal_partition_anchor_order")
+        seen.append(pid)
+        resolved.append({"paragraph_id": pid, "offsets": offsets})
+    if seen != [pid for pid in ids if pid in seen]:
+        fail("proposal_partition_parent_order")
+    if len(ids) + sum(len(item["offsets"]) for item in resolved) > MAX_PAGE_PARAGRAPHS:
+        fail("proposal_partition_page_too_large", 413)
+    return resolved
+
+
 def normalize_proposals(snapshot, view, proposals):
     decisions = deepcopy(view["decisions"])
     by_id = {row["paragraph_id"]: index for index, row in enumerate(decisions["paragraphs"])}
     replacements, id_page = {}, {}
+    partitions = deepcopy(decisions.get("paragraph_partitions", []))
     for proposal in proposals:
-        if type(proposal) is not dict or set(proposal) != {"version", "page_number", "paragraphs", "bands"}:
+        if type(proposal) is not dict:
+            fail("invalid_proposal")
+        expected_keys = {"version", "page_number", "paragraphs", "bands"}
+        if proposal.get("version") == PROPOSAL_VERSION_V2:
+            expected_keys.add("paragraph_partitions")
+        if set(proposal) != expected_keys:
             fail("invalid_proposal")
         page = proposal["page_number"]
-        if proposal["version"] != PROPOSAL_VERSION or type(page) is not int or page in replacements:
+        if proposal["version"] not in {PROPOSAL_VERSION, PROPOSAL_VERSION_V2} or type(page) is not int or page in replacements:
             fail("invalid_proposal")
         ids = page_ids(view, page)
         if type(proposal["paragraphs"]) is not list or [p.get("paragraph_id") for p in proposal["paragraphs"] if type(p) is dict] != ids:
             fail("proposal_coverage")
+        partitions = [item for item in partitions if item["paragraph_id"] not in ids]
+        partitions.extend(_resolve_partition_anchors(proposal, snapshot, ids))
         frame = next((p for p in view["pages"] if p["page_number"] == page), None)
         if frame is None:
             fail("invalid_proposal_page")
@@ -275,7 +322,13 @@ def normalize_proposals(snapshot, view, proposals):
                 "Suggested source box is empty or reversed; operator source association is required."
                 if unusable_box else "Source association requires operator review." if box is None else "")
             baseline = snapshot["paragraphs"][by_id[row["paragraph_id"]]]
-            if baseline["has_page_break"] and any((row["role"] != "body", row["heading_level"] != 0,
+            has_visible_text = any(token["kind"] == "t" and any(
+                not char.isspace() and unicodedata.category(char)[0] in {"L", "N", "P", "S"}
+                for char in token["text"]) for token in baseline["tokens"])
+            # Real footer/folio text may share a paragraph with its terminal
+            # page break. Its presentation uses the same bounded validator as
+            # other text; only control-only sentinel rows must remain neutral.
+            if baseline["has_page_break"] and not has_visible_text and any((row["role"] != "body", row["heading_level"] != 0,
                     row["bold"], row["italic"], row["underline"], row["emphasis"], row["alignment"] != "inherit",
                     not (row["space_before_pt"] is None or type(row["space_before_pt"]) in {int, float} and row["space_before_pt"] == 0),
                     not (row["space_after_pt"] is None or type(row["space_after_pt"]) in {int, float} and row["space_after_pt"] == 0))):
@@ -315,6 +368,16 @@ def normalize_proposals(snapshot, view, proposals):
                 bands.extend(replacements[page])
                 inserted.add(page)
     decisions["bands"] = bands
+    if partitions:
+        from .saved_docx_layout import PARTITION_DECISIONS_VERSION
+        order = {row["id"]: i for i, row in enumerate(snapshot["paragraphs"])}
+        partitions.sort(key=lambda item: order[item["paragraph_id"]])
+        decisions["version"] = PARTITION_DECISIONS_VERSION
+        decisions["paragraph_partitions"] = partitions
+    elif "paragraph_partitions" in decisions:
+        from .saved_docx_layout import DECISIONS_VERSION
+        decisions["version"] = DECISIONS_VERSION
+        decisions.pop("paragraph_partitions")
     decisions["review"].update(document_reviewed=False, pages_reviewed=[], reviewer="", note="")
     try:
         return validate_decisions(snapshot, view["pages"], decisions)

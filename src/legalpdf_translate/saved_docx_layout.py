@@ -19,6 +19,7 @@ from lxml import etree
 
 VERSION = "saved_docx_source_region_review_v1"
 DECISIONS_VERSION = "saved_docx_layout_decisions_v1"
+PARTITION_DECISIONS_VERSION = "saved_docx_layout_decisions_v2"
 PHRASE_POLICY = "conservative_phrase_boundaries_v1"
 DOCX_MAX_BYTES = 32 * 1024 * 1024
 EXPANDED_MAX_BYTES = 128 * 1024 * 1024
@@ -561,12 +562,70 @@ def validate_decisions(snapshot: dict, pages: list, decisions: dict, require_rev
         _fail("invalid_decisions")
 
 
+def validate_paragraph_partitions(snapshot: dict, decisions: dict) -> list:
+    """Validate exact parent character cuts without changing logical ownership."""
+    try:
+        partitions = decisions.get("paragraph_partitions", [])
+        if not partitions:
+            if decisions.get("version") != DECISIONS_VERSION:
+                _fail("unsupported_partition_version")
+            return []
+        if decisions.get("version") != PARTITION_DECISIONS_VERSION or type(partitions) is not list:
+            _fail("unsupported_partition_version")
+        rows = _snapshot(snapshot)
+        by_id = {row["id"]: row for row in rows}
+        choices = {row["paragraph_id"]: row for row in decisions["paragraphs"]}
+        allowed = {pid for band in decisions["bands"] if band["kind"] == "flow"
+                   for group in band["groups"] if not group["panel"] for pid in group["paragraph_ids"]}
+        previous = -1
+        for partition in partitions:
+            _keys(partition, {"paragraph_id", "offsets"})
+            identifier, offsets = partition["paragraph_id"], partition["offsets"]
+            if identifier not in by_id:
+                _fail("invalid_partition_parent")
+            row = by_id[identifier]
+            if row["ordinal"] <= previous:
+                _fail("partition_parent_order")
+            previous = row["ordinal"]
+            if (identifier not in allowed or choices[identifier]["role"] != "body"
+                    or row["has_page_break"] or any(t["kind"] != "t" for t in row["tokens"])
+                    or "numPr" in row["ppr_xml"]):
+                _fail("unsupported_partition_parent")
+            text = row["text"]
+            if (type(offsets) is not list or not 1 <= len(offsets) <= 7
+                    or any(type(cut) is not int or not 0 < cut < len(text) for cut in offsets)
+                    or offsets != sorted(set(offsets))):
+                _fail("invalid_partition_offsets")
+            ranges = _protected_ranges(row)
+            if snapshot["target_lang"] == "AR" and any(
+                    "ARABIC" in unicodedata.name(char, "") and unicodedata.category(char).startswith("L") for char in text):
+                for run in row["runs"]:
+                    if run["rpr_xml"]:
+                        props = _xml(run["rpr_xml"].encode())
+                        rtl = props.find(W + "rtl")
+                        if rtl is not None and not _on(rtl):
+                            ranges.append((run["start"], run["end"]))
+            if any(not _phrase_edge(text, cut) or any(a < cut < b for a, b in ranges) for cut in offsets):
+                _fail("unsafe_partition_boundary")
+            boundaries = [0, *offsets, len(text)]
+            if any(not text[start:end].strip() for start, end in zip(boundaries, boundaries[1:])):
+                _fail("blank_partition_child")
+        return json.loads(_canonical(partitions))
+    except SavedDocxLayoutError:
+        raise
+    except (TypeError, ValueError, KeyError, IndexError, AttributeError):
+        _fail("invalid_paragraph_partitions")
+
+
 def _validate_decisions(snapshot, pages, decisions, require_review):
     rows, frames = _snapshot(snapshot), _pages(pages)
     if len(_canonical(decisions)) > MAX_DECISION_BYTES:
         _fail("decision_size_limit")
-    _keys(decisions, {"version", "paragraphs", "bands", "review"})
-    if decisions["version"] != DECISIONS_VERSION or type(require_review) is not bool:
+    keys = {"version", "paragraphs", "bands", "review"}
+    if decisions.get("version") == PARTITION_DECISIONS_VERSION:
+        keys.add("paragraph_partitions")
+    _keys(decisions, keys)
+    if decisions["version"] not in {DECISIONS_VERSION, PARTITION_DECISIONS_VERSION} or type(require_review) is not bool:
         _fail("unsupported_decisions_version")
     choices = decisions["paragraphs"]
     if type(choices) is not list or len(choices) != len(rows):
@@ -640,6 +699,7 @@ def _validate_decisions(snapshot, pages, decisions, require_review):
             _fail("invalid_layout_band")
     if seen != [row["id"] for row in rows]:
         _fail("paragraph_coverage_or_order")
+    validate_paragraph_partitions(snapshot, decisions)
     review = decisions["review"]
     _keys(review, {"reviewer_kind", "reviewer", "note", "pages_reviewed", "document_reviewed"})
     if (review["reviewer_kind"] not in {"operator_review", "assistant_source_image_review"}

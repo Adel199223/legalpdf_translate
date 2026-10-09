@@ -11,7 +11,7 @@ from typing import Callable
 from . import saved_docx_layout_service as storage
 from .openai_client import OpenAIResponsesClient
 from .ordinary_layout_contracts import (LayoutSuggestionPolicy, OrdinaryLayoutJob, OrdinaryLayoutError,
-    MAX_RESPONSE_BYTES, PROPOSAL_VERSION, decode, digest, encode, fail, generation, identifier,
+    MAX_RESPONSE_BYTES, PROPOSAL_VERSION_V2, decode, digest, encode, fail, generation, identifier,
     job_identity, nonce, normalize_proposals, page_ids, proposal_schema)
 from .ordinary_layout_service import OrdinaryLayoutService, _directories, _read, _write, public
 from .saved_docx_layout import inspect_docx
@@ -28,8 +28,11 @@ column positions or change wording. For headings paired on the same source row, 
 space_before_pt so their top edges align unless the source clearly shows an offset.
 Use normalized image coordinates for broad honest source regions; bbox null means uncertain.
 Do not invent missing content, logos, barcodes, signatures or source provenance. Preserve existing
-fonts and bidi. Page-break paragraphs must stay body/inherit with no added styles and plain flow,
-outside columns and panels. Their space_before_pt and space_after_pt must be null or numeric zero.
+fonts and bidi. Every paragraph containing a page break must stay in plain flow, outside columns
+and panels, and cannot be partitioned. Preserve its exact text and break. A real text-bearing
+paragraph, including footer text or a folio, may use source-supported bounded presentation.
+An empty or control-only page-break paragraph must stay body/inherit with no added styles;
+its space_before_pt and space_after_pt must be null or numeric zero.
 Only role heading may use heading_level 1, 2 or 3 and heading_size_pt null or 1–24 points.
 Every other role, including institution, requires heading_level 0 and heading_size_pt null;
 use source-supported bold or alignment without promoting an institution to a heading for size.
@@ -40,7 +43,14 @@ columns may use successive bands with identical widths and gutters: for saved he
 heading-right, body-left, body-right order, place the headings in one band and the bodies in the
 next. Preserve exact global order and the source pairing. When no such ordered grouping fits,
 keep flow; do not delete/reorder paragraphs to imitate the source.
-All proposals require subsequent operator source and output review."""
+All proposals require subsequent operator source and output review.
+Return paragraph_partitions=[] unless the image clearly shows separate prose paragraphs merged
+inside one body paragraph. Only body paragraphs in non-panel flow may be partitioned. For each,
+split_before contains one to seven exact unique short substrings copied from that supplied
+paragraph, in their current order, starting at the next source-supported paragraph boundary.
+Never rewrite text, supply numeric offsets, split inside a word or protected Latin token,
+partition a heading/list/column/panel or a paragraph containing fields, tabs or breaks,
+or change original IDs, choices or bands. Source association remains the parent's coarse region."""
 
 JobResolver = Callable[[str], OrdinaryLayoutJob]
 ProviderFactory = Callable[[OrdinaryLayoutJob, LayoutSuggestionPolicy], OpenAIResponsesClient]
@@ -203,7 +213,7 @@ class OrdinaryLayoutManager:
                 ids = ids_by_page[page]
                 rows = [r for r in view["paragraphs"] if r["id"] in ids]
                 image = self.service.saved.image(view["review_id"], page)
-                prompt = encode({"version": PROPOSAL_VERSION, "page_number": page, "target_lang": job.target_lang,
+                prompt = encode({"version": PROPOSAL_VERSION_V2, "page_number": page, "target_lang": job.target_lang,
                                  "paragraphs": rows}).decode("utf-8")
                 if external_cancel_requested and external_cancel_requested(job_id):
                     self.service.cancel_suggestion(job_id, operation_nonce, expected_generation,

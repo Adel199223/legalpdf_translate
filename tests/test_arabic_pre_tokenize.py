@@ -87,3 +87,72 @@ def test_currency_fraction_is_part_of_required_token() -> None:
     complete = f"المبلغ {LRI}[[850,00]]{PDI}"
     assert validate_ar(split, expected_tokens=expected).kind == "expected_token_mismatch"
     assert validate_ar(complete, expected_tokens=expected).ok
+
+
+@pytest.mark.parametrize("label", ["Arguido", "Arguida", "Requerente", "Requerido", "Requerida",
+    "Autor", "Autora", "Réu", "Ré", "Testemunha"])
+def test_explicit_party_field_protects_exact_latin_person_name(label):
+    source = f"{label}: Ana de Sousa-Martins"
+    result = pretokenize_arabic_source(source)
+    assert result == f"{label}: [[Ana de Sousa-Martins]]"
+    assert pretokenize_arabic_source(result) == result
+
+
+@pytest.mark.parametrize("anchor", ["Exmo. Senhor", "Exma. Senhora", "Exmo(a) Senhor(a)",
+    "O Técnico de Justiça", "A Técnica de Justiça", "Juiz", "Juíza"])
+def test_standalone_recipient_and_signer_anchor_protects_only_next_name(anchor):
+    source = f"{anchor}\nAna de Sousa\nEste texto permanece traduzível."
+    assert pretokenize_arabic_source(source) == f"{anchor}\n[[Ana de Sousa]]\nEste texto permanece traduzível."
+
+
+def test_postal_block_is_anchored_bounded_and_preserves_lines():
+    source = "Exmo. Senhor\nAna de Sousa\nRua das Flores 12\n1234-567 Vila Nova\nNotificação para comparecer."
+    result = pretokenize_arabic_source(source)
+    assert result == "Exmo. Senhor\n[[Ana de Sousa]]\n[[Rua das Flores 12]]\n[[1234-567 Vila Nova]]\nNotificação para comparecer."
+    assert result.replace("[[", "").replace("]]", "") == source
+    assert pretokenize_arabic_source(result) == result
+
+
+@pytest.mark.parametrize("source", ["Arguido: Ministério Público", "Requerente: Tribunal Judicial",
+    "Autor: Estado Português", "Testemunha: Este texto explica o caso.",
+    "Exmo. Senhor\nTribunal Judicial", "Juiz\nFoi proferida decisão.",
+    "Ana de Sousa compareceu perante o tribunal."])
+def test_institutions_and_unanchored_prose_remain_translatable(source):
+    assert pretokenize_arabic_source(source) == source
+
+
+def test_street_without_nearby_postcode_or_across_body_boundary_is_not_whole_locked():
+    for source in ("Rua das Flores\n\n1234-567 Vila Nova",
+                   "Rua das Flores\nEste texto explica a decisão.\n1234-567 Vila Nova",
+                   "Rua das Flores\nVila Nova\nOutro Lugar\nMais Um Lugar\n1234-567 Vila Nova"):
+        assert "[[Rua das Flores]]" not in pretokenize_arabic_source(source)
+
+
+def test_period_signature_and_single_word_postal_locality_actual_shapes():
+    source = "O Técnico de Justiça.\nAna de Sousa\nRua das Flores\nViseu\n1234-567 Viseu"
+    assert pretokenize_arabic_source(source) == (
+        "O Técnico de Justiça.\n[[Ana de Sousa]]\n[[Rua das Flores]]\n[[Viseu]]\n[[1234-567 Viseu]]")
+
+
+def test_decomposed_latin_name_preserves_exact_characters():
+    source = "Arguida: Ana de Sa\u0301"
+    assert pretokenize_arabic_source(source) == "Arguida: [[Ana de Sa\u0301]]"
+
+
+def test_comma_signature_title_preserves_exact_next_name():
+    assert pretokenize_arabic_source("O Técnico de Justiça,\nAna de Sousa") == "O Técnico de Justiça,\n[[Ana de Sousa]]"
+
+
+@pytest.mark.parametrize("source", ["AB123456789CD", "*AB123456789CD*", "%AB123456789CD%",
+    "%*AB123456789CD*", "%*AB123456789CD*%"])
+def test_visible_tracking_core_is_one_exact_token_without_scaffold_changes(source):
+    result = pretokenize_arabic_source(source)
+    assert "[[AB123456789CD]]" in result
+    assert extract_locked_tokens(result) == ["AB123456789CD"]
+    assert result.replace("[[", "").replace("]]", "") == source
+    assert pretokenize_arabic_source(result) == result
+
+
+def test_tracking_core_rejects_longer_or_lowercase_alphanumeric_values():
+    for source in ("ab123456789cd", "XAB123456789CDX"):
+        assert "[[AB123456789CD]]" not in pretokenize_arabic_source(source)

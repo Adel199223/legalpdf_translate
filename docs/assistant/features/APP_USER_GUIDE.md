@@ -71,7 +71,7 @@ In builds containing the ordinary-layout update, a finished translation can show
 2. If a warning says `xhigh` can multiply cost and time, choose `Switch to fixed high` unless you intentionally want the slower, more expensive option.
 3. If an OCR-heavy warning appears for a scanned document, choose `Apply safe OCR profile` to fix the current run without changing your saved defaults.
 4. After a run finishes, open the Review Queue if pages were flagged for manual checking.
-5. For Arabic runs, open the owned Word working copy, set right-to-left direction and right alignment where needed, save it, and choose **I saved the Word file** if automatic detection has not continued. Check the resulting download before saving the case.
+5. For Arabic runs, open the owned Word working copy, use Word's visible **Right-to-Left** paragraph-direction button and **Align Right** button where needed, then save and close the file, and choose **I saved the Word file** if automatic detection has not continued. Check the resulting download before saving the case.
 6. Save the finished run to the Job Log so the case and cost details are stored together.
 7. Use `Generate Run Report` from the translation completion area when you want the full Markdown run report next to the run folder. The app now downloads it immediately once and keeps `Download Run Report` available afterward. For Gmail-started runs, that report also keeps the `Gmail Intake / Batch Context` section and clearly labels `run tokens` versus `billed total (includes reasoning)`.
 8. Use a queue manifest when you want the app to process several PDFs in sequence without starting each one manually.

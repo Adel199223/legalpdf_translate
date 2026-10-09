@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
 LRI = "\u2066"
@@ -17,6 +18,7 @@ IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b")
 POSTAL_CODE_RE = re.compile(r"\b\d{4}-\d{3}\b")
 BARCODE_RE = re.compile(r"%\*[^\s]*\*%")
 LONG_TRACK_RE = re.compile(r"\b\d[\d-]{7,}\b")
+POSTAL_TRACKING_CORE_RE = re.compile(r"(?<![A-Za-z0-9])[A-Z]{2}\d{9}[A-Z]{2}(?![A-Za-z0-9])")
 CASE_REF_RE = re.compile(
     r"(?<!\w)(?=[A-Za-z0-9./-]{5,})(?=[A-Za-z0-9./-]*\d)(?=[A-Za-z0-9./-]*(?:/|-|\.))[A-Za-z0-9./-]+(?!\w)"
 )
@@ -39,6 +41,82 @@ SENSITIVE_NAME_LINE_RE = re.compile(
 SENSITIVE_ADDRESS_LINE_RE = re.compile(
     r"(?im)^(?P<prefix>\s*(?:Morada|Endere(?:ç|c)o|Address|Domic[ií]lio)\s*[:\-]\s*)(?P<value>[^\n]+)$",
 )
+PARTY_NAME_LINE_RE = re.compile(
+    r"(?im)^[^\S\r\n]*(?:Arguid[oa]|Requerente|Requerid[oa]|Autor(?:a)?|Réu|Ré|Testemunha)"
+    r"[^\S\r\n]*:[^\S\r\n]*(?P<value>[^\r\n]+)$"
+)
+NAME_ANCHOR_RE = re.compile(
+    r"(?:Exm[oa]\.?(?:\(a\))?\s+Senhor(?:a|\(a\))?|"
+    r"[OA]\s+Técnic[oa]\s+de\s+Justiça[.,]?|Juiz[.,]?|Juíza[.,]?)", re.IGNORECASE
+)
+STREET_ANCHOR_RE = re.compile(
+    r"^(?:Rua|Avenida|Av\.|Largo|Praça|Travessa|Estrada)\s+|"
+    r"^Palácio\s+da\s+Justiça\b.*\b(?:Praça|Rua)\s+", re.IGNORECASE
+)
+
+
+def _plausible_latin_name(value: str, *, minimum_words: int = 2) -> bool:
+    """Field-bound names only; deliberately rejects institutions and prose."""
+    words = value.strip().split()
+    excluded = {"ministério", "tribunal", "procuradoria", "estado", "município", "câmara", "direção"}
+    particles = {"de", "da", "do", "das", "dos", "e", "van", "von"}
+    if not minimum_words <= len(words) <= 8 or words[0].casefold() in excluded:
+        return False
+    for word in words:
+        if word.casefold() in particles:
+            continue
+        letters = word.replace("-", "").replace("'", "").replace("’", "")
+        if not letters or not all((c.isalpha() and "LATIN" in unicodedata.name(c, ""))
+                                  or unicodedata.category(c).startswith("M") for c in letters):
+            return False
+        if not word[0].isupper():
+            return False
+    return True
+
+
+def _postal_locality_fragment(value: str) -> bool:
+    """A short capitalized locality inside an already anchored postal block."""
+    words = value.split()
+    if not 1 <= len(words) <= 5:
+        return False
+    # Reuse the Latin spelling constraints without relaxing personal names.
+    return _plausible_latin_name(value, minimum_words=1)
+
+
+def _anchored_literal_spans(segment: str) -> list[_Span]:
+    spans = []
+    for match in PARTY_NAME_LINE_RE.finditer(segment):
+        span = _trimmed_group_span(match, "value", segment)
+        if span is not None and _plausible_latin_name(segment[span.start:span.end]):
+            spans.append(span)
+    lines = []
+    offset = 0
+    for raw in segment.splitlines(keepends=True):
+        value = raw.strip()
+        start = offset + len(raw) - len(raw.lstrip())
+        lines.append((value, start, start + len(value)))
+        offset += len(raw)
+    for index, (value, _, _) in enumerate(lines):
+        if NAME_ANCHOR_RE.fullmatch(value) and index + 1 < len(lines):
+            name, start, end = lines[index + 1]
+            if _plausible_latin_name(name):
+                spans.append(_Span(start, end))
+        if not STREET_ANCHOR_RE.search(value):
+            continue
+        block = []
+        for address, start, end in lines[index:index + 4]:
+            if not address or ":" in address or re.search(r"[!?;]", address):
+                break
+            # No unanchored intervening body paragraph: intermediate lines must
+            # be short postal fragments, not sentence-like prose.
+            if len(address) > 140 or (block and not POSTAL_CODE_RE.search(address)
+                                      and not _postal_locality_fragment(address)):
+                break
+            block.append(_Span(start, end))
+            if POSTAL_CODE_RE.search(address):
+                spans.extend(block)
+                break
+    return spans
 SENSITIVE_CASE_LINE_RE = re.compile(
     r"(?im)^(?P<prefix>\s*(?:N[úu]mero\s+de\s+processo|Processo|Proc\.?|Refer[êe]ncia|Ref\.?|Ref\.ª)\s*[:\-]\s*)(?P<value>[^\n]+)$",
 )
@@ -76,7 +154,7 @@ def _trimmed_group_span(match: re.Match[str], group: str, segment: str) -> _Span
 
 
 def _collect_full_value_spans(segment: str) -> list[_Span]:
-    spans: list[_Span] = []
+    spans: list[_Span] = _anchored_literal_spans(segment)
     for regex in (SENSITIVE_NAME_LINE_RE, SENSITIVE_ADDRESS_LINE_RE, SENSITIVE_CASE_LINE_RE):
         for match in regex.finditer(segment):
             span = _trimmed_group_span(match, "value", segment)
@@ -104,6 +182,7 @@ def _collect_spans(segment: str) -> list[_Span]:
         IBAN_RE,
         POSTAL_CODE_RE,
         BARCODE_RE,
+        POSTAL_TRACKING_CORE_RE,
         LONG_TRACK_RE,
         CASE_REF_RE,
         PORTUGUESE_MONTH_DATE_RE,
@@ -112,6 +191,8 @@ def _collect_spans(segment: str) -> list[_Span]:
         for match in regex.finditer(segment):
             # A dot-decimal followed by /unit is a monetary value, not a case
             # identifier whose token should also consume the unit/punctuation.
+            if regex is BARCODE_RE and POSTAL_TRACKING_CORE_RE.fullmatch(match.group(0)[2:-2]):
+                continue
             if regex is CASE_REF_RE and any(match.start() == span.start for span in currency_spans):
                 continue
             spans.append(_Span(match.start(), match.end()))

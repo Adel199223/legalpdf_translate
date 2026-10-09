@@ -1,5 +1,13 @@
 # External Source Registry
 
+## Decisions API experiment — 2026-10-09
+
+Official references verified 2026-10-09: the [Decisions guide](https://developers.openai.com/api/docs/guides/decisions) documents text/image evidence, predicate/choice/score questions, currently gpt-6-luna, and USD0.10 per million input tokens with regional/long-context multipliers. The [create reference](https://developers.openai.com/api/reference/resources/decisions/methods/create) defines named typed answers, refusal and usage. The private experiment uses inline images, fixed choices and direct REST to preserve locked openai 2.36.0; no dependency upgrade follows.
+
+The preregistered six-case pilot now returned six typed results: 25/30 raw role labels agree with frozen labels; omission QA scores were 0.99 for the known bad output and 0.76 for the good output. Total usage is 18,622 input tokens, with estimated USD 0.0018622 input-only cost under the documented base rate, not an independently observed invoice. Exact raw responses and usage remain private under decisions_research_01/experiment_tools/live_sessions/pilot_01. Classification alone does not preserve physical layout, establish Word furniture or prove Arabic paragraph-boundary detection. Astra recommends no integration in this change: two real French sidebars were found, but a signature group was falsely classified as a sidebar; existing layout already captures the useful distinctions. The QA pair does not justify a reliable gate. Do not fit a post-hoc threshold or buy extra calls to improve this pilot retrospectively. The user's assistant model preference is unrelated to this API's model or saved app translation settings.
+
+Independent evaluation: private decisions_research_01/independent_evaluation_01.md (SHA-256 9c85e797ad29d20f93a05ebd2e3ae19658e221f9dca14ecd017d3201fae6b53c), detailed JSON SHA-256 67071b5f205edab520b07a0b6449c994a5b7e6322c8f902bf68904d9777962db. The six calls took 12.188 seconds total HTTP duration. This bounded negative/redundant result supports skipping integration now, without ruling out a differently preregistered future use.
+
 ## Ordinary translation structure accounting — 2026-10-09
 
 Official OpenAI references were rechecked for the fresh ordinary post-translation
