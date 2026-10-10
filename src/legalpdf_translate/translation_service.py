@@ -1571,10 +1571,10 @@ class TranslationJobManager:
             self._release_reservation(reservation_key, job_id)
 
     def _reuse_proven_ordinary_baseline(self, job: _ManagedTranslationJob, output: Path, source: Path) -> bool:
-        """Reuse exact pinned raw/map bytes after a byte-equivalent local repack.
+        """Reuse pinned raw/map after a repack or the exact primary mode15 repair.
 
-        ZIP container metadata may change on rebuild/resume. Every member byte,
-        writer ownership entry, source and frozen policy must still agree.
+        ZIP metadata may change. The sole permitted member delta is the current
+        writer's deterministic settings transformation; all ownership stays pinned.
         """
         from io import BytesIO
         from zipfile import ZipFile
@@ -1602,6 +1602,21 @@ class TranslationJobManager:
                 if len(names) > 1024 or len(names) != len(set(names)):
                     raise ValueError("ordinary_auto_layout_rebuild_package_changed")
                 return {name: hashlib.sha256(package.read(name)).hexdigest() for name in names}
+        old_members, new_members = members(old_raw), members(new_raw)
+        equivalent_package = old_members == new_members
+        if (not equivalent_package and old_members.keys() == new_members.keys()
+                and "word/settings.xml" in old_members
+                and all(old_members[name] == new_members[name]
+                        for name in old_members if name != "word/settings.xml")):
+            # Apply the one writer recipe to a private temporary copy, never to
+            # retained evidence. Do not ignore or broadly normalize settings XML.
+            from tempfile import TemporaryDirectory
+            from .docx_writer import _ensure_primary_compatibility_mode15
+            with TemporaryDirectory(prefix="legalpdf-primary-mode15-") as folder:
+                transformed = Path(folder) / "provider.docx"
+                transformed.write_bytes(old_raw)
+                _ensure_primary_compatibility_mode15(transformed)
+                equivalent_package = members(transformed.read_bytes()) == new_members
         policy = job._ordinary_auto_layout_policy or ""
         source_hash = hashlib.sha256(bounded_read(source, 64 * 1024 * 1024)).hexdigest()
         seed = job.result_payload.get("save_seed") or {}
@@ -1617,7 +1632,7 @@ class TranslationJobManager:
                 or intent.get("raw_source_map_bytes_sha256") != hashlib.sha256(old_map_bytes).hexdigest()
                 or old_map.get("docx_sha256") != hashlib.sha256(old_raw).hexdigest()
                 or new_map.get("docx_sha256") != hashlib.sha256(new_raw).hexdigest()
-                or members(old_raw) != members(new_raw)):
+                or not equivalent_package):
             raise ValueError("ordinary_auto_layout_rebuild_identity_changed")
         old_map["docx_sha256"] = new_map["docx_sha256"] = "verified-equivalent"
         if old_map != new_map:
