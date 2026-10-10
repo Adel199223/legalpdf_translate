@@ -41,7 +41,7 @@ def test_staging_refuses_path_names(tmp_path,name):
 
 
 def test_fee_filename_template_labels_keep_existing_ids():
-    template=(Path(__file__).parents[1]/"src/legalpdf_translate/shadow_web/templates/index.html").read_text()
+    template=(Path(__file__).parents[1]/"src/legalpdf_translate/shadow_web/templates/index.html").read_text(encoding='utf-8')
     for field in ("gmail-final-output-filename","gmail-batch-final-output-filename"):
         assert f'<label for="{field}">Honorários DOCX filename</label>' in template
         assert f'id="{field}" type="text" placeholder="Optional filename for the honorários DOCX"' in template
