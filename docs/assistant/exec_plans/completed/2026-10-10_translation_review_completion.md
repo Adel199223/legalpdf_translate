@@ -1,10 +1,25 @@
+# Translation review completion and fresh end-to-end acceptance
+
+## October 10 qualified final closeout
+
+The October 10 goal has qualified functional acceptance: source-evidenced omission notices, focused diagnostics, explicit text correction, reviewed Word edits, separator/footer handling and selected-delivery counts are implemented. The fresh Arabic email workflow completed translation, automatic layout, three explicit wording/punctuation corrections, complete native Word review, normal download, one saved case and one unsent draft. Close visual fidelity is accepted; this is not a claim of pixel identity or perfect first-pass translation.
+
+The first Save incorrectly counted 147 body words instead of all 159 words including the source footer. Normal History controls corrected that same record and its manual total to EUR4.29 at EUR0.027/word; normal fee generation and Gmail attachment replacement repaired the same unsent draft. The selected translation remained byte-identical. PR326 fixes future owned-delivery saving; the installed retained-document Save probe independently returned 159/EUR4.29 in a private database. That probe uses a constructed internal delivery descriptor, not a new live Gmail finalization.
+
+All 76 prior records, prior drafts, settings, schema and original files were preserved. The final run's two successful provider calls total USD0.33127325; earlier failed attempts and charges remain retained. Initial editor HTTP409 and download HTTP404 cleared on reopen/retry; their original causes remain unconfirmed. Gmail preserved visible body wording but serialized whitespace differently. These qualifications and manual recovery remain part of acceptance. No email was sent.
+
+The count repair at head `9335055bd90f1aa9c08c7fe751e68e11b0f071a8` passed 40 focused checks, Standard10 (261 tests), selected Full09 (2,122 executions including 191 formatting cases; nine expected intake deselections) and exact-head hosted CI38085511288 (8,107 unique tests exactly once, seven successful jobs and five verified archives). Full09 exited 0 in 2,670.735 seconds with all 1,171 pins unchanged; its log SHA256 is `9e61b8c1f3d5f543f15d5df3b8c76a63c7f819ae5132f0ae7c42b14e7d8156f3`. Known Dart AOT wrapper failures retained their successful direct-Dart fallback qualification. Independent source, terminal Full and hosted evidence reviews passed.
+
+PR326 merged and was installed on canonical main `e99e18d009fd16de3e7894de3726f05648378346`, with the exact tested tree. Passive runtime identity and all 77 records/settings/schema preservation passed. The installed Save-only probe used the retained reviewed DOCX and matched all three reviewed source-file hashes, returning 159 words/EUR4.29 with API accounting unchanged. Causal tests cover genuine correction/V7 resolution, browser Save and Gmail prospective/staged/fee boundaries. The installed probe does not repeat those live paths. The actual Word/draft acceptance retains the manual recovery and transient-GET qualifications recorded in the completed plan.
+
+Earlier stage/checkpoint instructions below are dated history. Current publication/application/cleanup authority is the private emphasis_publication_receipt.json and count-repair child. Functional acceptance is closed; root owns the remaining authorized docs publication and cleanup lifecycle.
+
 ## October 10 owned-story Save count repair (ongoing)
 
 Live04 completed one normal Save and one unsent draft, but Save refreshed the verified 159-word selected correction through the legacy body-only counter, recording 147 words and EUR 3.97. The 12 source footer words remain in the unchanged selected DOCX. Preserve row 103, draft and all original receipts; this is a counting defect, not missing delivered text or completed acceptance.
 
 Implementation is isolated in `translation-review-completion/legalpdf_translate`, branch `feat/owned-story-save-count-20261010`, from exact installed main `3d9e5ca9e5e3260f72b448a0b76d8658ce2613c4`. Carry only server-verified selected delivery identity/count through ordinary Save and Gmail prospective/staged validation, bind the exact bytes, preserve legacy unowned body counting and all route/payload contracts. Targeted causal tests, independent review and root-owned regression/publication precede installation. No live row, draft or source file is modified by implementation. The umbrella plan remains active.
 
-# Translation review completion and fresh end-to-end acceptance
 
 ## Generated emphasis boundary follow-up — October 10
 

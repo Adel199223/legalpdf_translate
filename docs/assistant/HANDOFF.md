@@ -4,19 +4,17 @@ Updated 2026-10-10. Read `AGENTS.md`, `agent.md`, this page and only the applica
 
 ## Current build and work
 
-### Translation review completion — active October 10 goal
+### Translation review completion — qualified closeout
 
-The [active plan](exec_plans/active/2026-10-10_translation_review_completion.md) owns whole-process acceptance.
+See the [completed plan](exec_plans/completed/2026-10-10_translation_review_completion.md).
 
-PR325 is installed as canonical main `3d9e5ca9e5e3260f72b448a0b76d8658ce2613c4`, asset `dc7afa0279f6`. It normalizes unsupported optional generated emphasis only under V3 policy and reconciles definitive nonpaid selection refusals without discarding uncertain operation identities. Historical recipes, protected text, malformed proposals, paid calls and manual decisions retain their guards.
+The October 10 goal has qualified functional acceptance: source-evidenced omission notices, focused diagnostics, explicit text correction, reviewed Word edits, separator/footer handling and selected-delivery counts are implemented. The fresh Arabic email workflow completed translation, automatic layout, three explicit wording/punctuation corrections, complete native Word review, normal download, one saved case and one unsent draft. Close visual fidelity is accepted; this is not a claim of pixel identity or perfect first-pass translation.
 
-Live04 completed genuine same-email intake, one translation and one automatic layout request, three explicit source-backed Arabic text corrections, qualified one-page native Word review, matching normal download, one case Save and one unsent draft. The selected/downloaded/actual translation attachment bytes match. All 14 exact-data checks, the postal R and one source folio pass; minor placement and spacing differences remain accepted. The initial editor GET409 and download GET404 each required one supported retry; their exact causes remain unproven. Paid cost is USD0.33127325 with two settled dispatches and no unresolved accounting.
+The first Save incorrectly counted 147 body words instead of all 159 words including the source footer. Normal History controls corrected that same record and its manual total to EUR4.29 at EUR0.027/word; normal fee generation and Gmail attachment replacement repaired the same unsent draft. The selected translation remained byte-identical. PR326 fixes future owned-delivery saving; the installed retained-document Save probe independently returned 159/EUR4.29 in a private database. That probe uses a constructed internal delivery descriptor, not a new live Gmail finalization.
 
-Final fee verification found a concrete defect: Save recomputed only the document body, reducing the verified 159 words to 147 by excluding 12 source-owned footer words. Row103 and the fee PDF therefore initially record EUR3.97 instead of EUR4.29 at EUR0.027 per word. The original failed fee and unsent draft are retained, with all 76 earlier records, settings, schema and four earlier drafts preserved. Translation review passed; whole delivery acceptance did not pass at this checkpoint.
+All 76 prior records, prior drafts, settings, schema and original files were preserved. The final run's two successful provider calls total USD0.33127325; earlier failed attempts and charges remain retained. Initial editor HTTP409 and download HTTP404 cleared on reopen/retry; their original causes remain unconfirmed. Gmail preserved visible body wording but serialized whitespace differently. These qualifications and manual recovery remain part of acceptance. No email was sent.
 
-Supported recovery edits only row103 through normal History, regenerates its fee through the existing Qt Job Log action and replaces only the fee PDF in the existing unsent draft after review. Decline the Qt offer to create another draft. This is explicit manual recovery of the retained failed fee, not a new automatic live test. Validate the fix separately with retained selected bytes and causal Save/Gmail checks; do not buy another translation, re-finalize the terminal batch or replay consumed helpers. The user has newly authorized shutdown only after actual completion. No email Send.
-
-Current repair validation, publication, installation, recovery and cleanup belong to `translation_review_completion_20261010_01/publication_01/emphasis_publication_receipt.json`.
+Current publication, installed identity and cleanup state are recorded in private `translation_review_completion_20261010_01/publication_01/emphasis_publication_receipt.json`, including its count-repair child. Do not replay consumed operations.
 
 ### Gmail layout and delivery follow-up — 2026-10-10
 
