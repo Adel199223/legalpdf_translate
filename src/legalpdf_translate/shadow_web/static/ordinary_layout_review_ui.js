@@ -4,6 +4,7 @@ import { mountSavedDocxLayout } from "./saved_docx_layout_ui.js";
 import { mountTextCorrection } from "./text_correction_ui.js";
 
 export function ordinaryLayoutMessage(code) {
+  if (code === "ordinary_layout_saved_word_unsupported") return "The saved Word file contains unsupported content. Original files are preserved.";
   if (/edited_layout_rebase_required/.test(code)) return "Word contains text changes. They remain preserved. Choose Review text changes in the text correction editor to compare and approve them.";
   if (/correction_output_review_required/.test(code)) return "Review the complete corrected output before saving the case.";
   if (/automatic_operation_pending_or_uncertain/.test(code)) return "An earlier layout request may have been billed. The app kept the original Word file and billing record; refresh its status before any new request.";

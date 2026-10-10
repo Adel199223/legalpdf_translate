@@ -1,5 +1,9 @@
 # Translation review completion and fresh end-to-end acceptance
 
+## Word system-note import boundary — October 10
+
+A normal Word save of the retained fallback added standard footnote/endnote separator parts. The current saved-DOCX parser refused them before ordinary rebase could proceed. This bounded follow-up accepts only strictly recognized reserved separator furniture with exact internal relationships and content types; substantive notes, references, duplicates and unknown content remain refused. Source and saved Word files stay immutable. Implementation continues on the isolated optional-footer branch after `5f74a6c`; no live mutation, provider or native action is performed by this worker. The parent plan remains active.
+
 ## Second fresh live failure — optional footer capability
 
 The second installed fresh attempt is retained failed evidence: a terminal source-footer hint owns paragraphs inside a column band. Full base layout passes when only that optional transformation is omitted; this diagnostic projection does not authorize footer conversion or acceptance. The bounded repair validates every existing safety, terminal ownership, bounding-box and role condition before recording unsupported column containment as `source_footer_requires_plain_flow`. Text, paragraph IDs, bands and cells remain intact. The V7 plain-flow transformation guard is unchanged.
