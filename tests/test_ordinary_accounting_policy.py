@@ -33,7 +33,7 @@ def sdk_for(tier="default", *, endpoint="https://api.openai.com/v1/"):
 def accountant(tmp_path, *, hard=False, arguments=None):
     budget = ReservationBudget(tmp_path / "budget.json", cap_usd="10", identity={"case": "test"}) if hard else None
     return DispatchAccounting(tmp_path / "accounting", run_identity={"case": "test"}, budget_context=budget,
-        **(arguments or ordinary_accounting_policy().accounting_arguments(today=date(2026, 9, 10))))
+        **(arguments or ordinary_accounting_policy().accounting_arguments(today=date(2026, 10, 9))))
 
 
 @pytest.mark.parametrize("tier,known", [("default", True), ("priority", False), (None, False), ("flex", False)])
@@ -72,7 +72,7 @@ def test_auto_hard_cap_with_unverified_project_tiers_stops_before_reservation_or
 
 
 def test_explicit_policy_preparation_equals_exact_dispatched_request(tmp_path):
-    arguments = ordinary_accounting_policy().accounting_arguments(today=date(2026, 9, 10))
+    arguments = ordinary_accounting_policy().accounting_arguments(today=date(2026, 10, 9))
     limits = arguments["dispatch_limits"]["openai:*:gpt-5.2"]
     limits.update(requested_service_tier="default", max_input_tokens=5000, max_output_tokens=100,
                   apply_output_bound_only_when_hard=False)
@@ -94,7 +94,7 @@ def test_explicit_policy_preparation_equals_exact_dispatched_request(tmp_path):
 
 
 def test_policy_has_no_mutable_caller_aliases():
-    arguments = ordinary_accounting_policy().accounting_arguments(today=date(2026, 9, 10))
+    arguments = ordinary_accounting_policy().accounting_arguments(today=date(2026, 10, 9))
     policy = OrdinaryAccountingPolicy.from_mapping(pricing=arguments["pricing_snapshot"], limits=arguments["dispatch_limits"])
     arguments["dispatch_limits"]["openai:*:gpt-5.2"]["allowed_base_urls"].append("https://example.invalid")
     copied = policy.accounting_arguments()
@@ -116,10 +116,10 @@ def test_endpoint_drift_after_begin_is_not_dispatched_and_not_charged(tmp_path):
     assert journal["events"][-1]["outcome"] == "not_dispatched"
 
 
-@pytest.mark.parametrize("today", [date(2026, 9, 9), date(2026, 10, 11)])
+@pytest.mark.parametrize("today", [date(2026, 10, 8), date(2026, 11, 10)])
 def test_expired_or_future_reference_new_run_unknown_saved_run_keeps_frozen_prices(tmp_path, today):
     policy = ordinary_accounting_policy()
-    old = accountant(tmp_path, arguments=policy.accounting_arguments(today=date(2026, 9, 10)))
+    old = accountant(tmp_path, arguments=policy.accounting_arguments(today=date(2026, 10, 9)))
     before = old.journal_path.read_bytes()
     expired = policy.accounting_arguments(today=today)
     assert expired["pricing_snapshot"] is None

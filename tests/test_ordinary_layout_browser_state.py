@@ -105,6 +105,25 @@ console.log(JSON.stringify({posts:calls.filter(c=>c.body),state:c.snapshot(),gen
     assert result["generation"]==1 and result["state"]["pending"] is None
 
 
+def test_automatic_and_word_edited_delivery_are_shown_as_unreviewed():
+    result=probe(DOM+r'''
+const job={job_id:scope.jobId,job_kind:'translate',status:'completed',result:{save_seed:{}}};
+const view=prepared();view.automatic_candidate={candidate_id:artifactId,document_reviewed:false,rendered_layout_acceptance:'not_evaluated'};
+view.delivery={kind:'automatic_unreviewed',selection_id:artifactId,generation:0,word_count:120,stale:false,document_reviewed:false};
+const rootState=ordinaryUi.mountOrdinaryLayoutReview({root,getScope:()=>scope,getJob:()=>job,
+ request:async()=>ordinaryEnvelope(view)});
+rootState.update({...job,ordinary_layout:view});
+const automatic=root.textContent;
+view.delivery={...view.delivery,kind:'automatic_unreviewed_edited',selection_id:'a'.repeat(32),word_edit_qualified:true};
+rootState.update({...job,ordinary_layout:view});
+console.log(JSON.stringify({automatic,edited:root.textContent,unsafeWrites}));
+''')
+    assert "Automatic formatted copy (unreviewed)" in result["automatic"]
+    assert "Word-edited formatted copy (source layout unreviewed)" in result["edited"]
+    assert "Reviewed formatted copy" not in result["edited"]
+    assert result["unsafeWrites"] == 0
+
+
 def test_actual_dom_prepares_bound_review_suggests_builds_reviews_and_selects():
     result=probe(DOM+r'''
 let saved=null, seenDelivery=null;const calls=[];

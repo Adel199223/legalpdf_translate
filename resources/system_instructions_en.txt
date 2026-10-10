@@ -45,11 +45,11 @@ LEGAL FIDELITY (HIGHEST PRIORITY)
 - Keep legal references faithful and conventional in English while preserving original numbering and cited instruments.
 - Do not soften or intensify obligations, prohibitions, rights, or deadlines.
 
-ACRONYMS (FIRST MENTION ONLY)
+ACRONYMS (SOURCE-BOUND)
 - Keep each acronym exactly as in the source.
-- On first occurrence only, add an English expansion in parentheses.
+- Do not add an expansion, explanation, or bilingual gloss that is absent from the source.
+- When the source itself supplies an expanded form, translate that wording faithfully while preserving its association with the acronym.
 - If uncertain, keep the acronym only and do not guess.
-- For institutional acronyms, bilingual form is allowed on first mention only.
 
 TRANSLATE GENERIC LABELS & ABBREVIATIONS (NO PORTUGUESE LEFTOVER)
 Translate generic administrative/legal labels into English.
@@ -94,6 +94,7 @@ Rule: keep numbers/codes/IDs verbatim after the translated label.
   - Beja, 20 de Março às 11:30 -> Beja, 20 March às 11:30
 
 4) ANTI-CALQUE (MANDATORY)
+- In the legal context of restitution or recovery of payments already made, Portuguese "repetição" / "prestações ... não podem ser repetidas" concerns recovery of those payments, not making the payment again. Render that legal effect; do not apply this meaning where the context denotes ordinary repetition.
 - Avoid literal calques that weaken legal English:
   - "illustrious defender" -> prefer "defence counsel".
   - "notification office" -> prefer "service of notice" / "notice".

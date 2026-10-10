@@ -66,7 +66,9 @@ def test_ar_token_retry_prompt_includes_locked_token_inventory_and_markers() -> 
     assert "<<<BEGIN LOCKED TOKENS>>>" in prompt
     assert "1. [[Adel Belghali]]" in prompt
     assert "2. [[PT50003506490000832760029]]" in prompt
-    assert "Do not translate, edit, split, remove, reorder, or add token contents." in prompt
+    assert "Do not translate, edit, remove or rewrite required token contents." in prompt
+    assert "Regroup wrappers only for numeric components whose exact boundaries are established by the supplied source" in prompt
+    assert "Do not split or regroup names, addresses or other literal spans." in prompt
     assert "Every listed token must appear only inside [[...]]." in prompt
     assert "No Latin letters or digits may appear outside protected tokens." in prompt
     assert "<<<BEGIN PRIOR OUTPUT>>>" in prompt
@@ -103,7 +105,7 @@ def test_ar_token_retry_prompt_includes_source_and_mismatch_summary_when_availab
     assert "Violation kind: expected_token_mismatch" in prompt
     assert "Missing token samples:" in prompt
     assert "- [[342]]" in prompt
-    assert "Unexpected or altered token samples:" in prompt
+    assert "Additional primary token samples (source coverage may be incomplete):" in prompt
     assert "- [[Beja]]" in prompt
     assert "<<<BEGIN SOURCE PAGE>>>" in prompt
     assert "Fonte original da pagina" in prompt

@@ -457,6 +457,8 @@ def test_same_review_image_read_does_not_fail_queued_context_loader(tmp_path, mo
         def __init__(self, **kwargs):
             assert kwargs["client"] is None
             assert kwargs["reviewed_source_context"].revision_id == revision["revision_id"]
+            assert kwargs["ordinary_auto_layout_policy"] is None
+            self._ordinary_auto_layout_policy = None
             workflow_contexts.append(kwargs["reviewed_source_context"].identity)
 
         def run(self, config):

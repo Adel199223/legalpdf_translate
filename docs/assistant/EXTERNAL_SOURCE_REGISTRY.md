@@ -1,5 +1,30 @@
 # External Source Registry
 
+## Decisions API experiment — 2026-10-09
+
+Official references verified 2026-10-09: the [Decisions guide](https://developers.openai.com/api/docs/guides/decisions) documents text/image evidence, predicate/choice/score questions, currently gpt-6-luna, and USD0.10 per million input tokens with regional/long-context multipliers. The [create reference](https://developers.openai.com/api/reference/resources/decisions/methods/create) defines named typed answers, refusal and usage. The private experiment uses inline images, fixed choices and direct REST to preserve locked openai 2.36.0; no dependency upgrade follows.
+
+The preregistered six-case pilot now returned six typed results: 25/30 raw role labels agree with frozen labels; omission QA scores were 0.99 for the known bad output and 0.76 for the good output. Total usage is 18,622 input tokens, with estimated USD 0.0018622 input-only cost under the documented base rate, not an independently observed invoice. Exact raw responses and usage remain private under decisions_research_01/experiment_tools/live_sessions/pilot_01. Classification alone does not preserve physical layout, establish Word furniture or prove Arabic paragraph-boundary detection. Astra recommends no integration in this change: two real French sidebars were found, but a signature group was falsely classified as a sidebar; existing layout already captures the useful distinctions. The QA pair does not justify a reliable gate. Do not fit a post-hoc threshold or buy extra calls to improve this pilot retrospectively. The user's assistant model preference is unrelated to this API's model or saved app translation settings.
+
+Independent evaluation: private decisions_research_01/independent_evaluation_01.md (SHA-256 9c85e797ad29d20f93a05ebd2e3ae19658e221f9dca14ecd017d3201fae6b53c), detailed JSON SHA-256 67071b5f205edab520b07a0b6449c994a5b7e6322c8f902bf68904d9777962db. The six calls took 12.188 seconds total HTTP duration. This bounded negative/redundant result supports skipping integration now, without ruling out a differently preregistered future use.
+
+## Ordinary translation structure accounting — 2026-10-09
+
+Official OpenAI references were rechecked for the fresh ordinary post-translation
+layout policy. This updates only the bundled future-run price and capacity
+snapshot; each existing run retains its recorded catalog and actual returned
+model, tier and usage still require reconciliation.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-5.2 | GPT-5.2 public standard accounting | USD per million tokens: 1.75 input, 0.175 cached input, 14 output. Documented context is 400,000 tokens and maximum output is 128,000. Image input and Responses are supported. The ordinary layout reservation remains a conservative USD0.812 for a full 400,000 input tokens and a separate 8,000-output limit; it is neither expected nor measured cost. | 2026-10-09 |
+| https://developers.openai.com/api/docs/guides/images-vision | Source-image layout request bound | GPT-5.2 low/high/auto image handling documents a 2,048-pixel maximum dimension and 6,144-patch budget. The project retains its 10,000 image-token accounting bound; actual billing remains response-dependent. | 2026-10-09 |
+| https://developers.openai.com/api/docs/guides/structured-outputs | Strict layout proposal schema | Structured Outputs requires `additionalProperties: false` and supports numeric minimum/maximum in the applicable base-model schema. Local validation separately enforces exact paragraph coverage, ordering and safe phrase cuts. | 2026-10-09 |
+
+No app model, effort, service tier, endpoint or saved default changes follow from
+this public-source refresh. Expired future-run references must produce a visible
+preflight/fallback state rather than silently certifying an unformatted output.
+
 ## Reproducible workstation recipe — 2026-09-30
 
 Official primary sources verified on 2026-09-30:

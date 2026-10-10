@@ -1081,14 +1081,17 @@ def _arabic_review_validation_payload(
     job: Mapping[str, Any] | None = None,
     completion_key: str | None = None,
 ) -> dict[str, Any]:
-    return {
-        "arabic_review": context.arabic_reviews.state_for_workspace(
+    try:
+        review = context.arabic_reviews.state_for_workspace(
             runtime_mode=target.mode,
             workspace_id=target.workspace_id,
             job=job,
             completion_key=completion_key,
         )
-    }
+    except ValueError as exc:
+        review = {"required": True, "resolved": False, "status": "missing",
+            "message": str(exc), "docx_path": "", "completion_key": completion_key or ""}
+    return {"arabic_review": review}
 
 
 _OFFLINE_SERVICE_REASON = "injected_offline_services"
@@ -1544,6 +1547,44 @@ def create_shadow_app(
     ordinary_layouts = BrowserOrdinaryLayouts(context_for=_context)
     app.state.ordinary_layouts = ordinary_layouts
     app.state.ordinary_layout_routes = OrdinaryLayoutRoutes(app, manager_for=ordinary_layouts.manager_for)
+    if isinstance(translation_jobs, TranslationJobManager):
+        def _run_automatic_ordinary_layout(job_id: str, policy: str):
+            from legalpdf_translate.ordinary_auto_layout import run_automatic_layout
+            job = translation_jobs.get_job(job_id)
+            if not job:
+                raise ValueError("ordinary_auto_layout_job_unavailable")
+            manager = ordinary_layouts.manager_for_context(
+                shadow_context, job["runtime_mode"], job["workspace_id"])
+            return run_automatic_layout(manager, ordinary_layouts._accounting, job_id, policy,
+                cancel_requested=translation_jobs.automatic_layout_cancel_requested,
+                begin_publication=translation_jobs.begin_automatic_layout_publication)
+
+        def _cancel_automatic_ordinary_layout(job_id: str):
+            from legalpdf_translate.ordinary_auto_layout import cancel_automatic_layout
+            job = translation_jobs.get_job(job_id)
+            if not job:
+                return
+            manager = ordinary_layouts.manager_for_context(
+                shadow_context, job["runtime_mode"], job["workspace_id"])
+            cancel_automatic_layout(manager, ordinary_layouts._accounting, job_id,
+                recovery=translation_jobs.automatic_layout_recovery_active(job_id))
+
+        def _recover_automatic_ordinary_layout(job_id: str, old_policy: str):
+            from legalpdf_translate.ordinary_auto_layout import frozen_automatic_layout_policy, run_automatic_layout
+            job = translation_jobs.get_job(job_id)
+            if not job:
+                raise ValueError("ordinary_auto_layout_job_unavailable")
+            manager = ordinary_layouts.manager_for_context(
+                shadow_context, job["runtime_mode"], job["workspace_id"])
+            return run_automatic_layout(manager, ordinary_layouts._accounting, job_id,
+                frozen_automatic_layout_policy(),
+                cancel_requested=translation_jobs.automatic_layout_cancel_requested,
+                begin_publication=translation_jobs.begin_automatic_layout_publication,
+                recovery_old_policy=old_policy)
+
+        translation_jobs.set_automatic_layout_runner(_run_automatic_ordinary_layout)
+        translation_jobs.set_automatic_layout_cancel(_cancel_automatic_ordinary_layout)
+        translation_jobs.set_automatic_layout_recovery_runner(_recover_automatic_ordinary_layout)
 
     @app.post("/api/translation/jobs/{job_id}/layout/budget")
     async def api_ordinary_layout_budget(request: Request, job_id: str):
@@ -2750,6 +2791,7 @@ def create_shadow_app(
                         "width_px": item.get("width_px"),
                         "height_px": item.get("height_px"),
                         "image_bytes": image_bytes,
+                        **({"text_content": item["text_content"]} if "text_content" in item else {}),
                     }
                 )
             written_manifest = write_browser_pdf_bundle(
@@ -2848,6 +2890,8 @@ def create_shadow_app(
                 return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
             if job_requires_arabic_review(job):
                 try:
+                    if not callable(getattr(context.arabic_reviews, "require_resolved", None)):
+                        raise ValueError("Arabic DOCX review is unavailable in this browser service.")
                     context.arabic_reviews.require_resolved(
                         runtime_mode=target.mode,
                         workspace_id=target.workspace_id,
@@ -3083,7 +3127,9 @@ def create_shadow_app(
         if job is None:
             return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
         try:
-            if job.get("status") == "completed" and job.get("job_kind") == "translate":
+            if (job.get("status") == "completed" and (job.get("job_kind") == "translate"
+                    or job.get("job_kind") == "rebuild" and
+                    job.get("result", {}).get("automatic_layout", {}).get("status") == "automatic_unreviewed")):
                 manager = ordinary_layouts.manager_for(request, target.mode, target.workspace_id)
                 state = manager.state(job_id)
                 job = {**job, "ordinary_layout": state}
@@ -3159,6 +3205,20 @@ def create_shadow_app(
             )
         )
 
+    @app.post("/api/translation/jobs/{job_id}/layout/recover")
+    async def api_translation_layout_recover(request: Request, job_id: str) -> JSONResponse:
+        context = _context(request)
+        target = _active_target(request)
+        if _owned_translation_job(context, target, job_id) is None:
+            return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
+        try:
+            job = context.translation_jobs.recover_layout_job(job_id=job_id)
+        except ValueError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, {"status": "ok",
+            "normalized_payload": {"job": job}, "diagnostics": {},
+            "capability_flags": build_translation_capability_flags(settings_path=target.data_paths.settings_path)}))
+
     @app.post("/api/translation/jobs/{job_id}/rebuild")
     async def api_translation_job_rebuild(request: Request, job_id: str) -> JSONResponse:
         context = _context(request)
@@ -3226,6 +3286,15 @@ def create_shadow_app(
             return JSONResponse({"status": "failed", "diagnostics": {"error": "Translation job was not found."}}, status_code=404)
         try:
             if artifact_kind == "output_docx":
+                job = _owned_translation_job(context, target, job_id)
+                if job_requires_arabic_review(job):
+                    review = context.arabic_reviews.state_for_workspace(
+                        runtime_mode=target.mode, workspace_id=target.workspace_id, job=job)
+                    manager = ordinary_layouts.manager_for(request, target.mode, target.workspace_id)
+                    if (review.get("resolved")
+                            and job.get("result", {}).get("automatic_layout", {}).get("status") == "automatic_unreviewed"
+                            and not manager.state(job_id)["frozen"]):
+                        manager.service.adopt_automatic_word_edit(job_id)
                 job, _ = delivery_job_snapshot(ordinary_layouts.manager_for(request, target.mode, target.workspace_id),
                     _owned_translation_job(context, target, job_id))
                 path = translation_job_docx_path(job)
@@ -3260,15 +3329,21 @@ def create_shadow_app(
         job = _owned_translation_job(context, target, job_id) if job_id else None
         if job_id and job is None:
             return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
+        if job is not None and row_id in (None, "") and job.get("job_kind") != "translate":
+            return _validation_error_response(context, target, message="Save requires the original completed translation job.")
         if job_id and row_id in (None, ""):
             if job_requires_arabic_review(job):
                 try:
+                    if not callable(getattr(context.arabic_reviews, "require_resolved", None)):
+                        raise ValueError("Arabic DOCX review is unavailable in this browser service.")
                     context.arabic_reviews.require_resolved(
                         runtime_mode=target.mode,
                         workspace_id=target.workspace_id,
                         job=job,
                         completion_key=completion_key,
                     )
+                    if job.get("result", {}).get("automatic_layout", {}).get("status") == "automatic_unreviewed":
+                        ordinary_layouts.manager_for(request, target.mode, target.workspace_id).service.adopt_automatic_word_edit(job_id)
                 except ValueError as exc:
                     return _validation_error_response(
                         context,
@@ -3319,6 +3394,11 @@ def create_shadow_app(
                 job=job,
                 completion_key=completion_key,
             )
+            if (job is not None and payload.get("resolved")
+                    and job.get("result", {}).get("automatic_layout", {}).get("status") == "automatic_unreviewed"):
+                manager = ordinary_layouts.manager_for(request, target.mode, target.workspace_id)
+                if not manager.state(job["job_id"])["frozen"]:
+                    manager.service.adopt_automatic_word_edit(job["job_id"])
         except ValueError as exc:
             return _validation_error_response(context, target, message=str(exc), capability_flags={})
         return JSONResponse(
@@ -3385,6 +3465,9 @@ def create_shadow_app(
                 job=job,
                 completion_key=completion_key,
             )
+            if (arabic_review.get("resolved")
+                    and job.get("result", {}).get("automatic_layout", {}).get("status") == "automatic_unreviewed"):
+                ordinary_layouts.manager_for(request, target.mode, target.workspace_id).service.adopt_automatic_word_edit(job["job_id"])
         except ValueError as exc:
             return _validation_error_response(context, target, message=str(exc), capability_flags={})
         return JSONResponse(
@@ -3412,6 +3495,9 @@ def create_shadow_app(
         completion_key = str(payload.get("completion_key", "") or "").strip() or None
         try:
             job = _translation_job_or_error(context, target, job_id=str(payload.get("job_id", "") or "").strip())
+            if job.get("result", {}).get("automatic_layout", {}).get("status") == "automatic_unreviewed":
+                ordinary_layouts.manager_for(request, target.mode, target.workspace_id).service.adopt_automatic_word_edit(
+                    job["job_id"], without_changes=str(payload.get("continuation", "") or "").strip() == "continue_without_changes")
             arabic_review = context.arabic_reviews.continue_review(
                 runtime_mode=target.mode,
                 workspace_id=target.workspace_id,

@@ -641,6 +641,7 @@ class TranslationWorkflow:
         environment_loader: Callable[[], None] | None = None,
         ocr_engine_factory: Callable[..., OCREngine] | None = None,
         reviewed_source_context: Any | None = None,
+        ordinary_auto_layout_policy: str | None = None,
     ) -> None:
         # One internal opt-in reaches browser/CLI/queue/Qt without new payloads.
         if reviewed_source_context is not None:
@@ -651,6 +652,12 @@ class TranslationWorkflow:
                 raise OrdinaryReviewedSourceError("ordinary_source_review_conflicting_context")
             translation_protocol = "legal_blocks_v2"
         requested = resolve_translation_protocol(translation_protocol)
+        from .ordinary_auto_layout import valid_automatic_layout_policy
+        if ordinary_auto_layout_policy is not None and not valid_automatic_layout_policy(ordinary_auto_layout_policy):
+            raise ValueError("Unsupported ordinary automatic layout policy.")
+        if ordinary_auto_layout_policy is not None and (requested != "legacy_text_v1" or reviewed_source_context is not None):
+            raise ValueError("Ordinary automatic layout requires an ordinary legacy translation run.")
+        self._ordinary_auto_layout_policy = ordinary_auto_layout_policy
         self._reviewed_source_context = reviewed_source_context
         self._gui_settings = None if gui_settings is None else deepcopy(dict(gui_settings))
         self._effective_gui_settings: dict[str, Any] = {}
@@ -948,6 +955,8 @@ class TranslationWorkflow:
         failed_page: int | None = None
         compliance_failure = False
         authentication_failure = False
+        source_unavailable = False
+        source_image_unavailable = False
         halt_reason: str | None = None
 
         thread_local = threading.local()
@@ -955,7 +964,8 @@ class TranslationWorkflow:
         # Reviewed browser jobs defer client construction until source checks.
         # Keep the same saved transport policy as the eager browser constructor.
         ordinary_client_options = ({
-            "max_transport_retries": int(gui_settings.get("perf_max_transport_retries", 4) or 4),
+            "max_transport_retries": int(4 if gui_settings.get("perf_max_transport_retries", 4) is None
+                                         else gui_settings.get("perf_max_transport_retries", 4)),
             "backoff_cap_seconds": float(gui_settings.get("perf_backoff_cap_seconds", 12.0) or 12.0),
         } if self._reviewed_source_context is not None else {})
 
@@ -1339,6 +1349,8 @@ class TranslationWorkflow:
                                 failed_page = page_number
                                 compliance_failure = outcome.error == "compliance_failure"
                                 authentication_failure = outcome.error == "authentication_failure"
+                                source_unavailable = outcome.error == "source_unavailable"
+                                source_image_unavailable = outcome.error == "source_image_unavailable"
                                 halt_reason = (
                                     f"Hard failure at page {page_number}: {outcome.error or 'unknown_failure'}"
                                 )
@@ -1541,7 +1553,8 @@ class TranslationWorkflow:
             run_state.run_status = (
                 "authentication_failure"
                 if authentication_failure
-                else "compliance_failure" if compliance_failure else "runtime_failure"
+                else "compliance_failure" if compliance_failure else "source_unavailable" if source_unavailable
+                else "source_image_unavailable" if source_image_unavailable else "runtime_failure"
             )
             run_state.finished_at = self._utc_now()
             run_state.halt_reason = halt_reason or run_state.halt_reason or "hard_failure"
@@ -1558,7 +1571,8 @@ class TranslationWorkflow:
             error=(
                 "authentication_failure"
                 if authentication_failure
-                else "compliance_failure" if compliance_failure else "runtime_failure"
+                else "compliance_failure" if compliance_failure else "source_unavailable" if source_unavailable
+                else "source_image_unavailable" if source_image_unavailable else "runtime_failure"
             ),
             details={
                 "failed_page": failed_page,
@@ -1576,7 +1590,8 @@ class TranslationWorkflow:
             error=(
                 "authentication_failure"
                 if authentication_failure
-                else "compliance_failure" if compliance_failure else "runtime_failure"
+                else "compliance_failure" if compliance_failure else "source_unavailable" if source_unavailable
+                else "source_image_unavailable" if source_image_unavailable else "runtime_failure"
             ),
             run_summary_path=run_summary_path,
         )
@@ -2378,6 +2393,17 @@ class TranslationWorkflow:
         if merged_visual_source_text is not None:
             page_metadata["visual_recovery_strategy"] = "crop_ocr_merge"
 
+        usage_payload: dict[str, object] = {
+            "ocr": {
+                "engine": ocr_result.engine,
+                "chars": ocr_result.chars,
+                "failed_reason": ocr_result.failed_reason,
+                "quality_score": float(ocr_result.quality_score or 0.0),
+                "selected_pass": str(ocr_result.selected_pass or ""),
+                "attempts_count": int(len(ocr_result.attempts or [])),
+            }
+        }
+
         self._record_event(
             event_type="page_source_route",
             stage="extract",
@@ -2450,8 +2476,9 @@ class TranslationWorkflow:
                 page_metadata["visual_recovery_failed"] = True
         effective_image_text = source_text if ocr_used_for_source else extracted_text
         short_or_failed = ordered.extraction_failed or len(effective_image_text.strip()) < 20
+        ordinary_visual_source = bool(self._ordinary_auto_layout_policy and self._structured_run is None)
         image_detail = "low"
-        if short_or_failed and config.image_mode in (ImageMode.AUTO, ImageMode.ALWAYS):
+        if (ordinary_visual_source and image_used) or (short_or_failed and config.image_mode in (ImageMode.AUTO, ImageMode.ALWAYS)):
             image_detail = "high"
 
         image_data_url = None
@@ -2459,13 +2486,31 @@ class TranslationWorkflow:
         if image_used:
             image_path = paths.images_dir / f"page_{page_number:04d}.jpg" if config.keep_intermediates else None
             image_cap_bytes = self._image_cap_for_lang(config.target_lang)
-            rendered_image = render_page_image_data_url(
-                config.pdf_path,
-                page_number - 1,
-                save_path=image_path,
-                max_data_url_bytes=image_cap_bytes,
-            )
-            image_data_url = rendered_image.data_url
+            try:
+                rendered_image = render_page_image_data_url(
+                    config.pdf_path,
+                    page_number - 1,
+                    save_path=image_path,
+                    max_data_url_bytes=image_cap_bytes,
+                )
+                image_data_url = rendered_image.data_url
+                if ordinary_visual_source and not image_data_url:
+                    raise ValueError("full_page_image_empty")
+            except Exception as exc:
+                if not ordinary_visual_source:
+                    raise
+                page_metadata["source_coverage_image_supplied"] = False
+                page_metadata["source_coverage_verified"] = False
+                page_metadata["source_coverage_basis"] = "required_full_page_image_unavailable"
+                page_metadata["image_decision_reason"] = "ordinary_full_page_image_unavailable"
+                page_metadata["ended_at_iso"] = self._utc_now()
+                page_metadata["wall_seconds"] = round(time.perf_counter() - started_monotonic, 3)
+                self._log(f"page={page_number} required full-page image unavailable: {type(exc).__name__}")
+                self._record_event(event_type="page_source_image_unavailable", stage="image",
+                    page_index=page_number, decisions={"image_mode": config.image_mode.value,
+                        "image_attached": False, "reason": "ordinary_full_page_image_unavailable"})
+                return _PageOutcome(status=PageStatus.FAILED, image_used=False, retry_used=False,
+                    usage=usage_payload, error="source_image_unavailable", page_metadata=page_metadata)
             page_metadata["image_detail"] = image_detail
             page_metadata["image_format"] = rendered_image.image_format
             page_metadata["image_bytes"] = int(rendered_image.encoded_bytes)
@@ -2474,6 +2519,11 @@ class TranslationWorkflow:
             page_metadata["image_compress_steps"] = int(rendered_image.compress_steps)
         else:
             page_metadata["image_detail"] = ""
+        if ordinary_visual_source:
+            page_metadata["source_coverage_image_supplied"] = bool(image_data_url)
+            page_metadata["source_coverage_verified"] = False
+            page_metadata["source_coverage_basis"] = (
+                "full_page_image_with_text_aid" if image_data_url else "extractable_text_only")
         request_type = self._translation_request_type(image_used=image_used)
         request_timeout_budget_seconds = self._translation_request_timeout_seconds(image_used=image_used)
         page_request_started = time.perf_counter()
@@ -2533,6 +2583,14 @@ class TranslationWorkflow:
             source_text=source_text,
             context_text=context_text,
         )
+        if ordinary_visual_source and image_data_url:
+            prompt_text += (
+                "\n<<<VISUAL SOURCE GUIDANCE>>>\n"
+                "The attached image shows the whole source page. Translate all readable text visible on it, "
+                "including text drawn as outlines, in images, or in marginal notes. The extracted source text "
+                "is an aid and may omit visible text. Include each passage once, preserve verbatim identifiers, "
+                "and do not infer illegible content.\n<<<END VISUAL SOURCE GUIDANCE>>>"
+            )
         prompt_text = self._append_glossary_prompt(
             prompt_text, config.target_lang, source_text=glossary_source_text, page_index=page_number,
         )
@@ -2562,17 +2620,6 @@ class TranslationWorkflow:
                 glossary_source_text=glossary_source_text,
             )
             emit_prompt_compiled_event(self._event_collector, page_index=page_number, metrics=_pm)
-
-        usage_payload: dict[str, object] = {
-            "ocr": {
-                "engine": ocr_result.engine,
-                "chars": ocr_result.chars,
-                "failed_reason": ocr_result.failed_reason,
-                "quality_score": float(ocr_result.quality_score or 0.0),
-                "selected_pass": str(ocr_result.selected_pass or ""),
-                "attempts_count": int(len(ocr_result.attempts or [])),
-            }
-        }
 
         def _record_ar_eval_diagnostics(evaluation: OutputEvaluation, *, attempt: int) -> None:
             if config.target_lang != TargetLang.AR:
@@ -2706,6 +2753,17 @@ class TranslationWorkflow:
             page_metadata["ended_at_iso"] = self._utc_now()
             page_metadata["wall_seconds"] = round(time.perf_counter() - started_monotonic, 3)
 
+        if self._structured_run is None and not source_text.strip() and image_data_url is None:
+            page_metadata["source_route_reason"] = "source_text_and_image_unavailable"
+            self._record_event(event_type="page_source_unavailable", stage="extract",
+                page_index=page_number,
+                decisions={"source_text_chars": 0, "image_attached": False,
+                           "ocr_mode": config.ocr_mode.value, "image_mode": config.image_mode.value})
+            self._log(f"page={page_number} source_unavailable: no text or attached image")
+            _finalize_page_metadata()
+            return _PageOutcome(status=PageStatus.FAILED, image_used=False, retry_used=False,
+                usage=usage_payload, error="source_unavailable", page_metadata=page_metadata)
+
         attempt1_started = time.perf_counter()
         try:
             attempt1_timeout = self._remaining_request_budget_seconds(
@@ -2807,6 +2865,7 @@ class TranslationWorkflow:
             initial.raw_output,
             config.target_lang,
             expected_ar_tokens=expected_ar_tokens,
+            ar_source_text=source_text,
         )
         _record_ar_eval_diagnostics(initial_eval, attempt=1)
         _apply_evaluation_metadata(initial_eval)
@@ -3032,6 +3091,8 @@ class TranslationWorkflow:
             retry.raw_output,
             config.target_lang,
             expected_ar_tokens=expected_ar_tokens,
+            ar_source_text=source_text,
+            primary_normalized_text=initial_eval.normalized_text,
         )
         _record_ar_eval_diagnostics(retry_eval, attempt=2)
         _apply_evaluation_metadata(retry_eval)
@@ -3180,11 +3241,15 @@ class TranslationWorkflow:
         lang: TargetLang,
         *,
         expected_ar_tokens: list[str] | None = None,
+        ar_source_text: str | None = None,
+        primary_normalized_text: str | None = None,
     ) -> OutputEvaluation:
         return evaluate_workflow_output(
             raw_output,
             lang,
             expected_ar_tokens=expected_ar_tokens,
+            ar_source_text=ar_source_text,
+            primary_normalized_text=primary_normalized_text,
         )
 
     def _accumulate_usage_totals(self, page_metadata: dict[str, object], usage: dict[str, Any]) -> None:
@@ -4045,12 +4110,16 @@ class TranslationWorkflow:
         ocr_quality_score: float,
         force_visual_grounding: bool = False,
     ) -> tuple[bool, str]:
+        if self._ordinary_auto_layout_policy and config.image_mode == ImageMode.OFF:
+            return False, "image_mode_off"
         if force_visual_grounding:
             return True, "visual_recovery_required"
         if config.image_mode == ImageMode.OFF:
             return False, "image_mode_off"
         if config.image_mode == ImageMode.ALWAYS:
             return True, "image_mode_always"
+        if self._ordinary_auto_layout_policy and self._structured_run is None:
+            return True, "ordinary_full_page_visual_source"
 
         ocr_used = ocr_chars > 0
         ocr_text_usable = ocr_used and self._is_usable_source_text(source_text)
@@ -4158,6 +4227,11 @@ class TranslationWorkflow:
         if config.resume and existing is not None and self._explicit_translation_protocol is None:
             # An environment opt-in affects fresh runs, not saved protocol identity.
             self._translation_protocol = existing.protocol_identity.get("protocol", "legacy_text_v1")
+        if config.resume and existing is not None:
+            recorded_auto = existing.settings.get("ordinary_auto_layout_policy")
+            if self._ordinary_auto_layout_policy is not None and self._ordinary_auto_layout_policy != recorded_auto:
+                raise ValueError("Ordinary automatic layout policy changed on resume.")
+            self._ordinary_auto_layout_policy = recorded_auto
         if self._translation_protocol not in {"legacy_text_v1", "legal_blocks_v2"}:
             raise ValueError("Checkpoint translation protocol is not supported.")
         has_structured_files = paths.pages_dir.exists() and (
@@ -4301,6 +4375,7 @@ class TranslationWorkflow:
                 protocol_identity=self._structured_run.identity if self._structured_run else None,
                 ordinary_source_review=(self._reviewed_source_context.identity
                     if self._reviewed_source_context is not None else None),
+                ordinary_auto_layout_policy=self._ordinary_auto_layout_policy,
             )
             if mismatch_reason is None:
                 existing.frozen_outdir_abs = str(paths.frozen_outdir)
@@ -4340,6 +4415,7 @@ class TranslationWorkflow:
             protocol_identity=self._structured_run.identity if self._structured_run else None,
             ordinary_source_review=(self._reviewed_source_context.identity
                 if self._reviewed_source_context is not None else None),
+            ordinary_auto_layout_policy=self._ordinary_auto_layout_policy,
         )
         save_run_state_atomic(paths.run_state_path, state)
         return state

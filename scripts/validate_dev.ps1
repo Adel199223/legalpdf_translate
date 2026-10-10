@@ -193,6 +193,10 @@ $baselineCommands = @(
 $fullExtraCommands = @(
     @{
         Executable = $venvPython
+        Arguments = @("-m", "pytest", "-q", "--durations=10", "tests/test_shadow_runtime_metadata_atomic.py")
+    },
+    @{
+        Executable = $venvPython
         Arguments = @("-m", "pytest", "-q", "--durations=10", "tests/test_gmail_review_state.py")
     },
     @{
@@ -221,17 +225,35 @@ $fullExtraCommands = @(
         Executable = $venvPython
         Arguments = @("-m", "pytest", "-q", "--durations=10",
             "tests/test_saved_docx_layout.py", "tests/test_saved_docx_layout_writer.py",
+            "tests/test_saved_docx_layout_horizontal_flow.py",
+            "tests/test_saved_docx_layout_modern_compatibility.py",
+            "tests/test_saved_docx_layout_partitions.py",
             "tests/test_saved_docx_layout_service.py", "tests/test_shadow_web_saved_docx_layout_api.py",
-            "tests/test_saved_docx_layout_browser_state.py")
+            "tests/test_saved_docx_layout_browser_state.py",
+            "tests/test_ordinary_auto_layout_artifacts.py")
     },
     @{
         Executable = $venvPython
         Arguments = @("-m", "pytest", "-q", "--durations=10",
             "tests/test_ordinary_layout_contracts.py", "tests/test_ordinary_layout_service.py",
+            "tests/test_ordinary_layout_columns_rows.py",
+            "tests/test_ordinary_generated_emphasis.py",
+            "tests/test_ordinary_edited_revision.py",
+            "tests/test_ordinary_layout_partition_contracts.py",
+            "tests/test_ordinary_layout_partition_browser.py",
             "tests/test_ordinary_layout_manager.py", "tests/test_ordinary_layout_delivery_integration.py",
             "tests/test_shadow_web_ordinary_layout_api.py", "tests/test_ordinary_layout_browser_state.py",
             "tests/test_ordinary_layout_parent_races.py", "tests/test_gmail_layout_confirmation_browser.py",
-            "tests/test_gmail_confirmation_prevalidation.py")
+            "tests/test_gmail_confirmation_prevalidation.py",
+            "tests/test_ordinary_auto_layout_integration.py",
+            "tests/test_ordinary_auto_layout_recovery.py",
+            "tests/test_ordinary_layout_retained_continuation.py",
+            "tests/test_ordinary_layout_direct_continuation.py",
+            "tests/test_ordinary_layout_order_emphasis.py",
+            "tests/test_ordinary_layout_zero_spacing.py",
+            "tests/test_ordinary_auto_layout_workflow.py",
+            "tests/test_browser_pdf_text_bundle.py",
+            "tests/test_ordinary_accounting_policy.py")
     },
     @{
         Executable = $venvPython
@@ -241,6 +263,8 @@ $fullExtraCommands = @(
             "tests/test_translation_honorarios_options.py", "tests/test_gmail_fee_options_browser.py",
             "tests/test_gmail_start_page_input.py", "tests/test_shadow_web_arabic_review_passive.py",
             "tests/test_docx_arabic_folio.py", "tests/test_resources_loader.py",
+            "tests/test_arabic_pre_tokenize.py",
+            "tests/test_ar_source_literal_fidelity.py",
             "tests/test_qt_app_state.py", "tests/test_formatting_policy_isolation.py",
             "tests/test_qt_cleanup.py", "tests/test_qt_arabic_review_lifecycle.py",
             "tests/test_test_shards.py",

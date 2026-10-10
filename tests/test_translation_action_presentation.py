@@ -3,6 +3,25 @@ from __future__ import annotations
 from .browser_esm_probe import run_browser_esm_json_probe
 
 
+def test_recovery_quote_uses_current_raw_snapshot_and_never_historical_suggestion_policy():
+    script = r"""
+const p = await import(__TRANSLATION_ACTION_PRESENTATION_MODULE_URL__);
+const base = {job_id:'tx-raw', actions:{recover_layout:true}, ordinary_layout:{suggestion_capability:{max_page_cost_usd:'0.812'}}};
+console.log(JSON.stringify({
+ old:p.deriveTranslationActionState(base).recoverLayoutLabel,
+ current:p.deriveTranslationActionState({...base,diagnostics:{layout_recovery_quote:{available:true,max_page_cost_usd:'1.148'}}}).recoverLayoutLabel,
+ unavailable:p.deriveTranslationActionState({...base,diagnostics:{layout_recovery_quote:{available:false,max_page_cost_usd:'1.148'}}}).recoverLayoutLabel,
+ invalid:p.deriveTranslationActionState({...base,diagnostics:{layout_recovery_quote:{available:true,max_page_cost_usd:'<script>'}}}).recoverLayoutLabel
+}));
+"""
+    result = run_browser_esm_json_probe(script,
+        {"__TRANSLATION_ACTION_PRESENTATION_MODULE_URL__": "translation_action_presentation.js"})
+    assert result == {'old':'Recover Source Layout (current price bound unavailable)',
+        'current':'Recover Source Layout (paid; up to USD1.148/page; prior charges remain)',
+        'unavailable':'Recover Source Layout (current price bound unavailable)',
+        'invalid':'Recover Source Layout (current price bound unavailable)'}
+
+
 def test_translation_action_presentation_module_builds_primary_action_state() -> None:
     script = r"""
 const presentation = await import(__TRANSLATION_ACTION_PRESENTATION_MODULE_URL__);
@@ -114,6 +133,8 @@ console.log(JSON.stringify({
         "cancelEnabled": False,
         "resumeEnabled": False,
         "rebuildEnabled": False,
+        "recoverLayoutEnabled": False,
+        "recoverLayoutLabel": "Recover Source Layout",
     }
     assert results["cases"]["nullSafe"] == results["cases"]["idle"]
 

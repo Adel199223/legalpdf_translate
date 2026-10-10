@@ -1,6 +1,6 @@
 """Caller-owned, offline pricing policy; never credentials or remote discovery.
 
-Public reference checked 2026-09-10:
+Public reference checked 2026-10-09:
 https://developers.openai.com/api/docs/models/gpt-5.2
 Only public standard USD pricing is represented. Auto-tier hard caps deliberately
 remain unavailable until a finite verified tier policy is explicitly supplied.
@@ -57,17 +57,17 @@ def ordinary_accounting_policy() -> OrdinaryAccountingPolicy:
             "billing_scope": "openai_public_api", "currency": "USD", "source_url": source,
         }
     policy = OrdinaryAccountingPolicy.from_mapping(pricing={
-        "snapshot_id": "openai_public_standard_2026_09_10",
-        "verified_at": "2026-09-10", "source": source, "models": models,
+        "snapshot_id": "openai_public_standard_2026_10_09",
+        "verified_at": "2026-10-09", "source": source, "models": models,
     }, limits={"openai:*:gpt-5.2": {
         "requested_model": "gpt-5.2", "allowed_actual_models": ["gpt-5.2-2025-12-11"],
         "billing_scope": "openai_public_api", "currency": "USD",
         "allowed_base_urls": ["https://api.openai.com/v1"],
         "max_input_tokens": 400000, "max_output_tokens": 128000,
         "apply_output_bound_only_when_hard": True,
-        "bound_source_url": source, "bound_verified_at": "2026-09-10",
+        "bound_source_url": source, "bound_verified_at": "2026-10-09",
         # No allowed_actual_service_tiers: project auto policy has not been verified.
     }})
     # Only the bundled public reference has this local freshness window. No
     # remote refresh or silent new approval; saved runs retain their own catalog.
-    return OrdinaryAccountingPolicy(policy._pricing_json, policy._limits_json, date(2026, 9, 10))
+    return OrdinaryAccountingPolicy(policy._pricing_json, policy._limits_json, date(2026, 10, 9))

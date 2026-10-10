@@ -79,7 +79,10 @@ def _resolve_review_target(job: Mapping[str, Any]) -> tuple[str, Path]:
     ).upper()
     if target_lang != "AR":
         raise ValueError("Arabic DOCX review only applies to completed Arabic translation jobs.")
-    output_docx_text = _clean_text(save_seed.get("output_docx"))
+    automatic = result.get("automatic_layout")
+    review_copy = (automatic.get("review_copy_path")
+        if isinstance(automatic, Mapping) and automatic.get("status") == "automatic_unreviewed" else None)
+    output_docx_text = _clean_text(review_copy or save_seed.get("output_docx"))
     if not output_docx_text:
         raise ValueError("Arabic DOCX review requires the durable translated DOCX from save_seed.output_docx.")
     docx_path = Path(output_docx_text).expanduser().resolve()
@@ -91,11 +94,11 @@ def _resolve_review_target(job: Mapping[str, Any]) -> tuple[str, Path]:
 def job_requires_arabic_review(job: Mapping[str, Any]) -> bool:
     if not isinstance(job, Mapping):
         return False
-    try:
-        _resolve_review_target(job)
-    except ValueError:
-        return False
-    return True
+    result = job.get("result")
+    seed = result.get("save_seed") if isinstance(result, Mapping) else None
+    return (job.get("status") == "completed" and job.get("job_kind") == "translate"
+        and isinstance(seed, Mapping) and (_clean_text(seed.get("target_lang")).upper()
+        or _clean_text((job.get("config") or {}).get("target_lang")).upper()) == "AR")
 
 
 @dataclass(slots=True)

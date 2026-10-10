@@ -8,17 +8,19 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import unicodedata
 from typing import Any, Mapping
 
 from .saved_docx_layout import inspect_docx, validate_decisions
 
 VERSION = "ordinary_layout_v1"
 PROPOSAL_VERSION = "ordinary_layout_proposal_v1"
+PROPOSAL_VERSION_V2 = "ordinary_layout_proposal_v2"
 MAX_PAGE_PARAGRAPHS = 200
 MAX_PAGE_CODEPOINTS = 32_000
-MAX_OUTPUT_TOKENS = 8000
+MAX_OUTPUT_TOKENS = 32000
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
-REQUEST_TIMEOUT_SECONDS = 240.0
+REQUEST_TIMEOUT_SECONDS = 480.0
 
 
 class OrdinaryLayoutError(ValueError):
@@ -230,10 +232,13 @@ def proposal_schema(page_number, ids):
         _object({**presentation, "role": {"type": "string",
                 "enum": ["institution", "reference", "recipient", "body", "list", "signature", "source_folio"]},
             "heading_level": {"type": "integer", "enum": [0]}, "heading_size_pt": {"type": "null"}})]}
-    return {"type": "json_schema", "strict": True, "name": "ordinary_source_layout_v1", "schema": _object({
-        "version": {"type": "string", "enum": [PROPOSAL_VERSION]}, "page_number": {"type": "integer", "enum": [page_number]},
+    return {"type": "json_schema", "strict": True, "name": "ordinary_source_layout_v2", "schema": _object({
+        "version": {"type": "string", "enum": [PROPOSAL_VERSION_V2]}, "page_number": {"type": "integer", "enum": [page_number]},
         "paragraphs": {"type": "array", "items": choice, "minItems": len(ids), "maxItems": len(ids)},
-        "bands": {"type": "array", "items": {"anyOf": [flow, columns]}, "minItems": 1, "maxItems": len(ids)}})}
+        "bands": {"type": "array", "items": {"anyOf": [flow, columns]}, "minItems": 1, "maxItems": len(ids)},
+        "paragraph_partitions": {"type": "array", "maxItems": len(ids), "items": _object({
+            "paragraph_id": pid, "split_before": {"type": "array", "minItems": 1, "maxItems": 7,
+                "items": {"type": "string", "minLength": 1, "maxLength": 160}}})}})}
 
 
 def _ids(band):
@@ -241,19 +246,190 @@ def _ids(band):
     return [i for g in groups for i in g["paragraph_ids"]]
 
 
+def _resolve_partition_anchors(proposal, snapshot, ids):
+    """Convert unique literal starts; the saved model validates cut semantics."""
+    partitions = proposal.get("paragraph_partitions", [])
+    if type(partitions) is not list or len(partitions) > len(ids):
+        fail("invalid_proposal_partitions")
+    rows = {row["id"]: row for row in snapshot["paragraphs"]}
+    resolved, seen = [], []
+    for item in partitions:
+        if type(item) is not dict or set(item) != {"paragraph_id", "split_before"}:
+            fail("invalid_proposal_partitions")
+        pid, anchors = item["paragraph_id"], item["split_before"]
+        if (type(pid) is not str or pid not in ids or pid in seen
+                or type(anchors) is not list or not 1 <= len(anchors) <= 7
+                or any(type(anchor) is not str or not 1 <= len(anchor) <= 160
+                       or not anchor.strip() for anchor in anchors)):
+            fail("invalid_proposal_partitions")
+        text = rows[pid]["text"]
+        offsets = []
+        for anchor in anchors:
+            offset = text.find(anchor)
+            if offset < 0 or text.find(anchor, offset + 1) >= 0:
+                fail("proposal_partition_anchor_ambiguous")
+            offsets.append(offset)
+        if offsets != sorted(set(offsets)):
+            fail("proposal_partition_anchor_order")
+        seen.append(pid)
+        resolved.append({"paragraph_id": pid, "offsets": offsets})
+    if seen != [pid for pid in ids if pid in seen]:
+        fail("proposal_partition_parent_order")
+    if len(ids) + sum(len(item["offsets"]) for item in resolved) > MAX_PAGE_PARAGRAPHS:
+        fail("proposal_partition_page_too_large", 413)
+    return resolved
+
+
+def _canonical_flow_groups(bands, ids):
+    """Restore only complete whole plain-flow intervals to immutable raw order."""
+    if (type(bands) is not list or len(bands) != 1 or type(bands[0]) is not dict
+            or bands[0].get("kind") != "flow"):
+        return bands
+    groups = bands[0].get("groups")
+    if type(groups) is not list or not groups:
+        return bands
+    ordinal = {pid: index for index, pid in enumerate(ids)}
+    intervals = []
+    for group in groups:
+        if type(group) is not dict or group.get("panel") is not False:
+            return bands
+        owned = group.get("paragraph_ids")
+        if type(owned) is not list or not owned or any(type(pid) is not str or pid not in ordinal for pid in owned):
+            return bands
+        positions = [ordinal[pid] for pid in owned]
+        if positions != list(range(positions[0], positions[0] + len(positions))):
+            return bands
+        intervals.append((positions[0], group))
+    flattened = [pid for group in groups for pid in group["paragraph_ids"]]
+    if len(flattened) != len(ids) or len(set(flattened)) != len(ids) or set(flattened) != set(ids):
+        return bands
+    if flattened == ids:
+        return bands
+    result = deepcopy(bands)
+    result[0]["groups"] = [deepcopy(group) for _, group in sorted(intervals, key=lambda item: item[0])]
+    return result
+
+
+def _canonical_columns_rows(bands, ids, choices):
+    """Separate source rows only when whole existing column groups prove order."""
+    try:
+        flattened = [pid for band in bands for pid in _ids(band)]
+    except (TypeError, KeyError):
+        return bands
+    if flattened == ids:
+        return bands
+    if (any(type(pid) is not str for pid in flattened)
+            or len(flattened) != len(ids) or len(set(flattened)) != len(ids)
+            or set(flattened) != set(ids)):
+        return bands
+    ordinal = {pid: index for index, pid in enumerate(ids)}
+    boxes = {choice["paragraph_id"]: choice["bbox"] for choice in choices}
+    result = []
+    for band in bands:
+        owned = _ids(band)
+        if band.get("kind") != "columns" or owned == sorted(owned, key=ordinal.get):
+            result.append(band)
+            continue
+        cells = band.get("cells")
+        if type(cells) is not list or len(cells) not in {2, 3}:
+            return bands
+        if any(type(cell) is not dict or type(cell.get("groups")) is not list for cell in cells):
+            return bands
+        count = len(cells[0]["groups"])
+        if count < 2 or any(len(cell["groups"]) != count for cell in cells):
+            return bands
+        for cell in cells:
+            for group in cell["groups"]:
+                if (type(group) is not dict or type(group.get("panel")) is not bool
+                        or type(group.get("paragraph_ids")) is not list or not group["paragraph_ids"]):
+                    return bands
+                positions = [ordinal[pid] for pid in group["paragraph_ids"]]
+                if positions != list(range(positions[0], positions[0] + len(positions))):
+                    return bands
+        start, end = min(ordinal[pid] for pid in owned), max(ordinal[pid] for pid in owned) + 1
+        row_order = [pid for row in range(count) for cell in cells
+                     for pid in cell["groups"][row]["paragraph_ids"]]
+        if row_order != ids[start:end]:
+            return bands
+        previous_bottom = None
+        for row in range(count):
+            row_ids = [pid for cell in cells for pid in cell["groups"][row]["paragraph_ids"]]
+            row_boxes = [boxes[pid] for pid in row_ids]
+            if any(type(box) is not list or len(box) != 4
+                    or any(type(v) not in {int, float} or not 0 <= v <= 1 for v in box)
+                    or box[0] >= box[2] or box[1] >= box[3] for box in row_boxes):
+                return bands
+            top, bottom = min(box[1] for box in row_boxes), max(box[3] for box in row_boxes)
+            if previous_bottom is not None and previous_bottom > top:
+                return bands
+            previous_bottom = bottom
+        for row in range(count):
+            split = deepcopy(band)
+            for cell in split["cells"]:
+                cell["groups"] = [cell["groups"][row]]
+            result.append(split)
+    return result if [pid for band in result for pid in _ids(band)] == ids else bands
+
+
+def _generated_emphasis(row, spans):
+    """Drop only optional word-interior endpoints; never repair unsafe literals."""
+    from .saved_docx_layout import _phrase_edge, _emphasis_end_edge, _protected_ranges
+    if type(spans) is not list or len(spans) > 1000:
+        fail("invalid_proposal_decisions")
+    if not spans:
+        return []
+    previous = 0
+    for span in spans:
+        if (type(span) is not dict or set(span) != {"start", "end", "bold", "italic", "underline"}
+                or type(span["start"]) is not int or type(span["end"]) is not int
+                or not previous <= span["start"] < span["end"] <= len(row["text"])
+                or any(type(span[k]) is not bool for k in ("bold", "italic", "underline"))
+                or not any(span[k] for k in ("bold", "italic", "underline"))):
+            fail("invalid_proposal_decisions")
+        previous = span["end"]
+    try:
+        ranges = _protected_ranges(row)
+    except ValueError:
+        fail("invalid_proposal_decisions")
+    retained = []
+    def word_interior(offset):
+        return (0 < offset < len(row["text"])
+                and all(unicodedata.category(char)[0] in {"L", "M", "N"}
+                        for char in row["text"][offset - 1:offset + 1]))
+    for span in spans:
+        start, end = span["start"], span["end"]
+        if (any(a < cut < b for a, b in ranges for cut in (start, end))
+                or any(token["kind"] != "t" and start < token["end"] and end > token["start"] for token in row["tokens"])):
+            fail("invalid_proposal_decisions")
+        valid_start, valid_end = _phrase_edge(row["text"], start), _emphasis_end_edge(row["text"], end)
+        if (not valid_start and not word_interior(start)) or (not valid_end and not word_interior(end)):
+            fail("invalid_proposal_decisions")
+        if valid_start and valid_end:
+            retained.append(deepcopy(span))
+    return retained
+
+
 def normalize_proposals(snapshot, view, proposals):
     decisions = deepcopy(view["decisions"])
     by_id = {row["paragraph_id"]: index for index, row in enumerate(decisions["paragraphs"])}
     replacements, id_page = {}, {}
+    partitions = deepcopy(decisions.get("paragraph_partitions", []))
     for proposal in proposals:
-        if type(proposal) is not dict or set(proposal) != {"version", "page_number", "paragraphs", "bands"}:
+        if type(proposal) is not dict:
+            fail("invalid_proposal")
+        expected_keys = {"version", "page_number", "paragraphs", "bands"}
+        if proposal.get("version") == PROPOSAL_VERSION_V2:
+            expected_keys.add("paragraph_partitions")
+        if set(proposal) != expected_keys:
             fail("invalid_proposal")
         page = proposal["page_number"]
-        if proposal["version"] != PROPOSAL_VERSION or type(page) is not int or page in replacements:
+        if proposal["version"] not in {PROPOSAL_VERSION, PROPOSAL_VERSION_V2} or type(page) is not int or page in replacements:
             fail("invalid_proposal")
         ids = page_ids(view, page)
         if type(proposal["paragraphs"]) is not list or [p.get("paragraph_id") for p in proposal["paragraphs"] if type(p) is dict] != ids:
             fail("proposal_coverage")
+        partitions = [item for item in partitions if item["paragraph_id"] not in ids]
+        partitions.extend(_resolve_partition_anchors(proposal, snapshot, ids))
         frame = next((p for p in view["pages"] if p["page_number"] == page), None)
         if frame is None:
             fail("invalid_proposal_page")
@@ -275,12 +451,21 @@ def normalize_proposals(snapshot, view, proposals):
                 "Suggested source box is empty or reversed; operator source association is required."
                 if unusable_box else "Source association requires operator review." if box is None else "")
             baseline = snapshot["paragraphs"][by_id[row["paragraph_id"]]]
-            if baseline["has_page_break"] and any((row["role"] != "body", row["heading_level"] != 0,
+            row["emphasis"] = _generated_emphasis(baseline, row["emphasis"])
+            has_visible_text = any(token["kind"] == "t" and any(
+                not char.isspace() and unicodedata.category(char)[0] in {"L", "N", "P", "S"}
+                for char in token["text"]) for token in baseline["tokens"])
+            # Real footer/folio text may share a paragraph with its terminal
+            # page break. Its presentation uses the same bounded validator as
+            # other text; only control-only sentinel rows must remain neutral.
+            if baseline["has_page_break"] and not has_visible_text and any((row["role"] != "body", row["heading_level"] != 0,
                     row["bold"], row["italic"], row["underline"], row["emphasis"], row["alignment"] != "inherit",
-                    row["space_before_pt"] is not None, row["space_after_pt"] is not None)):
+                    not (row["space_before_pt"] is None or type(row["space_before_pt"]) in {int, float} and row["space_before_pt"] == 0),
+                    not (row["space_after_pt"] is None or type(row["space_after_pt"]) in {int, float} and row["space_after_pt"] == 0))):
                 fail("page_break_requires_flow")
             decisions["paragraphs"][by_id[row["paragraph_id"]]] = row
-        bands = proposal["bands"]
+        bands = _canonical_flow_groups(proposal["bands"], ids)
+        bands = _canonical_columns_rows(bands, ids, proposal["paragraphs"])
         try:
             if [pid for band in bands for pid in _ids(band)] != ids:
                 fail("proposal_coverage")
@@ -314,6 +499,16 @@ def normalize_proposals(snapshot, view, proposals):
                 bands.extend(replacements[page])
                 inserted.add(page)
     decisions["bands"] = bands
+    if partitions:
+        from .saved_docx_layout import PARTITION_DECISIONS_VERSION
+        order = {row["id"]: i for i, row in enumerate(snapshot["paragraphs"])}
+        partitions.sort(key=lambda item: order[item["paragraph_id"]])
+        decisions["version"] = PARTITION_DECISIONS_VERSION
+        decisions["paragraph_partitions"] = partitions
+    elif "paragraph_partitions" in decisions:
+        from .saved_docx_layout import DECISIONS_VERSION
+        decisions["version"] = DECISIONS_VERSION
+        decisions.pop("paragraph_partitions")
     decisions["review"].update(document_reviewed=False, pages_reviewed=[], reviewer="", note="")
     try:
         return validate_decisions(snapshot, view["pages"], decisions)

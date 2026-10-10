@@ -765,8 +765,42 @@ function canvasToBlob(canvas, mimeType = "image/png") {
   });
 }
 
-async function renderPdfPageBlob(documentHandle, pageNumber, { scale = DEFAULT_BUNDLE_SCALE } = {}) {
+export async function renderPdfPageBlob(documentHandle, pageNumber, { scale = DEFAULT_BUNDLE_SCALE } = {}) {
   const page = await documentHandle.getPage(pageNumber);
+  const textViewport = page.getViewport({ scale: 1, rotation: 0 });
+  const textContent = await page.getTextContent({ disableNormalization: true });
+  const textItems = [];
+  for (const item of textContent.items || []) {
+    if (typeof item?.str !== "string") continue;
+    if (!Array.isArray(item.transform) || item.transform.length < 6) {
+      throw new Error("Browser PDF text item is missing its page position.");
+    }
+    const [a, b, c, d, originX, originY] = item.transform.map(Number);
+    const baselineLength = Math.hypot(a, b);
+    const uprightLength = Math.hypot(c, d);
+    if (!(baselineLength > 0) || !(uprightLength > 0)) {
+      throw new Error("Browser PDF text item has invalid orientation.");
+    }
+    const width = Math.abs(Number(item.width));
+    const height = Math.abs(Number(item.height));
+    const alongX = a / baselineLength * width;
+    const alongY = b / baselineLength * width;
+    const aboveX = c / uprightLength * height;
+    const aboveY = d / uprightLength * height;
+    const corners = [[originX, originY], [originX + alongX, originY + alongY],
+      [originX + aboveX, originY + aboveY],
+      [originX + alongX + aboveX, originY + alongY + aboveY]]
+      .map(([x, y]) => textViewport.convertToViewportPoint(x, y));
+    const xs = corners.map(([x]) => x);
+    const ys = corners.map(([, y]) => y);
+    const x = Math.min(...xs);
+    const y = Math.min(...ys);
+    textItems.push({ text: item.str, x, y,
+      width: Math.max(...xs) - x, height: Math.max(...ys) - y,
+      dir: item.dir || "ltr", has_eol: Boolean(item.hasEOL) });
+  }
+  const pageTextContent = { version: 1, page_number: pageNumber,
+    page_width: textViewport.width, page_height: textViewport.height, items: textItems };
   const viewport = page.getViewport({ scale });
   const canvas = document.createElement("canvas");
   const dimensions = renderViewportDimensions(viewport);
@@ -785,10 +819,11 @@ async function renderPdfPageBlob(documentHandle, pageNumber, { scale = DEFAULT_B
     widthPx: dimensions.widthPx,
     heightPx: dimensions.heightPx,
     blob,
+    textContent: pageTextContent,
   };
 }
 
-async function uploadBrowserPdfBundle({
+export async function uploadBrowserPdfBundle({
   appState,
   sourcePath,
   attachmentId = "",
@@ -805,6 +840,7 @@ async function uploadBrowserPdfBundle({
       mime_type: item.mimeType,
       width_px: item.widthPx,
       height_px: item.heightPx,
+      text_content: item.textContent,
     })),
   };
   const form = new FormData();

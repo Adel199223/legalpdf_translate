@@ -11,7 +11,7 @@ from typing import Callable
 from . import saved_docx_layout_service as storage
 from .openai_client import OpenAIResponsesClient
 from .ordinary_layout_contracts import (LayoutSuggestionPolicy, OrdinaryLayoutJob, OrdinaryLayoutError,
-    MAX_RESPONSE_BYTES, PROPOSAL_VERSION, decode, digest, encode, fail, generation, identifier,
+    MAX_RESPONSE_BYTES, PROPOSAL_VERSION_V2, decode, digest, encode, fail, generation, identifier,
     job_identity, nonce, normalize_proposals, page_ids, proposal_schema)
 from .ordinary_layout_service import OrdinaryLayoutService, _directories, _read, _write, public
 from .saved_docx_layout import inspect_docx
@@ -28,18 +28,31 @@ column positions or change wording. For headings paired on the same source row, 
 space_before_pt so their top edges align unless the source clearly shows an offset.
 Use normalized image coordinates for broad honest source regions; bbox null means uncertain.
 Do not invent missing content, logos, barcodes, signatures or source provenance. Preserve existing
-fonts and bidi. Page-break paragraphs must stay body/inherit with no added styles and plain flow.
+fonts and bidi. Every paragraph containing a page break must stay in plain flow, outside columns
+and panels, and cannot be partitioned. Preserve its exact text and break. A real text-bearing
+paragraph, including footer text or a folio, may use source-supported bounded presentation.
+An empty or control-only page-break paragraph must stay body/inherit with no added styles;
+its space_before_pt and space_after_pt must be null or numeric zero.
 Only role heading may use heading_level 1, 2 or 3 and heading_size_pt null or 1–24 points.
 Every other role, including institution, requires heading_level 0 and heading_size_pt null;
 use source-supported bold or alignment without promoting an institution to a heading for size.
 Spacing must be null or 0–72 points. Columns have 2–3 cells, widths of 10–90 percent each
 summing to 100, and a gutter of 0–36 points. Every cell and group must contain paragraph IDs.
-Use codepoint offsets only at phrase/whitespace boundaries for emphasis. Source-supported
+Use codepoint offsets only at phrase/whitespace boundaries for emphasis; a complete phrase
+may end immediately before closing punctuation followed by whitespace or text end.
+Never cut inside identifiers, numbers, protected literals or punctuation-linked words. Source-supported
 columns may use successive bands with identical widths and gutters: for saved heading-left,
 heading-right, body-left, body-right order, place the headings in one band and the bodies in the
 next. Preserve exact global order and the source pairing. When no such ordered grouping fits,
 keep flow; do not delete/reorder paragraphs to imitate the source.
-All proposals require subsequent operator source and output review."""
+All proposals require subsequent operator source and output review.
+Return paragraph_partitions=[] unless the image clearly shows separate prose paragraphs merged
+inside one body paragraph. Only body paragraphs in non-panel flow may be partitioned. For each,
+split_before contains one to seven exact unique short substrings copied from that supplied
+paragraph, in their current order, starting at the next source-supported paragraph boundary.
+Never rewrite text, supply numeric offsets, split inside a word or protected Latin token,
+partition a heading/list/column/panel or a paragraph containing fields, tabs or breaks,
+or change original IDs, choices or bands. Source association remains the parent's coarse region."""
 
 JobResolver = Callable[[str], OrdinaryLayoutJob]
 ProviderFactory = Callable[[OrdinaryLayoutJob, LayoutSuggestionPolicy], OpenAIResponsesClient]
@@ -118,7 +131,8 @@ class OrdinaryLayoutManager:
         return self.state(job_id)
 
     @public
-    def suggest(self, job_id, expected_generation, operation_nonce, page_numbers, *, expected_baseline_id):
+    def suggest(self, job_id, expected_generation, operation_nonce, page_numbers, *, expected_baseline_id,
+                external_cancel_requested=None, retained_proposals=None):
         nonce(operation_nonce); nonce(expected_baseline_id); generation(expected_generation)
         if (type(page_numbers) is not list or not page_numbers or any(type(n) is not int for n in page_numbers)
                 or sorted(set(page_numbers)) != page_numbers or not all(1 <= n <= 100 for n in page_numbers)):
@@ -141,6 +155,18 @@ class OrdinaryLayoutManager:
         if view["generation"] != expected_generation:
             fail("generation_conflict", 409)
         ids_by_page = {page: page_ids(view, page) for page in page_numbers}
+        # Server-only continuation input: validate every retained response before
+        # constructing an accountant or reserving a missing-page request.
+        retained_proposals = retained_proposals or {}
+        if type(retained_proposals) is not dict or not set(retained_proposals) <= set(page_numbers):
+            fail("retained_proposal_invalid", 409)
+        for page, retained in retained_proposals.items():
+            if type(retained) is not dict or set(retained) != {"raw", "origin"} or type(retained["raw"]) is not bytes:
+                fail("retained_proposal_invalid", 409)
+            proposal = decode(retained["raw"])
+            if type(proposal) is not dict or proposal.get("page_number") != page:
+                fail("retained_proposal_invalid", 409)
+            normalize_proposals(inspect_docx(job.reviewed_docx, job.target_lang), view, [proposal])
         if Decimal(policy.max_page_cost_usd) * len(page_numbers) > Decimal(policy.max_operation_cost_usd):
             fail("operation_cost_limit", 409)
         operation, intent, fresh = self.service.begin_suggestion(job_id, expected_generation, operation_nonce,
@@ -167,8 +193,18 @@ class OrdinaryLayoutManager:
                 fail("bounded_provider_required", 503)
             started = time.monotonic()
             for page in page_numbers:
+                if external_cancel_requested and external_cancel_requested(job_id):
+                    self.service.cancel_suggestion(job_id, operation_nonce, expected_generation,
+                        expected_baseline_id=expected_baseline_id)
                 if self.service.cancellation_requested(job_id, operation_nonce):
                     break
+                if page in retained_proposals:
+                    retained = retained_proposals[page]
+                    storage._atomic(operation / f"page-{page:04d}.response.json", retained["raw"])
+                    _write(operation / f"page-{page:04d}.retained.json", retained["origin"])
+                    proposals.append(decode(retained["raw"]))
+                    result["completed_pages"].append(page)
+                    continue
                 current = self.service.assert_current(self._job(job_id))
                 if current["baseline_id"] != expected_baseline_id:
                     fail("baseline_stale", 409)
@@ -179,8 +215,11 @@ class OrdinaryLayoutManager:
                 ids = ids_by_page[page]
                 rows = [r for r in view["paragraphs"] if r["id"] in ids]
                 image = self.service.saved.image(view["review_id"], page)
-                prompt = encode({"version": PROPOSAL_VERSION, "page_number": page, "target_lang": job.target_lang,
+                prompt = encode({"version": PROPOSAL_VERSION_V2, "page_number": page, "target_lang": job.target_lang,
                                  "paragraphs": rows}).decode("utf-8")
+                if external_cancel_requested and external_cancel_requested(job_id):
+                    self.service.cancel_suggestion(job_id, operation_nonce, expected_generation,
+                        expected_baseline_id=expected_baseline_id)
                 if self.service.cancellation_requested(job_id, operation_nonce):
                     break
                 with accounting_context(accountant, purpose="layout_suggestion", page_number=page):
@@ -218,6 +257,12 @@ class OrdinaryLayoutManager:
             if type(code) is not str or not re.fullmatch(r"[a-z][a-z0-9_]{0,120}", code):
                 code = "proposal_failed"
             result["error_code"] = code
+            from .openai_client import ApiCallError
+            if isinstance(exc, ApiCallError):
+                result["provider_response_status"] = exc.response_status or "unknown"
+                if exc.incomplete_reason in {"max_output_tokens", "content_filter", "steered", "unknown"}:
+                    result["provider_incomplete_reason"] = exc.incomplete_reason
+                result["provider_refused"] = bool(exc.refused)
         finally:
             if isinstance(accountant, DispatchAccounting):
                 try:
@@ -277,6 +322,10 @@ class OrdinaryLayoutManager:
         state = self.service.state(job_id)
         if state["status"] == "unprepared":
             return {"cost_usd": "0", "known_cost_usd": "0", "complete": True, "operations": 0}
+        if state.get("automatic_alias"):
+            with self.service.scope(job_id) as folder:
+                alias = _read(folder / "alias.json")
+            return self.layout_costs(alias["origin_job_id"])
         known, complete, count = Decimal(0), True, 0
         with self.service.scope(job_id) as folder:
             for baseline in _directories(folder / "baselines"):

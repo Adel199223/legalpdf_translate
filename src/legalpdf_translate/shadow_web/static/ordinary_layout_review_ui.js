@@ -3,6 +3,8 @@ import { createOrdinaryLayoutController, ordinaryLayoutUrl } from "./ordinary_la
 import { mountSavedDocxLayout } from "./saved_docx_layout_ui.js";
 
 export function ordinaryLayoutMessage(code) {
+  if (/automatic_operation_pending_or_uncertain/.test(code)) return "An earlier layout request may have been billed. The app kept the original Word file and billing record; refresh its status before any new request.";
+  if (/automatic_policy_changed|pricing_reference_expired/.test(code)) return "Automatic formatting is unavailable until the layout pricing is refreshed. Your original Word file is preserved.";
   if (/page_mapping|ambiguous_page/.test(code)) return "Confirm which translated paragraphs belong to each source page, save the review, then request a suggestion.";
   if (/budget|paid_policy|accounting|cost_limit/.test(code)) return "Layout suggestions need an available, bounded API budget. You can still review and adjust formatting locally.";
   if (/stale|conflict|changed/.test(code)) return "The document or review changed. Refresh the review and choose the current copy before continuing.";
@@ -85,6 +87,7 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
     const locked=state.busy || nativeOpening || Boolean(view.frozen) || !state.verified || view.stale || !view.attached;
     const busy=locked || editorBusy() || Boolean(state.pending);
     actions.append(el("h3","1. Review the source layout"),el("p","Review the source beside the current translation. Suggestions preserve the wording and require your review."));
+    if(view.automatic_candidate) actions.append(el("p","The normal Word download is automatically formatted from source-image suggestions. It is unreviewed; inspect the complete Word copy before case delivery or further editing."));
     const budget=view.budget;
     if(budget?.authorized) actions.append(el("p",`API budget: USD ${budget.cap_usd ?? "—"} maximum for this run, including its translation. Remaining: USD ${budget.remaining_usd ?? "unavailable"}.${budget.shared_existing_cap?" Existing shared budget applies.":""}`));
     if(budget?.authorization_available&&!budget.authorized&&!view.frozen) {
@@ -168,7 +171,7 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
     header.append(el("h3","Source layout and delivery"));
     const view=state.view;
     header.append(el("p",view?.delivery&&!view.delivery.stale&&!view.stale
-      ? `${view.delivery.kind==="reviewed"?"Reviewed formatted copy":"Current translation"} selected · ${view.delivery.word_count} words${view.frozen?" · files locked for confirmation":""}.`
+      ? `${view.delivery.kind==="reviewed"?"Reviewed formatted copy":view.delivery.kind==="automatic_unreviewed_edited"?"Word-edited formatted copy (source layout unreviewed)":view.delivery.kind==="automatic_unreviewed"?"Automatic formatted copy (unreviewed)":"Current translation"} selected · ${view.delivery.word_count} words${view.frozen?" · files locked for confirmation":""}.`
       : view?.review?"Choose a reviewed copy for delivery after checking its layout.":"Compare headers, headings, emphasis, notice panels, columns and spacing with the source before delivery."));
     if(state.error||localError){const warning=el("p",localError||ordinaryLayoutMessage(state.error),"saved-layout-error");warning.setAttribute("role","alert");header.append(warning);}
     if(localStatus)header.append(el("p",localStatus,"saved-layout-status"));
@@ -181,8 +184,9 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
         button(header,"Stop after current page",()=>controller.cancelSuggestion(),state.cancelBusy||state.operation?.status==="cancel_requested");
       }
     }
+    if(view?.automatic_alias) header.append(el("p","This job reuses the same verified formatted copy and saved layout cost. To change its layout, return to the original job and rebase the review there."));
     if(contentReviewBlocked())header.append(el("p","Complete the Arabic wording review above before starting source-layout review."));
-    button(header,panelOpen?"Hide layout review":"Review source layout",async()=>{
+    if(!view?.automatic_alias)button(header,panelOpen?"Hide layout review":"Review source layout",async()=>{
       const owner=ownerKey();
       if(panelOpen){panelOpen=false;return;}
       if(!controller.snapshot().view)await controller.read();

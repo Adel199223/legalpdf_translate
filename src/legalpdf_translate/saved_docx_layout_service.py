@@ -71,6 +71,32 @@ class VerifiedSavedLayoutArtifact:
     saved_docx_sha256: str
 
 
+@dataclass(frozen=True)
+class VerifiedUnreviewedCandidate:
+    """Server-owned automatic candidate with no operator review claim."""
+    docx_bytes: bytes
+    source_map: dict
+    receipt: dict
+    review_id: str
+    candidate_id: str
+    generation: int
+    current_generation: int
+    target_lang: str
+    source_pdf_sha256: str
+    raw_docx_sha256: str
+    raw_source_map_sha256: str
+    selected_pages: tuple[int, ...]
+    policy_fingerprint: str
+
+    @property
+    def docx_sha256(self):
+        return _sha(self.docx_bytes)
+
+    @property
+    def source_map_sha256(self):
+        return _sha(_encode(self.source_map, SNAPSHOT_MAX_BYTES))
+
+
 def _fail(code, status=422):
     raise SavedDocxLayoutServiceError(code, status) from None
 
@@ -789,3 +815,223 @@ class SavedDocxLayoutService:
             return VerifiedSavedLayoutArtifact(raw["docx"], _decode(raw["receipt"]), _decode(raw["source_map"]),
                 review_id, artifact_id, row["generation"], len(generations), manifest["target_lang"],
                 manifest["files"]["source.pdf"]["sha256"], manifest["files"]["original.docx"]["sha256"])
+
+    @_public
+    def attach_ordinary_binding(self, review_id, raw_source_map, selected_pages,
+                                policy_fingerprint, proposal_evidence, *, expected_generation):
+        """Pin an ordinary writer map once and proposal evidence per generation."""
+        from .ordinary_auto_layout_artifacts import bind_raw_page_map
+
+        _integer(expected_generation)
+        if (type(policy_fingerprint) is not str or not _HASH.fullmatch(policy_fingerprint)
+                or type(raw_source_map) is not dict or type(proposal_evidence) is not dict
+                or not proposal_evidence or proposal_evidence.get("document_reviewed") is True
+                or proposal_evidence.get("rendered_layout_acceptance") not in {None, "not_evaluated"}):
+            _fail("invalid_ordinary_binding")
+        pages_selected = tuple(selected_pages) if type(selected_pages) in {list, tuple} else ()
+        with self._scope(review_id) as folder:
+            manifest, snapshot, _ = self._load(folder)
+            generations, _, _ = self._generations(folder)
+            if expected_generation != len(generations):
+                _fail("generation_conflict", 409)
+            raw_docx = _read(folder / "original.docx", DOCX_MAX_BYTES)
+            mapped = bind_raw_page_map(raw_docx, raw_source_map,
+                source_pdf_sha256=manifest["files"]["source.pdf"]["sha256"],
+                selected_pages=pages_selected, target_lang=manifest["target_lang"])
+            if mapped.saved_snapshot != snapshot:
+                _fail("ordinary_snapshot_mismatch", 409)
+            base = {"version": "ordinary_binding_v1", "review_id": review_id,
+                "raw_docx_sha256": mapped.raw_docx_sha256,
+                "raw_source_map_sha256": mapped.raw_source_map_sha256,
+                "source_pdf_sha256": mapped.source_pdf_sha256,
+                "selected_pages": list(mapped.selected_pages),
+                "target_lang": mapped.target_lang,
+                "raw_snapshot_fingerprint": mapped.fingerprint,
+                "policy_fingerprint": policy_fingerprint}
+            binding_path = folder / "ordinary_binding.json"
+            map_path = folder / "ordinary_raw_source_map.json"
+            if binding_path.exists() or map_path.exists():
+                if not binding_path.exists() or not map_path.exists():
+                    _fail("ordinary_binding_changed", 409)
+                if _decode(_read(binding_path)) != base or _decode(_read(map_path, SNAPSHOT_MAX_BYTES)) != raw_source_map:
+                    _fail("ordinary_binding_changed", 409)
+            else:
+                _atomic(map_path, _encode(raw_source_map, SNAPSHOT_MAX_BYTES))
+                _write(binding_path, base)
+            evidence = {"version": "ordinary_proposal_evidence_v1",
+                "review_id": review_id, "generation": expected_generation,
+                "decisions_sha256": _sha(_encode(generations[-1]["decisions"], DECISIONS_MAX_BYTES)),
+                "proposal_evidence": proposal_evidence,
+                "proposal_evidence_sha256": _sha(_encode(proposal_evidence, RECORD_MAX_BYTES)),
+                "raw_snapshot_fingerprint": mapped.fingerprint,
+                "policy_fingerprint": policy_fingerprint}
+            folder_evidence = _mkdir(folder / "ordinary_proposals")
+            _write_once(folder_evidence / f"{expected_generation:06d}.json", evidence)
+            return {"review_id": review_id, "generation": expected_generation,
+                    "raw_snapshot_fingerprint": mapped.fingerprint,
+                    "proposal_evidence_sha256": evidence["proposal_evidence_sha256"]}
+
+    def _ordinary_binding(self, folder, manifest, snapshot, generation):
+        from .ordinary_auto_layout_artifacts import bind_raw_page_map
+
+        base = _decode(_read(folder / "ordinary_binding.json"))
+        raw_map = _decode(_read(folder / "ordinary_raw_source_map.json", SNAPSHOT_MAX_BYTES))
+        evidence = _decode(_read(folder / "ordinary_proposals" / f"{generation:06d}.json"))
+        mapped = bind_raw_page_map(_read(folder / "original.docx", DOCX_MAX_BYTES), raw_map,
+            source_pdf_sha256=manifest["files"]["source.pdf"]["sha256"],
+            selected_pages=tuple(base["selected_pages"]), target_lang=manifest["target_lang"])
+        if (base.get("version") != "ordinary_binding_v1" or base.get("review_id") != folder.name
+                or base.get("raw_docx_sha256") != mapped.raw_docx_sha256
+                or base.get("raw_source_map_sha256") != mapped.raw_source_map_sha256
+                or base.get("raw_snapshot_fingerprint") != mapped.fingerprint
+                or base.get("source_pdf_sha256") != mapped.source_pdf_sha256
+                or base.get("target_lang") != mapped.target_lang
+                or type(base.get("policy_fingerprint")) is not str
+                or not _HASH.fullmatch(base["policy_fingerprint"])
+                or mapped.saved_snapshot != snapshot
+                or evidence.get("version") != "ordinary_proposal_evidence_v1"
+                or evidence.get("review_id") != folder.name
+                or evidence.get("generation") != generation
+                or evidence.get("raw_snapshot_fingerprint") != mapped.fingerprint
+                or evidence.get("policy_fingerprint") != base["policy_fingerprint"]
+                or evidence.get("proposal_evidence_sha256") != _sha(_encode(evidence.get("proposal_evidence")))
+                or evidence["proposal_evidence"].get("document_reviewed") is True):
+            _fail("ordinary_binding_changed", 409)
+        return base, evidence, mapped
+
+    def _verified_unreviewed_candidate(self, folder, attempt, manifest, snapshot, pages,
+                                       generations):
+        from .ordinary_auto_layout_artifacts import AutoCandidateArtifact, verify_unreviewed_candidate
+
+        intent_raw = _read(attempt / "intent.json")
+        intent = _decode(intent_raw)
+        generation = intent.get("generation")
+        if type(generation) is not int or not 1 <= generation <= len(generations):
+            _fail("automatic_candidate_changed", 409)
+        base, evidence, mapped = self._ordinary_binding(folder, manifest, snapshot, generation)
+        decisions = generations[generation - 1]["decisions"]
+        if (intent.get("version") != "ordinary_candidate_service_v1" or intent.get("review_id") != folder.name
+                or intent.get("owner") != self._owner or intent.get("operation_nonce") != attempt.name
+                or intent.get("input_files") != manifest["files"]
+                or intent.get("raw_snapshot_fingerprint") != mapped.fingerprint
+                or intent.get("policy_fingerprint") != base["policy_fingerprint"]
+                or intent.get("decisions_sha256") != _sha(_encode(decisions, DECISIONS_MAX_BYTES))
+                or evidence.get("decisions_sha256") != intent["decisions_sha256"]
+                or intent.get("proposal_evidence_sha256") != evidence["proposal_evidence_sha256"]):
+            _fail("automatic_candidate_changed", 409)
+        _identifier(intent.get("candidate_id"))
+        record_raw = _read(attempt / "result.json")
+        record = _decode(record_raw)
+        values = {}
+        for key, filename, maximum in (("docx", "output.docx", DOCX_MAX_BYTES),
+                                       ("source_map", "source_map.json", SNAPSHOT_MAX_BYTES),
+                                       ("core_receipt", "core_receipt.json", RECORD_MAX_BYTES),
+                                       ("receipt", "receipt.json", RECORD_MAX_BYTES)):
+            raw = _read(attempt / filename, maximum)
+            if record.get("files", {}).get(key) != {"sha256": _sha(raw), "bytes": len(raw)}:
+                _fail("automatic_candidate_changed", 409)
+            values[key] = raw
+        if (record.get("version") != "ordinary_candidate_service_v1"
+                or record.get("intent_sha256") != _sha(intent_raw)
+                or record.get("candidate_id") != intent["candidate_id"]):
+            _fail("automatic_candidate_changed", 409)
+        artifact = AutoCandidateArtifact(values["docx"], values["source_map"], values["core_receipt"],
+            _sha(values["docx"]), _sha(values["source_map"]), _sha(values["core_receipt"]))
+        verify_unreviewed_candidate(_read(folder / "original.docx", DOCX_MAX_BYTES), mapped,
+            pages, decisions, artifact, proposal_evidence=evidence["proposal_evidence"])
+        receipt = _decode(values["receipt"])
+        if (receipt != artifact.receipt | {"review_id": folder.name,
+                "candidate_id": intent["candidate_id"], "generation": generation,
+                "policy_fingerprint": base["policy_fingerprint"], "provider_dispatch_count": 0}):
+            _fail("automatic_candidate_changed", 409)
+        marker = {"result_sha256": _sha(record_raw)}
+        complete = attempt / "complete.json"
+        if complete.exists():
+            if _decode(_read(complete)) != marker:
+                _fail("automatic_candidate_changed", 409)
+        else:
+            _write(complete, marker)
+        return VerifiedUnreviewedCandidate(values["docx"], artifact.source_map, receipt,
+            folder.name, intent["candidate_id"], generation, len(generations),
+            manifest["target_lang"], mapped.source_pdf_sha256, mapped.raw_docx_sha256,
+            mapped.raw_source_map_sha256, mapped.selected_pages, base["policy_fingerprint"])
+
+    @_public
+    def build_unreviewed_candidate(self, review_id, expected_generation, operation_nonce):
+        from .ordinary_auto_layout_artifacts import build_unreviewed_candidate
+        from .saved_docx_layout import validate_decisions
+
+        _integer(expected_generation)
+        _identifier(operation_nonce)
+        with self._scope(review_id) as folder:
+            manifest, snapshot, pages = self._load(folder, images=True)
+            generations, _, _ = self._generations(folder)
+            if expected_generation != len(generations):
+                _fail("generation_conflict", 409)
+            base, evidence, mapped = self._ordinary_binding(folder, manifest, snapshot,
+                                                             expected_generation)
+            decisions = validate_decisions(snapshot, pages, generations[-1]["decisions"],
+                                           require_review=False)
+            if (decisions["review"]["document_reviewed"]
+                    or decisions["review"]["pages_reviewed"]
+                    or evidence["decisions_sha256"] != _sha(_encode(decisions, DECISIONS_MAX_BYTES))):
+                _fail("automatic_review_claim", 409)
+            root = _mkdir(folder / "automatic_builds")
+            attempt = root / operation_nonce
+            if attempt.exists():
+                verified = self._verified_unreviewed_candidate(folder, attempt, manifest,
+                    snapshot, pages, generations)
+                if verified.generation != expected_generation:
+                    _fail("nonce_conflict", 409)
+                return {"review_id": review_id, "candidate_id": verified.candidate_id,
+                        "generation": verified.generation, "docx_sha256": verified.docx_sha256,
+                        "source_map_sha256": verified.source_map_sha256}
+            if len(_folders(root, MAX_BUILDS)) >= MAX_BUILDS:
+                _fail("build_limit", 413)
+            attempt.mkdir()
+            candidate_id = uuid.uuid4().hex
+            intent = {"version": "ordinary_candidate_service_v1", "owner": self._owner,
+                "review_id": review_id, "operation_nonce": operation_nonce,
+                "candidate_id": candidate_id, "generation": expected_generation,
+                "input_files": manifest["files"], "raw_snapshot_fingerprint": mapped.fingerprint,
+                "policy_fingerprint": base["policy_fingerprint"],
+                "decisions_sha256": evidence["decisions_sha256"],
+                "proposal_evidence_sha256": evidence["proposal_evidence_sha256"]}
+            intent_raw = _write(attempt / "intent.json", intent)
+            raw_docx = _read(folder / "original.docx", DOCX_MAX_BYTES)
+            artifact = build_unreviewed_candidate(raw_docx, mapped, pages, decisions,
+                proposal_evidence=evidence["proposal_evidence"])
+            receipt = artifact.receipt | {"review_id": review_id,
+                "candidate_id": candidate_id, "generation": expected_generation,
+                "policy_fingerprint": base["policy_fingerprint"], "provider_dispatch_count": 0}
+            raw_receipt = _encode(receipt)
+            values = {"docx": artifact.docx_bytes, "source_map": artifact.source_map_bytes,
+                      "core_receipt": artifact.receipt_bytes, "receipt": raw_receipt}
+            for key, filename in (("docx", "output.docx"), ("source_map", "source_map.json"),
+                                  ("core_receipt", "core_receipt.json"), ("receipt", "receipt.json")):
+                _atomic(attempt / filename, values[key])
+            _write(attempt / "result.json", {"version": "ordinary_candidate_service_v1",
+                "intent_sha256": _sha(intent_raw), "candidate_id": candidate_id,
+                "files": {key: {"sha256": _sha(raw), "bytes": len(raw)} for key, raw in values.items()}})
+            verified = self._verified_unreviewed_candidate(folder, attempt, manifest,
+                snapshot, pages, generations)
+            return {"review_id": review_id, "candidate_id": candidate_id,
+                    "generation": verified.generation, "docx_sha256": verified.docx_sha256,
+                    "source_map_sha256": verified.source_map_sha256}
+
+    @_public
+    def verified_unreviewed_candidate(self, review_id, candidate_id):
+        _identifier(candidate_id)
+        with self._scope(review_id) as folder:
+            manifest, snapshot, pages = self._load(folder, images=True)
+            generations, _, _ = self._generations(folder)
+            root = folder / "automatic_builds"
+            for attempt in _folders(root, MAX_BUILDS):
+                intent_file = attempt / "intent.json"
+                if not intent_file.exists():
+                    continue
+                intent = _decode(_read(intent_file))
+                if intent.get("candidate_id") == candidate_id:
+                    return self._verified_unreviewed_candidate(folder, attempt, manifest,
+                        snapshot, pages, generations)
+            _fail("automatic_candidate_not_found", 404)

@@ -162,7 +162,7 @@ function hasPreparedTranslationLaunch() {
 }
 
 function isActiveTranslationJobStatus(status) {
-  return ["queued", "running", "cancel_requested"].includes(String(status || "").trim());
+  return ["queued", "running", "cancel_requested", "formatting"].includes(String(status || "").trim());
 }
 
 // Fresh Gmail prepares should replace stale terminal workspace jobs instead of
@@ -1015,6 +1015,8 @@ function syncTranslationPrimaryActionState() {
     analyzeButton: qs("translation-analyze"),
     cancelButton: qs("translation-cancel"),
     resumeButton: qs("translation-resume-btn"),
+    recoverLayoutButton: qs("translation-layout-recover"),
+    recoverLayoutNote: qs("translation-layout-recovery-note"),
     rebuildButton: qs("translation-rebuild"),
   }, actionState);
   sourceReviewUi?.sync();
@@ -1487,7 +1489,9 @@ function translationStatusSummary(job) {
       : job.status_text || "DOCX rebuild is running.";
   }
   if (job.status === "completed") {
-    return "Translation complete. Review the translated document, then save the case record if everything looks right.";
+    const notice = String(job?.diagnostics?.source_coverage_notice || "").trim();
+    const base = "Translation complete. Review the translated document, then save the case record if everything looks right.";
+    return notice ? `${base} ${notice}` : base;
   }
   if (job.status === "cancel_requested") {
     return "Cancellation requested. Waiting for the current page task to stop cleanly.";
@@ -1899,6 +1903,8 @@ function renderTranslationPreparedState() {
     reviewExport: qs("translation-review-export"),
     cancelButton: qs("translation-cancel"),
     resumeButton: qs("translation-resume-btn"),
+    recoverLayoutButton: qs("translation-layout-recover"),
+    recoverLayoutNote: qs("translation-layout-recovery-note"),
     rebuildButton: qs("translation-rebuild"),
   });
   notifyTranslationUiStateChanged();
@@ -2066,7 +2072,7 @@ function renderTranslationJob(job) {
   }
   syncTranslationCompletionSurface();
   maybeAutoOpenTranslationCompletion(job);
-  if (job && ["queued", "running", "cancel_requested"].includes(job.status)) {
+  if (job && isActiveTranslationJobStatus(job.status)) {
     stopPolling();
     translationState.pollTimer = window.setTimeout(pollCurrentJob, 1500);
   } else {
@@ -2347,6 +2353,21 @@ async function handleResume(jobId = translationState.currentJobId) {
   });
   setDiagnostics("translation", payload, {
     hint: `Resume request sent for ${jobId}.`,
+    open: false,
+  });
+  renderTranslationJob(payload.normalized_payload.job || null);
+  await refreshTranslationHistory();
+}
+
+async function handleLayoutRecovery(jobId = translationState.currentJobId) {
+  if (!String(jobId || "").trim()) {
+    throw new Error("No completed translation job is available for source layout recovery.");
+  }
+  const payload = await fetchJson(`/api/translation/jobs/${jobId}/layout/recover`, appState, {
+    method: "POST",
+  });
+  setDiagnostics("translation", payload, {
+    hint: "Layout recovery started from the retained translation; no translation is being resent.",
     open: false,
   });
   renderTranslationJob(payload.normalized_payload.job || null);
@@ -2671,6 +2692,18 @@ export function initializeTranslationUi() {
           panelSlot: "translation",
           diagnosticsSlot: "translation",
           fallback: "Resume failed.",
+        });
+      }
+    });
+  });
+  qs("translation-layout-recover")?.addEventListener("click", async () => {
+    await runWithBusy(["translation-layout-recover"], { "translation-layout-recover": "Recovering..." }, async () => {
+      try {
+        closeTranslationCompletionDrawer();
+        await handleLayoutRecovery();
+      } catch (error) {
+        applyActionFailureFeedback(error, {
+          panelSlot: "translation", diagnosticsSlot: "translation", fallback: "Layout recovery failed.",
         });
       }
     });

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from legalpdf_translate import run_docx_formatting as adapter
-from legalpdf_translate.browser_pdf_bundle import write_browser_pdf_bundle, browser_pdf_bundle_dir
+from legalpdf_translate.browser_pdf_bundle import write_browser_pdf_bundle, browser_pdf_bundle_page_image_path
 from legalpdf_translate.document_structure import (PageStructure, classify_document_boundaries,
     structure_from_ordered, structure_from_tesseract_tsv)
 from legalpdf_translate.formatting_support import fingerprint
@@ -304,8 +304,10 @@ def test_changed_preferences_never_reuse_old_review(tmp_path, option):
 def test_changed_physical_or_committed_evidence_is_an_integrity_failure(tmp_path, kind):
     case = setup(tmp_path)
     revision = submit(case)
+    raster_path = browser_pdf_bundle_page_image_path(case.config.pdf_path, 1)
+    assert raster_path is not None
     path = {"source_file": case.config.pdf_path,
-        "source_raster": browser_pdf_bundle_dir(case.config.pdf_path) / "pages" / "page_0001.png",
+        "source_raster": raster_path,
         "source_structure": case.pages_dir / "page_0001.source_structure.json",
         "target_structure": case.pages_dir / "page_0001.structure.json",
         "commit": case.pages_dir / "page_0001.commit.json"}[kind]

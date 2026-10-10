@@ -94,7 +94,7 @@ def accounting_case(tmp_path, monkeypatch, hard=False):
 def test_explicit_budget_includes_prior_cost_and_shares_every_child(tmp_path, monkeypatch):
     case, support, original, _ = accounting_case(tmp_path, monkeypatch)
     quote = support.state(case.job)
-    assert quote["authorization_available"] and quote["minimum_cap_usd"] == "1.212"
+    assert quote["authorization_available"] and quote["minimum_cap_usd"] == "1.548"
     assert not (tmp_path / "ordinary_layout_budget").exists()
     authorization = nonce()
     result = support.authorize(case.job, authorization, "2")
@@ -109,7 +109,7 @@ def test_explicit_budget_includes_prior_cost_and_shares_every_child(tmp_path, mo
     assert one.budget_context is two.budget_context
     bound = _ceiling_for(pricing_snapshot=one.pricing_snapshot, provider="openai", model=policy.model,
         bounds=one.request_limits("openai", "layout_suggestion", policy.model), hard=True)
-    assert bound == Decimal("0.812")
+    assert bound == Decimal("1.148")
     one.budget_context.reserve("pending", bound, {"fictional": True})
     with pytest.raises(ValueError, match="Insufficient budget"):
         two.budget_context.reserve("next", bound, {"fictional": True})
@@ -129,9 +129,9 @@ def test_existing_hard_cap_cannot_be_replaced_and_unknown_cost_blocks(tmp_path, 
 
 def test_verified_pricing_reference_expires_against_actual_future_date():
     policy = layout_accounting_policy()
-    assert policy.accounting_arguments(today=date(2026, 9, 27))["pricing_snapshot"] is not None
-    assert policy.accounting_arguments(today=date(2026, 10, 28))["pricing_snapshot"] is None
-    assert policy.accounting_arguments(today=date(2026, 9, 26))["pricing_snapshot"] is None
+    assert policy.accounting_arguments(today=date(2026, 10, 9))["pricing_snapshot"] is not None
+    assert policy.accounting_arguments(today=date(2026, 11, 10))["pricing_snapshot"] is None
+    assert policy.accounting_arguments(today=date(2026, 10, 8))["pricing_snapshot"] is None
 
 
 def test_job_bound_save_cannot_update_another_historical_run(tmp_path, monkeypatch):
@@ -160,6 +160,8 @@ def test_production_policy_enforces_image_bound_default_tier_and_shared_settleme
     def create(**request):
         calls.append(request)
         assert request["service_tier"] == "default" and request["max_output_tokens"] == 8000
+        # The request explicitly asks for the historical 8k bound, so the
+        # per-call reservation remains smaller than the 32k policy ceiling.
         assert accountant.budget_context.status()["held_usd"] == "0.812000000"
         return SimpleNamespace(id="fictional-image-response", model="gpt-5.2-2025-12-11", service_tier="default",
             status="completed", output=[], output_text="{}", usage={"input_tokens": 100, "output_tokens": 10,

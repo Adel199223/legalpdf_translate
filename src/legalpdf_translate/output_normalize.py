@@ -493,3 +493,9 @@ def wrap_existing_tokens_with_isolates(text: str) -> str:
         cursor = end + (1 if has_suffix else 0)
     result.append(text[cursor:])
     return "".join(result)
+
+
+def regroup_source_bound_ar_numeric_tokens(text: str, *, source_text: str | None, expected_tokens: list[str] | None) -> tuple[str, int]:
+    """Regroup only exact source-owned numeric spans without changing visible text."""
+    from .ar_literal_fidelity import regroup_source_numeric_tokens_with_stats
+    return regroup_source_numeric_tokens_with_stats(text, source_text)

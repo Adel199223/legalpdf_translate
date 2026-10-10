@@ -40,11 +40,13 @@ def test_coherent_address_does_not_depend_on_model_token_segmentation(translatio
 
 
 def test_legacy_postcode_only_source_is_upgraded_from_exact_visible_address():
-    old_source = pretokenize_arabic_source(ADDRESS)
+    # Construct the historical postcode-only input explicitly; current protection is whole-address.
+    old_source = 'Largo Eng. Álvaro Mendes - [[1200-345]] Lisboa'
+    assert extract_locked_tokens(pretokenize_arabic_source(ADDRESS)) == [ADDRESS]
     assert extract_locked_tokens(old_source) == ['1200-345']
     result = normalize(old_source, f'[[{ADDRESS}]]')
     assert extract_locked_tokens(result) == [ADDRESS]
-    # No mutation to the legacy pre-tokenizer or legacy validator contract.
+    # The strict legacy expected-token validator still rejects the upgraded token shape.
     assert not validate_ar(result, expected_tokens=['1200-345']).ok
 
 

@@ -36,6 +36,10 @@ def test_injected_offline_bundle_constructs_and_serves_get_payloads_without_live
     def forbidden(*_args, **_kwargs):
         pytest.fail("A global credential, Gmail, Photos, Word, provider, native, or process boundary ran")
 
+    class ForbiddenTranslationJobManager(translation_service.TranslationJobManager):
+        def __init__(self, *_args, **_kwargs):
+            forbidden()
+
     for name in (
         "detect_runtime_build_identity",
         "detect_shadow_runtime_paths",
@@ -54,12 +58,14 @@ def test_injected_offline_bundle_constructs_and_serves_get_payloads_without_live
         "document_runtime_state_payload",
         "load_settings_from_path",
         "GmailBrowserSessionManager",
-        "TranslationJobManager",
         "BrowserSourceReviewManager",
         "ArabicDocxReviewManager",
         "BrowserLiveGmailBridgeManager",
     ):
         monkeypatch.setattr(browser, name, forbidden)
+    # This constructor guard must remain a type because app setup uses it in
+    # isinstance when deciding whether to install the ordinary job runner.
+    monkeypatch.setattr(browser, "TranslationJobManager", ForbiddenTranslationJobManager)
     monkeypatch.setattr(translation_service, "resolve_openai_key_with_source", forbidden)
     monkeypatch.setattr(translation_service, "resolve_ocr_api_key", forbidden)
     monkeypatch.setattr(power_tools_service, "resolve_openai_key_with_source", forbidden)

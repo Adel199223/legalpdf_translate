@@ -11,8 +11,12 @@ from legalpdf_translate.workflow import TranslationWorkflow
 
 
 class _FakeClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def create_page_response(self, **kwargs) -> ApiCallResult:  # noqa: ANN003
         _ = kwargs
+        self.calls += 1
         return ApiCallResult(
             raw_output="```\nTranslated output\n```",
             usage={"input_tokens": 10, "output_tokens": 4, "reasoning_tokens": 1, "total_tokens": 15},
@@ -122,9 +126,12 @@ def test_auto_mode_warns_only_when_ocr_needed_and_unavailable(tmp_path: Path, mo
     monkeypatch.setattr(workflow_module, "build_ocr_engine", _raise_missing)
 
     logs: list[str] = []
-    summary = TranslationWorkflow(client=_FakeClient(), log_callback=logs.append).run(_config(pdf, outdir))
+    client = _FakeClient()
+    summary = TranslationWorkflow(client=client, log_callback=logs.append).run(_config(pdf, outdir))
 
-    assert summary.success is True
+    assert summary.success is False
+    assert summary.exit_code == 2
+    assert client.calls == 0
     assert summary.run_summary_path is not None
     summary_payload = json.loads(summary.run_summary_path.read_text(encoding="utf-8"))
     assert summary_payload["pipeline"]["ocr_requested"] is True
@@ -134,11 +141,12 @@ def test_auto_mode_warns_only_when_ocr_needed_and_unavailable(tmp_path: Path, mo
     assert summary_payload["pipeline"]["ocr_used_pages"] == 0
 
     run_state = json.loads((summary.run_dir / "run_state.json").read_text(encoding="utf-8"))
-    assert run_state["pages"]["1"]["source_route_reason"] == "ocr_requested_engine_unavailable"
+    assert run_state["pages"]["1"]["source_route_reason"] == "source_text_and_image_unavailable"
 
     events = _event_rows(summary.run_dir / "run_events.jsonl")
     unavailable_events = [item for item in events if item.get("event_type") == "ocr_engine_unavailable"]
     assert len(unavailable_events) == 1
+    assert any(item.get("event_type") == "page_source_unavailable" for item in events)
     assert "OCR provider not configured for OCR-requested pages" in str(unavailable_events[0].get("warning", ""))
     assert any("OCR provider not configured for OCR-requested pages" in line for line in logs)
 

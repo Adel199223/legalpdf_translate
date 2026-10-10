@@ -22,7 +22,7 @@ def enable_paid(case, *, response_kind="valid", cap="3"):
     calls, accountants = [], []
     policy = LayoutSuggestionPolicy("gpt-5.2", ".4", "1")
     budget = ReservationBudget(case.root.parent / "shared_budget.json", cap_usd=cap, identity={"fixture": "shared"})
-    pricing = ordinary_accounting_policy().accounting_arguments(today=date(2026, 9, 27))["pricing_snapshot"]
+    pricing = ordinary_accounting_policy().accounting_arguments(today=date(2026, 10, 9))["pricing_snapshot"]
     limits = {"requested_model": "gpt-5.2", "allowed_actual_models": ["gpt-5.2"],
         "allowed_actual_service_tiers": ["default"], "requested_service_tier": "default",
         "billing_scope": "openai_public_api", "currency": "USD", "allowed_base_urls": ["https://api.openai.com/v1"],
@@ -267,7 +267,7 @@ def test_layout_timeout_reaches_sdk_once_and_unknown_cost_remains_held(tmp_path,
     assert result["retry_dispatch_allowed"] is False
     assert len(paid.calls) == 1
     request = paid.calls[0]
-    assert 230 < request["timeout"] <= 240
+    assert 470 < request["timeout"] <= 480
     assert request["max_output_tokens"] == 8000 and request["reasoning"] == {"effort": "high"}
     assert case.manager.state(case.job.job_id)["generation"] == case.view["generation"]
     before = paid.budget.status()

@@ -1,8 +1,22 @@
 # Current handoff
 
-Updated 2026-09-30. Read `AGENTS.md`, `agent.md`, this page and only the applicable current plan. Current user authority takes precedence over historical continuation text. Consumed provider/native helpers must not be replayed.
+Updated 2026-10-10. Read `AGENTS.md`, `agent.md`, this page and only the applicable current plan. Current user authority takes precedence over historical continuation text. Consumed provider/native helpers must not be replayed.
 
 ## Current build and work
+
+### Ordinary structure repair — 2026-10-09
+
+All **27 selected source pages** passed qualified source/content/native Word review, identical normal download and normal Save acceptance. H2 completes the three-page Arabic holdout by retaining its correct primary translations and requesting only the missing layout work. Explicit source-backed content revisions, manual Arabic finishing and the historical R1 review-state qualification remain documented in the authoritative private acceptance matrix, `structure_deep_20261009_01/final_acceptance_matrix_02.json`. Failed responses and earlier refused attempts remain preserved; inherited costs are counted once.
+
+Final selected Full07 is **PASS: 1,777 selected executions, including 191 formatting cases; nine expected intake deselections; exit 0 in 2,170.078 seconds with all 633 pins unchanged**. Standard09 passed 250 tests in 85.094 seconds with unchanged source pins and the successful direct-Dart fallback. Hosted CI11 passed 7,837 unique tests exactly once across all seven jobs, with all five artifact digests verified. CI11 certifies its recorded product revision and becomes historical after the final documentation commit; the final committed head still requires hosted checks. All owned acceptance runtimes are retired.
+
+The [repair plan](exec_plans/completed/2026-10-09_deep_structure_fidelity.md) records the completed implementation and qualified acceptance. Publication, canonical application and cleanup are authorized; their current state is recorded in the stable publication receipt below. Private `structure_deep_20261009_01/publication_final_01/publication_receipt.json` owns the exact final-head CI, merge, installed build and cleanup evidence. Daily use targets canonical `C:/Users/FA507/.codex/legalpdf_translate`, branch `main`; use that receipt for its current installed identity. Astra/GPT-6.1 Sol preferences apply to Codex workers and do not change application models.
+
+### Sent-reference audit — 2026-10-03
+
+The [dated audit](exec_plans/completed/2026-10-03_sent_structure_audit.md) reviewed seven exact DOCX attachments from five sent threads,21native Word pages and actual source ranges. Close reference fidelity is qualified by one stretched justified line before a forced break. Earlier furniture-absence impressions were retracted. Attachment generation provenance remains unverified; the user's reported ChatGPT6Pro/manual Arabic finishing does not establish app-output provenance.
+
+The audit's offline legacy reproductions demonstrated lost layout and led to the October9 repair above. They are historical diagnostics, not provider reruns or current output failures. Exact originals, audits and obsolete operational snapshots remain in the dated plans/private evidence; they do not authorize replaying consumed operations.
 
 ### Reproducible workstation setup — 2026-09-30
 
@@ -70,7 +84,7 @@ The final runtime used clean canonical `main` at applied PR309 `5b2c94b899b6827c
 
 All five reviewed translations, fee PDFs and exact draft attachments are bound by `reviews/request-01/` through `reviews/request-05/completed_review_01.json` and their per-request audits. Final word counts are227,1343,5088,1490 and1142 respectively. `reviews/five_drafts_final_counts_01.json` and `reviews/user_sent_first_three_confirmation_01.json` distinguish later user sends from the completed agent draft workflow. Request04's draft includes a source-requested proposed commitment and blank signature line; the user must review and sign it before sending. Legal sufficiency is not claimed. Preserve original and corrected artifacts; never repeat successful finalization to alter historical evidence.
 
-All three operations `five_requests_live_01`, `five_requests_live_02` and `five_requests_live_03` are retired/consumed. Final live03 returned normally through its owned stop with zero active jobs, two consumed requests and12finalized calls/USD0.61920775, no new hold/block or unfinished entry. `operations/five_requests_live_03/terminal_root_core_01.json` and `independent_terminal_audit_01.json` establish all34 terminal checks: all68 preceding rows/schema preserved, only rows95/96 added,70total; runtime and temporary native owners absent; ports8877/8765 free; current interactive Word preserved. Only learned `vocab_case_entities` and `vocab_service_entities` lists changed during live03; saved defaults stayed unchanged. Whole-settings-byte equality is not claimed.
+All three operations `five_requests_live_01`, `five_requests_live_02` and `five_requests_live_03` are retired/consumed. Final live03 returned normally through its owned stop with zero active jobs, two consumed requests and12finalized calls / USD0.61920775, no new hold/block or unfinished entry. `operations/five_requests_live_03/terminal_root_core_01.json` and `independent_terminal_audit_01.json` establish all34 terminal checks: all68 preceding rows/schema preserved, only rows95/96 added,70total; runtime and temporary native owners absent; ports8877/8765 free; current interactive Word preserved. Only learned `vocab_case_entities` and `vocab_service_entities` lists changed during live03; saved defaults stayed unchanged. Whole-settings-byte equality is not claimed.
 
 The five jobs costUSD2.46125565. Final lifetime known spend isUSD6.65216805 plus the preservedUSD0.119 uncertain hold, givingUSD6.77116805 exposure under the originalUSD10 ceiling. Every historical ledger, FRlong block/five-page partial,2,398 older support files and v4 beforeimages remain preserved. Do not reset budgets, clear the historical hold or replay consumed support. Terminal audit SHA `976b477a6d0c417f23c3e7ee0f5580dd129e925cd2aa3cff04f676c836a3058c` is the bounded starting point.
 

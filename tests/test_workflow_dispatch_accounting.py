@@ -49,7 +49,7 @@ def offline(monkeypatch):
     class VerifiedDate(date):
         @classmethod
         def today(cls):
-            return cls(2026, 9, 10)
+            return cls(2026, 10, 9)
     monkeypatch.setattr(policy_module, "date", VerifiedDate)
     monkeypatch.setattr(module, "load_environment", lambda: None)
     monkeypatch.setattr(module, "load_gui_settings", lambda: pytest.fail("Ambient settings"))

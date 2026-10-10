@@ -481,7 +481,7 @@ def test_required_route_builds_policy_engine_once_for_multiple_pages(
     monkeypatch.setattr(
         workflow_module,
         "ocr_pdf_page_text",
-        lambda *_args, **_kwargs: OcrResult(text="", engine="none", failed_reason="empty_result", chars=0),
+        lambda *_args, **_kwargs: OcrResult(text="OCR source", engine="stub", failed_reason="", chars=10),
     )
 
     calls = {"count": 0, "policies": []}

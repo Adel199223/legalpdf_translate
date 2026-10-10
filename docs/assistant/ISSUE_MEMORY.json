@@ -1,7 +1,71 @@
 {
   "version": 1,
-  "last_updated": "2026-09-27T16:25:50Z",
+  "last_updated": "2026-10-03T13:22:38Z",
   "issues": [
+    {
+      "id": "ordinary-source-structure-flattening",
+      "title": "Plain-text ordinary output loses source layout before Word assembly",
+      "first_seen_timestamp": "2026-09-26T00:00:00Z",
+      "last_seen_timestamp": "2026-10-03T13:22:38Z",
+      "repeat_count": 2,
+      "status": "open",
+      "trigger_source": "operational",
+      "symptoms": [
+        "Seven retained-body-wording legacy reproductions collapse into zero tables and one section.",
+        "A native French comparison loses columns/sidebar and heading emphasis despite equal page counts."
+      ],
+      "likely_root_cause": "Legacy target transport lacks source role/region associations; unstructured DOCX assembly assigns paragraph roles.",
+      "attempted_fix_history": [
+        {
+          "timestamp": "2026-09-26T00:00:00Z",
+          "summary": "Explicit saved-Word/source-image formatting implemented as a separate reviewed workflow.",
+          "outcome": "bounded_optional_mitigation_not_automatic_ordinary_source_binding"
+        },
+        {
+          "timestamp": "2026-10-03T13:22:38Z",
+          "summary": "Seven current-writer diagnostic copies and complete native reference audit reconfirm the unstructured lane limitation.",
+          "outcome": "offline_reproduced_historical_sent_lineage_unproven"
+        }
+      ],
+      "accepted_fix": null,
+      "regressed_after_accepted_fix": false,
+      "affected_workflows": [
+        "docs/assistant/workflows/STAGED_EXECUTION_WORKFLOW.md"
+      ],
+      "affected_docs": [
+        "APP_KNOWLEDGE.md",
+        "docs/assistant/HANDOFF.md",
+        "docs/assistant/VALIDATION.md",
+        "docs/assistant/exec_plans/completed/2026-10-03_sent_structure_audit.md"
+      ],
+      "bootstrap_relevance": "none",
+      "docs_sync_relevance": {
+        "priority": "high",
+        "targets": [
+          "Distinguish external sent reference from current app generation",
+          "Acquire source/block bindings before target flattening",
+          "Keep optional formatting and ordinary defaults distinct"
+        ]
+      },
+      "evidence_refs": [
+        {
+          "type": "private_artifact",
+          "ref": "sent_structure_audit_20261003_01/reproductions/legacy_writer_01/structural_comparison_01.json"
+        },
+        {
+          "type": "private_artifact",
+          "ref": "sent_structure_audit_20261003_01/analysis/audit_older/legacy_comparison.json"
+        },
+        {
+          "type": "private_artifact",
+          "ref": "sent_structure_audit_20261003_01/stage1_receipt.json"
+        },
+        {
+          "type": "document",
+          "ref": "docs/assistant/exec_plans/completed/2026-09-26_source_layout_fidelity.md"
+        }
+      ]
+    },
     {
       "id": "fictional-powershell-outer-timeout",
       "title": "Synthetic PowerShell startup and compilation exceed a nonsemantic outer test cap",
