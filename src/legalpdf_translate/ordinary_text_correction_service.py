@@ -11,6 +11,21 @@ from .ordinary_text_correction import paragraphs, apply_actions, word_changes, c
 VERSION = "ordinary_text_correction_v1"
 
 
+def _qualify_corrected_formatting(base, edited):
+    from .ordinary_edited_revision import qualify_edited_docx
+    from .ordinary_text_correction import package
+    from .ordinary_section_ownership import word_section_signature
+    qualify_edited_docx(base, edited)
+    try:
+        before, _, _ = package(base)
+        after, _, _ = package(edited)
+        same = word_section_signature(before) == word_section_signature(after)
+    except ValueError:
+        fail("correction_word_section_changed", 409)
+    if not same:
+        fail("correction_word_section_changed", 409)
+
+
 class TextCorrectionMixin:
     def _correction_findings(self, folder, view):
         from .ordinary_layout_service import _read
@@ -115,11 +130,13 @@ class TextCorrectionMixin:
                 return mapping
             from .ordinary_edited_revision import qualify_edited_docx
             try:
-                qualify_edited_docx(candidate.docx_bytes, raw)
+                qualify_edited_docx(candidate.docx_bytes, raw, source_layout_map=candidate.source_map)
             except ValueError:
                 return mapping
             _, _, roots = package(raw)
             actual = {(name, tuple(path)): row for row, (name, _, path) in zip(mapping, _nodes(roots))}
+            decorative_ids = {pid for rule in (candidate.source_map.get("source_layout_plan") or {}).get("decorative_rules", [])
+                              for pid in rule["paragraph_ids"]}
             for logical in candidate.source_map.get("paragraphs", []):
                 locations = logical.get("parts") or [logical]
                 for part in locations:
@@ -136,6 +153,8 @@ class TextCorrectionMixin:
                     if row is not None:
                         row.update(parent_paragraph_id=logical["paragraph_id"], regions=deepcopy(logical.get("regions", [])),
                             association_status="inherited_coarse_source_association")
+                        if logical["paragraph_id"] in decorative_ids:
+                            row["decorative_rule"] = True
         return mapping
 
     def _correction_parent(self, folder, job, *, allow_frozen=False):
@@ -166,6 +185,8 @@ class TextCorrectionMixin:
             current = paragraphs(raw)
             for row, mapped in zip(current, mapping):
                 row.update({k:v for k,v in mapped.items() if k not in {"text", "editable"}})
+                if mapped.get("decorative_rule"):
+                    row["editable"] = False
             from .ordinary_layout_service import _read
             drafts = []
             for record in self._correction_records(folder):
@@ -251,8 +272,7 @@ class TextCorrectionMixin:
             fail("correction_revision_changed", 409)
         request = record["request"]
         if record.get("formatting_only"):
-            from .ordinary_edited_revision import qualify_edited_docx
-            qualify_edited_docx(base, output)
+            _qualify_corrected_formatting(base, output)
         elif request["import_word"]:
             changes = word_changes(base, output)
             if [(c["before"], c["after"]) for c in changes] != [(c["before"], c["after"]) for c in record["changes"]]:
@@ -335,7 +355,7 @@ class TextCorrectionMixin:
                 fail("delivery_frozen", 409)
             if without_changes:
                 fail("edited_revision_changes_detected", 409)
-            qualify_edited_docx(storage._read(folder / "deliveries" / parent["selection_id"] / "output.docx", storage.DOCX_MAX_BYTES), raw)
+            _qualify_corrected_formatting(storage._read(folder / "deliveries" / parent["selection_id"] / "output.docx", storage.DOCX_MAX_BYTES), raw)
             revision = digest(encode({"parent": parent["selection_id"], "sha256": digest(raw)}))[:32]
             destination = storage._mkdir(folder / "text_corrections" / revision)
             _put_immutable(destination / "parent.docx", storage._read(folder / "deliveries" / parent["selection_id"] / "output.docx", storage.DOCX_MAX_BYTES))

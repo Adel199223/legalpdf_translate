@@ -183,7 +183,7 @@ def apply_actions(raw, actions, language, selected_pages, *, paragraph_map=None)
             fail("correction_invalid_action")
         touched.add(pid)
         node, row = nodes[pid], by_id[pid]
-        if not row["editable"]:
+        if not row["editable"] or provenance[pid].get("decorative_rule"):
             fail("correction_paragraph_controls")
         page, bbox = action["source_page"], action["source_bbox"]
         if type(page) is not int or page not in selected_pages:

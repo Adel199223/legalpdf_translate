@@ -251,3 +251,21 @@ def test_mixed_latin_sentence_retains_ltr_paragraph_with_arabic_run(tmp_path,mon
     arabic=next(r for r in first.findall(W+"r") if "محمد" in "".join(n.text or "" for n in r.iter(W+"t")))
     assert arabic.find(W+"rPr/"+W+"rtl").get(W+"val")=="1"
     assert "".join(n.text or "" for n in first.iter(W+"t"))==value
+
+
+def test_v7_source_footer_count_and_correction_formatting_section_guard(tmp_path):
+    from tests.test_ordinary_source_layout import fixture,build,verify
+    from legalpdf_translate.ordinary_layout_service import _candidate_word_count
+    from legalpdf_translate.ordinary_edited_revision import qualify_edited_docx
+    from legalpdf_translate.ordinary_text_correction_service import _qualify_corrected_formatting
+    from legalpdf_translate.ordinary_text_correction import count_correction_words
+    args=fixture();candidate=build(args);verify(candidate,args)
+    path=tmp_path/"verified.docx";path.write_bytes(candidate.docx_bytes)
+    assert _candidate_word_count(candidate,path)==count_correction_words(candidate.docx_bytes)==9
+    doc=Document(path);doc.paragraphs[0].paragraph_format.alignment=2;doc.save(path)
+    qualify_edited_docx(candidate.docx_bytes,path.read_bytes(),source_layout_map=candidate.source_map)
+    assert _candidate_word_count(candidate,path)==9
+    _qualify_corrected_formatting(candidate.docx_bytes,path.read_bytes())
+    doc=Document(path);doc.sections[0].different_first_page_header_footer=False;doc.save(path)
+    with pytest.raises(OrdinaryLayoutError,match="section_changed"):
+        _qualify_corrected_formatting(candidate.docx_bytes,path.read_bytes())

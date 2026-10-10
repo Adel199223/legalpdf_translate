@@ -94,6 +94,17 @@ def _directories(folder):
     return sorted(rows)
 
 
+def _candidate_word_count(candidate, path):
+    """A verified V7 map owns source footer words; legacy count is unchanged."""
+    if candidate.source_map.get("writer_version") == "saved_docx_layout_writer_source_layout_v7":
+        from .ordinary_source_layout import owned_story_count_descriptor
+        from .joblog_flow import count_words_from_owned_story_map
+        descriptor = owned_story_count_descriptor(candidate.source_map)
+        descriptor["docx_sha256"] = digest(storage._read(path, storage.DOCX_MAX_BYTES))
+        return count_words_from_owned_story_map(path, descriptor)
+    return count_words_from_docx(path)
+
+
 class OrdinaryLayoutService(TextCorrectionMixin):
     @public
     def __init__(self, root, *, mode, workspace_id, saved_service=None):
@@ -224,8 +235,8 @@ class OrdinaryLayoutService(TextCorrectionMixin):
                 or revision_id != digest(automatic["candidate_id"].encode("ascii") + raw)[:32]):
             fail("edited_revision_stale", 409)
         from .ordinary_edited_revision import qualify_edited_docx
-        qualify_edited_docx(candidate.docx_bytes, raw)
-        if count_words_from_docx(folder / "edited_revisions" / revision_id / "output.docx") != record["word_count"]:
+        qualify_edited_docx(candidate.docx_bytes, raw, source_layout_map=candidate.source_map)
+        if _candidate_word_count(candidate, folder / "edited_revisions" / revision_id / "output.docx") != record["word_count"]:
             fail("edited_revision_stale", 409)
         return record
 
@@ -277,8 +288,8 @@ class OrdinaryLayoutService(TextCorrectionMixin):
         nonce(revision_id)
         raw = storage._read(folder / "alias_edits" / revision_id / "output.docx", storage.DOCX_MAX_BYTES)
         from .ordinary_edited_revision import qualify_edited_docx
-        qualify_edited_docx(candidate.docx_bytes, raw)
-        count = count_words_from_docx(folder / "alias_edits" / revision_id / "output.docx")
+        qualify_edited_docx(candidate.docx_bytes, raw, source_layout_map=candidate.source_map)
+        count = _candidate_word_count(candidate, folder / "alias_edits" / revision_id / "output.docx")
         expected = {"version": VERSION, "revision_id": digest(alias["candidate_id"].encode("ascii") + raw)[:32],
             "candidate_id": alias["candidate_id"], "candidate_sha256": candidate.docx_sha256,
             "origin_delivery_sha256": alias["delivery_sha256"], "sha256": digest(raw),
@@ -380,8 +391,8 @@ class OrdinaryLayoutService(TextCorrectionMixin):
                     automatic = _read(source / "automatic.json")
                     candidate = self._verified_automatic(source, manifest, automatic)
                 from .ordinary_edited_revision import qualify_edited_docx
-                qualify_edited_docx(candidate.docx_bytes, working)
-                count = count_words_from_docx(working_path)
+                qualify_edited_docx(candidate.docx_bytes, working, source_layout_map=candidate.source_map)
+                count = _candidate_word_count(candidate, working_path)
                 if type(count) is not int or count <= 0:
                     fail("delivery_empty", 409)
                 revision_id = digest(record["candidate_id"].encode("ascii") + working)[:32]
@@ -420,8 +431,8 @@ class OrdinaryLayoutService(TextCorrectionMixin):
             if without_changes:
                 fail("edited_revision_changes_detected", 409)
             from .ordinary_edited_revision import qualify_edited_docx
-            qualify_edited_docx(candidate.docx_bytes, working)
-            count = count_words_from_docx(working_path)
+            qualify_edited_docx(candidate.docx_bytes, working, source_layout_map=candidate.source_map)
+            count = _candidate_word_count(candidate, working_path)
             if type(count) is not int or count <= 0:
                 fail("delivery_empty", 409)
             records = _edited_records(folder / "edited_revisions")
@@ -516,7 +527,7 @@ class OrdinaryLayoutService(TextCorrectionMixin):
             _put_immutable(destination / "working.docx", candidate.docx_bytes)
             _put_immutable(destination / "source_map.json", encode(candidate.source_map))
             _put_immutable(destination / "receipt.json", encode(candidate.receipt))
-            count = count_words_from_docx(destination / "output.docx")
+            count = _candidate_word_count(candidate, destination / "output.docx")
             if type(count) is not int or count <= 0:
                 fail("delivery_empty")
             record["word_count"] = count
