@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import io
 import json
 from pathlib import Path
@@ -8,6 +9,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from fastapi.testclient import TestClient
 from PIL import Image
+import pytest
 
 from .browser_esm_probe import run_browser_esm_json_probe
 import legalpdf_translate.browser_arabic_review as browser_arabic_review
@@ -37277,3 +37279,67 @@ def test_shadow_web_add_interpretation_court_email_route_updates_city_options(
     assert "beja.novo@tribunais.org.pt" in (
         payload["normalized_payload"]["interpretation_reference"]["court_email_options_by_city"]["Beja"]
     )
+
+
+@pytest.mark.parametrize("phase", [
+    "native_prepare_ok", "redirect_started", "redirect_committed",
+    "workspace_readiness", "bridge_context_posted", "failed", "future_phase", "",
+])
+def test_extension_launch_diagnostics_is_passive(tmp_path: Path, monkeypatch, phase: str) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        context = client.app.state.shadow_context
+        def forbidden_probe(**_kwargs):
+            raise AssertionError("Diagnostics must not probe provider or native capabilities")
+        context = replace(context, services=replace(
+            context.services, browser_provider_state=forbidden_probe,
+            browser_capability_snapshot=forbidden_probe,
+        ))
+        monkeypatch.setattr(client.app.state, "shadow_context", context)
+        response = client.post("/api/extension/launch-session-diagnostics", json={
+            "launch_session_id": "passive-launch", "handoff_session_id": "passive-handoff",
+            "click_phase": phase, "bridge_context_posted": True,
+            "workspace_surface_confirmed": True, "outcome": "loaded", "reason": "workspace_loaded",
+            "tab_id": 17, "browser_url": "http://127.0.0.1:8877/?mode=live&workspace=gmail-intake",
+        })
+        payload = response.json()
+        assert response.status_code == 200
+        assert payload["status"] == "ok"
+        assert payload["capability_flags"] == {}
+        assert "runtime" in payload["diagnostics"]
+        assert "runtime" in payload["normalized_payload"]
+        assert "workspace" in payload["normalized_payload"]
+        session = payload["normalized_payload"]["launch_session"]
+        assert session["launch_session_id"] == "passive-launch"
+        assert session["handoff_session_id"] == "passive-handoff"
+        assert session["click_phase"] == phase
+        assert session["extension_surface_reason"] == "workspace_loaded"
+        assert session["extension_surface_tab_id"] == 17
+        if phase == "bridge_context_posted":
+            assert session["runtime_state_root_compatible"] is True
+        persisted = context.services.launch_session_status(_browser_data_paths(tmp_path, "live").app_data_dir)
+        assert persisted["launch_session_id"] == "passive-launch"
+        assert persisted["click_phase"] == phase
+        assert payload["diagnostics"]["launch_session_updated"]["launch_session_id"] == "passive-launch"
+
+
+@pytest.mark.parametrize("launch_id", [None, "", "   "])
+def test_extension_launch_diagnostics_validation_is_passive(tmp_path: Path, monkeypatch, launch_id) -> None:
+    with _build_app(tmp_path, monkeypatch) as client:
+        context = client.app.state.shadow_context
+        def forbidden_probe(**_kwargs):
+            raise AssertionError("Diagnostics validation must not probe or update launch state")
+        context = replace(context, services=replace(
+            context.services, browser_provider_state=forbidden_probe,
+            browser_capability_snapshot=forbidden_probe,
+        ))
+        monkeypatch.setattr(client.app.state, "shadow_context", context)
+        monkeypatch.setattr(shadow_app_module, "update_launch_session_state", forbidden_probe)
+        payload = {} if launch_id is None else {"launch_session_id": launch_id}
+        response = client.post("/api/extension/launch-session-diagnostics", json=payload)
+        result = response.json()
+        assert response.status_code == 422
+        assert result["capability_flags"] == {}
+        assert "launch_session_id is required." in str(result)
+        assert "runtime" in result["diagnostics"]
+        assert "runtime" in result["normalized_payload"]
+        assert "workspace" in result["normalized_payload"]
