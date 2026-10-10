@@ -124,7 +124,11 @@ def _replace(node, text, language):
         bidi = ppr.find(W + "bidi")
         if bidi is None:
             bidi = etree.SubElement(ppr, W + "bidi")
-        bidi.set(W + "val", "1" if any(unicodedata.bidirectional(c) in {"R", "AL"} for c in text) else "0")
+        first_strong = next((unicodedata.bidirectional(c) for c in text
+                             if c not in {"\u200e", "\u200f"} and unicodedata.bidirectional(c) in {"L", "R", "AL"}), "L")
+        paragraph_rtl = (any(unicodedata.bidirectional(c) in {"R", "AL"} for c in text)
+                         if language == "AR" else first_strong in {"R", "AL"})
+        bidi.set(W + "val", "1" if paragraph_rtl else "0")
     else:
         segments = [("ltr", text)]
     for direction, value in segments:

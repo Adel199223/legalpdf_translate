@@ -238,3 +238,16 @@ def test_natural_arabic_in_latin_target_gets_native_direction_and_literal_bracke
     replaced,_,_=apply_actions(edited,[action(mapping[0]["paragraph_id"],"Latin text")],"EN",(1,),paragraph_map=mapping)
     with ZipFile(BytesIO(replaced)) as archive:root=etree.fromstring(archive.read("word/document.xml"))
     assert next(root.iter(W+"p")).find(W+"pPr/"+W+"bidi").get(W+"val")=="0"
+
+
+@pytest.mark.parametrize("language",["EN","FR"])
+def test_mixed_latin_sentence_retains_ltr_paragraph_with_arabic_run(tmp_path,monkeypatch,language):
+    case=make_case(tmp_path,monkeypatch,lang=language)
+    value="The witness wrote محمد."
+    edited,_,_=apply_actions(case.job.reviewed_docx,[action(paragraphs(case.job.reviewed_docx)[0]["paragraph_id"],value)],language,(1,))
+    with ZipFile(BytesIO(edited)) as archive:root=etree.fromstring(archive.read("word/document.xml"))
+    first=next(root.iter(W+"p"))
+    assert first.find(W+"pPr/"+W+"bidi").get(W+"val")=="0"
+    arabic=next(r for r in first.findall(W+"r") if "محمد" in "".join(n.text or "" for n in r.iter(W+"t")))
+    assert arabic.find(W+"rPr/"+W+"rtl").get(W+"val")=="1"
+    assert "".join(n.text or "" for n in first.iter(W+"t"))==value
