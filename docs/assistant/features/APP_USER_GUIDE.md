@@ -159,7 +159,7 @@ This recovery does not require weakening Word security settings or repairing/rei
 
 ## Gmail Intake Batch Replies
 1. In `Settings > Keys & Providers > Gmail Drafts (Windows)`, turn on the Gmail intake bridge.
-2. Load `extensions/gmail_intake/` as an unpacked extension in Edge or Chrome.
+2. Load `extensions/gmail_intake/` as an unpacked extension in Edge or Chrome. In Edge, enable **Developer mode** on the Extensions page, then use **Load unpacked** and enable **LegalPDF Gmail Intake**. Developer mode is expected for this local installation; see [Microsoft's setup instructions](https://learn.microsoft.com/en-us/microsoft-edge/extensions/getting-started/extension-sideloading). If the toolbar entry is disabled, check its enabled switch on that page before trying the handoff again.
 3. Normal use no longer requires manually copying the bridge token and port into the extension options page. Use that page only for diagnostics.
 4. Open Gmail in that same Windows browser and expand exactly one message.
 5. Click the extension toolbar button once. If the browser app is closed but the live Gmail bridge is configured, the native host can auto-start the canonical `main` checkout without opening CMD windows, and the same Gmail tab redirects into LegalPDF after preparation. If the handoff fails or is rejected before redirect, Gmail stays on the current page and shows the error banner there. If the browser says live Gmail is running from a noncanonical build, normal Gmail work stays blocked until `Restart from Canonical Main` succeeds.
@@ -181,7 +181,7 @@ This recovery does not require weakening Word security settings or repairing/rei
 19. If a translation file fails, the current attachment moves into a recovery state. `Resume Translation` reruns the same config; if you want different OCR or image settings, start a fresh translation from the current form instead.
 20. If one translation file resolves to a different case or court, stop and split the work into separate batches.
 21. After the last translation file, or after the interpretation honorários export generates its PDF, the app can create one Gmail reply draft in the original thread.
-22. Translation Gmail drafts attach the translated DOCX files plus the generated honorários PDF.
+22. Translation Gmail drafts attach the translated DOCX files plus the generated honorários PDF. In builds with the October 10 delivery follow-up, each translation download/attachment uses its source filename plus the target language, such as `Notice_AR.docx`. The **Honorários DOCX filename** field names the separate fee document and its matching PDF. Check [HANDOFF](../HANDOFF.md) for installed status.
 23. Interpretation Gmail drafts attach only the generated honorários PDF. They do not attach the original notice or any translated DOCX.
 24. When the original Gmail message explicitly names a reply email, the app now prefers that reply address for the Gmail draft instead of a weaker derived guess.
 25. The app creates a draft only. It does not send the email automatically.

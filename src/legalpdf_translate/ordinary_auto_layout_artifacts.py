@@ -303,7 +303,8 @@ def build_unreviewed_candidate(raw_docx_bytes: bytes, raw_snapshot: RawOrdinaryS
         _fail("invalid_candidate_binding")
     checked = _checked_automatic_decisions(raw_snapshot, page_frames, decisions)
     rendered = build_unreviewed_docx(raw_docx_bytes, raw_snapshot.saved_snapshot,
-                                     page_frames, checked)
+                                     page_frames, checked, ordinary_context={"selected_pages":list(raw_snapshot.selected_pages),
+                                         "page_groups":[[page,list(ids)] for page,ids in raw_snapshot.page_groups]})
     source_map = _extended_source_map(rendered.source_map, raw_snapshot, proposal_evidence)
     map_bytes = _json(source_map)
     receipt = _candidate_receipt(raw_snapshot, checked, proposal_evidence,
@@ -338,7 +339,10 @@ def verify_unreviewed_candidate(raw_docx_bytes: bytes, raw_snapshot: RawOrdinary
         row.pop("raw_source_page_number", None)
     validate_built_docx(artifact.docx_bytes, base_map, original_docx=raw_docx_bytes,
                         snapshot=raw_snapshot.saved_snapshot, pages=page_frames,
-                        decisions=checked, require_review=False)
+                        decisions=checked, require_review=False,
+                        ordinary_context={"selected_pages":list(raw_snapshot.selected_pages),
+                            "page_groups":[[page,list(ids)] for page,ids in raw_snapshot.page_groups]}
+                        if base_map.get("writer_version") == "saved_docx_layout_writer_ordinary_presentation_v6" else None)
     expected_map = _extended_source_map(base_map, raw_snapshot, proposal_evidence)
     if artifact.source_map_bytes != _json(expected_map):
         _fail("candidate_provenance_changed")

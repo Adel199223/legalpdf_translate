@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import stat
 import threading
@@ -872,6 +872,27 @@ def reviewed_translation_word_count(docx_path: Path) -> int:
     if word_count <= 0:
         raise ValueError("The reviewed translation DOCX is missing or has no readable words. Save and close it, then try again.")
     return word_count
+
+
+def translation_job_download_name(job: Mapping[str, Any]) -> str:
+    """Name the selected bytes from trusted source metadata, never storage paths."""
+    config = job.get("config", {})
+    result = job.get("result", {})
+    seed = result.get("save_seed", {}) if isinstance(result, Mapping) else {}
+    config = config if isinstance(config, Mapping) else {}
+    seed = seed if isinstance(seed, Mapping) else {}
+    source = str(config.get("source_path") or seed.get("pdf_path") or "translation")
+    # Both path separators are meaningful even when the server runs on POSIX.
+    basename = source.replace("\\", "/").rsplit("/", 1)[-1]
+    stem = Path(basename).stem.strip(" .")
+    stem = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', "_", stem).strip(" .")
+    while len(stem.encode("utf-16-le")) // 2 > 160:
+        stem = stem[:-1]
+    stem = stem.rstrip(" .")
+    if not stem or PureWindowsPath(stem).is_reserved() or stem.split(".", 1)[0].upper() in {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}:
+        stem = "translation"
+    lang = str(config.get("target_lang") or seed.get("target_lang") or "").upper()
+    return f"{stem}_{lang}.docx" if lang in {"EN", "FR", "AR"} else f"{stem}.docx"
 
 
 def translation_job_docx_path(job: Mapping[str, Any]) -> Path:

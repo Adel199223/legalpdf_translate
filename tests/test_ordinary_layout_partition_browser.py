@@ -37,6 +37,8 @@ def test_fresh_partition_response_normal_download_save_and_cost(tmp_path, monkey
         assert len(parts)==1 and [(p['start'],p['end']) for p in parts[0]] == [(0,14),(14,28)]
         download=client.get(f'/api/translation/jobs/{job_id}/artifact/output_docx'+scope)
         assert download.status_code==200 and download.content==candidate.docx_bytes
+        assert download.headers["content-disposition"] == 'attachment; filename="fictional_EN.docx"'
+        assert candidate.docx_bytes == download.content
         assert sha256(download.content).hexdigest()==shown['delivery']['sha256']
         with ZipFile(BytesIO(download.content)) as package:
             document=etree.fromstring(package.read('word/document.xml'))

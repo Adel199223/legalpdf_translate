@@ -521,7 +521,7 @@ def test_shadow_web_index_contains_beginner_first_shell_sections(tmp_path: Path,
         assert "Continue Gmail Step" in gmail_session_drawer
         assert "Gmail Session" not in gmail_session_drawer
         assert "Session Actions" not in gmail_session_drawer
-        assert "Final DOCX filename" in gmail_session_drawer
+        assert "Honorários DOCX filename" in gmail_session_drawer
         assert "Create Gmail reply" in gmail_session_drawer
         assert "Gmail attachment ready" in new_job_view
         assert "Review the Gmail message and attachments before you continue." in new_job_view

@@ -272,6 +272,8 @@ console.log(JSON.stringify({
 
     gmail_finalization = results["cases"]["gmailFinalizationReady"]
     assert gmail_finalization["gmailFinalization"]["ready"] is True
+    assert gmail_finalization["gmailFinalization"]["filenameLabel"] == "Honorários DOCX filename"
+    assert gmail_finalization["gmailFinalization"]["filenamePlaceholder"] == "Optional filename for the honorários DOCX"
     assert gmail_finalization["gmailFinalization"]["title"] == "Create Gmail Reply"
     assert gmail_finalization["gmailFinalization"]["status"] == (
         "Every selected Gmail attachment is saved. You can create the Gmail reply when you are ready."

@@ -133,6 +133,7 @@ from legalpdf_translate.translation_service import (
     refresh_completed_translation_metrics,
     save_translation_row,
     translation_job_docx_path,
+    translation_job_download_name,
     upload_translation_source,
 )
 from legalpdf_translate.shadow_runtime import (
@@ -3312,7 +3313,7 @@ def create_shadow_app(
             media_type = "application/json"
         elif path.suffix.lower() == ".md":
             media_type = "text/markdown; charset=utf-8"
-        return FileResponse(path, media_type=media_type, filename=path.name)
+        return FileResponse(path, media_type=media_type, filename=translation_job_download_name(job) if artifact_kind == "output_docx" else path.name)
 
     @app.post("/api/translation/save-row")
     async def api_translation_save_row(request: Request) -> JSONResponse:

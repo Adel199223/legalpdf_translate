@@ -468,13 +468,17 @@ def stage_gmail_batch_translated_docx(
     *,
     session: GmailBatchSession,
     translated_docx_path: Path,
+    attachment_name: str | None = None,
 ) -> Path:
     source = translated_docx_path.expanduser().resolve()
     if not source.exists():
         raise ValueError(f"Translated DOCX not found for Gmail batch staging: {source}")
     draft_dir = session.download_dir.expanduser().resolve() / "_draft_attachments"
     draft_dir.mkdir(parents=True, exist_ok=True)
-    staged = resolve_noncolliding_output_path(draft_dir / source.name)
+    name = attachment_name or source.name
+    if Path(name).name != name or "/" in name or "\\" in name or not name.lower().endswith(".docx"):
+        raise ValueError("Invalid translated attachment filename.")
+    staged = resolve_noncolliding_output_path(draft_dir / name)
     copy2(source, staged)
     return staged
 

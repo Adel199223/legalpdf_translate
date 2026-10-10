@@ -197,7 +197,9 @@ $fullExtraCommands = @(
     },
     @{
         Executable = $venvPython
-        Arguments = @("-m", "pytest", "-q", "--durations=10", "tests/test_gmail_review_state.py")
+        Arguments = @("-m", "pytest", "-q", "--durations=10", "tests/test_gmail_review_state.py",
+            "tests/test_translation_delivery_names.py", "tests/test_translation_completion_presentation.py",
+            "tests/test_gmail_browser_service.py")
     },
     @{
         Executable = $venvPython
@@ -228,6 +230,7 @@ $fullExtraCommands = @(
             "tests/test_saved_docx_layout_horizontal_flow.py",
             "tests/test_saved_docx_layout_modern_compatibility.py",
             "tests/test_saved_docx_layout_partitions.py",
+            "tests/test_ordinary_presentation.py",
             "tests/test_saved_docx_layout_service.py", "tests/test_shadow_web_saved_docx_layout_api.py",
             "tests/test_saved_docx_layout_browser_state.py",
             "tests/test_ordinary_auto_layout_artifacts.py")

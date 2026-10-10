@@ -2133,7 +2133,7 @@ class GmailBrowserSessionManager:
         save_seed = result.get("save_seed")
         if not isinstance(save_seed, dict):
             raise ValueError("The selected translation job does not have a Save-to-Job-Log seed yet.")
-        from .translation_service import save_translation_row, translation_job_docx_path, validate_translation_row
+        from .translation_service import save_translation_row, translation_job_docx_path, translation_job_download_name, validate_translation_row
         from .ordinary_layout_integration import owned_form_values
 
         translated_docx_path = translation_job_docx_path(job)
@@ -2157,7 +2157,8 @@ class GmailBrowserSessionManager:
             if locked.sha256 != delivery_hash:
                 raise ValueError("ordinary_layout_delivery_changed")
             delivery = locked
-        staged_docx = stage_gmail_batch_translated_docx(session=session, translated_docx_path=translated_docx_path)
+        staged_docx = stage_gmail_batch_translated_docx(session=session, translated_docx_path=translated_docx_path,
+            attachment_name=translation_job_download_name(job))
         if sha256(staged_docx.read_bytes()).hexdigest() != delivery_hash:
             raise ValueError("ordinary_layout_staged_delivery_changed")
         # The saved fee metrics must describe the exact bytes attached to the draft.
