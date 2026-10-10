@@ -13,3 +13,16 @@ def test_section_semantics_survive_word_revision_and_relationship_renumbering():
 @pytest.mark.parametrize("changed", [members(target="other.xml"),members(extra='<w:type w:val="continuous"/>')])
 def test_section_or_footer_ownership_changes_are_distinct(changed):
     assert word_section_signature(members()) != word_section_signature(changed)
+
+
+def test_paragraph_section_owner_ignores_anchor_formatting_not_position():
+    base=members();root=etree.fromstring(base["word/document.xml"])
+    body=root[0];section=body[-1];body.remove(section)
+    props=etree.SubElement(body[0],"{"+W+"}pPr");props.append(section)
+    base["word/document.xml"]=etree.tostring(root)
+    formatted=dict(base);etree.SubElement(props,"{"+W+"}bidi");props.insert(0,props[-1])
+    formatted["word/document.xml"]=etree.tostring(root)
+    assert word_section_signature(base)==word_section_signature(formatted)
+    other=etree.SubElement(body,"{"+W+"}p");otherprops=etree.SubElement(other,"{"+W+"}pPr");otherprops.append(section)
+    moved=dict(base);moved["word/document.xml"]=etree.tostring(root)
+    assert word_section_signature(base)!=word_section_signature(moved)

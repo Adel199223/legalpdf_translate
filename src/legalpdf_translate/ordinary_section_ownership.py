@@ -31,4 +31,12 @@ def word_section_signature(members):
                 refs.append(("relationship_target",ids[v]))
         return node.tag, attrs+tuple(refs), tuple(semantic(child) for child in node)
     root=etree.fromstring(members["word/document.xml"])
-    return tuple((tuple(_path(node,root)),semantic(node)) for node in root.iter(W+"sectPr"))
+    def owner(node):
+        parent = node.getparent()
+        if parent is not None and parent.tag == W + "pPr":
+            paragraph = parent.getparent()
+            if paragraph is None or paragraph.tag != W + "p":
+                raise ValueError("section_owner_missing")
+            return "paragraph", tuple(_path(paragraph, root))
+        return "terminal", tuple(_path(node, root))
+    return tuple((owner(node),semantic(node)) for node in root.iter(W+"sectPr"))
