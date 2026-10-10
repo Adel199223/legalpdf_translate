@@ -111,7 +111,9 @@ def _replace(node, text, language):
     for child in list(node):
         if child.tag != W + "pPr":
             node.remove(child)
-    if language == "AR":
+    directional = (language == "AR" or any(unicodedata.bidirectional(c) in {"R", "AL"} for c in text)
+                   or node.find(W + "pPr/" + W + "bidi") is not None)
+    if directional:
         from .docx_writer import _segment_directional_runs
         segments, _ = _segment_directional_runs(text)
         if "".join(value for _, value in segments) != text:
@@ -128,7 +130,7 @@ def _replace(node, text, language):
     for direction, value in segments:
         run = etree.SubElement(node, W + "r")
         props = deepcopy(rpr) if rpr is not None else etree.Element(W + "rPr")
-        if language == "AR":
+        if directional:
             for tag in ("rtl", "cs"):
                 old = props.find(W + tag)
                 if old is not None:

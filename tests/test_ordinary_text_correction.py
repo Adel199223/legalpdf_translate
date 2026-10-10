@@ -224,3 +224,17 @@ def test_semantic_word_sections_allow_benign_metadata_but_reject_footer_repoint(
     assert len(word_changes(original,edit())) == 1
     with pytest.raises(OrdinaryLayoutError,match="section_changed"):
         word_changes(original,edit(True))
+
+
+def test_natural_arabic_in_latin_target_gets_native_direction_and_literal_brackets(tmp_path, monkeypatch):
+    case=make_case(tmp_path,monkeypatch)
+    raw=case.job.reviewed_docx
+    value="نص [[ABC]]"
+    edited,changes,mapping=apply_actions(raw,[action(paragraphs(raw)[0]["paragraph_id"],value)],"EN",(1,))
+    with ZipFile(BytesIO(edited)) as archive:root=etree.fromstring(archive.read("word/document.xml"))
+    first=next(root.iter(W+"p"))
+    assert first.find(W+"pPr/"+W+"bidi").get(W+"val")=="1"
+    assert "".join(n.text or "" for n in first.iter(W+"t"))==value
+    replaced,_,_=apply_actions(edited,[action(mapping[0]["paragraph_id"],"Latin text")],"EN",(1,),paragraph_map=mapping)
+    with ZipFile(BytesIO(replaced)) as archive:root=etree.fromstring(archive.read("word/document.xml"))
+    assert next(root.iter(W+"p")).find(W+"pPr/"+W+"bidi").get(W+"val")=="0"
