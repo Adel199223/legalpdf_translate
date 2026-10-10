@@ -269,6 +269,8 @@ class OrdinaryLayoutManager:
                 _write(operation / "source_evidence.json", {"version": "ordinary_source_evidence_v1", "pages": source_evidence})
                 result["source_coverage_findings"] = [f for page in source_evidence for f in page["findings"]]
                 result["source_layout_evidence_sha256"] = digest(encode(source_evidence))
+                from .ordinary_layout_contracts import source_evidence_review_fields
+                result.update(source_evidence_review_fields(source_evidence))
                 _write(operation / "proposed_decisions.json", decisions)
                 saved = self.service.apply_suggestion(job_id, operation_nonce, expected_generation, decisions,
                     baseline_id=expected_baseline_id)

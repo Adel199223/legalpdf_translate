@@ -3,6 +3,21 @@ from __future__ import annotations
 from .browser_esm_probe import run_browser_esm_json_probe
 
 
+def test_rejected_optional_rule_warning_visible_before_arabic_review() -> None:
+    result = run_browser_esm_json_probe(r"""
+const p = await import(__TRANSLATION_COMPLETION_PRESENTATION_MODULE_URL__);
+const view = p.deriveTranslationCompletionPresentation({
+ job:{job_id:'fictional-ar',job_kind:'translate',status:'completed',
+ result:{automatic_layout:{source_layout_review_required:true}}},
+ saveSeed:{target_lang:'AR',output_docx:'fictional.docx'},
+ arabicReview:{required:true,resolved:false}
+});
+console.log(JSON.stringify(view));
+""", {"__TRANSLATION_COMPLETION_PRESENTATION_MODULE_URL__": "translation_completion_presentation.js"})
+    assert any('its text was retained' in line for line in result['resultDetailLines'])
+    assert 'Review the Arabic document' in result['drawerStatus']
+
+
 def test_translation_completion_presentation_module_builds_finish_drawer_state() -> None:
     script = r"""
 const presentation = await import(__TRANSLATION_COMPLETION_PRESENTATION_MODULE_URL__);

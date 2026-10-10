@@ -31,6 +31,7 @@ def frozen_automatic_layout_policy() -> str:
         "proposal_version": PROPOSAL_VERSION_V3,
         "automatic_writer_version": "saved_docx_layout_writer_source_layout_v7",
         "source_folio_direction_version": "numeric_run_ltr_v2",
+        "source_layout_normalization_version": "ordinary_optional_layout_hint_normalization_v1",
         "instructions_sha256": hashlib.sha256(INSTRUCTIONS.encode("utf-8")).hexdigest(),
         "pricing_catalog": json.loads(accounting._pricing_json),
         "dispatch_limits": json.loads(accounting._limits_json)}
@@ -67,7 +68,8 @@ def _direct_revalidation(root: Path, result: dict, policy: dict) -> bool:
     return has_direct or (not has_capacity
         and result.get("error_code") in {"ordinary_layout_page_break_requires_flow",
                                        "ordinary_layout_proposal_coverage",
-                                       "ordinary_layout_invalid_proposal_decisions"}
+                                       "ordinary_layout_invalid_proposal_decisions",
+                                       "ordinary_layout_invalid_source_layout_evidence"}
         and policy.get("max_output_tokens") == 32000
         and policy.get("timeout_seconds") == 480.0)
 
@@ -199,6 +201,7 @@ def _retained_continuation(manager, root: Path, identity: dict, predecessor: dic
     if direct:
         allowed_errors.add("ordinary_layout_proposal_coverage")
         allowed_errors.add("ordinary_layout_invalid_proposal_decisions")
+        allowed_errors.add("ordinary_layout_invalid_source_layout_evidence")
     if (result.get("error_code") not in allowed_errors or policy.get("max_output_tokens") != 32000
             or direct and policy.get("timeout_seconds") != 480.0):
         fail("automatic_retained_response_unavailable", 409)
@@ -268,6 +271,12 @@ def _operation_costs(manager, origin: str, identity: dict) -> dict:
     return costs
 
 
+def _source_layout_review(candidate) -> dict:
+    """Expose rejected optional hints from the independently verified map."""
+    from .ordinary_layout_contracts import source_evidence_review_fields
+    return source_evidence_review_fields(candidate.source_map.get("source_evidence", {}).get("pages", []))
+
+
 def _reused_candidate(manager, folder: Path, identity: dict, record: dict, job) -> dict:
     if identity.get("retained_pages"):
         pointer = _read_record(folder / "operation.json")
@@ -312,6 +321,7 @@ def _reused_candidate(manager, folder: Path, identity: dict, record: dict, job) 
         "policy_fingerprint": candidate.policy_fingerprint,
         "delivery_kind": "automatic_unreviewed", "reviewed": False,
         "reused_durable_candidate": True, "layout_costs": record["layout_costs"],
+        **_source_layout_review(candidate),
         **({"recovery_predecessor": identity["recovery_predecessor"]}
            if "recovery_predecessor" in identity else {}),
         **({"revalidation_predecessor": identity["revalidation_predecessor"]}
@@ -356,12 +366,21 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
             proposal = decode(response)
             response_version = proposal.get("version")
             if response_version == "ordinary_layout_proposal_v3":
-                # The signed sidecar was validated against the immutable initial
+                # The hash-bound sidecar was validated against the immutable initial
                 # generation, before uncertain proposed regions were applied.
                 sidecar = verified_record(operation / "source_evidence.json")
                 records = [item for item in sidecar["pages"] if item.get("page_number") == page]
                 if len(records) != 1 or records[0].get("response_sha256") != row["response_sha256"]:
                     fail("source_evidence_response_changed", 409)
+                if "normalization" in records[0]:
+                    from .ordinary_layout_contracts import proposal_source_evidence
+                    from .saved_docx_layout import inspect_docx
+                    initial_view = verified_record(operation / "proposal_initial_view.json")["view"]
+                    baseline_bytes = bounded_read(operation.parent.parent / "reviewed.docx", storage.DOCX_MAX_BYTES)
+                    expected = proposal_source_evidence(inspect_docx(baseline_bytes, initial_view["target_lang"]), initial_view, proposal)
+                    expected["response_sha256"] = row["response_sha256"]
+                    if records[0] != expected:
+                        fail("source_evidence_response_changed", 409)
                 source_evidence.append(records[0])
             if response_version != "ordinary_layout_proposal_v1":
                 row["proposal_schema_version"] = response_version
@@ -377,7 +396,7 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
         **({"source_evidence": {"version": "ordinary_source_evidence_v1", "pages": source_evidence}} if source_evidence else {})}
 
 
-def _recover_settled_result(manager, pointer: dict, selected_pages: list[int]) -> None:
+def _recover_settled_result(manager, pointer: dict, selected_pages: list[int], *, policy_fingerprint=None) -> None:
     """Complete a saved, fully accounted operation locally after a crash."""
     from .ordinary_layout_contracts import decode, normalize_proposals, OrdinaryLayoutError
     from .ordinary_layout_service import _read as verified_record, _write as verified_write
@@ -447,6 +466,9 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int]) -
             for record, proposal in zip(source_records, proposals):
                 record["response_sha256"] = hashlib.sha256(storage._read(operation / f"page-{proposal['page_number']:04d}.response.json", 2 * 1024 * 1024)).hexdigest()
             expected_sidecar = {"version": "ordinary_source_evidence_v1", "pages": source_records}
+            if (any(page.get("normalization", {}).get("review_required") for page in source_records)
+                    and policy_fingerprint != frozen_automatic_layout_policy().split(":", 1)[1]):
+                fail("optional_hint_recovery_requires_current_policy", 409)
             sidecar = operation / "source_evidence.json"
             if sidecar.exists() and verified_record(sidecar) != expected_sidecar:
                 fail("source_evidence_response_changed", 409)
@@ -480,6 +502,9 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int]) -
             "known_cost_usd": summary.get("known_cost_usd"),
             "unknown_cost_count": summary.get("unknown_cost_count"), "complete": True}}
     result.update(source_result_fields)
+    if source_result_fields:
+        from .ordinary_layout_contracts import source_evidence_review_fields
+        result.update(source_evidence_review_fields(source_records if any(p.get("version") == "ordinary_layout_proposal_v3" for p in proposals) else records))
     manager.service.finish_suggestion(origin, operation_nonce, result, baseline_id=baseline_id)
 
 
@@ -498,7 +523,7 @@ def _finish_saved_proposals(manager, folder: Path, identity: dict, pointer: dict
         fail("automatic_operation_identity_changed", 409)
     if cancel_requested(job.job_id):
         fail("automatic_layout_cancelled", 409)
-    _recover_settled_result(manager, pointer, identity["selected_pages"])
+    _recover_settled_result(manager, pointer, identity["selected_pages"], policy_fingerprint=policy_hash)
     outcome = manager.service.suggestion(origin, operation_nonce,
         expected_baseline_id=baseline_id, expected_generation=pointer["initial_generation"],
         page_numbers=identity["selected_pages"])
@@ -555,6 +580,7 @@ def _finish_saved_proposals(manager, folder: Path, identity: dict, pointer: dict
         "word_count": artifact.word_count, "candidate_id": built["candidate_id"],
         "source_map_sha256": built["source_map_sha256"], "policy_fingerprint": policy_hash,
         "delivery_kind": artifact.kind, "reviewed": False, "layout_costs": costs,
+        **_source_layout_review(candidate),
         **({"recovery_predecessor": identity["recovery_predecessor"]}
            if "recovery_predecessor" in identity else {}),
         **({"revalidation_predecessor": identity["revalidation_predecessor"]}

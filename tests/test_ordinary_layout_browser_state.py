@@ -124,6 +124,21 @@ console.log(JSON.stringify({automatic,edited:root.textContent,unsafeWrites}));
     assert result["unsafeWrites"] == 0
 
 
+def test_optional_hint_warning_renders_with_and_without_suggestions():
+    result = probe(DOM+r'''
+const job={job_id:scope.jobId,job_kind:'translate',status:'completed',result:{save_seed:{}}};
+const view=prepared();
+const ordinaryMount=ordinaryUi.mountOrdinaryLayoutReview({root,getScope:()=>scope,getJob:()=>job,request:async()=>ordinaryEnvelope(view)});
+ordinaryMount.update({...job,ordinary_layout:view});const plain=root.textContent;
+view.suggestions=[{source_layout_review_required:true}];
+ordinaryMount.update({...job,ordinary_layout:view});
+console.log(JSON.stringify({plain,warning:root.textContent,unsafeWrites}));
+''')
+    assert 'its text was retained' not in result['plain']
+    assert 'its text was retained' in result['warning']
+    assert result['unsafeWrites'] == 0
+
+
 def test_actual_dom_prepares_bound_review_suggests_builds_reviews_and_selects():
     result=probe(DOM+r'''
 let saved=null, seenDelivery=null;const calls=[];

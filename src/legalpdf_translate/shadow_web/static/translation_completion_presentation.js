@@ -82,6 +82,15 @@ export function deriveTranslationCompletionPresentation(options = {}) {
   const gmailStepBatchLabel = String(gmailStep.batchLabel || "").trim() || "Gmail";
   const gmailStepHasMoreItems = Boolean(gmailStep.hasMoreItems);
   const resultDetailLines = [];
+  if (job?.result?.automatic_layout?.source_layout_review_required) {
+    resultDetailLines.push("Source layout needs review: an optional decorative rule could not be safely applied; its text was retained.");
+  }
+  if (job?.result?.automatic_layout?.status === "raw_fallback") {
+    resultDetailLines.push("Source layout formatting could not be applied; the original translation was retained for review.");
+    if (job.result.automatic_layout.reason === "ordinary_layout_invalid_source_layout_evidence") {
+      resultDetailLines.push("A source-layout evidence hint could not be safely applied.");
+    }
+  }
 
   if (rowLoaded || hasSaveSeed || translationCompleted) {
     if (seed.case_number || seed.case_entity || seed.case_city || seed.translation_date) {

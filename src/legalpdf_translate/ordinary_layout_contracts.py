@@ -330,7 +330,8 @@ def proposal_source_evidence(snapshot, view, proposal):
         fail("invalid_source_layout_evidence")
     partitions = {row["paragraph_id"] for row in partition_rows}
     used = set()
-    for row in evidence:
+    accepted, rejected = [], []
+    for evidence_index, row in enumerate(evidence):
         if type(row) is not dict or set(row) != {"kind", "paragraph_ids", "bbox"}:
             fail("invalid_source_layout_evidence")
         box(row["bbox"])
@@ -348,7 +349,7 @@ def proposal_source_evidence(snapshot, view, proposal):
                 fail("invalid_source_layout_evidence")
             if raw.get("has_page_break") and (row["kind"] != "source_footer" or pid != owned[-1] or not raw["tokens"] or raw["tokens"][-1]["kind"] != "page_break"):
                 fail("invalid_source_layout_evidence")
-            if (pid in partitions or pid in panel_ids or pid in column_ids or raw.get("has_numbering") or "numPr" in raw.get("ppr_xml", "") or raw.get("has_field") or
+            if (pid in partitions or pid in panel_ids or raw.get("has_numbering") or "numPr" in raw.get("ppr_xml", "") or raw.get("has_field") or
                     any(t["kind"] != "t" and not (row["kind"] == "source_footer" and t["kind"] == "page_break") for t in raw["tokens"])):
                 fail("invalid_source_layout_evidence")
         if row["kind"] == "decorative_rule":
@@ -356,16 +357,36 @@ def proposal_source_evidence(snapshot, view, proposal):
             if (len(owned) != 1 or choices[owned[0]]["role"] != "body" or
                     re.fullmatch(r"[_─━—–-]{3,}", text.strip()) is None or row["bbox"][3] - row["bbox"][1] > .03):
                 fail("invalid_decorative_rule_evidence")
+            if owned[0] in column_ids:
+                rejected.append({"index": evidence_index, "kind": row["kind"],
+                    "paragraph_ids": deepcopy(owned), "reason": "decorative_rule_requires_plain_flow"})
+                continue
         elif row["kind"] == "source_footer":
+            if any(pid in column_ids for pid in owned):
+                fail("invalid_source_layout_evidence")
             if (indices[-1] != len(ids)-1 or row["bbox"][1] < .85 or
                     any(not "".join(t["text"] for t in baseline[pid]["tokens"] if t["kind"] == "t").strip() for pid in owned) or
                     any(choices[pid]["role"] not in {"body", "source_folio"} for pid in owned)):
                 fail("invalid_source_footer_evidence")
         else:
             fail("invalid_source_layout_evidence")
+        accepted.append(deepcopy(row))
     return {"version": "ordinary_source_evidence_v1", "page_number": page,
-            "findings": normalized, "layout": deepcopy(evidence), "source_coverage_verified": False}
+            "findings": normalized, "layout": accepted, "source_coverage_verified": False,
+            **({"normalization": {"version": "ordinary_optional_layout_hint_normalization_v1",
+                 "canonical_proposal_sha256": digest(encode(proposal)), "rejected_hints": rejected,
+                 "review_required": True}} if rejected else {})}
 
+
+
+def source_evidence_review_fields(records):
+    """Current review warning, absent for historical or fully supported evidence."""
+    rejected = [{"page_number": page["page_number"], **row}
+                for page in records
+                if page.get("normalization", {}).get("version") == "ordinary_optional_layout_hint_normalization_v1"
+                for row in page["normalization"]["rejected_hints"]]
+    return ({"source_layout_review_required": True, "source_layout_rejected_hints": rejected}
+            if rejected else {})
 
 
 def _ids(band):
