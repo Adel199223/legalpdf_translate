@@ -148,20 +148,24 @@ def _inventory(raw: bytes) -> tuple:
         fail("edited_docx_invalid", 409)
 
 
-def qualify_edited_docx(candidate: bytes, edited: bytes, *, source_layout_map: dict | None = None) -> None:
+def qualify_edited_docx(candidate: bytes, edited: bytes, *, source_layout_map: dict | None = None):
     """A source map remains valid only for unchanged paragraph ownership/text."""
-    if _inventory(candidate) != _inventory(edited):
-        fail("edited_layout_rebase_required", 409)
-
     if source_layout_map is not None and source_layout_map.get('writer_version')=='saved_docx_layout_writer_source_layout_v7':
         import hashlib
-        from .ordinary_section_ownership import word_section_signature
+        from .ordinary_section_ownership import verified_word_story_projection, project_story_inventory
         if source_layout_map.get('docx_sha256')!=hashlib.sha256(candidate).hexdigest():fail('edited_layout_candidate_changed',409)
+        candidate_inventory=_inventory(candidate)
+        edited_inventory=_inventory(edited)
         def members(raw):
             with ZipFile(BytesIO(raw)) as archive:
-                return {name:archive.read(name) for name in ('word/document.xml','word/_rels/document.xml.rels')}
+                return {name:archive.read(name) for name in archive.namelist()}
         try:
-            if word_section_signature(members(candidate))!=word_section_signature(members(edited)):
-                fail('edited_layout_section_ownership_changed',409)
+            projection=verified_word_story_projection(members(candidate),members(edited))
         except (ValueError,KeyError,etree.XMLSyntaxError):
             fail('edited_layout_section_ownership_changed',409)
+        if project_story_inventory(candidate_inventory,projection)!=project_story_inventory(edited_inventory,projection,edited=True):
+            fail('edited_layout_rebase_required',409)
+        return {**projection,'parent_sha256':hashlib.sha256(candidate).hexdigest(),'edited_sha256':hashlib.sha256(edited).hexdigest()}
+    if _inventory(candidate) != _inventory(edited):
+        fail("edited_layout_rebase_required", 409)
+    return None

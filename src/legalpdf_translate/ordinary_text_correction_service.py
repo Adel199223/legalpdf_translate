@@ -6,24 +6,23 @@ from pathlib import Path
 
 from . import saved_docx_layout_service as storage
 from .ordinary_layout_contracts import DeliveryArtifact, digest, encode, fail, job_identity, nonce, generation
-from .ordinary_text_correction import paragraphs, apply_actions, word_changes, count_correction_words
+from .ordinary_text_correction import paragraphs, apply_actions, word_changes, count_correction_words, imported_word_map
 
 VERSION = "ordinary_text_correction_v1"
 
 
 def _qualify_corrected_formatting(base, edited):
-    from .ordinary_edited_revision import qualify_edited_docx
+    from .ordinary_edited_revision import _inventory
     from .ordinary_text_correction import package
-    from .ordinary_section_ownership import word_section_signature
-    qualify_edited_docx(base, edited)
+    from .ordinary_section_ownership import verified_word_story_projection, project_story_inventory
     try:
         before, _, _ = package(base)
         after, _, _ = package(edited)
-        same = word_section_signature(before) == word_section_signature(after)
+        projection=verified_word_story_projection(before,after)
     except ValueError:
         fail("correction_word_section_changed", 409)
-    if not same:
-        fail("correction_word_section_changed", 409)
+    if project_story_inventory(_inventory(base),projection)!=project_story_inventory(_inventory(edited),projection,edited=True):
+        fail('edited_layout_rebase_required',409)
 
 
 class TextCorrectionMixin:
@@ -130,7 +129,7 @@ class TextCorrectionMixin:
                 return mapping
             from .ordinary_edited_revision import qualify_edited_docx
             try:
-                qualify_edited_docx(candidate.docx_bytes, raw, source_layout_map=candidate.source_map)
+                projection=qualify_edited_docx(candidate.docx_bytes, raw, source_layout_map=candidate.source_map)
             except ValueError:
                 return mapping
             _, _, roots = package(raw)
@@ -141,6 +140,8 @@ class TextCorrectionMixin:
                 locations = logical.get("parts") or [logical]
                 for part in locations:
                     uri = part.get("part_uri", logical.get("part_uri", "word/document.xml"))
+                    if projection:
+                        uri=projection['part_map'].get(uri,uri)
                     location = part.get("location")
                     if uri not in roots or type(location) is not str:
                         continue
@@ -237,7 +238,7 @@ class TextCorrectionMixin:
                     change["paragraph_id"] = translated[change["paragraph_id"]]
                 if any(row.get("decorative_rule") and row["paragraph_id"] in {c["paragraph_id"] for c in changes} for row in mapping):
                     fail("correction_paragraph_not_editable")
-                out_map = [{**m, "part_uri": r["part_uri"], "location": r["location"]} for r, m in zip(paragraphs(output), mapping)]
+                out_map = imported_word_map(raw,output,mapping)
             else:
                 output, changes, out_map = apply_actions(raw, actions, job.target_lang,
                     job.selected_pages, paragraph_map=mapping)
@@ -275,6 +276,8 @@ class TextCorrectionMixin:
         request = record["request"]
         if record.get("formatting_only"):
             _qualify_corrected_formatting(base, output)
+            if imported_word_map(base,output,record['base_paragraph_map'])!=record['paragraph_map']:
+                fail('correction_revision_changed',409)
         elif request["import_word"]:
             changes = word_changes(base, output)
             mapped = record.get("base_paragraph_map") or paragraphs(base)
@@ -284,6 +287,8 @@ class TextCorrectionMixin:
                 fail("correction_paragraph_not_editable")
             if [(c["before"], c["after"]) for c in changes] != [(c["before"], c["after"]) for c in record["changes"]]:
                 fail("correction_revision_changed", 409)
+            if imported_word_map(base,output,mapped)!=record['paragraph_map']:
+                fail('correction_revision_changed',409)
         else:
             # Base map is retained explicitly; do not reassign IDs after deletion.
             mapped = record.get("base_paragraph_map") or paragraphs(base)
@@ -394,7 +399,8 @@ class TextCorrectionMixin:
                 fail("delivery_frozen", 409)
             if without_changes:
                 fail("edited_revision_changes_detected", 409)
-            _qualify_corrected_formatting(storage._read(folder / "deliveries" / parent["selection_id"] / "output.docx", storage.DOCX_MAX_BYTES), raw)
+            parent_raw=storage._read(folder / "deliveries" / parent["selection_id"] / "output.docx", storage.DOCX_MAX_BYTES)
+            _qualify_corrected_formatting(parent_raw, raw)
             revision = digest(encode({"parent": parent["selection_id"], "sha256": digest(raw)}))[:32]
             destination = storage._mkdir(folder / "text_corrections" / revision)
             _put_immutable(destination / "parent.docx", storage._read(folder / "deliveries" / parent["selection_id"] / "output.docx", storage.DOCX_MAX_BYTES))
@@ -404,7 +410,8 @@ class TextCorrectionMixin:
                 "delivery_generation": parent["generation"], "baseline_id": parent["baseline_id"]}, sha256=digest(raw),
                 word_count=count_correction_words(raw), formatting_only=True, changes=[],
                 request={"import_word": False, "actions": []},
-                base_paragraph_map=prior["paragraph_map"])
+                base_paragraph_map=prior["paragraph_map"],
+                paragraph_map=imported_word_map(parent_raw,raw,prior['paragraph_map']))
             _write(folder / "text_corrections" / (revision + ".json"), record)
             self._verify_correction(folder, revision)
             delivered = storage._mkdir(folder / "deliveries" / revision)

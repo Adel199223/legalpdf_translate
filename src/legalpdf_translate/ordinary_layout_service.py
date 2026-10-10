@@ -100,7 +100,13 @@ def _candidate_word_count(candidate, path):
         from .ordinary_source_layout import owned_story_count_descriptor
         from .joblog_flow import count_words_from_owned_story_map
         descriptor = owned_story_count_descriptor(candidate.source_map)
-        descriptor["docx_sha256"] = digest(storage._read(path, storage.DOCX_MAX_BYTES))
+        raw=storage._read(path, storage.DOCX_MAX_BYTES)
+        from .ordinary_edited_revision import qualify_edited_docx
+        projection=qualify_edited_docx(candidate.docx_bytes,raw,source_layout_map=candidate.source_map)
+        if projection:
+            for row in descriptor['paragraphs']:
+                row['part_uri']=projection['part_map'].get(row['part_uri'],row['part_uri'])
+        descriptor["docx_sha256"] = digest(raw)
         return count_words_from_owned_story_map(path, descriptor)
     return count_words_from_docx(path)
 

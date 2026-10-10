@@ -12,7 +12,7 @@ import re
 import unicodedata
 
 from lxml import etree
-from .ordinary_section_ownership import word_section_signature
+from .ordinary_section_ownership import word_section_signature, verified_word_story_projection, project_story_inventory
 
 from .ordinary_layout_contracts import digest, fail
 from .ordinary_edited_revision import _inventory
@@ -274,15 +274,13 @@ def word_changes(base, working):
     original_members, _, original_roots = package(base)
     edited_members, _, edited_roots = package(working)
     try:
-        sections_equal = word_section_signature(original_members) == word_section_signature(edited_members)
+        projection=verified_word_story_projection(original_members,edited_members)
     except ValueError:
-        fail("correction_word_section_changed", 409)
-    if not sections_equal:
         fail("correction_word_section_changed", 409)
     def relationships(members):
         return [(name, tuple(sorted(tuple(sorted((k,v) for k,v in child.attrib.items() if k != "Id"))
                     for child in etree.fromstring(raw)
-                    if not child.get("Type", "").endswith(("/stylesWithEffects", "/footnotes", "/endnotes", "/thumbnail")))))
+                    if not child.get("Type", "").endswith(("/stylesWithEffects", "/footnotes", "/endnotes", "/thumbnail", "/footer", "/header")))))
                 for name, raw in sorted(members.items()) if name.endswith(".rels")]
     if relationships(original_members) != relationships(edited_members):
         fail("correction_word_relationships_changed", 409)
@@ -308,13 +306,10 @@ def word_changes(base, working):
         return rows
     if uneditable_stories(original_members) != uneditable_stories(edited_members):
         fail("correction_word_story_unsupported", 409)
-    if skeleton(a) != skeleton(b):
-        fail("correction_word_structure_unsupported", 409)
-    before, after = paragraphs(base), paragraphs(working)
-    if [(r["part_uri"], r["location"]) for r in before] != [(r["part_uri"], r["location"]) for r in after]:
+    if skeleton(project_story_inventory(a,projection)) != skeleton(project_story_inventory(b,projection,edited=True)):
         fail("correction_word_structure_unsupported", 409)
     changes = []
-    for old, new in zip(before, after):
+    for old, new in word_paragraph_pairs(base,working,projection):
         if old["text"] != new["text"]:
             checked_text(new["text"])
             if not old["editable"] or not new["editable"]:
@@ -325,6 +320,37 @@ def word_changes(base, working):
     if not changes:
         fail("correction_no_text_changes")
     return changes
+
+
+def word_paragraph_pairs(base, working, projection=None):
+    if projection is None:
+        before,_,_=package(base);after,_,_=package(working)
+        try:projection=verified_word_story_projection(before,after)
+        except ValueError:fail('correction_word_section_changed',409)
+    inverse={v:k for k,v in projection['part_map'].items()}
+    old={(r['part_uri'],tuple(r['location'])):r for r in paragraphs(base) if r['part_uri'] not in projection['parent_empty_parts']}
+    new={(inverse.get(r['part_uri'],r['part_uri']),tuple(r['location'])):r for r in paragraphs(working) if r['part_uri'] not in projection['edited_empty_parts']}
+    if old.keys()!=new.keys():fail('correction_word_structure_unsupported',409)
+    return [(row,new[key]) for key,row in old.items()]
+
+
+def imported_word_map(base, working, mapping):
+    """Stable IDs through verified logical-story projection, not ZIP order."""
+    prior={(r['part_uri'],tuple(r['location'])):m for r,m in zip(paragraphs(base),mapping)}
+    moved={}
+    for old,new in word_paragraph_pairs(base,working):
+        moved[(new['part_uri'],tuple(new['location']))]=prior[(old['part_uri'],tuple(old['location']))]
+    result=[]
+    for row in paragraphs(working):
+        old=moved.get((row['part_uri'],tuple(row['location'])))
+        if old is None:
+            if row['text'].strip():fail('correction_word_structure_unsupported',409)
+            empty_identity=(digest(base)+'|'+row['part_uri']+'|'+repr(row['location'])).encode('utf-8')
+            old={'paragraph_id':'p-empty-'+digest(empty_identity)[:24],'parent_paragraph_id':None,'regions':[],
+                'association_status':'unowned_empty_serialization_story'}
+        result.append({**old,'part_uri':row['part_uri'],'location':row['location']})
+    if len({r['paragraph_id'] for r in result})!=len(result):fail('correction_duplicate_paragraph_id')
+    return result
 
 
 def count_correction_words(raw):

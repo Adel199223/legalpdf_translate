@@ -275,17 +275,18 @@ def test_safe_source_folio_wrapper_remains_correctable_without_reversing_fractio
     from legalpdf_translate.ordinary_source_layout import _folio_ltr_span
     case=make_case(tmp_path,monkeypatch,lang='AR')
     doc=Document(BytesIO(case.job.reviewed_docx));doc.paragraphs[0].text='الصفحة 2 / 7'
-    assert _folio_ltr_span(doc.paragraphs[0]._p)['literal']=='2 / 7'
+    assert _folio_ltr_span(doc.paragraphs[0]._p,legacy_wrapper=True)['literal']=='2 / 7'
     out=BytesIO();doc.save(out);raw=out.getvalue()
     row=paragraphs(raw)[0];assert row['editable']
     edited,_,_=apply_actions(raw,[action(row['paragraph_id'],'الصفحة 3 / 7')],'AR',(1,))
     with ZipFile(BytesIO(edited)) as z:root=etree.fromstring(z.read('word/document.xml'))
-    wrapper=next(root.iter(W+'dir'))
-    assert wrapper.get(W+'val')=='ltr'
-    assert ''.join(t.text or '' for t in wrapper.iter(W+'t'))=='3 / 7'
+    assert not list(root.iter(W+'dir'))
+    numeric=next(r for r in root.iter(W+'r') if ''.join(t.text or '' for t in r.iter(W+'t'))=='3 / 7')
+    assert numeric.find(W+'rPr/'+W+'rtl').get(W+'val')=='0'
     with pytest.raises(OrdinaryLayoutError,match='folio_structure_changed'):
         apply_actions(raw,[action(row['paragraph_id'],'Unrecognized changed paragraph')],'AR',(1,))
-    wrapper.set(W+'val','rtl')
+    with ZipFile(BytesIO(raw)) as z:legacy=etree.fromstring(z.read('word/document.xml'))
+    wrapper=next(legacy.iter(W+'dir'));wrapper.set(W+'val','rtl')
     assert not __import__('legalpdf_translate.ordinary_text_correction',fromlist=['_editable'])._editable(wrapper.getparent())
 
 
