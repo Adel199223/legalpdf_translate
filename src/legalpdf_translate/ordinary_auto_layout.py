@@ -369,10 +369,13 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
                 # The hash-bound sidecar was validated against the immutable initial
                 # generation, before uncertain proposed regions were applied.
                 sidecar = verified_record(operation / "source_evidence.json")
+                recorded_result = verified_record(operation / "result.json")
+                if hashlib.sha256(encode(sidecar["pages"])).hexdigest() != recorded_result.get("source_layout_evidence_sha256"):
+                    fail("source_evidence_response_changed", 409)
                 records = [item for item in sidecar["pages"] if item.get("page_number") == page]
                 if len(records) != 1 or records[0].get("response_sha256") != row["response_sha256"]:
                     fail("source_evidence_response_changed", 409)
-                if "normalization" in records[0]:
+                if (operation / "proposal_initial_view.json").exists():
                     from .ordinary_layout_contracts import proposal_source_evidence
                     from .saved_docx_layout import inspect_docx
                     initial_view = verified_record(operation / "proposal_initial_view.json")["view"]

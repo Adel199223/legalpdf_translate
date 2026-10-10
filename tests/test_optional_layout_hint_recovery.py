@@ -99,6 +99,34 @@ def test_settled_invalid_hint_recovers_without_dispatch_and_reuses_warning(tmp_p
             result._client.responses.create = lambda **kwargs: pytest.fail('retained recovery dispatched a provider')
             return result
         layout.provider_factory = denied
+        from legalpdf_translate import ordinary_auto_layout as automatic
+        from legalpdf_translate.ordinary_layout_service import _read, _write
+        checked_evidence = automatic._proposal_evidence
+        tampered_before_publication = []
+        def deleted_marker(manager, origin, baseline, review, nonce, *args, **kwargs):
+            path = manager.service.root/origin/'baselines'/baseline/'suggestions'/nonce/'source_evidence.json'
+            original_bytes = path.read_bytes()
+            altered = _read(path)
+            assert 'normalization' in altered['pages'][0]
+            altered['pages'][0].pop('normalization')
+            path.unlink()  # Synthetic attacker replaces the immutable envelope.
+            _write(path, altered)  # Valid envelope hash cannot authorize changed evidence.
+            try:
+                with pytest.raises(OrdinaryLayoutError, match='source_evidence_response_changed'):
+                    checked_evidence(manager, origin, baseline, review, nonce, *args, **kwargs)
+                tampered_before_publication.append(True)
+                fail('source_evidence_response_changed', 409)
+            finally:
+                path.write_bytes(original_bytes)
+        with monkeypatch.context() as tamper:
+            tamper.setattr(automatic, '_proposal_evidence', deleted_marker)
+            assert client.post(f'/api/translation/jobs/{job_id}/layout/recover'+scope).status_code == 200
+            refused = flow._wait(jobs, job_id)['result']['automatic_layout']
+        assert refused == {'status':'raw_fallback','reason':'ordinary_layout_source_evidence_response_changed'}
+        assert tampered_before_publication == [True]
+        from pathlib import Path
+        run_path = Path(first['result']['run_dir'])
+        assert not (run_path/'ordinary_auto_layout/recoveries/layout_direct_revalidation_v1/candidate.json').exists()
         assert client.post(f'/api/translation/jobs/{job_id}/layout/recover'+scope).status_code == 200
         final = flow._wait(jobs, job_id)['result']['automatic_layout']
         assert final['status'] == 'automatic_unreviewed', final
