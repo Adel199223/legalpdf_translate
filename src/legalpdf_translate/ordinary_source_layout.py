@@ -205,7 +205,10 @@ def verify(actual, base, snapshot, pages, decisions, context, evidence):
         sections=list(actual_doc.iter(W+'sectPr'))
         if len(sections)!=len(context['selected_pages']):model._fail('source_section_count')
         for section,item,page in zip(sections,plan['source_footers'],context['selected_pages']):
-            if item['source_page_number']!=page or section.find(W+'titlePg') is None:model._fail('source_section_first_page')
+            title=section.find(W+'titlePg')
+            if item['source_page_number']!=page or title is None or title.get(W+'val','true') not in {'true','1','on'}:model._fail('source_section_first_page')
+            section_type=section.find(W+'type')
+            if section_type is None or section_type.get(W+'val')!='nextPage':model._fail('source_section_next_page')
             references=section.findall(W+'footerReference')
             if len(references)!=3 or {r.get(W+'type') for r in references}!={'first','default','even'}:model._fail('source_section_footer_references')
             for reference in references:

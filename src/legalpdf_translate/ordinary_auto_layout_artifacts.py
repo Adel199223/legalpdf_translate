@@ -346,7 +346,7 @@ def verify_unreviewed_candidate(raw_docx_bytes: bytes, raw_snapshot: RawOrdinary
                         decisions=checked, require_review=False,
                         ordinary_context={"selected_pages":list(raw_snapshot.selected_pages),
                             "page_groups":[[page,list(ids)] for page,ids in raw_snapshot.page_groups],
-                            **({"source_evidence":proposal_evidence["source_evidence"]} if "source_evidence" in proposal_evidence else {})}
+                            **({"source_evidence":proposal_evidence["source_evidence"]} if base_map.get("writer_version") == "saved_docx_layout_writer_source_layout_v7" and "source_evidence" in proposal_evidence else {})}
                         if base_map.get("writer_version") in {"saved_docx_layout_writer_ordinary_presentation_v6","saved_docx_layout_writer_source_layout_v7"} else None)
     expected_map = _extended_source_map(base_map, raw_snapshot, proposal_evidence)
     if artifact.source_map_bytes != _json(expected_map):

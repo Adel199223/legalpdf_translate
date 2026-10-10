@@ -138,16 +138,22 @@ def test_partial_footer_coverage_keeps_original_flow():
     assert artifact.source_map['source_layout_plan']['qualifications']
 
 
-def test_independent_section_guard_rejects_mutated_transform(monkeypatch):
+@pytest.mark.parametrize('mutation,error', [('missing_title','source_section_first_page'),('disabled_title','source_section_first_page'),('continuous','source_section_next_page')])
+def test_independent_section_guard_rejects_mutated_transform(monkeypatch,mutation,error):
     import legalpdf_translate.ordinary_source_layout as layer
     original=layer.transform
     def malicious(*args):
         artifact=original(*args)
-        raw=changed_part(artifact.docx_bytes,'word/document.xml',lambda root:root.find('.//'+model.W+'titlePg').getparent().remove(root.find('.//'+model.W+'titlePg')))
+        def patch(root):
+            title=root.find('.//'+model.W+'titlePg')
+            if mutation=='missing_title':title.getparent().remove(title)
+            elif mutation=='disabled_title':title.set(model.W+'val','0')
+            else:root.find('.//'+model.W+'sectPr/'+model.W+'type').set(model.W+'val','continuous')
+        raw=changed_part(artifact.docx_bytes,'word/document.xml',patch)
         mapping=deepcopy(artifact.source_map);mapping['docx_sha256']=model._sha(raw)
         return writer.SavedDocxLayoutArtifact(raw,mapping)
     monkeypatch.setattr(layer,'transform',malicious)
-    with pytest.raises(ValueError,match='source_section_first_page'):build(fixture())
+    with pytest.raises(ValueError,match=error):build(fixture())
 
 
 def test_owned_footer_edit_recounts_current_verified_bytes(tmp_path):
