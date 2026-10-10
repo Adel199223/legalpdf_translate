@@ -19,6 +19,36 @@ def _xml(raw):
 def _bytes(root):
     return etree.tostring(root,xml_declaration=True,encoding="UTF-8",standalone=True)
 
+def _folio_ltr_span(paragraph):
+    """One closed Arabic folio expression; no text or font substitutions."""
+    text=''.join(n.text or '' for n in paragraph.iter(W+'t'))
+    match=re.fullmatch(r'(?:الصفحة|صفحة)\s+([0-9\u0660-\u0669\u06f0-\u06f9]{1,4}(?:\s*/\s*[0-9\u0660-\u0669\u06f0-\u06f9]{1,4})?)\s*',text)
+    runs=paragraph.findall(W+'r')
+    if match is None or any(child.tag not in {W+'pPr',W+'r'} for child in paragraph):return None
+    if any(any(child.tag not in {W+'rPr',W+'t'} for child in run) for run in runs):return None
+    start,end=match.span(1);offset=0;before=[];numeric=[];after=[]
+    for run in runs:
+        value=''.join(n.text or '' for n in run.findall(W+'t'))
+        for left,right,destination in ((offset,min(offset+len(value),start),before),(max(offset,start),min(offset+len(value),end),numeric),(max(offset,end),offset+len(value),after)):
+            if right<=left:continue
+            piece=deepcopy(run)
+            for node in list(piece.findall(W+'t')):piece.remove(node)
+            node=etree.SubElement(piece,W+'t');node.text=value[left-offset:right-offset]
+            node.set('{http://www.w3.org/XML/1998/namespace}space','preserve')
+            if destination is numeric or destination is before:
+                props=piece.find(W+'rPr')
+                if props is None:props=etree.Element(W+'rPr');piece.insert(0,props)
+                for old in list(props.findall(W+'rtl')):props.remove(old)
+                etree.SubElement(props,W+'rtl').set(W+'val','0' if destination is numeric else '1')
+            destination.append(piece)
+        offset+=len(value)
+    if not numeric:return None
+    for run in runs:paragraph.remove(run)
+    paragraph.extend(before)
+    direction=etree.SubElement(paragraph,W+'dir');direction.set(W+'val','ltr');direction.extend(numeric)
+    paragraph.extend(after)
+    return {'start':start,'end':end,'literal':text[start:end]}
+
 def _pack(members):
     out=BytesIO()
     with ZipFile(out,"w",ZIP_DEFLATED) as z:
@@ -63,7 +93,7 @@ def transform(base, snapshot, pages, decisions, context, evidence):
     nodes={i:_node_at(root,p["location"]) for i,p in mapped.items()}
     part_nodes={i:[_node_at(root,p["location"]) for p in row.get("parts",[])] for i,row in mapped.items()}
     structural=[_node_at(root,path) for path in base.source_map["structural_paragraphs"]]
-    plan={"version":"ordinary_source_layout_plan_v1","evidence_sha256":model._sha(model._canonical(evidence)),"decorative_rules":[],"source_footers":[],"qualifications":[],"footer_placement":"source_footer_on_first_output_page_of_source_section"}
+    plan={"version":"ordinary_source_layout_plan_v1","evidence_sha256":model._sha(model._canonical(evidence)),"decorative_rules":[],"source_footers":[],"folio_ltr_spans":[],"qualifications":[],"footer_placement":"source_footer_on_first_output_page_of_source_section"}
     frames={p["page_number"]:p for p in pages}
     for item in layout:
         if item["kind"]!="decorative_rule":continue
@@ -136,6 +166,9 @@ def transform(base, snapshot, pages, decisions, context, evidence):
                     for br in list(node.iter(W+"br")):
                         if br.get(W+"type")!="page":model._fail("source_footer_control")
                         br.getparent().remove(br)
+                    if snapshot['target_lang']=='AR' and choices[identifier]['role']=='source_folio':
+                        span=_folio_ltr_span(node)
+                        if span is not None:plan['folio_ltr_spans'].append({'paragraph_id':identifier,**span})
                     body.remove(node);footer.append(node)
                 name=f"word/footer{next_part}.xml";next_part+=1;first_id=add_footer(name,footer)
                 sec=deepcopy(section)
@@ -253,6 +286,13 @@ def verify(actual, base, snapshot, pages, decisions, context, evidence):
                 for br in list(baseline.iter(W+'br')):
                     if br.get(W+'type')!='page':model._fail('source_footer_control')
                     br.getparent().remove(br)
+                span=next((item for item in plan.get('folio_ltr_spans',[]) if item['paragraph_id']==identifier),None)
+                if span is not None:
+                    expected_span=_folio_ltr_span(baseline)
+                    if expected_span!={k:span[k] for k in ('start','end','literal')}:model._fail('source_folio_direction_delta')
+                    directions=node.findall(W+'dir')
+                    if len(directions)!=1 or directions[0].get(W+'val')!='ltr' or ''.join(n.text or '' for n in directions[0].iter(W+'t'))!=span['literal']:model._fail('source_folio_direction_delta')
+                    if any(run.find(W+'rPr/'+W+'rtl') is None or run.find(W+'rPr/'+W+'rtl').get(W+'val')!='0' for run in directions[0].findall(W+'r')):model._fail('source_folio_direction_delta')
             if model._c14n(node)!=model._c14n(baseline):model._fail('source_layout_run_semantics_changed')
             original="".join(t["text"] for t in rows[identifier]["tokens"] if t["kind"]=="t")
             if visible!=original:model._fail("source_layout_meaningful_text_changed")

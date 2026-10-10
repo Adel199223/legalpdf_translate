@@ -29,6 +29,30 @@ def fixture(lang='EN',custom=False):
 def build(args):return writer.build_unreviewed_docx(*args[:4],ordinary_context=args[4])
 def verify(artifact,args):writer.validate_built_docx(artifact.docx_bytes,artifact.source_map,original_docx=args[0],snapshot=args[1],pages=args[2],decisions=args[3],require_review=False,ordinary_context=args[4])
 
+def test_arabic_source_folio_numeric_expression_is_contiguous_ltr():
+    args=multipage_fixture('AR');artifact=build(args);verify(artifact,args)
+    with ZipFile(BytesIO(artifact.docx_bytes)) as archive:
+        for name,literal in [('word/footer2.xml','2 / 7'),('word/footer3.xml','7 / 7')]:
+            footer=etree.fromstring(archive.read(name));paragraph=footer.findall(model.W+'p')[-1]
+            assert ''.join(n.text or '' for n in paragraph.iter(model.W+'t'))=='الصفحة '+literal
+            direction=paragraph.find(model.W+'dir')
+            assert direction.get(model.W+'val')=='ltr'
+            assert ''.join(n.text or '' for n in direction.iter(model.W+'t'))==literal
+            assert all(run.find(model.W+'rPr/'+model.W+'rtl').get(model.W+'val')=='0' for run in direction.findall(model.W+'r'))
+    bad=changed_part(artifact.docx_bytes,'word/footer2.xml',lambda root:root.find('.//'+model.W+'dir').set(model.W+'val','rtl'))
+    mapping=deepcopy(artifact.source_map);mapping['docx_sha256']=model._sha(bad)
+    with pytest.raises(ValueError):verify(writer.SavedDocxLayoutArtifact(bad,mapping),args)
+
+def test_folio_direction_recipe_preserves_fonts_and_declines_mixed_text():
+    from legalpdf_translate.ordinary_source_layout import _folio_ltr_span
+    paragraph=etree.fromstring(('<w:p xmlns:w="'+model.W[1:-1]+'"><w:r><w:rPr><w:rFonts w:ascii="Arial" w:cs="Arial"/><w:sz w:val="22"/></w:rPr><w:t>الصفحة 12 / 37</w:t></w:r></w:p>').encode())
+    original=''.join(paragraph.itertext());span=_folio_ltr_span(paragraph)
+    assert span['literal']=='12 / 37' and ''.join(paragraph.itertext())==original
+    assert all(run.find(model.W+'rPr/'+model.W+'sz').get(model.W+'val')=='22' for run in paragraph.iter(model.W+'r'))
+    mixed=deepcopy(paragraph);mixed.find('.//'+model.W+'t').text='Extra operative text '
+    before=etree.tostring(mixed)
+    assert _folio_ltr_span(mixed) is None and etree.tostring(mixed)==before
+
 @pytest.mark.parametrize('lang',['EN','FR','AR'])
 def test_rule_border_and_first_page_source_footer_exact_owned_text(lang):
     args=fixture(lang);original=deepcopy(args[3]);artifact=build(args);verify(artifact,args)
@@ -41,7 +65,7 @@ def test_rule_border_and_first_page_source_footer_exact_owned_text(lang):
         assert not any(n.text=='Reply instruction.' for n in body.iter(model.W+'t'))
         assert body.find('.//'+model.W+'titlePg') is not None
         footer=etree.fromstring(z.read('word/footer2.xml'))
-        assert [n.text for n in footer.iter(model.W+'t')]==[''.join(t['text'] for t in r['tokens'] if t['kind']=='t') for r in args[1]['paragraphs'][-2:]]
+        assert [''.join(n.text or '' for n in p.iter(model.W+'t')) for p in footer.findall(model.W+'p')]==[''.join(t['text'] for t in r['tokens'] if t['kind']=='t') for r in args[1]['paragraphs'][-2:]]
         assert b' PAGE ' not in z.read('word/footer2.xml')
         assert list(etree.fromstring(z.read('word/footer1.xml')).iter(model.W+'t'))==[]
     footer_rows=artifact.source_map['paragraphs'][-2:]
