@@ -229,6 +229,7 @@ $fullExtraCommands = @(
             "tests/test_saved_docx_layout.py", "tests/test_saved_docx_layout_writer.py",
             "tests/test_saved_docx_layout_horizontal_flow.py",
             "tests/test_saved_docx_layout_modern_compatibility.py",
+            "tests/test_docx_writer.py", "tests/test_primary_docx_compatibility.py",
             "tests/test_saved_docx_layout_partitions.py",
             "tests/test_ordinary_presentation.py",
             "tests/test_saved_docx_layout_service.py", "tests/test_shadow_web_saved_docx_layout_api.py",
