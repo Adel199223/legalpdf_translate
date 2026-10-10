@@ -243,6 +243,7 @@ $fullExtraCommands = @(
             "tests/test_ordinary_layout_contracts.py", "tests/test_ordinary_layout_service.py",
             "tests/test_ordinary_source_evidence.py",
             "tests/test_optional_layout_hint_recovery.py",
+            "tests/test_optional_footer_hint_recovery.py",
             "tests/test_ordinary_source_layout.py",
             "tests/test_ordinary_section_ownership.py",
             "tests/test_word_story_projection.py",
