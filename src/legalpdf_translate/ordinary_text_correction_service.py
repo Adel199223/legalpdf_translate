@@ -16,7 +16,7 @@ class TextCorrectionMixin:
         from .ordinary_layout_service import _read
         findings = {}
         for suggestion in view.get("suggestions", []):
-            for finding in (suggestion.get("result") or {}).get("source_coverage_findings", []):
+            for finding in suggestion.get("source_coverage_findings", (suggestion.get("result") or {}).get("source_coverage_findings", [])):
                 findings[finding["finding_id"]] = deepcopy(finding)
         source_folder = folder
         if (folder / "alias.json").exists():
@@ -178,6 +178,7 @@ class TextCorrectionMixin:
             return {"version": VERSION, "job_id": job.job_id, "identity": identity,
                 "parent": parent, "paragraphs": current, "drafts": drafts,
                 "source_findings": self._correction_findings(folder, self.state(job.job_id)),
+                "selected_kind": (self.state(job.job_id).get("delivery") or {}).get("kind"),
                 "source_pages": list(job.selected_pages), "paid_calls": 0,
                 "frozen": bool(self.state(job.job_id).get("frozen")),
                 "output_review_required": bool((self.state(job.job_id).get("delivery") or {}).get("output_review_required"))}

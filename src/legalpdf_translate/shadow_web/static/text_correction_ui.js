@@ -61,7 +61,7 @@ export function mountTextCorrection({root,getScope,getJob,request=fetchJson,onAp
       if(finding.review_status==="unresolved"){
         button(card,"Propose correction",async()=>{page=finding.page_number;region=[...finding.source_bbox];editor={paragraph:view.paragraphs.find(r=>r.parent_paragraph_id===finding.insertion_context.paragraph_id)?.paragraph_id||view.paragraphs.find(r=>r.editable)?.paragraph_id||"",kind:finding.insertion_context.position==="before"?"insert_before":finding.insertion_context.position==="after"?"insert_after":"replace",text:finding.insertion_context.position==="within"?(view.paragraphs.find(r=>r.parent_paragraph_id===finding.insertion_context.paragraph_id)?.text||""):finding.literal};});
         button(card,"Reviewed — no change needed",async()=>{await call(`/text-corrections/findings/${finding.finding_id}`,{parent:view.parent,disposition:"reviewed_no_change",source_compared:true});await read();});
-        if(view.parent.selection_id&&getJob()?.delivery?.kind==="text_corrected")button(card,"Correction reviewed for this detail",async()=>{await call(`/text-corrections/findings/${finding.finding_id}`,{parent:view.parent,disposition:"corrected",source_compared:true});await read();});
+        if(view.parent.selection_id&&view.selected_kind==="text_corrected")button(card,"Correction reviewed for this detail",async()=>{await call(`/text-corrections/findings/${finding.finding_id}`,{parent:view.parent,disposition:"corrected",source_compared:true});await read();});
       }root.append(card);
     }
     if(draft){

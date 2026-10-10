@@ -173,7 +173,7 @@ def test_source_finding_requires_explicit_review_and_is_revision_bound(tmp_path,
     original_state = service.state
     finding = {"finding_id": "a"*64, "kind": "missing_readable_literal", "literal": "R", "page_number": 1, "source_bbox": [.1,.1,.2,.2], "insertion_context": {"paragraph_id": "p1", "position": "before"}}
     def state(job_id):
-        value = original_state(job_id); value["suggestions"] = [{"result": {"source_coverage_findings": [finding]}}]; return value
+        value = original_state(job_id); value["suggestions"] = [{"source_coverage_findings": [finding]}]; return value
     monkeypatch.setattr(service, "state", state)
     view = service.text_correction_state(case.job)
     assert view["source_findings"][0]["review_status"] == "unresolved"
