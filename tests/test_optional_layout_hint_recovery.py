@@ -63,7 +63,8 @@ def test_valid_terminal_footer_remains_accepted_after_rejected_rule():
     assert proposal_source_evidence(s, v, p)['layout'] == [footer]
 
 
-def test_settled_invalid_hint_recovers_without_dispatch_and_reuses_warning(tmp_path, monkeypatch):
+@pytest.mark.parametrize("hint_kind", ["decorative_rule", "source_footer"])
+def test_settled_invalid_hint_recovers_without_dispatch_and_reuses_warning(tmp_path, monkeypatch, hint_kind):
     from fastapi.testclient import TestClient
     from tests import test_ordinary_auto_layout_workflow as flow
     from legalpdf_translate import ordinary_layout_manager as module
@@ -74,7 +75,7 @@ def test_settled_invalid_hint_recovers_without_dispatch_and_reuses_warning(tmp_p
         ids = [row['paragraph_id'] for row in p['paragraphs']]
         p['paragraphs'][0].update(role='body', heading_level=0, heading_size_pt=None)
         p.update(version=PROPOSAL_VERSION_V3, paragraph_partitions=[], source_coverage_findings=[],
-                 source_layout_evidence=[{'kind':'decorative_rule','paragraph_ids':[ids[0]],'bbox':[.1,.4,.9,.41]}])
+                 source_layout_evidence=[{'kind':hint_kind,'paragraph_ids':[ids[0] if hint_kind == 'decorative_rule' else ids[-1]],'bbox':[.1,.4,.9,.41] if hint_kind == 'decorative_rule' else [.1,.9,.9,.98]}])
         p['bands'] = [{'kind':'columns','widths_pct':[50,50],'gutter_pt':12,'cells':[
             {'groups':[{'paragraph_ids':[ids[0]],'panel':False}]},
             {'groups':[{'paragraph_ids':ids[1:],'panel':False}]}]}]
@@ -108,7 +109,10 @@ def test_settled_invalid_hint_recovers_without_dispatch_and_reuses_warning(tmp_p
             original_bytes = path.read_bytes()
             altered = _read(path)
             assert 'normalization' in altered['pages'][0]
-            altered['pages'][0].pop('normalization')
+            if hint_kind == 'source_footer':
+                altered['pages'][0]['normalization']['version'] = 'ordinary_optional_layout_hint_normalization_v1'
+            else:
+                altered['pages'][0].pop('normalization')
             path.unlink()  # Synthetic attacker replaces the immutable envelope.
             _write(path, altered)  # Valid envelope hash cannot authorize changed evidence.
             try:
@@ -144,8 +148,22 @@ def test_settled_invalid_hint_recovers_without_dispatch_and_reuses_warning(tmp_p
         with pytest.raises(OrdinaryLayoutError, match='optional_hint_recovery_requires_current_policy'):
             _recover_settled_result(layout, pointer, [1], policy_fingerprint='0'*64)
         assert not (operation/'result.json').exists()
-        _recover_settled_result(layout, pointer, [1], policy_fingerprint=frozen_automatic_layout_policy().split(':')[1])
+        from legalpdf_translate.ordinary_auto_layout import _optional_hint_policy
+        if hint_kind == 'source_footer':
+            with pytest.raises(OrdinaryLayoutError, match='invalid_source_layout_evidence'):
+                _recover_settled_result(layout, pointer, [1], policy_fingerprint=_optional_hint_policy('ordinary_optional_layout_hint_normalization_v1').split(':')[1])
+            assert not (operation/'source_evidence.json').exists()
+        reconstruction_policy = (_optional_hint_policy('ordinary_optional_layout_hint_normalization_v1')
+            if hint_kind == 'decorative_rule' else frozen_automatic_layout_policy())
+        _recover_settled_result(layout, pointer, [1], policy_fingerprint=reconstruction_policy.split(':')[1])
         assert _read(operation/'result.json') == original_result
+        persisted_evidence = checked_evidence(layout, pointer['origin_job_id'], pointer['baseline_id'],
+            pointer['review_id'], pointer['operation_nonce'], (1,), reconstruction_policy,
+            retained_pages=pointer.get('retained_pages', {}))
+        assert persisted_evidence['source_evidence']['pages'] == _read(operation/'source_evidence.json')['pages']
+        assert persisted_evidence['source_evidence']['pages'][0]['normalization']['version'] == (
+            'ordinary_optional_layout_hint_normalization_v1' if hint_kind == 'decorative_rule'
+            else 'ordinary_optional_layout_hint_normalization_v2')
         assert client.post(f'/api/translation/jobs/{job_id}/layout/recover'+scope).status_code == 200
         repeated = flow._wait(jobs, job_id)['result']['automatic_layout']
         assert repeated['sha256'] == final['sha256']

@@ -83,7 +83,7 @@ export function deriveTranslationCompletionPresentation(options = {}) {
   const gmailStepHasMoreItems = Boolean(gmailStep.hasMoreItems);
   const resultDetailLines = [];
   if (job?.result?.automatic_layout?.source_layout_review_required) {
-    resultDetailLines.push("Source layout needs review: an optional decorative rule could not be safely applied; its text was retained.");
+    resultDetailLines.push("Source layout needs review: an optional source-layout transformation could not be safely applied; its text was retained.");
   }
   if (job?.result?.automatic_layout?.status === "raw_fallback") {
     resultDetailLines.push("Source layout formatting could not be applied; the original translation was retained for review.");

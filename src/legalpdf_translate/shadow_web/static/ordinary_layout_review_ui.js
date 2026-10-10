@@ -177,7 +177,7 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
     const view=state.view;
     header.append(el("h3","Source layout and delivery"));
     if (view?.suggestions?.some(item=>item.source_layout_review_required)) {
-      header.append(el("p","Source layout needs review: an optional decorative rule could not be safely applied; its text was retained.","saved-layout-status"));
+      header.append(el("p","Source layout needs review: an optional source-layout transformation could not be safely applied; its text was retained.","saved-layout-status"));
     }
     header.append(el("p",view?.delivery&&!view.delivery.stale&&!view.stale
       ? `${view.delivery.kind==="text_corrected"?"Approved text correction":view.delivery.kind==="reviewed"?"Reviewed formatted copy":view.delivery.kind==="automatic_unreviewed_edited"?"Word-edited formatted copy (source layout unreviewed)":view.delivery.kind==="automatic_unreviewed"?"Automatic formatted copy (unreviewed)":"Current translation"} selected · ${view.delivery.word_count} words${view.frozen?" · files locked for confirmation":""}.`
