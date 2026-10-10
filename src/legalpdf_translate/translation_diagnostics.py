@@ -285,8 +285,11 @@ def _visible_bidi_safety(text: str) -> dict[str, int]:
 def _missing_cited_anchors(source: str, output: str) -> int:
     from .new_translation_blocks import _citation_heads, _digits
     # Generic address/reference labels are not legal article heads.
-    source_ids = _citation_heads(_digits(source).replace("الفصل", "المادة"))
-    output_ids = _citation_heads(_digits(output).replace("الفصل", "المادة"))
+    def canonical_heads(value):
+        value = re.sub(r"\bart(s?)\.[º°](?=\s|$)", r"art\1.", value, flags=re.IGNORECASE)
+        return _citation_heads(_digits(value).replace("الفصل", "المادة"))
+    source_ids = canonical_heads(source)
+    output_ids = canonical_heads(output)
     return sum((source_ids - output_ids).values()) + sum((output_ids - source_ids).values())
 
 def _unbalanced_brackets(text: str) -> int:

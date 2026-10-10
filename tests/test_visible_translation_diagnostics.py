@@ -105,3 +105,9 @@ def test_alphabetic_marker_changes_are_reviewable_without_bracket_error():
     assert changed["citation_actionable_missing_count"] == 1
     assert changed["actionable_bracket_drift_count"] == 0
     assert checks("أ) أول", "أ) أول")["citation_actionable_missing_count"] == 0
+
+
+def test_portuguese_ordinal_article_abbreviation_preserves_anchor():
+    source="nos termos do art.º 123.º do Código"
+    assert checks(source,"بموجب المادة 123 من القانون")["citation_actionable_missing_count"] == 0
+    assert checks(source,"بموجب المادة 124 من القانون")["citation_actionable_missing_count"] > 0
