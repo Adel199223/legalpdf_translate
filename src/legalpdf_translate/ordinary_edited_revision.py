@@ -148,7 +148,20 @@ def _inventory(raw: bytes) -> tuple:
         fail("edited_docx_invalid", 409)
 
 
-def qualify_edited_docx(candidate: bytes, edited: bytes) -> None:
+def qualify_edited_docx(candidate: bytes, edited: bytes, *, source_layout_map: dict | None = None) -> None:
     """A source map remains valid only for unchanged paragraph ownership/text."""
     if _inventory(candidate) != _inventory(edited):
         fail("edited_layout_rebase_required", 409)
+
+    if source_layout_map is not None and source_layout_map.get('writer_version')=='saved_docx_layout_writer_source_layout_v7':
+        import hashlib
+        from .ordinary_section_ownership import word_section_signature
+        if source_layout_map.get('docx_sha256')!=hashlib.sha256(candidate).hexdigest():fail('edited_layout_candidate_changed',409)
+        def members(raw):
+            with ZipFile(BytesIO(raw)) as archive:
+                return {name:archive.read(name) for name in ('word/document.xml','word/_rels/document.xml.rels')}
+        try:
+            if word_section_signature(members(candidate))!=word_section_signature(members(edited)):
+                fail('edited_layout_section_ownership_changed',409)
+        except (ValueError,KeyError,etree.XMLSyntaxError):
+            fail('edited_layout_section_ownership_changed',409)

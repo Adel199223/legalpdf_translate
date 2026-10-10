@@ -723,3 +723,37 @@ def build_interpretation_notice_diagnostics_text(diagnostics: "MetadataExtractio
     else:
         lines.append("No metadata fields were recovered automatically.")
     return "\n".join(lines)
+
+
+def count_words_from_owned_story_map(docx_path: Path, descriptor: Mapping[str, object]) -> int:
+    """Count a server-verified selected ownership descriptor once, including source footers.
+
+    Legacy callers remain body-only. This descriptor must come from selected artifact
+    verification, never from submitted fee values or an unverified client map.
+    """
+    import hashlib
+    import re
+    from lxml import etree
+    raw=docx_path.read_bytes()
+    if descriptor.get('version')!='ordinary_owned_story_count_v1' or descriptor.get('docx_sha256')!=hashlib.sha256(raw).hexdigest():
+        raise ValueError('owned_story_count_identity_changed')
+    rows=descriptor.get('paragraphs')
+    if type(rows) is not list or not rows or len(rows)>20000:raise ValueError('owned_story_count_invalid')
+    seen_ids=set();seen_locations=set();count=0
+    with ZipFile(docx_path) as archive:
+        roots={}
+        for row in rows:
+            if type(row) is not dict or set(row)!={'paragraph_id','part_uri','location'}:raise ValueError('owned_story_count_invalid')
+            identifier,part,path=(row[k] for k in ('paragraph_id','part_uri','location'))
+            if any(type(v) is not str for v in (identifier,part,path)) or identifier in seen_ids or (part,path) in seen_locations:raise ValueError('owned_story_count_duplicate')
+            if part!='word/document.xml' and re.fullmatch(r'word/footer[0-9]+\.xml',part) is None:raise ValueError('owned_story_count_part')
+            seen_ids.add(identifier);seen_locations.add((part,path))
+            if part not in roots:
+                roots[part]=etree.fromstring(archive.read(part),parser=etree.XMLParser(resolve_entities=False,no_network=True))
+            # Only a concrete absolute OOXML node location is permitted.
+            if re.fullmatch(r'/(?:w:(?:document|body|ftr|tbl|tr|tc|p)(?:\[[0-9]+\])?/?)+',path) is None:raise ValueError('owned_story_count_location')
+            nodes=roots[part].xpath(path,namespaces={'w':_WORD_XML_NS['w']})
+            if len(nodes)!=1 or nodes[0].tag!='{'+_WORD_XML_NS['w']+'}p':raise ValueError('owned_story_count_location')
+            text=''.join((node.text or '') if node.tag.rsplit('}',1)[-1]=='t' else ' ' if node.tag.rsplit('}',1)[-1] in _DOCX_WORD_SEPARATOR_TAGS else '' for node in nodes[0].iter())
+            count+=len(text.split())
+    return count

@@ -346,6 +346,8 @@ def proposal_source_evidence(snapshot, view, proposal):
             raw = baseline[pid]
             if any(t["kind"] == "page_break" for t in raw["tokens"][:-1]):
                 fail("invalid_source_layout_evidence")
+            if raw.get("has_page_break") and (row["kind"] != "source_footer" or pid != owned[-1] or not raw["tokens"] or raw["tokens"][-1]["kind"] != "page_break"):
+                fail("invalid_source_layout_evidence")
             if (pid in partitions or pid in panel_ids or pid in column_ids or raw.get("has_numbering") or "numPr" in raw.get("ppr_xml", "") or raw.get("has_field") or
                     any(t["kind"] != "t" and not (row["kind"] == "source_footer" and t["kind"] == "page_break") for t in raw["tokens"])):
                 fail("invalid_source_layout_evidence")
@@ -356,6 +358,7 @@ def proposal_source_evidence(snapshot, view, proposal):
                 fail("invalid_decorative_rule_evidence")
         elif row["kind"] == "source_footer":
             if (indices[-1] != len(ids)-1 or row["bbox"][1] < .85 or
+                    any(not "".join(t["text"] for t in baseline[pid]["tokens"] if t["kind"] == "t").strip() for pid in owned) or
                     any(choices[pid]["role"] not in {"body", "source_folio"} for pid in owned)):
                 fail("invalid_source_footer_evidence")
         else:

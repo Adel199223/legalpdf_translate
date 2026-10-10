@@ -29,7 +29,7 @@ def frozen_automatic_layout_policy() -> str:
     accounting = layout_accounting_policy()
     identity = {"version": ORDINARY_AUTO_LAYOUT_POLICY,
         "proposal_version": PROPOSAL_VERSION_V3,
-        "automatic_writer_version": "saved_docx_layout_writer_ordinary_presentation_v6",
+        "automatic_writer_version": "saved_docx_layout_writer_source_layout_v7",
         "instructions_sha256": hashlib.sha256(INSTRUCTIONS.encode("utf-8")).hexdigest(),
         "pricing_catalog": json.loads(accounting._pricing_json),
         "dispatch_limits": json.loads(accounting._limits_json)}
