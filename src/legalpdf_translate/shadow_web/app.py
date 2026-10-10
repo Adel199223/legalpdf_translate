@@ -2331,7 +2331,9 @@ def create_shadow_app(
         )
         launch_session_id = str(payload.get("launch_session_id", "") or "").strip()
         if launch_session_id == "":
-            return _validation_error_response(context, target, message="launch_session_id is required.")
+            return _validation_error_response(
+                context, target, message="launch_session_id is required.", capability_flags={}
+            )
         launch_session_fields: dict[str, object] = {
             "handoff_session_id": str(payload.get("handoff_session_id", "") or "").strip(),
             "click_phase": str(payload.get("click_phase", "") or "").strip(),
@@ -2384,6 +2386,7 @@ def create_shadow_app(
         )
         response = {
             "status": "ok",
+            "capability_flags": {},
             "normalized_payload": {
                 "launch_session": context.services.launch_session_status(target.data_paths.app_data_dir),
             },
