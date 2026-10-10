@@ -8,6 +8,10 @@ This is the roadmap anchor file for `resume master plan`, `where did we leave of
 
 **Dormant roadmap state:** no active roadmap currently open on this worktree. New scoped work uses normal ExecPlan flow. Older stage tokens and completed campaigns do not create new work.
 
+## Gmail layout and delivery closeout — 2026-10-10
+
+The [completed follow-up](exec_plans/completed/2026-10-10_gmail_layout_and_delivery_followup.md) closes implementation, independent review, qualified native Arabic acceptance and synthetic visible download/fee-label acceptance. Standard02 passed 250 tests; selected Full01 passed 1,847 executions with nine expected deselections and unchanged pins. The user authorized publication, merge after hosted checks and application to the normal app. Read `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/gmail_structure_followup_20261010_01/publication_01/publication_receipt.json` for the exact final-head CI, merge, installed identity and cleanup. Complete an unfinished authorized lifecycle; do not replay a terminal one or consumed paid/native/Gmail operations. Earlier scopes below are historical.
+
 ## Workstation publication and application — 2026-09-30
 
 The [workstation implementation](exec_plans/completed/2026-09-30_reproducible_workstation_setup.md) completed local delivery from canonical main `90485237c00b95aa9744b32aa4684d16ec06e100`. The user explicitly selected **Both** when asked whether to publish/merge the files or apply setup to this PC. The [publication/application plan](exec_plans/completed/2026-09-30_workstation_publication_and_application.md) closes the corrected stable-version checking and successful local recipe application. Follow the standard commit/publish workflow for any remaining exact-head CI, merge, canonical application or cleanup in `C:/Users/FA507/.codex/worktrees/reproducible-workstation/legalpdf_translate`, branch `feat/reproducible-workstation-20260930`; those remaining operations must not be inferred from local plan completion.

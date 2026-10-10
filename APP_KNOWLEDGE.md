@@ -12,6 +12,12 @@ This file is canonical for app-level architecture and status. Source code is fin
 
 ## Current build and status
 
+### Gmail layout and delivery follow-up — October 10
+
+The [completed follow-up](docs/assistant/exec_plans/completed/2026-10-10_gmail_layout_and_delivery_followup.md) repairs source-evidenced metadata placement, duplicate generated page numbering and browser/Gmail translation names, and clarifies the honorários filename field. Implementation and qualified acceptance are complete. The user authorized publication, merge after hosted checks and application to the normal app; current lifecycle and installed identity are recorded in the private publication receipt named in [HANDOFF.md](docs/assistant/HANDOFF.md). Delivery naming changes only the download/attachment basename; the verified selected DOCX bytes and immutable revision paths remain authoritative. The current unpacked Edge extension requires Developer mode and user enablement; its genuine canonical handoff has passed.
+
+The ordinary automatic writer V6 uses retained source-page ownership to move only adjacent whole metadata groups with strictly inverted, nonoverlapping source regions on the same page. Narrative, list and signature groups, uncertain geometry and page barriers stay fixed. Original/rendered IDs and exact presentation changes remain explicit in its map; an independent check validates the actual permutation and permitted footer delta. A frozen app-generated PAGE-only footer is suppressed only when source-owned folios cover every selected page; source folios and meaningful footer text remain. Manual validation and historical V1–V5 verification keep their previous contracts. Fresh automatic policy fingerprints include the writer identity.
+
 ### Ordinary source-layout workflow — October 9
 
 Fresh ordinary output preserves raw translation and source-page ownership while building a separate verified, explicitly unreviewed source-image layout candidate. Generated-response normalization supports bounded complete flow-group and geometric column-row ordering, valid optional emphasis and exact source-backed paragraph partitions. Direct manual decisions remain strict. Modern compatibility mode 15 and structural separators between adjacent tables preserve the accepted Word finishing workflow and historical candidate verification. Eligible explicit Recover reuses settled complete replies and requests only missing layout pages.

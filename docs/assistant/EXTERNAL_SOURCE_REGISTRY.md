@@ -1,5 +1,9 @@
 # External Source Registry
 
+## Local Edge extension setup — 2026-10-10
+
+Microsoft's [sideload an extension guide](https://learn.microsoft.com/en-us/microsoft-edge/extensions/getting-started/extension-sideloading), verified 2026-10-10, requires Edge Developer mode before **Load unpacked**. LegalPDF Gmail Intake uses this local unpacked installation. The user enabled the extension manually; a genuine same-message handoff then passed on canonical main. This check did not change browser settings through automation or repeat translation/finalization.
+
 ## Decisions API experiment — 2026-10-09
 
 Official references verified 2026-10-09: the [Decisions guide](https://developers.openai.com/api/docs/guides/decisions) documents text/image evidence, predicate/choice/score questions, currently gpt-6-luna, and USD0.10 per million input tokens with regional/long-context multipliers. The [create reference](https://developers.openai.com/api/reference/resources/decisions/methods/create) defines named typed answers, refusal and usage. The private experiment uses inline images, fixed choices and direct REST to preserve locked openai 2.36.0; no dependency upgrade follows.
