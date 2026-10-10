@@ -107,10 +107,10 @@ def build_quality_risk_summary(
         reasoning_tokens = max(0, _to_int(page.get("reasoning_tokens", 0)))
         wall_seconds = max(0.0, _to_float(page.get("wall_seconds", 0.0)))
         numeric_mismatches = max(0, _to_int(page.get("numeric_mismatches_count", 0)))
-        citation_mismatches = max(0, _to_int(page.get("citation_mismatches_count", 0)))
+        citation_mismatches = max(0, _to_int(page.get("citation_actionable_missing_count", page.get("citation_mismatches_count", 0))))
         structure_warnings = max(0, _to_int(page.get("structure_warnings_count", 0)))
         bidi_warnings = max(0, _to_int(page.get("bidi_warnings_count", 0)))
-        bidi_controls = max(0, _to_int(page.get("bidi_control_count", 0)))
+        bidi_controls = max(0, _to_int(page.get("bidi_actionable_count", page.get("bidi_control_count", 0))))
         replacement_chars = max(0, _to_int(page.get("replacement_char_count", 0)))
         extraction_integrity_suspect = _to_bool(page.get("extraction_integrity_suspect", False))
         visual_recovery_used = _to_bool(page.get("visual_recovery_used", False))
@@ -190,14 +190,14 @@ def build_quality_risk_summary(
             score += 0.08
             reasons.append("visual_recovery_used")
 
-        if arabic_mode:
+        if arabic_mode or page.get("diagnostic_evidence_basis"):
             if numeric_mismatches > 0:
                 score += min(0.6, 0.45 + min(0.15, float(max(0, numeric_mismatches - 1)) * 0.05))
                 reasons.append("numeric_mismatch")
 
             citation_drift_score = 0.0
             citation_drift = False
-            if citation_mismatches >= 20:
+            if citation_mismatches >= (1 if page.get("diagnostic_evidence_basis") else 20):
                 citation_drift = True
                 citation_drift_score += min(0.42, 0.12 + max(0.0, float(citation_mismatches - 20)) * 0.004)
             if structure_warnings > 0 and citation_mismatches >= 10:
@@ -230,7 +230,8 @@ def build_quality_risk_summary(
             or "extraction_integrity_suspect" in reasons
             or "visual_recovery_failed" in reasons
             or "numeric_mismatch" in reasons
-            or ("citation_structure_drift" in reasons and citation_mismatches >= 45)
+            or ("citation_structure_drift" in reasons and citation_mismatches >= (1 if page.get("diagnostic_evidence_basis") else 45))
+            or (bool(page.get("diagnostic_evidence_basis")) and bidi_warnings > 0)
         )
         if not include_in_queue:
             continue
