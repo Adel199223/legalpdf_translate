@@ -253,10 +253,6 @@ def summarize_extraction_integrity(
 
 VISIBLE_DIAGNOSTICS_VERSION = "visible_translation_diagnostics_v1"
 _PROTOCOL_LITERAL = re.compile(r"\u2066\[\[([^\[\]\u2066-\u2069]+)\]\]\u2069")
-_CITED_ANCHOR = re.compile(
-    r"(?:\bartigo\b|\barticle\b|\bart\.|\balínea\b|\balinéa\b|"
-    r"\bparagraph\b|\bn\s*\.?\s*[º°o]|\bno\.|المادة|الفصل|رقم|الفقرة)"
-    r"\s*(\d+(?:[.,]\d+)?)", re.IGNORECASE)
 
 def visible_text_projection(text: str, target_lang: str) -> tuple[str, int]:
     """Decode only the established balanced AR protocol, never ordinary brackets."""
@@ -283,13 +279,30 @@ def _visible_bidi_safety(text: str) -> dict[str, int]:
     unsafe = len(re.findall(r"[\u202a-\u202e]", text))
     return {"unsafe_bidi_control_count": unsafe,
             "unbalanced_isolate_count": unbalanced + depth,
+            "remaining_isolate_control_count": len(re.findall(r"[\u2066-\u2069]", text)),
             "visible_replacement_char_count": text.count("\ufffd")}
 
 def _missing_cited_anchors(source: str, output: str) -> int:
-    from collections import Counter
-    source_ids = Counter(_CITED_ANCHOR.findall(source))
-    output_ids = Counter(_CITED_ANCHOR.findall(output))
-    return sum((source_ids - output_ids).values())
+    from .new_translation_blocks import _citation_heads, _digits
+    # Generic address/reference labels are not legal article heads.
+    source_ids = _citation_heads(_digits(source).replace("الفصل", "المادة"))
+    output_ids = _citation_heads(_digits(output).replace("الفصل", "المادة"))
+    return sum((source_ids - output_ids).values()) + sum((output_ids - source_ids).values())
+
+def _unbalanced_brackets(text: str) -> int:
+    stack = []
+    defects = 0
+    matching = {")": "(", "]": "[", "}": "{"}
+    for char in text:
+        if char in "([{":
+            stack.append(char)
+        elif char in matching:
+            if stack and stack[-1] == matching[char]:
+                stack.pop()
+            else:
+                defects += 1
+    return defects + len(stack)
+
 
 def run_all_quality_checks(
     *,
@@ -309,6 +322,7 @@ def run_all_quality_checks(
     bidi_check = check_bidi_safety(output_text)
     visible_bidi = _visible_bidi_safety(visible_output)
     citation_missing = _missing_cited_anchors(visible_source, visible_output)
+    bracket_anomalies = _unbalanced_brackets(visible_output)
     list_source = re.findall(r"(?m)^\s*(\d+)[.)]\s", visible_source)
     list_output = re.findall(r"(?m)^\s*(\d+)[.)]\s", visible_output)
     from collections import Counter
@@ -323,10 +337,11 @@ def run_all_quality_checks(
         "output_protocol_literal_count": output_protocol_count,
         "raw_citation_mismatches_count": raw_citation["citation_marker_delta_abs"] + raw_citation["parenthesis_delta_abs"],
         "raw_bidi_control_count": bidi_check["bidi_control_count"],
-        "citation_actionable_missing_count": citation_missing + list_missing,
+        "citation_actionable_missing_count": citation_missing + list_missing + bracket_anomalies,
         "list_marker_missing_count": list_missing,
         "protocol_anomaly_count": protocol_anomalies,
-        "bidi_actionable_count": visible_bidi["unsafe_bidi_control_count"] + visible_bidi["unbalanced_isolate_count"] + protocol_anomalies,
+        "visible_bracket_anomaly_count": bracket_anomalies,
+        "bidi_actionable_count": visible_bidi["unsafe_bidi_control_count"] + visible_bidi["remaining_isolate_control_count"] + protocol_anomalies,
         **visible_bidi,
         "language_ok": lang_check["language_ok"],
         "detected_lang": lang_check["detected_lang"],
@@ -342,7 +357,7 @@ def run_all_quality_checks(
         "structure_warnings_count": int(structure_check["collapse_warning"]),
         "source_paragraphs": structure_check["source_paragraphs"],
         "output_paragraphs": structure_check["output_paragraphs"],
-        "bidi_warnings_count": int(bool(visible_bidi["unsafe_bidi_control_count"] + visible_bidi["unbalanced_isolate_count"] + protocol_anomalies)) + int(bool(visible_bidi["visible_replacement_char_count"])),
+        "bidi_warnings_count": int(bool(visible_bidi["unsafe_bidi_control_count"] + visible_bidi["remaining_isolate_control_count"] + protocol_anomalies)) + int(bool(visible_bidi["visible_replacement_char_count"])),
         "bidi_control_count": bidi_check["bidi_control_count"],
         "replacement_char_count": bidi_check["replacement_char_count"],
         "extraction_integrity_warnings_count": integrity_check["extraction_integrity_warnings_count"],

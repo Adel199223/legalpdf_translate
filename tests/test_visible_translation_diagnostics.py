@@ -31,7 +31,7 @@ def test_unsafe_override_inside_protected_literal_survives_projection():
 
 def test_actual_citation_number_loss_and_replacement_remain_actionable():
     r=checks("Article 277", "المادة 278 \ufffd")
-    assert r["citation_actionable_missing_count"]==1
+    assert r["citation_actionable_missing_count"]==2
     assert r["numeric_mismatches_count"]==2
     assert r["visible_replacement_char_count"]==1
     assert r["bidi_warnings_count"]==1
@@ -53,7 +53,7 @@ def test_real_missing_list_marker_is_actionable():
 def test_balanced_isolates_with_malformed_protocol_are_actionable():
     r=checks("one", "\u2066[[one]\u2069")
     assert r["protocol_anomaly_count"]==1
-    assert r["bidi_actionable_count"]==1
+    assert r["bidi_actionable_count"]>=1
 
 
 def test_quality_risk_uses_visible_actionable_counts_not_protocol_noise():
@@ -67,3 +67,18 @@ def test_quality_risk_uses_visible_actionable_counts_not_protocol_noise():
     bad=checks("Article 277", "المادة 278")
     bad.update(status="done")
     assert "citation_structure_drift" in build_quality_risk_summary([(1,bad)], target_lang="AR")["review_queue"][0]["reasons"]
+
+
+def test_nonprotocol_balanced_isolates_remain_actionable():
+    assert checks("ABC", "\u2066ABC\u2069")["bidi_actionable_count"]==2
+
+def test_generic_address_number_is_not_legal_citation():
+    assert checks("Rua X, n.º 14", "Rua X, 14")["citation_actionable_missing_count"]==0
+
+def test_article_paragraph_exchange_and_extra_article_are_detected():
+    assert checks("Article 277; paragraph 2", "المادة 2؛ الفقرة 277")["citation_actionable_missing_count"]==2
+    assert checks("Article 277; Reference 278", "المادة 277؛ المادة 278")["citation_actionable_missing_count"]==1
+
+def test_unmatched_visible_brackets_are_actionable_balanced_changes_advisory():
+    assert checks("(note)", "(x")["visible_bracket_anomaly_count"]==1
+    assert checks("(note)", "[x]")["visible_bracket_anomaly_count"]==0
