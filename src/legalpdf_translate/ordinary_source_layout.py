@@ -19,7 +19,7 @@ def _xml(raw):
 def _bytes(root):
     return etree.tostring(root,xml_declaration=True,encoding="UTF-8",standalone=True)
 
-def _folio_ltr_span(paragraph):
+def _folio_ltr_span(paragraph, *, legacy_wrapper=False):
     """One closed Arabic folio expression; no text or font substitutions."""
     text=''.join(n.text or '' for n in paragraph.iter(W+'t'))
     match=re.fullmatch(r'(?:الصفحة|صفحة)\s+([0-9\u0660-\u0669\u06f0-\u06f9]{1,4}(?:\s*/\s*[0-9\u0660-\u0669\u06f0-\u06f9]{1,4})?)\s*',text)
@@ -45,7 +45,10 @@ def _folio_ltr_span(paragraph):
     if not numeric:return None
     for run in runs:paragraph.remove(run)
     paragraph.extend(before)
-    direction=etree.SubElement(paragraph,W+'dir');direction.set(W+'val','ltr');direction.extend(numeric)
+    if legacy_wrapper:
+        direction=etree.SubElement(paragraph,W+'dir');direction.set(W+'val','ltr');direction.extend(numeric)
+    else:
+        paragraph.extend(numeric)
     paragraph.extend(after)
     return {'start':start,'end':end,'literal':text[start:end]}
 
@@ -67,10 +70,11 @@ def _top(node,body):
         if node is None:model._fail("source_layout_body_ownership")
     return node
 
-def transform(base, snapshot, pages, decisions, context, evidence):
+def transform(base, snapshot, pages, decisions, context, evidence, folio_direction_mode='numeric_run_ltr_v2'):
     """No side effects; only explicitly qualified decorative/footer rows may change."""
     from .saved_docx_layout_writer import SavedDocxLayoutArtifact
     from .ordinary_layout_contracts import proposal_source_evidence, PROPOSAL_VERSION_V3
+    if folio_direction_mode not in {'legacy_none','direction_wrapper_v1','numeric_run_ltr_v2'}:model._fail('source_folio_direction_version')
     if base.source_map.get("writer_version")!="saved_docx_layout_writer_ordinary_presentation_v6":model._fail("source_layout_base_version")
     if type(evidence) is not dict or evidence.get("version")!="ordinary_source_evidence_v1" or type(evidence.get("pages")) is not list:model._fail("source_layout_evidence_invalid")
     # Revalidate the evidence against the trusted snapshot and current decisions.
@@ -93,7 +97,9 @@ def transform(base, snapshot, pages, decisions, context, evidence):
     nodes={i:_node_at(root,p["location"]) for i,p in mapped.items()}
     part_nodes={i:[_node_at(root,p["location"]) for p in row.get("parts",[])] for i,row in mapped.items()}
     structural=[_node_at(root,path) for path in base.source_map["structural_paragraphs"]]
-    plan={"version":"ordinary_source_layout_plan_v1","evidence_sha256":model._sha(model._canonical(evidence)),"decorative_rules":[],"source_footers":[],"folio_ltr_spans":[],"qualifications":[],"footer_placement":"source_footer_on_first_output_page_of_source_section"}
+    plan={"version":"ordinary_source_layout_plan_v1","evidence_sha256":model._sha(model._canonical(evidence)),"decorative_rules":[],"source_footers":[],"qualifications":[],"footer_placement":"source_footer_on_first_output_page_of_source_section"}
+    if folio_direction_mode!='legacy_none':plan['folio_ltr_spans']=[]
+    if folio_direction_mode=='numeric_run_ltr_v2':plan['folio_direction_version']=folio_direction_mode
     frames={p["page_number"]:p for p in pages}
     for item in layout:
         if item["kind"]!="decorative_rule":continue
@@ -166,8 +172,8 @@ def transform(base, snapshot, pages, decisions, context, evidence):
                     for br in list(node.iter(W+"br")):
                         if br.get(W+"type")!="page":model._fail("source_footer_control")
                         br.getparent().remove(br)
-                    if snapshot['target_lang']=='AR' and choices[identifier]['role']=='source_folio':
-                        span=_folio_ltr_span(node)
+                    if folio_direction_mode!='legacy_none' and snapshot['target_lang']=='AR' and choices[identifier]['role']=='source_folio':
+                        span=_folio_ltr_span(node,legacy_wrapper=folio_direction_mode=='direction_wrapper_v1')
                         if span is not None:plan['folio_ltr_spans'].append({'paragraph_id':identifier,**span})
                     body.remove(node);footer.append(node)
                 name=f"word/footer{next_part}.xml";next_part+=1;first_id=add_footer(name,footer)
@@ -218,7 +224,9 @@ def transform(base, snapshot, pages, decisions, context, evidence):
 
 def verify(actual, base, snapshot, pages, decisions, context, evidence):
     """Reconstruct the closed recipe, then independently inventory actual owned stories."""
-    expected=transform(base,snapshot,pages,decisions,context,evidence)
+    saved_plan=actual.source_map.get('source_layout_plan',{})
+    mode=saved_plan.get('folio_direction_version','direction_wrapper_v1' if 'folio_ltr_spans' in saved_plan else 'legacy_none')
+    expected=transform(base,snapshot,pages,decisions,context,evidence,mode)
     if actual.source_map!=expected.source_map:model._fail("source_layout_map_changed")
     actual_parts,_=model._package(actual.docx_bytes);expected_parts,_=model._package(expected.docx_bytes)
     if actual_parts!=expected_parts:model._fail("source_layout_package_changed")
@@ -288,11 +296,23 @@ def verify(actual, base, snapshot, pages, decisions, context, evidence):
                     br.getparent().remove(br)
                 span=next((item for item in plan.get('folio_ltr_spans',[]) if item['paragraph_id']==identifier),None)
                 if span is not None:
-                    expected_span=_folio_ltr_span(baseline)
+                    expected_span=_folio_ltr_span(baseline,legacy_wrapper=mode=='direction_wrapper_v1')
                     if expected_span!={k:span[k] for k in ('start','end','literal')}:model._fail('source_folio_direction_delta')
-                    directions=node.findall(W+'dir')
-                    if len(directions)!=1 or directions[0].get(W+'val')!='ltr' or ''.join(n.text or '' for n in directions[0].iter(W+'t'))!=span['literal']:model._fail('source_folio_direction_delta')
-                    if any(run.find(W+'rPr/'+W+'rtl') is None or run.find(W+'rPr/'+W+'rtl').get(W+'val')!='0' for run in directions[0].findall(W+'r')):model._fail('source_folio_direction_delta')
+                    if mode=='direction_wrapper_v1':
+                        directions=node.findall(W+'dir')
+                        if len(directions)!=1 or directions[0].get(W+'val')!='ltr' or ''.join(n.text or '' for n in directions[0].iter(W+'t'))!=span['literal']:model._fail('source_folio_direction_delta')
+                        numeric=directions[0].findall(W+'r')
+                    else:
+                        if list(node.iter(W+'dir')):model._fail('source_folio_direction_delta')
+                        numeric=[];offset=0
+                        for run in node.findall(W+'r'):
+                            value=''.join(n.text or '' for n in run.iter(W+'t'));end=offset+len(value)
+                            if offset<span['end'] and end>span['start']:
+                                if offset<span['start'] or end>span['end']:model._fail('source_folio_direction_delta')
+                                numeric.append(run)
+                            offset=end
+                        if ''.join(n.text or '' for run in numeric for n in run.iter(W+'t'))!=span['literal']:model._fail('source_folio_direction_delta')
+                    if not numeric or any(run.find(W+'rPr/'+W+'rtl') is None or run.find(W+'rPr/'+W+'rtl').get(W+'val')!='0' for run in numeric):model._fail('source_folio_direction_delta')
             if model._c14n(node)!=model._c14n(baseline):model._fail('source_layout_run_semantics_changed')
             original="".join(t["text"] for t in rows[identifier]["tokens"] if t["kind"]=="t")
             if visible!=original:model._fail("source_layout_meaningful_text_changed")

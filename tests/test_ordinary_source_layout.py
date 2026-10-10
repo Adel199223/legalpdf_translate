@@ -35,11 +35,13 @@ def test_arabic_source_folio_numeric_expression_is_contiguous_ltr():
         for name,literal in [('word/footer2.xml','2 / 7'),('word/footer3.xml','7 / 7')]:
             footer=etree.fromstring(archive.read(name));paragraph=footer.findall(model.W+'p')[-1]
             assert ''.join(n.text or '' for n in paragraph.iter(model.W+'t'))=='الصفحة '+literal
-            direction=paragraph.find(model.W+'dir')
-            assert direction.get(model.W+'val')=='ltr'
-            assert ''.join(n.text or '' for n in direction.iter(model.W+'t'))==literal
-            assert all(run.find(model.W+'rPr/'+model.W+'rtl').get(model.W+'val')=='0' for run in direction.findall(model.W+'r'))
-    bad=changed_part(artifact.docx_bytes,'word/footer2.xml',lambda root:root.find('.//'+model.W+'dir').set(model.W+'val','rtl'))
+            assert not list(paragraph.iter(model.W+'dir'))
+            runs=paragraph.findall(model.W+'r');numeric=runs[-1]
+            assert ''.join(n.text or '' for n in numeric.iter(model.W+'t'))==literal
+            assert numeric.find(model.W+'rPr/'+model.W+'rtl').get(model.W+'val')=='0'
+            assert runs[0].find(model.W+'rPr/'+model.W+'rtl').get(model.W+'val')=='1'
+            assert not any(0x202a<=ord(c)<=0x202e or 0x2066<=ord(c)<=0x2069 for c in ''.join(paragraph.itertext()))
+    bad=changed_part(artifact.docx_bytes,'word/footer2.xml',lambda root:root.findall(model.W+'p')[-1].findall(model.W+'r')[-1].find(model.W+'rPr/'+model.W+'rtl').set(model.W+'val','1'))
     mapping=deepcopy(artifact.source_map);mapping['docx_sha256']=model._sha(bad)
     with pytest.raises(ValueError):verify(writer.SavedDocxLayoutArtifact(bad,mapping),args)
 
@@ -52,6 +54,17 @@ def test_folio_direction_recipe_preserves_fonts_and_declines_mixed_text():
     mixed=deepcopy(paragraph);mixed.find('.//'+model.W+'t').text='Extra operative text '
     before=etree.tostring(mixed)
     assert _folio_ltr_span(mixed) is None and etree.tostring(mixed)==before
+
+@pytest.mark.parametrize('mode',['legacy_none','direction_wrapper_v1'])
+def test_pre_fix_v7_folio_maps_remain_exactly_verifiable(mode):
+    from legalpdf_translate.ordinary_source_layout import transform
+    args=multipage_fixture('AR');context={k:v for k,v in args[4].items() if k!='source_evidence'}
+    base=writer.build_unreviewed_docx(*args[:4],ordinary_context=context)
+    artifact=transform(base,*args[1:4],context,args[4]['source_evidence'],mode)
+    before=(artifact.docx_bytes,deepcopy(artifact.source_map))
+    assert 'folio_direction_version' not in artifact.source_map['source_layout_plan']
+    verify(artifact,args)
+    assert before==(artifact.docx_bytes,artifact.source_map)
 
 @pytest.mark.parametrize('lang',['EN','FR','AR'])
 def test_rule_border_and_first_page_source_footer_exact_owned_text(lang):
