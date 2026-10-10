@@ -269,3 +269,38 @@ def test_v7_source_footer_count_and_correction_formatting_section_guard(tmp_path
     doc=Document(path);doc.sections[0].different_first_page_header_footer=False;doc.save(path)
     with pytest.raises(OrdinaryLayoutError,match="section_changed"):
         _qualify_corrected_formatting(candidate.docx_bytes,path.read_bytes())
+
+
+def test_safe_source_folio_wrapper_remains_correctable_without_reversing_fraction(tmp_path, monkeypatch):
+    from legalpdf_translate.ordinary_source_layout import _folio_ltr_span
+    case=make_case(tmp_path,monkeypatch,lang='AR')
+    doc=Document(BytesIO(case.job.reviewed_docx));doc.paragraphs[0].text='الصفحة 2 / 7'
+    assert _folio_ltr_span(doc.paragraphs[0]._p)['literal']=='2 / 7'
+    out=BytesIO();doc.save(out);raw=out.getvalue()
+    row=paragraphs(raw)[0];assert row['editable']
+    edited,_,_=apply_actions(raw,[action(row['paragraph_id'],'الصفحة 3 / 7')],'AR',(1,))
+    with ZipFile(BytesIO(edited)) as z:root=etree.fromstring(z.read('word/document.xml'))
+    wrapper=next(root.iter(W+'dir'))
+    assert wrapper.get(W+'val')=='ltr'
+    assert ''.join(t.text or '' for t in wrapper.iter(W+'t'))=='3 / 7'
+    with pytest.raises(OrdinaryLayoutError,match='folio_structure_changed'):
+        apply_actions(raw,[action(row['paragraph_id'],'Unrecognized changed paragraph')],'AR',(1,))
+    wrapper.set(W+'val','rtl')
+    assert not __import__('legalpdf_translate.ordinary_text_correction',fromlist=['_editable'])._editable(wrapper.getparent())
+
+
+def test_word_import_refuses_mapped_decorative_rule(tmp_path, monkeypatch):
+    case=make_case(tmp_path,monkeypatch);service=case.manager.service
+    state=service.text_correction_state(case.job)
+    draft=service.draft_text_correction(case.job,nonce(),state['parent'],[action(state['paragraphs'][0]['paragraph_id'],'First approved text')])
+    service.approve_text_correction(case.job,draft['draft_id'],nonce(),True,True,'')
+    working=service.text_corrected_review_copy(case.job.job_id)
+    doc=Document(working);doc.paragraphs[0].text='Forbidden decorative text';doc.save(working)
+    parent=service._correction_parent
+    def mapped(*args,**kwargs):
+        raw,identity,rows=parent(*args,**kwargs);rows[0]['decorative_rule']=True
+        return raw,identity,rows
+    monkeypatch.setattr(service,'_correction_parent',mapped)
+    state=service.text_correction_state(case.job)
+    with pytest.raises(OrdinaryLayoutError,match='paragraph_not_editable'):
+        service.draft_text_correction(case.job,nonce(),state['parent'],[],import_word=True)

@@ -82,9 +82,30 @@ def _nodes(roots):
             for node in root.iter(W + "p")]
 
 
+def _safe_folio_wrapper(node):
+    wrappers = node.findall(W + "dir")
+    if len(wrappers) != 1 or dict(wrappers[0].attrib) != {W + "val": "ltr"}:
+        return False
+    wrapper = wrappers[0]
+    if not len(wrapper) or any(r.tag != W + "r" for r in wrapper):
+        return False
+    if any(c.tag not in {W + "rPr", W + "t"} for r in node.iter(W + "r") for c in r):
+        return False
+    plain = deepcopy(node)
+    direction = plain.find(W + "dir")
+    position = plain.index(direction)
+    for run in list(direction):
+        plain.insert(position, run); position += 1
+    plain.remove(direction)
+    from .ordinary_source_layout import _folio_ltr_span
+    span = _folio_ltr_span(plain)
+    return span is not None and span["literal"] == "".join(t.text or "" for t in wrapper.iter(W + "t"))
+
+
 def _editable(node):
-    return node.find(W + "pPr/" + W + "sectPr") is None and all(child.tag in {W + "pPr", W + "r", W + "proofErr"} for child in node) and all(
-        child.tag in {W + "rPr", W + "t"} for run in node.findall(W + "r") for child in run)
+    return node.find(W + "pPr/" + W + "sectPr") is None and all(
+        child.tag in {W + "pPr", W + "r", W + "proofErr"} or child.tag == W + "dir" and _safe_folio_wrapper(node)
+        for child in node) and all(child.tag in {W + "rPr", W + "t"} for run in node.iter(W + "r") for child in run)
 
 
 def paragraphs(raw):
@@ -104,7 +125,10 @@ def checked_text(value):
 
 def _replace(node, text, language):
     """Keep pPr and one uniform character style; explicitly report style reset."""
-    runs = node.findall(W + "r")
+    inherited_folio = bool(node.findall(W + "dir"))
+    if inherited_folio and not _safe_folio_wrapper(node):
+        fail("correction_paragraph_not_editable")
+    runs = list(node.iter(W + "r"))
     styles = [etree.tostring(r.find(W + "rPr"), method="c14n") if r.find(W + "rPr") is not None else b"" for r in runs]
     uniform = len(set(styles)) <= 1
     rpr = deepcopy(runs[0].find(W + "rPr")) if runs and uniform else None
@@ -153,6 +177,10 @@ def _replace(node, text, language):
         if len(props):
             run.append(props)
         etree.SubElement(run, W + "t", {SPACE: "preserve"}).text = value
+    if inherited_folio:
+        from .ordinary_source_layout import _folio_ltr_span
+        if _folio_ltr_span(node) is None:
+            fail("correction_folio_structure_changed")
     return not uniform
 
 

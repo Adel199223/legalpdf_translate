@@ -235,6 +235,8 @@ class TextCorrectionMixin:
                 translated = {r["paragraph_id"]: m["paragraph_id"] for r, m in zip(paragraphs(raw), mapping)}
                 for change in changes:
                     change["paragraph_id"] = translated[change["paragraph_id"]]
+                if any(row.get("decorative_rule") and row["paragraph_id"] in {c["paragraph_id"] for c in changes} for row in mapping):
+                    fail("correction_paragraph_not_editable")
                 out_map = [{**m, "part_uri": r["part_uri"], "location": r["location"]} for r, m in zip(paragraphs(output), mapping)]
             else:
                 output, changes, out_map = apply_actions(raw, actions, job.target_lang,
@@ -275,6 +277,11 @@ class TextCorrectionMixin:
             _qualify_corrected_formatting(base, output)
         elif request["import_word"]:
             changes = word_changes(base, output)
+            mapped = record.get("base_paragraph_map") or paragraphs(base)
+            changed_ids = {row["paragraph_id"] for row, original in zip(mapped, paragraphs(base))
+                           if original["paragraph_id"] in {c["paragraph_id"] for c in changes}}
+            if any(row.get("decorative_rule") and row["paragraph_id"] in changed_ids for row in mapped):
+                fail("correction_paragraph_not_editable")
             if [(c["before"], c["after"]) for c in changes] != [(c["before"], c["after"]) for c in record["changes"]]:
                 fail("correction_revision_changed", 409)
         else:
