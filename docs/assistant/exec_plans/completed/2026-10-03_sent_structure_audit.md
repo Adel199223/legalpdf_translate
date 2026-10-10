@@ -1,5 +1,7 @@
 # Last five sent translations structural fidelity audit
 
+Current closure authority: October 10 final closeout. Earlier stage and checkpoint instructions below are dated historical evidence, not current continuation authority. Current publication/application/cleanup state is recorded in private `structure_deep_20261009_01/publication_final_01/publication_receipt.json`; its preceding intent records the authorized scope.
+
 ## Goal and non-goals
 
 Audit the five latest sent translation threads, bind exact sent DOCX to their source PDFs, inspect Microsoft Word rendering, reproduce the current writer with retained wording, and prepare a bounded repair. The user accepts close structural fidelity; exact fonts, pagination and pixel equality are not acceptance requirements. No sending, draft writing, paid translation, publication, schema change, saved-setting change or live-service operation belongs to Stage 1 or Stage 2.
@@ -87,3 +89,38 @@ Continue this plan at Stage 2 in the attached isolated worktree. Re-read the ter
 ### Prepared Stage 3 prompt pack
 
 After accepted Stage 2 packet and exact NEXT_STAGE_3, perform root-owned full-page Microsoft Word review of the new fictional EN/FR/AR artifacts, comparing actual source layout with natural translated reflow. Assess columns, emphasis, groups, literal ordering, page furniture and break behavior only within the implemented supported lane. Arabic may include the user-accepted manual RTL/right-alignment finishing step on a separate derivative; record that qualification and verify literal ordering afterward. Use private retained wording solely as separately qualified, no-provider diagnostics where actual source bindings exist; do not retrofit synthetic baselines into structured commits. Preserve all previous evidence and fix demonstrated issues within this stage's supported scope. Report unsupported scan/panel/multi-document gaps explicitly. Real paid translations and production/default activation require a separate bounded proposal with build, inputs, settings, cost and current approval; do not invent authorization from this prompt pack.
+
+
+## Final implementation and qualified acceptance — October 10
+
+All 27 selected source pages passed qualified source/content/native Word review, identical normal download and normal Save/DB acceptance. The authoritative private matrix is `structure_deep_20261009_01/final_acceptance_matrix_02.json`; financial reconciliation is `structure_deep_20261009_01/final_acceptance_financial_summary_01.json`. H2 retains its three correct primaries; only three layout pages were newly requested. Exact source-backed revisions, manual Arabic finishing, historical R1 review-state qualification, failed attempts and furniture-display retractions remain preserved in the linked receipts.
+
+All owned acceptance runtimes are retired. Standard09 passed 250 tests in 85.094 seconds; CI11 passed 7,837 unique cases exactly once across all seven jobs with verified artifact digests. Final selected Full07 is **PASS: 1,777 selected executions, including 191 formatting cases; nine expected intake deselections; exit 0 in 2,170.078 seconds with all 633 pins unchanged**.
+
+Implementation and acceptance are complete; current publication/application/cleanup state is recorded in the stable publication receipt below. Private `structure_deep_20261009_01/publication_final_01/publication_receipt.json` owns exact final-head hosted CI, merge, installed-build smoke and cleanup evidence. The plan is completed under PLANS.md after implementation, qualified acceptance and final validation; original chronological evidence and explicitly superseded quotations below remain unchanged.
+
+
+## Dated historical snapshot — Superseded HANDOFF October3 operational snapshot
+
+The following is superseded historical text, preserved as a quotation, with plan links updated for relocation. It is not current continuation authority. Exact original file bytes are in the private beforeimages manifest. Current outcome and terminal publication receipt routing appear in the final closeout section.
+
+> ### Last five sent translations — 2026-10-03
+>
+> The [sent-structure audit](exec_plans/completed/2026-10-03_sent_structure_audit.md) completes Stage 1 in `C:/Users/FA507/.codex/worktrees/sent-structure-audit/legalpdf_translate`, branch `feat/sent-structure-audit-20261003`, based on canonical main `e70e1912b20de57901bec93372cf4e122568967a`. This is unpublished documentation/review work; no product/test/default, app data, live server or canonical files changed. Five latest sent threads contain seven exact DOCX attachments. Native Microsoft Word screenshots and exports cover all 21 output pages, paired to actual source ranges. Close fidelity is accepted; one stretched justified line before a forced page break is confirmed. Earlier citation/header/footer warnings were review errors and are explicitly retracted in preserved correction receipts.
+>
+> All seven sent files byte-match Downloads but none joins the 37 extant job-log outputs; two also match older August copies. The user reports ChatGPT 6 Pro generation, with Arabic finished manually using RTL/right alignment; exact conversation/export history is unverified. This manual step is acceptable for future app output, preserving internal literal/number run order. Seven no-provider, retained-body-wording legacy reproductions preserve nonempty text/order while losing tables, sections and emphasis. One separately reviewed native French baseline confirms collapsed columns/sidebar despite equal page count. The synthetic one-input-page projection excludes reference furniture and source-page ownership; do not call it a provider rerun, omission finding or corrected translation.
+>
+> Private root `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/sent_structure_audit_20261003_01/` contains `AUDIT_REPORT.md`, `stage1_receipt.json`, originals/hash manifests, Word screenshots/PDFs, corrected page reviews and reproduction comparisons. Exact documentation beforeimages are retained there. Its staged digital-only continuation and `NEXT_STAGE_2` stop are historical and superseded for the current authorized operation by the October 9 plan above. Do not replay consumed paid/native operations or fabricate source IDs. Preserve the original plan and receipts as evidence of the earlier scope.
+>
+
+
+## Dated historical snapshot — Superseded APP_KNOWLEDGE October3 snapshot
+
+The following is superseded historical text, preserved as a quotation, with plan links updated for relocation. It is not current continuation authority. Exact original file bytes are in the private beforeimages manifest. Current outcome and terminal publication receipt routing appear in the final closeout section.
+
+> ### Sent-document structure audit — October 3
+>
+> The [October 3 audit plan](docs/assistant/exec_plans/completed/2026-10-03_sent_structure_audit.md) records read-only review of the five then-latest sent translation threads: seven exact DOCX files, 21 native Microsoft Word pages, and source-range bindings. These references have close structural fidelity; one justified line before a forced page break has excessive spacing. The user reports generation with ChatGPT 6 Pro and manual RTL/right-alignment finishing for Arabic; exact conversation/export history is unverified. All seven match Downloads bytes but none matches the 37 extant job-log output paths. Do not attribute them to current ordinary output or infer a new translation from an email date.
+>
+> Seven offline body-wording reproductions through the current `legacy_text_v1` writer preserve nonempty text/order but collapse tables, sections and emphasis into paragraph flow. The representative French native comparison confirms lost sidebar/columns despite equal page counts. These are synthetic single-input-page diagnostics, not provider reruns or repaired translations; reference furniture and source-page ownership are outside their projection. Ordinary source acquisition and block/layout binding before flattening need a separate implementation gate. Manual Arabic RTL/right-alignment finishing is an accepted step; it does not repair missing groups or columns. Existing optional reviewed formatting remains available; no default, product code or canonical runtime changed during this audit. HANDOFF owns current continuation and private receipts.
+>
