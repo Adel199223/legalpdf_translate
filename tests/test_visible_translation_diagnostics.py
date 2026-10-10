@@ -82,3 +82,13 @@ def test_article_paragraph_exchange_and_extra_article_are_detected():
 def test_unmatched_visible_brackets_are_actionable_balanced_changes_advisory():
     assert checks("(note)", "(x")["visible_bracket_anomaly_count"]==1
     assert checks("(note)", "[x]")["visible_bracket_anomaly_count"]==0
+
+
+def test_unchanged_legal_list_and_subparagraph_are_not_translation_defects():
+    for value in ["1) First\n2) Second", "Article 277, subparagraph a).", "source (unfinished"]:
+        r=checks(value,value)
+        assert r["citation_actionable_missing_count"]==0
+        assert r["actionable_bracket_drift_count"]==0
+
+def test_new_misnested_output_remains_actionable():
+    assert checks("(x)","([x)]")["actionable_bracket_drift_count"]>0

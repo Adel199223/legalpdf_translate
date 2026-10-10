@@ -293,10 +293,14 @@ def _unbalanced_brackets(text: str) -> int:
     stack = []
     defects = 0
     matching = {")": "(", "]": "[", "}": "{"}
-    for char in text:
+    for index, char in enumerate(text):
         if char in "([{":
             stack.append(char)
         elif char in matching:
+            if char == ")" and not stack and re.search(
+                    r"(?:^|\n)\s*(?:\d+|[a-z])$|(?:subparagraph|alínea|alinéa|الفقرة)\s+[a-z]$",
+                    text[:index], re.IGNORECASE):
+                continue
             if stack and stack[-1] == matching[char]:
                 stack.pop()
             else:
@@ -323,6 +327,8 @@ def run_all_quality_checks(
     visible_bidi = _visible_bidi_safety(visible_output)
     citation_missing = _missing_cited_anchors(visible_source, visible_output)
     bracket_anomalies = _unbalanced_brackets(visible_output)
+    source_bracket_anomalies = _unbalanced_brackets(visible_source)
+    bracket_drift = max(0, bracket_anomalies - source_bracket_anomalies)
     list_source = re.findall(r"(?m)^\s*(\d+)[.)]\s", visible_source)
     list_output = re.findall(r"(?m)^\s*(\d+)[.)]\s", visible_output)
     from collections import Counter
@@ -337,10 +343,12 @@ def run_all_quality_checks(
         "output_protocol_literal_count": output_protocol_count,
         "raw_citation_mismatches_count": raw_citation["citation_marker_delta_abs"] + raw_citation["parenthesis_delta_abs"],
         "raw_bidi_control_count": bidi_check["bidi_control_count"],
-        "citation_actionable_missing_count": citation_missing + list_missing + bracket_anomalies,
+        "citation_actionable_missing_count": citation_missing + list_missing + bracket_drift,
         "list_marker_missing_count": list_missing,
         "protocol_anomaly_count": protocol_anomalies,
         "visible_bracket_anomaly_count": bracket_anomalies,
+        "source_bracket_anomaly_count": source_bracket_anomalies,
+        "actionable_bracket_drift_count": bracket_drift,
         "bidi_actionable_count": visible_bidi["unsafe_bidi_control_count"] + visible_bidi["remaining_isolate_control_count"] + protocol_anomalies,
         **visible_bidi,
         "language_ok": lang_check["language_ok"],
