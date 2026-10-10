@@ -3,7 +3,7 @@ from copy import deepcopy
 import pytest
 
 from legalpdf_translate.ordinary_layout_contracts import (
-    PROPOSAL_VERSION, PROPOSAL_VERSION_V2, OrdinaryLayoutError,
+    PROPOSAL_VERSION, PROPOSAL_VERSION_V2, PROPOSAL_VERSION_V3, OrdinaryLayoutError,
     _resolve_partition_anchors, normalize_proposals, proposal_schema,
 )
 from legalpdf_translate.saved_docx_layout import inspect_docx
@@ -11,10 +11,13 @@ from tests.test_ordinary_layout_contracts import proposal
 from tests.test_ordinary_layout_service import make_case
 
 
-def test_v2_schema_requires_bounded_literal_anchors_and_preserves_historical_version():
+def test_fresh_schema_requires_bounded_literal_anchors_and_preserves_historical_version():
     schema = proposal_schema(1, ["p000001"])["schema"]
     assert PROPOSAL_VERSION == "ordinary_layout_proposal_v1"
-    assert schema["properties"]["version"]["enum"] == [PROPOSAL_VERSION_V2]
+    assert schema["properties"]["version"]["enum"] == [PROPOSAL_VERSION_V3]
+    historical = proposal_schema(1, ["p000001"], version=PROPOSAL_VERSION_V2)["schema"]
+    assert historical["properties"]["version"]["enum"] == [PROPOSAL_VERSION_V2]
+    assert historical["properties"]["paragraph_partitions"] == schema["properties"]["paragraph_partitions"]
     assert "paragraph_partitions" in schema["required"]
     item = schema["properties"]["paragraph_partitions"]["items"]
     assert item["additionalProperties"] is False
@@ -73,7 +76,7 @@ def test_empty_v2_partitions_normalize_identically_to_retained_v1(tmp_path, monk
     assert old["version"] == PROPOSAL_VERSION and "paragraph_partitions" not in old
 
 
-def test_v2_empty_response_crosses_real_manager_sdk_and_accounting_boundary(tmp_path, monkeypatch):
+def test_retained_v2_response_crosses_fresh_v3_sdk_and_accounting_boundary(tmp_path, monkeypatch):
     import json
     import tests.test_ordinary_layout_manager as manager_fixture
     case = make_case(tmp_path, monkeypatch)
@@ -88,9 +91,9 @@ def test_v2_empty_response_crosses_real_manager_sdk_and_accounting_boundary(tmp_
     assert result["status"] == "applied_unreviewed"
     assert len(paid.calls) == 1
     request = paid.calls[0]
-    assert request["text"]["format"]["schema"]["properties"]["version"]["enum"] == [PROPOSAL_VERSION_V2]
+    assert request["text"]["format"]["schema"]["properties"]["version"]["enum"] == [PROPOSAL_VERSION_V3]
     prompt = json.loads(request["input"][0]["content"][0]["text"])
-    assert prompt["version"] == PROPOSAL_VERSION_V2
+    assert prompt["version"] == PROPOSAL_VERSION_V3
     assert result["accounting"]["complete"] is True
 
 
