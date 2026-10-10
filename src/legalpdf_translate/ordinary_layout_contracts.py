@@ -301,7 +301,7 @@ def proposal_source_evidence(snapshot, view, proposal):
         choices[row["paragraph_id"]] = row
     if set(choices) != set(ids):
         fail("invalid_source_layout_evidence")
-    panel_ids = set()
+    panel_ids, column_ids = set(), set()
     for band in proposal.get("bands", []):
         if type(band) is not dict:
             fail("invalid_source_layout_evidence")
@@ -313,6 +313,9 @@ def proposal_source_evidence(snapshot, view, proposal):
                 if type(cell) is not dict or type(cell.get("groups")) is not list:
                     fail("invalid_source_layout_evidence")
                 groups.extend(cell["groups"])
+                for group in cell["groups"]:
+                    if type(group) is not dict or type(group.get("paragraph_ids")) is not list or any(type(pid) is not str for pid in group["paragraph_ids"]):fail("invalid_source_layout_evidence")
+                    column_ids.update(group["paragraph_ids"])
         else:
             fail("invalid_source_layout_evidence")
         if type(groups) is not list:
@@ -343,12 +346,12 @@ def proposal_source_evidence(snapshot, view, proposal):
             raw = baseline[pid]
             if any(t["kind"] == "page_break" for t in raw["tokens"][:-1]):
                 fail("invalid_source_layout_evidence")
-            if (pid in partitions or pid in panel_ids or raw.get("has_numbering") or "numPr" in raw.get("ppr_xml", "") or raw.get("has_field") or
+            if (pid in partitions or pid in panel_ids or pid in column_ids or raw.get("has_numbering") or "numPr" in raw.get("ppr_xml", "") or raw.get("has_field") or
                     any(t["kind"] != "t" and not (row["kind"] == "source_footer" and t["kind"] == "page_break") for t in raw["tokens"])):
                 fail("invalid_source_layout_evidence")
         if row["kind"] == "decorative_rule":
             text = "".join(t["text"] for t in baseline[owned[0]]["tokens"] if t["kind"] == "t")
-            if (len(owned) != 1 or choices[owned[0]]["role"] == "signature" or
+            if (len(owned) != 1 or choices[owned[0]]["role"] != "body" or
                     re.fullmatch(r"[_─━—–-]{3,}", text.strip()) is None or row["bbox"][3] - row["bbox"][1] > .03):
                 fail("invalid_decorative_rule_evidence")
         elif row["kind"] == "source_footer":

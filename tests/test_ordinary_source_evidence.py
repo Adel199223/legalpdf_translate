@@ -87,3 +87,27 @@ def test_candidate_binds_source_finding_sidecar_and_detects_tampering(tmp_path):
     import hashlib
     tampered=replace(artifact,source_map_bytes=encoded,source_map_sha256=hashlib.sha256(encoded).hexdigest())
     with pytest.raises((OrdinaryAutoArtifactError,ValueError)):verify_unreviewed_candidate(raw,snapshot,frames,decisions,tampered,proposal_evidence=evidence)
+
+
+def test_v3_automatic_finish_uses_initial_ownership_for_uncertain_boxes(tmp_path,monkeypatch):
+    from tests import test_ordinary_auto_layout_workflow as flow
+    from fastapi.testclient import TestClient
+    from legalpdf_translate import workflow
+    monkeypatch.setattr(workflow,'load_environment',lambda:None)
+    original=flow._proposal
+    def uncertain(view,page,columns=0):
+        proposal=original(view,page,columns)
+        proposal.update(version=PROPOSAL_VERSION_V3,paragraph_partitions=[],source_coverage_findings=[],source_layout_evidence=[])
+        proposal['paragraphs'][0]['bbox']=None
+        if len(proposal['paragraphs'])>1:proposal['paragraphs'][1]['bbox']=[.4,.4,.4,.6]
+        return proposal
+    monkeypatch.setattr(flow,'_proposal',uncertain)
+    source=tmp_path/'source.pdf';flow._source(source,('digital',));output=tmp_path/'output';output.mkdir()
+    app,manager,sdk,requests=flow._app(tmp_path,monkeypatch,('First fictional paragraph\nMiddle fictional paragraph\nLast fictional paragraph',),(1,))
+    with TestClient(app) as client:
+        job_id=flow._start(client,source,output,'EN',start=1,end=1,image_mode='auto',ocr_mode='off')
+        job=flow._wait(manager,job_id)
+        assert job['result']['automatic_layout']['status']=='automatic_unreviewed',job['result']['automatic_layout']
+        assert len(sdk.requests)==len(requests)==1
+        response=client.get(f'/api/translation/jobs/{job_id}/artifact/output_docx?mode=shadow&workspace=fictional')
+        assert response.status_code==200

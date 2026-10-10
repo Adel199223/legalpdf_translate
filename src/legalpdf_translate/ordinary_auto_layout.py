@@ -355,11 +355,13 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
             proposal = decode(response)
             response_version = proposal.get("version")
             if response_version == "ordinary_layout_proposal_v3":
-                from .ordinary_layout_contracts import proposal_source_evidence
-                from .saved_docx_layout import inspect_docx
-                reviewed = storage._read(folder / "baselines" / baseline_id / "reviewed.docx", storage.DOCX_MAX_BYTES)
-                view = manager.service.saved.read(review_id)
-                source_evidence.append(proposal_source_evidence(inspect_docx(reviewed, view["target_lang"]), view, proposal))
+                # The signed sidecar was validated against the immutable initial
+                # generation, before uncertain proposed regions were applied.
+                sidecar = verified_record(operation / "source_evidence.json")
+                records = [item for item in sidecar["pages"] if item.get("page_number") == page]
+                if len(records) != 1 or records[0].get("response_sha256") != row["response_sha256"]:
+                    fail("source_evidence_response_changed", 409)
+                source_evidence.append(records[0])
             if response_version != "ordinary_layout_proposal_v1":
                 row["proposal_schema_version"] = response_version
             response_versions.add(response_version)

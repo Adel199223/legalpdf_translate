@@ -263,6 +263,8 @@ class OrdinaryLayoutManager:
             if proposals:
                 decisions = normalize_proposals(inspect_docx(job.reviewed_docx, job.target_lang), view, proposals)
                 source_evidence = [proposal_source_evidence(inspect_docx(job.reviewed_docx, job.target_lang), view, p) for p in proposals]
+                for item, proposal in zip(source_evidence, proposals):
+                    item["response_sha256"] = digest(storage._read(operation / f"page-{proposal['page_number']:04d}.response.json", MAX_RESPONSE_BYTES))
                 _write(operation / "source_evidence.json", {"version": "ordinary_source_evidence_v1", "pages": source_evidence})
                 result["source_coverage_findings"] = [f for page in source_evidence for f in page["findings"]]
                 result["source_layout_evidence_sha256"] = digest(encode(source_evidence))
