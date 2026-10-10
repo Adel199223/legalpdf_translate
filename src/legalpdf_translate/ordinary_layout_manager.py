@@ -189,6 +189,7 @@ class OrdinaryLayoutManager:
             page_numbers, policy.public(), expected_baseline_id=expected_baseline_id)
         if not fresh:
             return self.service.suggestion(job_id, operation_nonce)
+        _write(operation / "proposal_initial_view.json", {"review_id": view["review_id"], "generation": expected_generation, "view": view})
         accountant = None
         proposals = []
         result = {"operation_nonce": operation_nonce, "baseline_id": expected_baseline_id,

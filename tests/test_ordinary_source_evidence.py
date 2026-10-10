@@ -111,3 +111,17 @@ def test_v3_automatic_finish_uses_initial_ownership_for_uncertain_boxes(tmp_path
         assert len(sdk.requests)==len(requests)==1
         response=client.get(f'/api/translation/jobs/{job_id}/artifact/output_docx?mode=shadow&workspace=fictional')
         assert response.status_code==200
+        from legalpdf_translate.ordinary_auto_layout import _read_record,_recover_settled_result
+        pointer_path=next(output.rglob('operation.json'))
+        pointer=_read_record(pointer_path)
+        layout=app.state.ordinary_layouts.manager_for_context(app.state.shadow_context,'shadow','fictional')
+        from legalpdf_translate.ordinary_layout_service import _read
+        with layout.service.scope(pointer['origin_job_id']) as folder:
+            operation=folder/'baselines'/pointer['baseline_id']/'suggestions'/pointer['operation_nonce']
+            before=_read(operation/'result.json')
+            (operation/'result.json').unlink()
+            (operation/'source_evidence.json').unlink()
+        _recover_settled_result(layout,pointer,[1])
+        with layout.service.scope(pointer['origin_job_id']) as folder:
+            assert _read(operation/'result.json')==before
+        assert len(sdk.requests)==len(requests)==1
