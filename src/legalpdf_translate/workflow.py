@@ -2865,6 +2865,7 @@ class TranslationWorkflow:
             initial.raw_output,
             config.target_lang,
             expected_ar_tokens=expected_ar_tokens,
+            ar_source_text=source_text,
         )
         _record_ar_eval_diagnostics(initial_eval, attempt=1)
         _apply_evaluation_metadata(initial_eval)
@@ -3090,6 +3091,8 @@ class TranslationWorkflow:
             retry.raw_output,
             config.target_lang,
             expected_ar_tokens=expected_ar_tokens,
+            ar_source_text=source_text,
+            primary_normalized_text=initial_eval.normalized_text,
         )
         _record_ar_eval_diagnostics(retry_eval, attempt=2)
         _apply_evaluation_metadata(retry_eval)
@@ -3238,11 +3241,15 @@ class TranslationWorkflow:
         lang: TargetLang,
         *,
         expected_ar_tokens: list[str] | None = None,
+        ar_source_text: str | None = None,
+        primary_normalized_text: str | None = None,
     ) -> OutputEvaluation:
         return evaluate_workflow_output(
             raw_output,
             lang,
             expected_ar_tokens=expected_ar_tokens,
+            ar_source_text=ar_source_text,
+            primary_normalized_text=primary_normalized_text,
         )
 
     def _accumulate_usage_totals(self, page_metadata: dict[str, object], usage: dict[str, Any]) -> None:

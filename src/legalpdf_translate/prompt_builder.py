@@ -66,8 +66,8 @@ def build_ar_token_retry_prompt(
     token_lines = [f"{index}. [[{token}]]" for index, token in enumerate(tokens, start=1)]
     header = (
         "ARABIC TOKEN CORRECTION ONLY: Re-emit the SAME content as ONE plain-text code block and NOTHING ELSE. "
-        "Keep every listed [[...]] token exactly character-for-character. "
-        "Do not translate, edit, split, remove, reorder, or add token contents. "
+        "The listed tokens are a required minimum, not an exhaustive source inventory. Keep every listed [[...]] token exactly character-for-character. "
+        "Do not translate, edit, remove or rewrite required token contents. Preserve additional literal spans and visible source-image annotation text already present in the prior output; do not delete them merely because extraction omitted them from the list. Regroup wrappers only for numeric components whose exact boundaries are established by the supplied source; preserve the complete visible numeric expression. Do not split or regroup names, addresses or other literal spans. Do not invent new literal content. "
         "Every listed token must appear only inside [[...]]. "
         "If a listed token appears outside [[...]], wrap it instead of rewriting it. "
         "No Latin letters or digits may appear outside protected tokens. "
@@ -97,8 +97,8 @@ def build_ar_token_retry_prompt(
             mismatch_lines.extend(
                 [
                     f"Missing protected tokens: {missing_count}",
-                    f"Altered protected tokens: {altered_count}",
-                    f"Unexpected protected tokens: {unexpected_count}",
+                    f"Unpaired missing/additional count (not proof of alteration): {altered_count}",
+                    f"Additional protected tokens (not necessarily altered): {unexpected_count}",
                 ]
             )
             missing_samples = [
@@ -115,7 +115,7 @@ def build_ar_token_retry_prompt(
                 mismatch_lines.append("Missing token samples:")
                 mismatch_lines.extend(f"- [[{item}]]" for item in missing_samples[:3])
             if unexpected_samples:
-                mismatch_lines.append("Unexpected or altered token samples:")
+                mismatch_lines.append("Additional primary token samples (source coverage may be incomplete):")
                 mismatch_lines.extend(f"- [[{item}]]" for item in unexpected_samples[:3])
         mismatch_lines.append("<<<END TOKEN MISMATCH SUMMARY>>>")
 

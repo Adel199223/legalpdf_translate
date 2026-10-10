@@ -48,6 +48,8 @@ def evaluate_output(
     lang: TargetLang,
     *,
     expected_ar_tokens: list[str] | None = None,
+    ar_source_text: str | None = None,
+    primary_normalized_text: str | None = None,
 ) -> OutputEvaluation:
     parsed = parse_code_block_output(raw_output)
     if parsed.block_count == 0:
@@ -98,10 +100,28 @@ def evaluate_output(
         lang=lang,
         expected_ar_tokens=expected_ar_tokens,
     )
+    if lang == TargetLang.AR:
+        from ..output_normalize import regroup_source_bound_ar_numeric_tokens
+        normalized, regroup_count = regroup_source_bound_ar_numeric_tokens(normalized, source_text=ar_source_text, expected_tokens=expected_ar_tokens)
+        ar_autofix_applied_count += regroup_count
     if lang in (TargetLang.EN, TargetLang.FR):
         validation = validate_enfr(normalized, lang=lang)
     else:
         validation = validate_ar(normalized, expected_tokens=expected_ar_tokens)
+    token_details = validation.details
+    if lang == TargetLang.AR and primary_normalized_text is not None:
+        from ..ar_literal_fidelity import correction_preserves_additional_literals
+        if not correction_preserves_additional_literals(primary_normalized_text, normalized, expected_ar_tokens, ar_source_text):
+            return OutputEvaluation(ok=False, normalized_text=normalized, defect_reason="Correction lost an additional primary literal.", parser_failed=False, validator_failed=True, outside_text=False, block_count=1, ar_autofix_applied_count=int(ar_autofix_applied_count), ar_token_details=None, ar_violation_kind="correction_literal_fidelity_loss", ar_violation_samples=None)
+        from ..ar_literal_fidelity import _address_correction_exemptions
+        exemptions = _address_correction_exemptions(primary_normalized_text, normalized, expected_ar_tokens, ar_source_text)
+        if exemptions:
+            import re
+            token_details = dict(token_details or {})
+            token_details["source_bound_address_replacements"] = [
+                {"primary_literal": old, "required_literal": next(value for value in expected_ar_tokens or [] if re.sub(r"[0-9]+", "#", value) == re.sub(r"[0-9]+", "#", old))}
+                for old in sorted(exemptions)
+            ]
     if not validation.ok:
         return OutputEvaluation(
             ok=False,
@@ -112,7 +132,7 @@ def evaluate_output(
             outside_text=False,
             block_count=1,
             ar_autofix_applied_count=int(ar_autofix_applied_count),
-            ar_token_details=validation.details,
+            ar_token_details=token_details,
             ar_violation_kind=validation.kind,
             ar_violation_samples=_ar_violation_samples(validation.details),
         )
@@ -128,7 +148,7 @@ def evaluate_output(
                 outside_text=False,
                 block_count=1,
                 ar_autofix_applied_count=int(ar_autofix_applied_count),
-                ar_token_details=validation.details,
+                ar_token_details=token_details,
                 ar_violation_kind=None,
                 ar_violation_samples=None,
             )
@@ -142,7 +162,7 @@ def evaluate_output(
             outside_text=True,
             block_count=1,
             ar_autofix_applied_count=int(ar_autofix_applied_count),
-            ar_token_details=validation.details,
+            ar_token_details=token_details,
             ar_violation_kind=None,
             ar_violation_samples=None,
         )
@@ -155,7 +175,7 @@ def evaluate_output(
         outside_text=False,
         block_count=1,
         ar_autofix_applied_count=int(ar_autofix_applied_count),
-        ar_token_details=validation.details,
+        ar_token_details=token_details,
         ar_violation_kind=None,
         ar_violation_samples=None,
     )

@@ -236,7 +236,10 @@ def _wrap_plain_segment(segment: str) -> str:
             cursor = span.end + 1
             continue
         result.append(segment[cursor : span.start])
-        result.append(f"[[{token}]]")
+        if (span.start > 0 and segment[span.start - 1] == "[") or (span.end < len(segment) and segment[span.end] == "]"):
+            result.append(f"{LRI}[[{token}]]{PDI}")
+        else:
+            result.append(f"[[{token}]]")
         cursor = span.end
     result.append(segment[cursor:])
     return "".join(result)
