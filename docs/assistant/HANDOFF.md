@@ -6,6 +6,8 @@ Updated 2026-10-10. Read `AGENTS.md`, `agent.md`, this page and only the applica
 
 ### Translation review completion — active October 10 goal
 
+Hosted CI run 38058067424 for published head b72d9277ed136b369fcef3e25080a8e9b2c2c0c8 is retained failed evidence: shard 2 and the aggregate job failed, while the other three shards and contract jobs passed. The sole shard assertion expected the obsolete report explanation; the product correctly distinguishes versioned actionable citation evidence from historical/advisory marker and parenthesis counts. The test-only repair preserves table/sample assertions and passes the complete report module: 22 tests in 1.33 seconds. That module is outside all local validation selectors, so Full04 remains valid for its unchanged covered files. Root integrated the repair as 8ffccfebeba177d0cce43020cacaa245e54396c5; new exact-head exhaustive hosted CI remains pending. No canonical application or fresh live success is claimed. Original artifacts are preserved under private publication_01/ci_terminal_failure_01.
+
 The [active plan](exec_plans/active/2026-10-10_translation_review_completion.md) owns the authorized repairs and fresh normal workflow test. Integration remains isolated from canonical main; previous retest operations are complete and must not be replayed.
 
 New V7 source folios use `numeric_run_ltr_v2`: the whole numeric expression is in one explicit LTR run, the Arabic label retains its RTL run, and no direction wrapper or marks are added. Historical recipes remain verifiable. Semantic section/story ownership tolerates equivalent Word footer renaming and empty continuation-footer serialization while preserving nonempty ownership, section roles, relationships, text and control safeguards.
