@@ -293,13 +293,12 @@ def _unbalanced_brackets(text: str) -> int:
     stack = []
     defects = 0
     matching = {")": "(", "]": "[", "}": "{"}
+    enumerator_closers = {m.end() - 1 for m in re.finditer(r"(?m)^[ \t]*(?:\d+|[^\W\d_])\)", text)}
     for index, char in enumerate(text):
         if char in "([{":
             stack.append(char)
         elif char in matching:
-            if char == ")" and not stack and re.search(
-                    r"(?:^|\n)\s*(?:\d+|[a-z])$|(?:subparagraph|alínea|alinéa|الفقرة)\s+[a-z]$",
-                    text[:index], re.IGNORECASE):
+            if char == ")" and not stack and index in enumerator_closers:
                 continue
             if stack and stack[-1] == matching[char]:
                 stack.pop()

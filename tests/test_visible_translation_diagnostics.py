@@ -92,3 +92,8 @@ def test_unchanged_legal_list_and_subparagraph_are_not_translation_defects():
 
 def test_new_misnested_output_remains_actionable():
     assert checks("(x)","([x)]")["actionable_bracket_drift_count"]>0
+
+
+def test_legal_enumerators_are_script_neutral_and_inline_differences_relative():
+    assert checks("a) First", "أ) أول")["actionable_bracket_drift_count"]==0
+    assert checks("subparagraph a).", "point a).", "FR")["actionable_bracket_drift_count"]==0
