@@ -32,5 +32,3 @@ def word_section_signature(members):
         return node.tag, attrs+tuple(refs), tuple(semantic(child) for child in node)
     root=etree.fromstring(members["word/document.xml"])
     return tuple((tuple(_path(node,root)),semantic(node)) for node in root.iter(W+"sectPr"))
-
-
