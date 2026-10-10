@@ -4,6 +4,18 @@ Updated 2026-10-10. Read `AGENTS.md`, `agent.md`, this page and only the applica
 
 ## Current build and work
 
+### Translation review completion — active October 10 goal
+
+The [active plan](exec_plans/active/2026-10-10_translation_review_completion.md) owns the authorized repairs and fresh normal workflow test. Integration remains isolated from canonical main; previous retest operations are complete and must not be replayed.
+
+New V7 source folios use `numeric_run_ltr_v2`: the whole numeric expression is in one explicit LTR run, the Arabic label retains its RTL run, and no direction wrapper or marks are added. Historical recipes remain verifiable. Semantic section/story ownership tolerates equivalent Word footer renaming and empty continuation-footer serialization while preserving nonempty ownership, section roles, relationships, text and control safeguards.
+
+Genuine fictional browser correction, Word import/approval, later formatting adoption, exact download and one saved row pass. Word edits used the document API after desktop input failed; manual typing remains unproved. All 12 no-mark before/after native pages pass with six byte-identical image pairs, correct unequal folios and empty spill continuation footers. The production-map-bound actual Word-save qualification preserves 4,218 words and 11 unique mapped paragraph IDs. Earlier failures, interrupted Full01/Full02, Full03's two stale request-schema test failures and fixture-history qualifications remain preserved in the active plan and private evidence.
+
+Standard04 passes 250 tests in 56.844 seconds with all 1,164 pins unchanged. Selected Full04 passes 1,988 executions, including 191 formatting cases, with nine expected intake deselections; exit 0 in 2110.188 seconds with all 1,164 pins unchanged. Its log SHA-256 is `7bedace7a7771f7b75bb35b3f7081f49f162aec99f768e7c60e58db4edf8a78e`. These selected local checks do not establish exhaustive hosted CI.
+
+The umbrella completion plan remains active through exact final-head hosted checks, canonical application and the fresh same-email Arabic workflow. Current publication state and installed identity belong to private `translation_review_completion_20261010_01/publication_01/publication_receipt.json`; fresh workflow outcomes belong to `live_acceptance_01`. No live or installed success is inferred from fixture acceptance.
+
 ### Gmail layout and delivery follow-up — 2026-10-10
 
 The live Arabic email test completed on canonical main `fc9b3d560f874459f02274e64977a382bd714f4a`, asset `0c27123ea444`: one source/output page, all 14 exact-data checks, manual Word RTL/right alignment, normal download, one saved record and one unsent draft. Recipient/reference placement, duplicated numbering, generic translation names and ambiguous fee-filename wording remained. The original draft and outputs are retained; do not replay the completed translation, save or finalization.

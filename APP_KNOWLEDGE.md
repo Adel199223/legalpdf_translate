@@ -12,6 +12,16 @@ This file is canonical for app-level architecture and status. Source code is fin
 
 ## Current build and status
 
+### Translation review completion — active October 10 work
+
+The [active completion plan](docs/assistant/exec_plans/active/2026-10-10_translation_review_completion.md) owns this scope. Implementation and bounded acceptance are independently reviewed.
+
+New V7 source folios use `numeric_run_ltr_v2`: the whole numeric expression is in one explicit LTR run, the Arabic label retains its RTL run, and no direction wrapper or marks are added. Historical recipes remain verifiable. Semantic section/story ownership tolerates equivalent Word footer renaming and empty continuation-footer serialization while preserving nonempty ownership, section roles, relationships, text and control safeguards.
+
+Versioned visible diagnostics retain historical raw counts separately from actionable findings. V3 source-coverage findings require explicit disposition; they do not automatically insert text or certify completeness. Approved text corrections remain separate immutable revisions with recalculated owned-story counts and independent output review.
+
+The umbrella completion plan remains active through exact final-head hosted checks, canonical application and the fresh same-email Arabic workflow. Current publication state and installed identity belong to private `translation_review_completion_20261010_01/publication_01/publication_receipt.json`; fresh workflow outcomes belong to `live_acceptance_01`. No live or installed success is inferred from fixture acceptance.
+
 ### Gmail layout and delivery follow-up — October 10
 
 The [completed follow-up](docs/assistant/exec_plans/completed/2026-10-10_gmail_layout_and_delivery_followup.md) repairs source-evidenced metadata placement, duplicate generated page numbering and browser/Gmail translation names, and clarifies the honorários filename field. Implementation and qualified acceptance are complete. The user authorized publication, merge after hosted checks and application to the normal app; current lifecycle and installed identity are recorded in the private publication receipt named in [HANDOFF.md](docs/assistant/HANDOFF.md). Delivery naming changes only the download/attachment basename; the verified selected DOCX bytes and immutable revision paths remain authoritative. The current unpacked Edge extension requires Developer mode and user enablement; its genuine canonical handoff has passed.

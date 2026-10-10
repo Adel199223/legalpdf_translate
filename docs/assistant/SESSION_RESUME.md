@@ -8,6 +8,10 @@ This is the roadmap anchor file for `resume master plan`, `where did we leave of
 
 **Dormant roadmap state:** no active roadmap currently open on this worktree. New scoped work uses normal ExecPlan flow. Older stage tokens and completed campaigns do not create new work.
 
+## Translation review completion — active October 10 goal
+
+The [active completion plan](exec_plans/active/2026-10-10_translation_review_completion.md) owns implementation-complete, independently reviewed diagnostics, source findings, text correction and V7 layout. Standard04 and selected Full04 pass. The umbrella completion plan remains active through exact final-head hosted checks, canonical application and the fresh same-email Arabic workflow. Current publication state and installed identity belong to private `translation_review_completion_20261010_01/publication_01/publication_receipt.json`; fresh workflow outcomes belong to `live_acceptance_01`. No live or installed success is inferred from fixture acceptance. Older completed scopes are historical and do not authorize replay of consumed operations.
+
 ## Gmail layout and delivery closeout — 2026-10-10
 
 The [completed follow-up](exec_plans/completed/2026-10-10_gmail_layout_and_delivery_followup.md) closes implementation, independent review, qualified native Arabic acceptance and synthetic visible download/fee-label acceptance. Standard02 passed 250 tests; selected Full01 passed 1,847 executions with nine expected deselections and unchanged pins. The user authorized publication, merge after hosted checks and application to the normal app. Read `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/gmail_structure_followup_20261010_01/publication_01/publication_receipt.json` for the exact final-head CI, merge, installed identity and cleanup. Complete an unfinished authorized lifecycle; do not replay a terminal one or consumed paid/native/Gmail operations. Earlier scopes below are historical.

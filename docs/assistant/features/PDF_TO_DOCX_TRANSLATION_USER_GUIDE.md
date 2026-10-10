@@ -62,6 +62,12 @@ For opt-in structured runs, changing page breaks or other formatting can reuse t
 
 Automatic Word-to-PDF export is not needed for translation DOCX creation. Translations stay in Word. The separate honorarios export retains its editable DOCX and now creates a verified fresh PDF through an isolated Word operation. PDFs/PNGs generated for development layout checks remain internal evidence only.
 
+## Correct wording after translation
+
+In builds containing the October 10 translation-review completion update, use **Correct translated text** to replace, add or remove wording in a completed ordinary translation. Compare with the source, review the before/after changes, approve the corrected copy, then inspect its complete Word layout. **Review text changes saved in Word** can import supported edits from the app's working copy for the same explicit approval. Rebuilding alone does not import Word edits. See the [correction steps](REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md#correct-wording-in-a-completed-translation) and [current installed-build status](../HANDOFF.md).
+
+The chosen revision supplies the final word count, download and Gmail attachment. The original translation and API charges are retained. Source-image findings can help locate possibly missing text, but you must verify them against the source; no findings does not mean the translation is complete.
+
 ## If Warnings Appear Before The Run Starts
 Two warnings matter for OCR-heavy work.
 

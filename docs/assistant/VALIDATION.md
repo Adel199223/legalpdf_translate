@@ -1,5 +1,15 @@
 # Validation guide
 
+## Translation review completion — active October 10 work
+
+Standard04 passes 250 tests in 56.844 seconds with all 1,164 pins unchanged. Selected Full04 passes 1,988 executions, including 191 formatting cases, with nine expected intake deselections; exit 0 in 2110.188 seconds with all 1,164 pins unchanged. Its log SHA-256 is `7bedace7a7771f7b75bb35b3f7081f49f162aec99f768e7c60e58db4edf8a78e`. These selected local checks do not establish exhaustive hosted CI.
+
+Genuine fictional browser correction, Word import/approval, later formatting adoption, exact download and one saved row pass. Word edits used the document API after desktop input failed; manual typing remains unproved. All 12 no-mark before/after native pages pass with six byte-identical image pairs, correct unequal folios and empty spill continuation footers. The production-map-bound actual Word-save qualification preserves 4,218 words and 11 unique mapped paragraph IDs. Earlier failures, interrupted Full01/Full02, Full03's two stale request-schema test failures and fixture-history qualifications remain preserved in the active plan and private evidence.
+
+Standard04 log SHA-256: `cca0318cdae2b987b1bc690dd61c65f9fc32dfe1dc146584ef0c2846f27e062f`. Full04 terminal evidence is private `translation_review_completion_20261010_01/validation_full_04`; its count audit distinguishes selected executions from formatting worker summaries. Known Dart AOT failures remain qualified by successful direct-Dart fallback when recorded.
+
+The umbrella completion plan remains active through exact final-head hosted checks, canonical application and the fresh same-email Arabic workflow. Current publication state and installed identity belong to private `translation_review_completion_20261010_01/publication_01/publication_receipt.json`; fresh workflow outcomes belong to `live_acceptance_01`. No live or installed success is inferred from fixture acceptance.
+
 ## Gmail layout and delivery follow-up — 2026-10-10
 
 The [completed follow-up](exec_plans/completed/2026-10-10_gmail_layout_and_delivery_followup.md) separates pure fictional regressions, retained-response layout reconstruction, native Word inspection and isolated shadow UI acceptance from the completed paid live test. One genuine extension click passed after user enablement on canonical main; private `gmail_structure_followup_20261010_01/extension_01` owns its UI/build evidence. No translation, case save or draft creation was repeated. The final product passes independent review, all 30 affected focused tests and eight additional adversarial probes. Complete native review of the corrected retained one-page Arabic copy passes all 14 exact-data checks, all 34 paragraph texts and actual Word formatting-only adoption after the accepted manual RTL/right-alignment finish. Wrapping/spacing and page-bottom anchoring retain the user's close-fidelity qualification. Visible shadow download/fee-label acceptance passes on a synthetic fixture; it is not another live provider test. All owned temporary shadow/native acceptance runtimes are retired; the unchanged canonical live server remains running.
