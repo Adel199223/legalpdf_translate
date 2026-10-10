@@ -1,5 +1,11 @@
 # Translation review completion and fresh end-to-end acceptance
 
+## Fresh live failure and bounded recovery — October 10
+
+The installed fresh run retained a paid V3 proposal but refused automatic publication because a proposed decorative rule belongs to a column band. Exact provider response, primary baseline and accounting are preserved under private `live_acceptance_01/layout_failure_01`; the strict structural guard is not waived. Optional-hint recovery is under independent design review, with no additional provider trial authorized by this checkpoint. The primary fallback also still removed compatibility mode 15, so new primary output requires an explicit modern settings value while historical removal helpers and candidate verification recipes remain unchanged.
+
+The isolated implementation checkout is `translation-visible-fidelity/legalpdf_translate`, branch `feat/layout-evidence-recovery-20261010`, based exactly on installed main `a18f7494b7b0c9a32b8701540082bbbc6d76e39a`. Root integration is separately in `translation-review-completion/legalpdf_translate`, branch `feat/layout-evidence-integration-20261010`, at the same base. Current work is bounded repair, not final live acceptance or goal completion. No provider/native/Gmail operations are performed by the implementation worker.
+
 ## Goal and non-goals
 Fix every finding retained by the fresh Arabic Gmail retest: readable text beside graphics omitted from output, misleading citation/bidi warnings, missing ordinary text-correction approval, wrapped separator and source-footer placement. Then exercise the whole normal same-email Arabic workflow again. Minor source spacing may differ; content cannot be silently omitted. No mail sending, model-default changes, schema migration, history rewrite or unrelated cleanup.
 

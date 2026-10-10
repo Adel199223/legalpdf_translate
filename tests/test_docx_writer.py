@@ -4,6 +4,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from docx import Document
+from docx.oxml.ns import qn
 import pytest
 
 import legalpdf_translate.docx_writer as docx_writer
@@ -172,7 +173,7 @@ def _assert_all_xml_parts_wellformed(docx_path: Path) -> None:
                 ET.fromstring(data)  # raises on malformed XML
 
 
-def test_generated_docx_has_no_compatibility_mode(tmp_path: Path) -> None:
+def test_generated_docx_has_modern_compatibility_mode(tmp_path: Path) -> None:
     pages_dir = tmp_path / "pages"
     _write_page(pages_dir / "page_0001.txt", "Hello world")
     out = tmp_path / "compat.docx"
@@ -180,7 +181,10 @@ def test_generated_docx_has_no_compatibility_mode(tmp_path: Path) -> None:
     with ZipFile(out) as archive:
         if "word/settings.xml" in archive.namelist():
             settings_xml = archive.read("word/settings.xml").decode("utf-8")
-            assert "compatibilityMode" not in settings_xml
+            settings = ET.fromstring(settings_xml)
+            modes = [node for node in settings.iter(qn("w:compatSetting"))
+                     if node.get(qn("w:name")) == "compatibilityMode"]
+            assert len(modes) == 1 and modes[0].get(qn("w:val")) == "15"
             _assert_ignorable_prefixes_declared(settings_xml)
     _assert_all_xml_parts_wellformed(out)
 
