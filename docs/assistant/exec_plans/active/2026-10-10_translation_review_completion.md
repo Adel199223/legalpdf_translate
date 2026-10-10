@@ -1,3 +1,9 @@
+## October 10 owned-story Save count repair (ongoing)
+
+Live04 completed one normal Save and one unsent draft, but Save refreshed the verified 159-word selected correction through the legacy body-only counter, recording 147 words and EUR 3.97. The 12 source footer words remain in the unchanged selected DOCX. Preserve row 103, draft and all original receipts; this is a counting defect, not missing delivered text or completed acceptance.
+
+Implementation is isolated in `translation-review-completion/legalpdf_translate`, branch `feat/owned-story-save-count-20261010`, from exact installed main `3d9e5ca9e5e3260f72b448a0b76d8658ce2613c4`. Carry only server-verified selected delivery identity/count through ordinary Save and Gmail prospective/staged validation, bind the exact bytes, preserve legacy unowned body counting and all route/payload contracts. Targeted causal tests, independent review and root-owned regression/publication precede installation. No live row, draft or source file is modified by implementation. The umbrella plan remains active.
+
 # Translation review completion and fresh end-to-end acceptance
 
 ## Generated emphasis boundary follow-up — October 10

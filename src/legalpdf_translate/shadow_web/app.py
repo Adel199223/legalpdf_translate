@@ -3138,14 +3138,15 @@ def create_shadow_app(
         if job is None:
             return _validation_error_response(context, target, message="Translation job was not found.", status_code=404)
         try:
+            verified_delivery = None
             if (job.get("status") == "completed" and (job.get("job_kind") == "translate"
                     or job.get("job_kind") == "rebuild" and
                     job.get("result", {}).get("automatic_layout", {}).get("status") == "automatic_unreviewed")):
                 manager = ordinary_layouts.manager_for(request, target.mode, target.workspace_id)
                 state = manager.state(job_id)
                 job = {**job, "ordinary_layout": state}
-                job, _ = delivery_job_snapshot(manager, job)
-            job = refresh_completed_translation_metrics(job)
+                job, verified_delivery = delivery_job_snapshot(manager, job)
+            job = refresh_completed_translation_metrics(job, verified_delivery=verified_delivery)
         except ValueError as exc:
             # Viewing the original job/report remains available if its artifact moved.
             # Mutations independently require a successful read of the current DOCX.
@@ -3368,8 +3369,9 @@ def create_shadow_app(
                         ),
                     )
         try:
+            verified_delivery = None
             if job is not None:
-                job, _ = delivery_job_snapshot(ordinary_layouts.manager_for(request, target.mode, target.workspace_id), job,
+                job, verified_delivery = delivery_job_snapshot(ordinary_layouts.manager_for(request, target.mode, target.workspace_id), job,
                     mutation=True, baseline_id=payload.get("baseline_id"),
                     expected_delivery_generation=payload.get("expected_delivery_generation"))
             word_count_docx = translation_job_docx_path(job) if job is not None else None
@@ -3380,6 +3382,7 @@ def create_shadow_app(
                 seed_payload=job["result"]["save_seed"] if job is not None else payload.get("seed_payload"),
                 row_id=row_id,
                 word_count_docx=word_count_docx,
+                verified_delivery=verified_delivery,
                 owned_run_id=job["result"]["save_seed"].get("run_id") if job is not None else None,
             )
         except ValueError as exc:

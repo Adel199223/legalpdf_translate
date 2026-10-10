@@ -863,8 +863,20 @@ def list_translation_history(*, db_path: Path, limit: int = 100) -> list[dict[st
     return items
 
 
-def reviewed_translation_word_count(docx_path: Path) -> int:
+def reviewed_translation_word_count(docx_path: Path, *, verified_delivery=None) -> int:
     """Read the durable review artifact, never fall back to pre-review page text."""
+    if verified_delivery is not None:
+        try:
+            selected_sha = hashlib.sha256(docx_path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise ValueError("The reviewed translation DOCX could not be read. Save and close it, then try again.") from exc
+        from .ordinary_layout_contracts import DeliveryArtifact
+        if (type(verified_delivery) is not DeliveryArtifact
+                or verified_delivery.kind not in {"automatic_unreviewed", "automatic_unreviewed_edited", "text_corrected", "reviewed", "original"}
+                or type(verified_delivery.word_count) is not int or verified_delivery.word_count <= 0
+                or selected_sha != verified_delivery.sha256):
+            raise ValueError("The verified selected delivery count no longer matches these DOCX bytes.")
+        return verified_delivery.word_count
     try:
         word_count = count_words_from_docx(docx_path)
     except (OSError, BadZipFile, ValueError) as exc:
@@ -909,7 +921,7 @@ def translation_job_docx_path(job: Mapping[str, Any]) -> Path:
     return Path(str(path)).expanduser().resolve()
 
 
-def refresh_completed_translation_metrics(job: Mapping[str, Any]) -> dict[str, Any]:
+def refresh_completed_translation_metrics(job: Mapping[str, Any], *, verified_delivery=None) -> dict[str, Any]:
     """Refresh a response snapshot without rewriting the original completion seed."""
     refreshed = deepcopy(dict(job))
     if job.get("status") != "completed" or job.get("job_kind") != "translate":
@@ -917,7 +929,7 @@ def refresh_completed_translation_metrics(job: Mapping[str, Any]) -> dict[str, A
     seed = refreshed.get("result", {}).get("save_seed")
     if not isinstance(seed, dict):
         return refreshed
-    seed["word_count"] = reviewed_translation_word_count(translation_job_docx_path(job))
+    seed["word_count"] = reviewed_translation_word_count(translation_job_docx_path(job), verified_delivery=verified_delivery)
     seed["expected_total"] = translation_fee_eur(seed["word_count"], seed.get("rate_per_word", 0))
     seed["profit"] = None
     return refreshed
@@ -939,6 +951,7 @@ def validate_translation_row(
     *, job_log_db_path: Path, form_values: Mapping[str, Any],
     seed_payload: Mapping[str, Any] | None = None, row_id: int | None = None,
     word_count_docx: Path | None = None, owned_run_id: str | None = None,
+    verified_delivery=None,
 ) -> tuple[JobLogSeed, dict[str, Any]]:
     """Validate prospective save values without changing a DB, settings or files."""
     seed = _hydrate_translation_seed_payload(seed_payload)
@@ -950,8 +963,12 @@ def validate_translation_row(
         use_service_location_in_honorarios_checked=False,
         include_transport_sentence_in_honorarios_checked=True,
     )
+    from .ordinary_layout_contracts import DeliveryArtifact
+    if verified_delivery is not None and (type(verified_delivery) is not DeliveryArtifact or verified_delivery.run_id != seed.run_id
+            or verified_delivery.target_lang != seed.target_lang or word_count_docx is None):
+        raise ValueError("The verified delivery does not belong to this translation seed.")
     if word_count_docx is not None:
-        _refresh_saved_word_count(payload, reviewed_translation_word_count(word_count_docx), seed=seed,
+        _refresh_saved_word_count(payload, reviewed_translation_word_count(word_count_docx, verified_delivery=verified_delivery), seed=seed,
                                  total_mode=raw_values["expected_total_mode"])
 
     if row_id is not None and owned_run_id is not None:
@@ -981,9 +998,10 @@ def save_translation_row(
     row_id: int | None = None,
     word_count_docx: Path | None = None,
     owned_run_id: str | None = None,
+    verified_delivery=None,
 ) -> dict[str, Any]:
     seed, payload = validate_translation_row(job_log_db_path=job_log_db_path, form_values=form_values,
-        seed_payload=seed_payload, row_id=row_id, word_count_docx=word_count_docx, owned_run_id=owned_run_id)
+        seed_payload=seed_payload, row_id=row_id, word_count_docx=word_count_docx, owned_run_id=owned_run_id, verified_delivery=verified_delivery)
 
     with closing(open_job_log(job_log_db_path)) as conn:
         if row_id is not None:

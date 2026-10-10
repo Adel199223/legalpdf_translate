@@ -2145,7 +2145,7 @@ class GmailBrowserSessionManager:
         validated_form = owned_form_values(job, form_values)
         _, prospective = validate_translation_row(job_log_db_path=job_log_db_path, form_values=validated_form,
             seed_payload=save_seed, row_id=row_id, word_count_docx=translated_docx_path,
-            owned_run_id=save_seed.get("run_id"))
+            owned_run_id=save_seed.get("run_id"), verified_delivery=delivery)
         prospective_signature = gmail_batch_consistency_signature(
             case_number=_clean_text(prospective.get("case_number")), case_entity=_clean_text(prospective.get("case_entity")),
             case_city=_clean_text(prospective.get("case_city")), court_email=_clean_text(prospective.get("court_email")))
@@ -2154,7 +2154,8 @@ class GmailBrowserSessionManager:
         if delivery is not None:
             locked = ordinary_layout_manager.resolve_delivery(job_id, expected_delivery_generation, freeze_nonce,
                 require_settled=True)
-            if locked.sha256 != delivery_hash:
+            if (locked.sha256 != delivery_hash or locked.word_count != delivery.word_count
+                    or locked.selection_id != delivery.selection_id or locked.generation != delivery.generation):
                 raise ValueError("ordinary_layout_delivery_changed")
             delivery = locked
         staged_docx = stage_gmail_batch_translated_docx(session=session, translated_docx_path=translated_docx_path,
@@ -2169,6 +2170,7 @@ class GmailBrowserSessionManager:
             seed_payload=save_seed,
             row_id=row_id,
             word_count_docx=staged_docx,
+            verified_delivery=delivery,
             owned_run_id=save_seed.get("run_id"),
         )
         saved_result = dict(save_response.get("saved_result", {}))
