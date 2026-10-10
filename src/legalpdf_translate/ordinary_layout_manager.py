@@ -11,8 +11,8 @@ from typing import Callable
 from . import saved_docx_layout_service as storage
 from .openai_client import OpenAIResponsesClient
 from .ordinary_layout_contracts import (LayoutSuggestionPolicy, OrdinaryLayoutJob, OrdinaryLayoutError,
-    MAX_RESPONSE_BYTES, PROPOSAL_VERSION_V2, decode, digest, encode, fail, generation, identifier,
-    job_identity, nonce, normalize_proposals, page_ids, proposal_schema)
+    MAX_RESPONSE_BYTES, PROPOSAL_VERSION_V3, decode, digest, encode, fail, generation, identifier,
+    job_identity, nonce, normalize_proposals, page_ids, proposal_schema, proposal_source_evidence)
 from .ordinary_layout_service import OrdinaryLayoutService, _directories, _read, _write, public
 from .saved_docx_layout import inspect_docx
 from .usage_accounting import DispatchAccounting, accounting_context, _ceiling_for
@@ -53,6 +53,22 @@ paragraph, in their current order, starting at the next source-supported paragra
 Never rewrite text, supply numeric offsets, split inside a word or protected Latin token,
 partition a heading/list/column/panel or a paragraph containing fields, tabs or breaks,
 or change original IDs, choices or bands. Source association remains the parent's coarse region."""
+INSTRUCTIONS_V2 = INSTRUCTIONS
+INSTRUCTIONS += """
+SOURCE COVERAGE REVIEW: Inspect every source-image region for readable text absent from the
+supplied target paragraphs, including isolated initials/markers adjacent to graphics. Do not
+infer barcode payloads or add text to paragraphs. Report each distinct visible missing occurrence
+in source_coverage_findings with its short exact visible literal, source bbox and nearby owned
+paragraph insertion context. A character inside a longer identifier does not account for a
+separate isolated marker. Preserve repeated occurrence proposals; do not deduplicate by substring.
+An empty checklist is only your visual assessment, never proof of complete source transcription.
+SOURCE LAYOUT EVIDENCE: Use decorative_rule only for a complete repeated line-glyph paragraph
+that visibly represents a rule, never a signature/fill-in blank or meaningful prose. Use
+source_footer only for the complete terminal source-page footer/folio at the bottom. Preserve
+all supplied paragraph IDs/text/decisions; these evidence arrays do not authorize text insertion.
+If uncertain leave evidence empty and preserve flow for explicit operator source comparison.
+"""
+
 
 JobResolver = Callable[[str], OrdinaryLayoutJob]
 ProviderFactory = Callable[[OrdinaryLayoutJob, LayoutSuggestionPolicy], OpenAIResponsesClient]
@@ -173,6 +189,7 @@ class OrdinaryLayoutManager:
             page_numbers, policy.public(), expected_baseline_id=expected_baseline_id)
         if not fresh:
             return self.service.suggestion(job_id, operation_nonce)
+        _write(operation / "proposal_initial_view.json", {"review_id": view["review_id"], "generation": expected_generation, "view": view})
         accountant = None
         proposals = []
         result = {"operation_nonce": operation_nonce, "baseline_id": expected_baseline_id,
@@ -215,7 +232,7 @@ class OrdinaryLayoutManager:
                 ids = ids_by_page[page]
                 rows = [r for r in view["paragraphs"] if r["id"] in ids]
                 image = self.service.saved.image(view["review_id"], page)
-                prompt = encode({"version": PROPOSAL_VERSION_V2, "page_number": page, "target_lang": job.target_lang,
+                prompt = encode({"version": PROPOSAL_VERSION_V3, "page_number": page, "target_lang": job.target_lang,
                                  "paragraphs": rows}).decode("utf-8")
                 if external_cancel_requested and external_cancel_requested(job_id):
                     self.service.cancel_suggestion(job_id, operation_nonce, expected_generation,
@@ -246,6 +263,12 @@ class OrdinaryLayoutManager:
                 fail("delivery_frozen", 409)
             if proposals:
                 decisions = normalize_proposals(inspect_docx(job.reviewed_docx, job.target_lang), view, proposals)
+                source_evidence = [proposal_source_evidence(inspect_docx(job.reviewed_docx, job.target_lang), view, p) for p in proposals]
+                for item, proposal in zip(source_evidence, proposals):
+                    item["response_sha256"] = digest(storage._read(operation / f"page-{proposal['page_number']:04d}.response.json", MAX_RESPONSE_BYTES))
+                _write(operation / "source_evidence.json", {"version": "ordinary_source_evidence_v1", "pages": source_evidence})
+                result["source_coverage_findings"] = [f for page in source_evidence for f in page["findings"]]
+                result["source_layout_evidence_sha256"] = digest(encode(source_evidence))
                 _write(operation / "proposed_decisions.json", decisions)
                 saved = self.service.apply_suggestion(job_id, operation_nonce, expected_generation, decisions,
                     baseline_id=expected_baseline_id)

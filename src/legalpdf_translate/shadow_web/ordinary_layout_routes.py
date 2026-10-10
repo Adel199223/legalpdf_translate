@@ -5,7 +5,7 @@ import asyncio
 import re
 
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from ..ordinary_layout_contracts import decode, fail
@@ -60,6 +60,15 @@ class OrdinaryLayoutRoutes:
             ("/layout/suggestions/{operation_nonce}/cancel", "POST", self.cancel_suggestion),
             ("/layout/output-review", "POST", self.accept_output),
             ("/delivery", "GET", self.delivery), ("/delivery", "POST", self.select_delivery),
+            ("/text-corrections", "GET", self.text_state),
+            ("/text-corrections", "POST", self.text_draft),
+            ("/text-corrections/{draft_id}/approve", "POST", self.text_approve),
+            ("/text-corrections/{draft_id}/cancel", "POST", self.text_cancel),
+            ("/text-corrections/output-review", "POST", self.text_output_review),
+            ("/text-corrections/source/{page_number}", "GET", self.text_source),
+            ("/text-corrections/findings/{finding_id}", "POST", self.text_finding),
+            ("/text-corrections/word/open", "POST", self.text_word_open),
+            ("/text-corrections/word/check", "POST", self.text_word_check),
         ):
             app.add_api_route(PREFIX + suffix, endpoint, methods=[method])
 
@@ -117,3 +126,58 @@ class OrdinaryLayoutRoutes:
             d["keep_ordinary_confirmed"], expected_baseline_id=d["baseline_id"]),
             {"expected_delivery_generation", "selection_nonce", "kind", "review_id", "artifact_id",
              "expected_review_generation", "keep_ordinary_confirmed", "baseline_id"})
+
+    def correction_job(self, manager, job_id):
+        job = manager._job(job_id)
+        if manager.service.state(job_id)["status"] == "unprepared":
+            from uuid import uuid4
+            manager.service.prepare(job, uuid4().hex)
+        manager.service.assert_current(job)
+        return job
+
+    async def text_state(self, request: Request, job_id: str):
+        return await self._call(request, job_id, lambda m, _: m.service.text_correction_state(self.correction_job(m, job_id)))
+
+    async def text_draft(self, request: Request, job_id: str):
+        return await self._call(request, job_id, lambda m, d: m.service.draft_text_correction(
+            self.correction_job(m, job_id), d["draft_nonce"], d["parent"], d["actions"], import_word=d["import_word"]),
+            {"draft_nonce", "parent", "actions", "import_word"})
+
+    async def text_approve(self, request: Request, job_id: str, draft_id: str):
+        return await self._call(request, job_id, lambda m, d: m.service.approve_text_correction(
+            self.correction_job(m, job_id), draft_id, d["approval_nonce"], d["source_compared"],
+            d["changes_reviewed"], d["rationale"]), {"approval_nonce", "source_compared", "changes_reviewed", "rationale"})
+
+    async def text_cancel(self, request: Request, job_id: str, draft_id: str):
+        return await self._call(request, job_id, lambda m, _: m.service.cancel_text_correction(
+            self.correction_job(m, job_id), draft_id), set())
+
+    async def text_source(self, request: Request, job_id: str, page_number: int):
+        try:
+            manager = self.manager(request)
+            self.correction_job(manager, job_id)
+            view = manager.service.state(job_id)
+            if page_number not in view["selected_pages"]:
+                fail("correction_source_page_required")
+            raw = await run_in_threadpool(manager.service.saved.image, view["review"]["review_id"], page_number)
+            return Response(raw, media_type="image/png", headers=HEADERS)
+        except Exception as exc:
+            return error_response(exc)
+
+    async def text_output_review(self, request: Request, job_id: str):
+        return await self._call(request, job_id, lambda m, d: m.service.review_text_output(
+            self.correction_job(m, job_id), d["selection_id"], d["expected_generation"], d["all_pages_reviewed"]),
+            {"selection_id", "expected_generation", "all_pages_reviewed"})
+
+    async def text_finding(self, request: Request, job_id: str, finding_id: str):
+        return await self._call(request, job_id, lambda m, d: m.service.review_source_finding(
+            self.correction_job(m, job_id), finding_id, d["parent"], d["disposition"], d["source_compared"]),
+            {"parent", "disposition", "source_compared"})
+
+    async def text_word_open(self, request: Request, job_id: str):
+        return await self._call(request, job_id, lambda m, d: m.service.open_text_correction_word(
+            self.correction_job(m, job_id), d["parent"]), {"parent"})
+
+    async def text_word_check(self, request: Request, job_id: str):
+        return await self._call(request, job_id, lambda m, d: m.service.check_text_correction_word(
+            self.correction_job(m, job_id), d["parent"]), {"parent"})

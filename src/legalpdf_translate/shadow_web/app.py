@@ -28,7 +28,7 @@ from legalpdf_translate.shadow_web.formatting_review_api import DisabledFormatti
 from legalpdf_translate.saved_docx_layout_service import SavedDocxLayoutService
 from legalpdf_translate.shadow_web.saved_docx_layout_api import SavedDocxLayoutRoutes, default_saved_docx_layout_root
 from legalpdf_translate.shadow_web.ordinary_layout_routes import OrdinaryLayoutRoutes
-from legalpdf_translate.ordinary_layout_integration import BrowserOrdinaryLayouts, delivery_job_snapshot, open_layout_artifact, owned_form_values
+from legalpdf_translate.ordinary_layout_integration import BrowserOrdinaryLayouts, delivery_job_snapshot, open_layout_artifact, owned_form_values, arabic_review_job
 from legalpdf_translate.browser_gmail_bridge import BrowserLiveBridgeSyncResult, BrowserLiveGmailBridgeManager
 from legalpdf_translate.browser_pdf_bundle import (
     browser_pdf_bundle_manifest_path,
@@ -954,6 +954,8 @@ def _validation_error_response(
 ) -> JSONResponse:
     normalized_payload: dict[str, Any] = {}
     diagnostics: dict[str, Any] = {"error": message}
+    if message == "ordinary_layout_edited_layout_rebase_required":
+        diagnostics["message"] = "Word text changes are preserved. Open Correct translated text, then Review text changes saved in Word to compare and approve them."
     if validation_error:
         normalized_payload["validation_error"] = dict(validation_error)
         diagnostics["validation_error"] = dict(validation_error)
@@ -1547,6 +1549,11 @@ def create_shadow_app(
     app.state.saved_docx_layout_routes = SavedDocxLayoutRoutes(app, context_for=_context)
     ordinary_layouts = BrowserOrdinaryLayouts(context_for=_context)
     app.state.ordinary_layouts = ordinary_layouts
+
+    def current_review_job(request, target, job):
+        if job is None:
+            return None
+        return arabic_review_job(ordinary_layouts.manager_for(request, target.mode, target.workspace_id), job)
     app.state.ordinary_layout_routes = OrdinaryLayoutRoutes(app, manager_for=ordinary_layouts.manager_for)
     if isinstance(translation_jobs, TranslationJobManager):
         def _run_automatic_ordinary_layout(job_id: str, policy: str):
@@ -2896,7 +2903,7 @@ def create_shadow_app(
                     context.arabic_reviews.require_resolved(
                         runtime_mode=target.mode,
                         workspace_id=target.workspace_id,
-                        job=job,
+                        job=current_review_job(request, target, job),
                         completion_key=completion_key,
                     )
                 except ValueError as exc:
@@ -2907,7 +2914,7 @@ def create_shadow_app(
                         validation_error=_arabic_review_validation_payload(
                             context,
                             target,
-                            job=job,
+                            job=current_review_job(request, target, job),
                             completion_key=completion_key,
                         ),
                     )
@@ -3290,7 +3297,7 @@ def create_shadow_app(
                 job = _owned_translation_job(context, target, job_id)
                 if job_requires_arabic_review(job):
                     review = context.arabic_reviews.state_for_workspace(
-                        runtime_mode=target.mode, workspace_id=target.workspace_id, job=job)
+                        runtime_mode=target.mode, workspace_id=target.workspace_id, job=current_review_job(request, target, job))
                     manager = ordinary_layouts.manager_for(request, target.mode, target.workspace_id)
                     if (review.get("resolved")
                             and job.get("result", {}).get("automatic_layout", {}).get("status") == "automatic_unreviewed"
@@ -3340,7 +3347,7 @@ def create_shadow_app(
                     context.arabic_reviews.require_resolved(
                         runtime_mode=target.mode,
                         workspace_id=target.workspace_id,
-                        job=job,
+                        job=current_review_job(request, target, job),
                         completion_key=completion_key,
                     )
                     if job.get("result", {}).get("automatic_layout", {}).get("status") == "automatic_unreviewed":
@@ -3353,7 +3360,7 @@ def create_shadow_app(
                         validation_error=_arabic_review_validation_payload(
                             context,
                             target,
-                            job=job,
+                            job=current_review_job(request, target, job),
                             completion_key=completion_key,
                         ),
                     )
@@ -3392,7 +3399,7 @@ def create_shadow_app(
             payload = context.arabic_reviews.state_for_workspace(
                 runtime_mode=target.mode,
                 workspace_id=target.workspace_id,
-                job=job,
+                job=current_review_job(request, target, job),
                 completion_key=completion_key,
             )
             if (job is not None and payload.get("resolved")
@@ -3430,7 +3437,7 @@ def create_shadow_app(
             arabic_review, diagnostics = context.arabic_reviews.open_review(
                 runtime_mode=target.mode,
                 workspace_id=target.workspace_id,
-                job=job,
+                job=current_review_job(request, target, job),
                 completion_key=completion_key,
             )
         except ValueError as exc:
@@ -3463,7 +3470,7 @@ def create_shadow_app(
             arabic_review, diagnostics = context.arabic_reviews.align_right_and_save(
                 runtime_mode=target.mode,
                 workspace_id=target.workspace_id,
-                job=job,
+                job=current_review_job(request, target, job),
                 completion_key=completion_key,
             )
             if (arabic_review.get("resolved")
@@ -3502,7 +3509,7 @@ def create_shadow_app(
             arabic_review = context.arabic_reviews.continue_review(
                 runtime_mode=target.mode,
                 workspace_id=target.workspace_id,
-                job=job,
+                job=current_review_job(request, target, job),
                 continuation=str(payload.get("continuation", "") or "").strip(),
                 completion_key=completion_key,
             )

@@ -112,6 +112,7 @@ function makeElement(id = "", initial = {}) {
   const listeners = new Map();
   const element = {
     id,
+    ownerDocument: globalThis.document,
     tagName: (initial.tagName || tagNameForId(id)).toUpperCase(),
     value: initial.value || "",
     textContent: initial.textContent || "",
@@ -235,6 +236,8 @@ function installEnvironment(url) {
       }
     },
   };
+
+  globalThis.document.body.ownerDocument = globalThis.document;
 
   globalThis.window = {
     LEGALPDF_BROWSER_BOOTSTRAP: {

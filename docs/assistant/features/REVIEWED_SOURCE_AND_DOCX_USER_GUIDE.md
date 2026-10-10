@@ -8,6 +8,21 @@ Use this optional workflow to check the source text before translation, then arr
 
 In builds containing the October 9 ordinary update, a fresh translation may already show an **Automatic formatted copy (unreviewed)**. That server-owned copy is separate from this guide's explicit source-layout review and manually built derivative. Its normal download has no claim that a person checked source regions. **Source layout and delivery** remains the place to inspect and correct associations, then explicitly choose a reviewed copy or the retained original. Arabic Word direction/alignment finishing can adopt a formatting-only revision without approving source geometry.
 
+## Correct wording in a completed translation
+
+Builds containing the October 10 translation-review completion update add **Correct translated text** to the completed translation. Check [HANDOFF](../HANDOFF.md) for the installed build and validation status.
+
+1. Open **Correct translated text** and compare the selected paragraph with the original source page. Replace its text, add a missing paragraph or remove an unwanted paragraph. Enter ordinary text, preserving names, references, dates and other exact data. Drag over the source image to identify the relevant passage, or retain the whole-page reference. Choose **Add change to review** for each change.
+2. Choose **Review these changes** and check the before/after comparison and source association. **Approve changes** creates a separate corrected revision. **Cancel this correction** leaves the current delivery selection unchanged. An explanation is optional and stays outside the Word document.
+3. Choose **Open corrected document in Word** and inspect every page. Arabic direction/alignment finishing can follow the usual Word procedure. Save and close the file, then choose **I saved the Word file** to accept formatting changes. If you changed wording, use **Review text changes saved in Word** and approve the displayed differences. Use **Confirm output review** after checking the complete corrected document, before saving or confirming the Gmail attachment.
+4. Download and save normally. The selected corrected document supplies the word count and delivery bytes; the original translation and its API costs remain preserved.
+
+If you already corrected the app's working copy in Word, save and close it, then use **Review text changes saved in Word**. The app shows supported text changes for explicit approval. Formatting-only adoption does not silently approve changed wording. Unsupported structural changes must be handled separately; a pending correction does not replace a previously confirmed Gmail attachment.
+
+Possible missing-text findings from a source image are review suggestions. **Show source detail** highlights the proposed location; **Propose correction** prepares an edit for your review. Choose **Reviewed — no change needed** only after comparing the source, or **Correction reviewed for this detail** after checking an approved correction. An empty list does not prove that all source text was translated. Keep readable text beside stamps, barcodes and other graphics when present, without recreating those graphics or inventing their contents.
+
+The source-supported layout update can replace a decorative underscore separator with a Word rule and place identified source footer text at the bottom of its source section's first output page. Extra continuation pages do not repeat that source folio. This preserves source numbering when a translation needs more space; inspect the final pagination and footer direction in Word. Source footer words remain included in the selected document's word count.
+
 ## Review a completed translation's layout
 
 Builds containing the future-translation update add **Source layout and delivery** to a completed ordinary translation, including Gmail work. Check [HANDOFF](../HANDOFF.md) for the applied build.

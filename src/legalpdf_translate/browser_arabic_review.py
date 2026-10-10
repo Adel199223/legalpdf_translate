@@ -82,7 +82,7 @@ def _resolve_review_target(job: Mapping[str, Any]) -> tuple[str, Path]:
     automatic = result.get("automatic_layout")
     review_copy = (automatic.get("review_copy_path")
         if isinstance(automatic, Mapping) and automatic.get("status") == "automatic_unreviewed" else None)
-    output_docx_text = _clean_text(review_copy or save_seed.get("output_docx"))
+    output_docx_text = _clean_text(job.get("correction_review_copy") or review_copy or save_seed.get("output_docx"))
     if not output_docx_text:
         raise ValueError("Arabic DOCX review requires the durable translated DOCX from save_seed.output_docx.")
     docx_path = Path(output_docx_text).expanduser().resolve()
@@ -163,7 +163,7 @@ class ArabicDocxReviewManager:
         key = self._session_key(runtime_mode, workspace_id, resolved_completion_key)
         with self._lock:
             existing = self._sessions.get(key)
-            if existing is not None:
+            if existing is not None and existing.docx_path == docx_path:
                 existing.job_id = job_id
                 existing.docx_path = docx_path
                 self._refresh_session_locked(existing)

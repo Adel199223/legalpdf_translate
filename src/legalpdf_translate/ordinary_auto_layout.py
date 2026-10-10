@@ -23,13 +23,14 @@ _POLICY_RE = re.compile(r"source_image_unreviewed_v1:([a-f0-9]{64})\Z")
 def frozen_automatic_layout_policy() -> str:
     """Freeze local price, request and validation versions before translation."""
     from .ordinary_layout_accounting import layout_accounting_policy
-    from .ordinary_layout_contracts import PROPOSAL_VERSION_V2
+    from .ordinary_layout_contracts import PROPOSAL_VERSION_V3
     from .ordinary_layout_manager import INSTRUCTIONS
 
     accounting = layout_accounting_policy()
     identity = {"version": ORDINARY_AUTO_LAYOUT_POLICY,
-        "proposal_version": PROPOSAL_VERSION_V2,
-        "automatic_writer_version": "saved_docx_layout_writer_ordinary_presentation_v6",
+        "proposal_version": PROPOSAL_VERSION_V3,
+        "automatic_writer_version": "saved_docx_layout_writer_source_layout_v7",
+        "source_folio_direction_version": "numeric_run_ltr_v2",
         "instructions_sha256": hashlib.sha256(INSTRUCTIONS.encode("utf-8")).hexdigest(),
         "pricing_catalog": json.loads(accounting._pricing_json),
         "dispatch_limits": json.loads(accounting._limits_json)}
@@ -336,7 +337,7 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
     from .ordinary_layout_contracts import decode
     image_hashes = {page: hashlib.sha256(manager.service.saved.image(review_id, page)).hexdigest()
                     for page in selected_pages}
-    pages, response_versions = [], set()
+    pages, response_versions, source_evidence = [], set(), []
     with manager.service.scope(job_id) as folder:
         operation = folder / "baselines" / baseline_id / "suggestions" / operation_nonce
         _verified_retained_pages(operation, retained_pages or {})
@@ -352,7 +353,16 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
             retained_path = operation / f"page-{page:04d}.retained.json"
             if retained_path.exists():
                 row["retained_origin"] = verified_record(retained_path)
-            response_version = decode(response).get("version")
+            proposal = decode(response)
+            response_version = proposal.get("version")
+            if response_version == "ordinary_layout_proposal_v3":
+                # The signed sidecar was validated against the immutable initial
+                # generation, before uncertain proposed regions were applied.
+                sidecar = verified_record(operation / "source_evidence.json")
+                records = [item for item in sidecar["pages"] if item.get("page_number") == page]
+                if len(records) != 1 or records[0].get("response_sha256") != row["response_sha256"]:
+                    fail("source_evidence_response_changed", 409)
+                source_evidence.append(records[0])
             if response_version != "ordinary_layout_proposal_v1":
                 row["proposal_schema_version"] = response_version
             response_versions.add(response_version)
@@ -363,7 +373,8 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
         "operation_nonce": operation_nonce, "intent_sha256": hashlib.sha256(intent).hexdigest(),
         "accounting_summary_sha256": hashlib.sha256(summary).hexdigest(),
         "requested_model": request_policy["model"], "effort": request_policy["effort"],
-        "proposal_schema_version": schema_version, "pages": pages}
+        "proposal_schema_version": schema_version, "pages": pages,
+        **({"source_evidence": {"version": "ordinary_source_evidence_v1", "pages": source_evidence}} if source_evidence else {})}
 
 
 def _recover_settled_result(manager, pointer: dict, selected_pages: list[int]) -> None:
@@ -413,9 +424,38 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int]) -
     if (current["baseline_id"] != baseline_id or current["review"]["review_id"] != pointer["review_id"]
             or current["generation"] not in {initial, initial + 1}):
         fail("automatic_generation_changed", 409)
+    source_result_fields = {}
+    with manager.service.scope(origin) as folder:
+        sidecar_path = folder / "baselines" / baseline_id / "suggestions" / operation_nonce / "source_evidence.json"
+        if sidecar_path.exists():
+            records = verified_record(sidecar_path)["pages"]
+            source_result_fields = {"source_coverage_findings": [f for page in records for f in page["findings"]],
+                "source_layout_evidence_sha256": hashlib.sha256(encode(records)).hexdigest()}
+    evidence_view = current["review"]
+    if any(p.get("version") == "ordinary_layout_proposal_v3" for p in proposals):
+        with manager.service.scope(origin) as folder:
+            operation = folder / "baselines" / baseline_id / "suggestions" / operation_nonce
+            initial_path = operation / "proposal_initial_view.json"
+            if not initial_path.exists():
+                fail("source_evidence_initial_view_missing", 409)
+            initial_record = verified_record(initial_path)
+            if initial_record.get("review_id") != pointer["review_id"] or initial_record.get("generation") != initial:
+                fail("source_evidence_initial_view_changed", 409)
+            evidence_view = initial_record["view"]
+            from .ordinary_layout_contracts import proposal_source_evidence
+            source_records = [proposal_source_evidence(inspect_docx(reviewed, evidence_view["target_lang"]), evidence_view, p) for p in proposals]
+            for record, proposal in zip(source_records, proposals):
+                record["response_sha256"] = hashlib.sha256(storage._read(operation / f"page-{proposal['page_number']:04d}.response.json", 2 * 1024 * 1024)).hexdigest()
+            expected_sidecar = {"version": "ordinary_source_evidence_v1", "pages": source_records}
+            sidecar = operation / "source_evidence.json"
+            if sidecar.exists() and verified_record(sidecar) != expected_sidecar:
+                fail("source_evidence_response_changed", 409)
+            if not sidecar.exists(): verified_write(sidecar, expected_sidecar)
+            source_result_fields = {"source_coverage_findings": [f for page in source_records for f in page["findings"]],
+                "source_layout_evidence_sha256": hashlib.sha256(encode(source_records)).hexdigest()}
     try:
         decisions = normalize_proposals(inspect_docx(reviewed, current["review"]["target_lang"]),
-            current["review"], proposals)
+            evidence_view, proposals)
     except (OrdinaryLayoutError, ValueError):
         return
     if stored_decisions is not None and stored_decisions != decisions:
@@ -439,6 +479,7 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int]) -
         "accounting": {"cost_usd": summary.get("cost_usd"),
             "known_cost_usd": summary.get("known_cost_usd"),
             "unknown_cost_count": summary.get("unknown_cost_count"), "complete": True}}
+    result.update(source_result_fields)
     manager.service.finish_suggestion(origin, operation_nonce, result, baseline_id=baseline_id)
 
 

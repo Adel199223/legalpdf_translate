@@ -166,8 +166,9 @@ export function deriveTranslationRunStatusView(job = null, options = {}) {
     imageRetryParts.unshift(`Retry on page ${realPage}`);
   }
   const alertParts = [];
+  if(result.selected_text_review)alertParts.push(result.selected_text_review.output_review_required?"Corrected output review pending":"Corrected output reviewed");
   if (flaggedCount > 0) {
-    alertParts.push(`Flagged ${flaggedCount}`);
+    alertParts.push(`${result.selected_text_review?"Original-run flags":"Flagged"} ${flaggedCount}`);
   }
   if (errorCount > 0) {
     alertParts.push(`Errors ${errorCount}`);

@@ -370,7 +370,8 @@ def test_quality_checks_section_renders(tmp_path: Path) -> None:
     md = build_run_report_markdown(run_dir=run_dir, admin_mode=True, include_sanitized_snippets=False)
 
     assert "### D. Translation Quality Checks" in md
-    assert "Citation Marker Δ counts legal-reference marker drift" in md
+    assert "Versioned rows use visible actionable citation evidence for warning selection." in md
+    assert "Citation Marker Δ and Paren Δ remain historical/advisory counts, not independently proven defects." in md
     assert "| Page | Lang OK | Detected | Numeric Δ | Citation Marker Δ | Paren Δ |" in md
     assert "| 1 | yes | EN | 2 | 3 | 9 |" in md
     assert "#### Numeric Mismatch Samples" in md

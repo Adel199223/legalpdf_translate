@@ -588,6 +588,15 @@ def validate_built_docx(docx_bytes: bytes, source_map: dict, *, original_docx: b
                         snapshot: dict, pages: list, decisions: dict,
                         require_review: bool = True, ordinary_context: dict | None = None) -> None:
     """Reparse independently, check ownership/content, then exact approved scaffold."""
+    if source_map.get("writer_version") == "saved_docx_layout_writer_source_layout_v7":
+        if require_review or ordinary_context is None or "source_evidence" not in ordinary_context:
+            model._fail("ordinary_writer_context_required")
+        from .ordinary_source_layout import verify
+        base_context = {k:v for k,v in ordinary_context.items() if k != "source_evidence"}
+        base = build_unreviewed_docx(original_docx,snapshot,pages,decisions,ordinary_context=base_context)
+        verify(SavedDocxLayoutArtifact(docx_bytes,source_map),base,snapshot,pages,decisions,base_context,ordinary_context["source_evidence"])
+        return
+
     actual_snapshot = model.inspect_docx(original_docx, snapshot["target_lang"])
     if actual_snapshot != snapshot:
         model._fail("snapshot_identity_mismatch")
@@ -776,6 +785,14 @@ def build_docx(docx_bytes: bytes, snapshot: dict, pages: list, decisions: dict) 
 def build_unreviewed_docx(docx_bytes: bytes, snapshot: dict, pages: list,
                           decisions: dict, *, ordinary_context: dict | None = None) -> SavedDocxLayoutArtifact:
     """Build the same editable layout with explicit unreviewed provenance."""
+    if ordinary_context is not None and "source_evidence" in ordinary_context:
+        from .ordinary_source_layout import transform,verify
+        base_context = {k:v for k,v in ordinary_context.items() if k != "source_evidence"}
+        base = build_unreviewed_docx(docx_bytes,snapshot,pages,decisions,ordinary_context=base_context)
+        artifact = transform(base,snapshot,pages,decisions,base_context,ordinary_context["source_evidence"])
+        verify(artifact,base,snapshot,pages,decisions,base_context,ordinary_context["source_evidence"])
+        return artifact
+
     try:
         if model.inspect_docx(docx_bytes, snapshot["target_lang"]) != snapshot:
             model._fail("snapshot_identity_mismatch")

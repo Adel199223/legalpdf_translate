@@ -17,6 +17,7 @@ from .ordinary_layout_contracts import (VERSION, OrdinaryLayoutError, DeliveryAr
     encode, fail, generation, identifier, job_identity, nonce, validated_groups)
 from .run_workspace_lock import RunWorkspaceBusy, run_workspace_slot
 from .saved_docx_layout import inspect_docx
+from .ordinary_text_correction_service import TextCorrectionMixin
 
 MAX_RECORDS = 256
 
@@ -93,7 +94,24 @@ def _directories(folder):
     return sorted(rows)
 
 
-class OrdinaryLayoutService:
+def _candidate_word_count(candidate, path):
+    """A verified V7 map owns source footer words; legacy count is unchanged."""
+    if candidate.source_map.get("writer_version") == "saved_docx_layout_writer_source_layout_v7":
+        from .ordinary_source_layout import owned_story_count_descriptor
+        from .joblog_flow import count_words_from_owned_story_map
+        descriptor = owned_story_count_descriptor(candidate.source_map)
+        raw=storage._read(path, storage.DOCX_MAX_BYTES)
+        from .ordinary_edited_revision import qualify_edited_docx
+        projection=qualify_edited_docx(candidate.docx_bytes,raw,source_layout_map=candidate.source_map)
+        if projection:
+            for row in descriptor['paragraphs']:
+                row['part_uri']=projection['part_map'].get(row['part_uri'],row['part_uri'])
+        descriptor["docx_sha256"] = digest(raw)
+        return count_words_from_owned_story_map(path, descriptor)
+    return count_words_from_docx(path)
+
+
+class OrdinaryLayoutService(TextCorrectionMixin):
     @public
     def __init__(self, root, *, mode, workspace_id, saved_service=None):
         if (mode not in {"live", "shadow"} or type(workspace_id) is not str
@@ -190,14 +208,14 @@ class OrdinaryLayoutService:
         if selection:
             selection["stale"] = selection["baseline_id"] != baseline.name or (not frozen and
                 selection["kind"] == "reviewed" and selection["review_generation"] != view["generation"])
-        return {"job_id": manifest["identity"]["job_id"], "baseline_id": baseline.name,
+        return self._correction_view(folder, {"job_id": manifest["identity"]["job_id"], "baseline_id": baseline.name,
                 "generation": view["generation"], "status": "prepared", "review": view,
                 "delivery_generation": len(rows), "delivery": selection, "frozen": frozen,
                 "selected_pages": manifest["identity"]["selected_pages"],
                 "output_reviews": [_read(p) for p in _records(baseline / "acceptances")],
                 "suggestions": [_read(p) for p in _records(baseline / "suggestion_results")],
                 "preparation_nonce": manifest["prepare_nonce"],
-                "automatic_candidate": automatic, "edited_revision": edited}
+                "automatic_candidate": automatic, "edited_revision": edited})
 
     def _latest_edited(self, folder):
         records = _edited_records(folder / "edited_revisions")
@@ -219,14 +237,12 @@ class OrdinaryLayoutService:
             fail("edited_revision_stale", 409)
         revision_id = nonce(record["revision_id"])
         raw = storage._read(folder / "edited_revisions" / revision_id / "output.docx", storage.DOCX_MAX_BYTES)
-        working = storage._read(folder / "automatic" / "working.docx", storage.DOCX_MAX_BYTES)
         if (digest(raw) != record["sha256"]
-                or revision_id != digest(automatic["candidate_id"].encode("ascii") + raw)[:32]
-                or not (folder / "frozen.json").exists() and working != raw):
+                or revision_id != digest(automatic["candidate_id"].encode("ascii") + raw)[:32]):
             fail("edited_revision_stale", 409)
         from .ordinary_edited_revision import qualify_edited_docx
-        qualify_edited_docx(candidate.docx_bytes, raw)
-        if count_words_from_docx(folder / "edited_revisions" / revision_id / "output.docx") != record["word_count"]:
+        qualify_edited_docx(candidate.docx_bytes, raw, source_layout_map=candidate.source_map)
+        if _candidate_word_count(candidate, folder / "edited_revisions" / revision_id / "output.docx") != record["word_count"]:
             fail("edited_revision_stale", 409)
         return record
 
@@ -260,14 +276,14 @@ class OrdinaryLayoutService:
                 word_count=edited["word_count"])
         frozen_path = alias_folder / "frozen.json"
         view["frozen"] = frozen_path.exists()
-        if frozen_path.exists():
+        if frozen_path.exists() and not self._selections(alias_folder):
             frozen = _read(frozen_path)
             if frozen.get("generation") != 0 or frozen.get("sha256") != view["delivery"]["sha256"]:
                 fail("delivery_frozen", 409)
         view["job_id"] = job_id
         view["automatic_alias"] = True
         view["editor_rebase_required"] = True
-        return view
+        return self._correction_view(alias_folder, view)
 
     def _verified_alias_edited(self, folder, alias, candidate):
         rows = _edited_records(folder / "alias_edits")
@@ -278,8 +294,8 @@ class OrdinaryLayoutService:
         nonce(revision_id)
         raw = storage._read(folder / "alias_edits" / revision_id / "output.docx", storage.DOCX_MAX_BYTES)
         from .ordinary_edited_revision import qualify_edited_docx
-        qualify_edited_docx(candidate.docx_bytes, raw)
-        count = count_words_from_docx(folder / "alias_edits" / revision_id / "output.docx")
+        qualify_edited_docx(candidate.docx_bytes, raw, source_layout_map=candidate.source_map)
+        count = _candidate_word_count(candidate, folder / "alias_edits" / revision_id / "output.docx")
         expected = {"version": VERSION, "revision_id": digest(alias["candidate_id"].encode("ascii") + raw)[:32],
             "candidate_id": alias["candidate_id"], "candidate_sha256": candidate.docx_sha256,
             "origin_delivery_sha256": alias["delivery_sha256"], "sha256": digest(raw),
@@ -334,6 +350,8 @@ class OrdinaryLayoutService:
     @public
     def automatic_review_copy(self, job_id):
         with self.scope(job_id) as folder:
+            if self._selections(folder) and self._selections(folder)[-1]["kind"] == "text_corrected":
+                return self.text_corrected_review_copy(job_id)
             if (folder / "alias.json").exists():
                 record = _read(folder / "alias.json")
                 self._alias_view(job_id, record)
@@ -357,6 +375,8 @@ class OrdinaryLayoutService:
     def adopt_automatic_word_edit(self, job_id, *, without_changes=False):
         """Commit a reviewed Word working copy as a separate unreviewed revision."""
         with self.scope(job_id) as folder:
+            if self._selections(folder) and self._selections(folder)[-1]["kind"] == "text_corrected":
+                return self.adopt_text_corrected_word_edit(job_id, without_changes=without_changes)
             if (folder / "alias.json").exists():
                 record = _read(folder / "alias.json")
                 view = self._alias_view(job_id, record)
@@ -377,8 +397,8 @@ class OrdinaryLayoutService:
                     automatic = _read(source / "automatic.json")
                     candidate = self._verified_automatic(source, manifest, automatic)
                 from .ordinary_edited_revision import qualify_edited_docx
-                qualify_edited_docx(candidate.docx_bytes, working)
-                count = count_words_from_docx(working_path)
+                qualify_edited_docx(candidate.docx_bytes, working, source_layout_map=candidate.source_map)
+                count = _candidate_word_count(candidate, working_path)
                 if type(count) is not int or count <= 0:
                     fail("delivery_empty", 409)
                 revision_id = digest(record["candidate_id"].encode("ascii") + working)[:32]
@@ -417,8 +437,8 @@ class OrdinaryLayoutService:
             if without_changes:
                 fail("edited_revision_changes_detected", 409)
             from .ordinary_edited_revision import qualify_edited_docx
-            qualify_edited_docx(candidate.docx_bytes, working)
-            count = count_words_from_docx(working_path)
+            qualify_edited_docx(candidate.docx_bytes, working, source_layout_map=candidate.source_map)
+            count = _candidate_word_count(candidate, working_path)
             if type(count) is not int or count <= 0:
                 fail("delivery_empty", 409)
             records = _edited_records(folder / "edited_revisions")
@@ -477,6 +497,8 @@ class OrdinaryLayoutService:
         if type(policy_fingerprint) is not str or re.fullmatch(r"[a-f0-9]{64}", policy_fingerprint) is None:
             fail("invalid_policy_fingerprint")
         with self.scope(job_id) as folder:
+            if self._selections(folder) and self._selections(folder)[-1]["kind"] == "text_corrected":
+                fail("correction_layout_rebase_required", 409)
             baseline, manifest = self._baseline(folder)
             if baseline.name != expected_baseline_id or (folder / "frozen.json").exists():
                 fail("baseline_stale", 409)
@@ -511,7 +533,7 @@ class OrdinaryLayoutService:
             _put_immutable(destination / "working.docx", candidate.docx_bytes)
             _put_immutable(destination / "source_map.json", encode(candidate.source_map))
             _put_immutable(destination / "receipt.json", encode(candidate.receipt))
-            count = count_words_from_docx(destination / "output.docx")
+            count = _candidate_word_count(candidate, destination / "output.docx")
             if type(count) is not int or count <= 0:
                 fail("delivery_empty")
             record["word_count"] = count
@@ -646,6 +668,8 @@ class OrdinaryLayoutService:
             "review_id": review_id, "artifact_id": artifact_id, "expected_review_generation": expected_review_generation,
             "keep_ordinary_confirmed": keep_ordinary_confirmed}
         with self.scope(job_id) as folder:
+            if self._selections(folder) and self._selections(folder)[-1]["kind"] == "text_corrected":
+                fail("correction_layout_rebase_required", 409)
             baseline, manifest = self._baseline(folder)
             if nonce(expected_baseline_id) != baseline.name:
                 fail("baseline_stale", 409)
@@ -700,6 +724,9 @@ class OrdinaryLayoutService:
         if freeze_nonce is not None:
             nonce(freeze_nonce)
         with self.scope(job_id) as folder:
+            corrected = self._resolve_text_delivery(folder, job_id, expected_delivery_generation, freeze_nonce, require_settled)
+            if corrected is not None:
+                return corrected
             if (folder / "alias.json").exists():
                 record = _read(folder / "alias.json")
                 view = self._alias_view(job_id, record)

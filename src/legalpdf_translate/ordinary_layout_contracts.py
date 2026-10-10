@@ -16,6 +16,7 @@ from .saved_docx_layout import inspect_docx, validate_decisions
 VERSION = "ordinary_layout_v1"
 PROPOSAL_VERSION = "ordinary_layout_proposal_v1"
 PROPOSAL_VERSION_V2 = "ordinary_layout_proposal_v2"
+PROPOSAL_VERSION_V3 = "ordinary_layout_proposal_v3"
 MAX_PAGE_PARAGRAPHS = 200
 MAX_PAGE_CODEPOINTS = 32_000
 MAX_OUTPUT_TOKENS = 32000
@@ -203,7 +204,7 @@ def _object(properties):
     return {"type": "object", "additionalProperties": False, "properties": properties, "required": list(properties)}
 
 
-def proposal_schema(page_number, ids):
+def proposal_schema(page_number, ids, *, version=PROPOSAL_VERSION_V3):
     pid = {"type": "string", "enum": list(ids)}
     boolean = {"type": "boolean"}
     nullable_spacing = {"type": ["number", "null"], "minimum": 0, "maximum": 72}
@@ -232,13 +233,139 @@ def proposal_schema(page_number, ids):
         _object({**presentation, "role": {"type": "string",
                 "enum": ["institution", "reference", "recipient", "body", "list", "signature", "source_folio"]},
             "heading_level": {"type": "integer", "enum": [0]}, "heading_size_pt": {"type": "null"}})]}
-    return {"type": "json_schema", "strict": True, "name": "ordinary_source_layout_v2", "schema": _object({
+    response = {"type": "json_schema", "strict": True, "name": "ordinary_source_layout_v2", "schema": _object({
         "version": {"type": "string", "enum": [PROPOSAL_VERSION_V2]}, "page_number": {"type": "integer", "enum": [page_number]},
         "paragraphs": {"type": "array", "items": choice, "minItems": len(ids), "maxItems": len(ids)},
         "bands": {"type": "array", "items": {"anyOf": [flow, columns]}, "minItems": 1, "maxItems": len(ids)},
         "paragraph_partitions": {"type": "array", "maxItems": len(ids), "items": _object({
             "paragraph_id": pid, "split_before": {"type": "array", "minItems": 1, "maxItems": 7,
                 "items": {"type": "string", "minLength": 1, "maxLength": 160}}})}})}
+
+    if version == PROPOSAL_VERSION_V3:
+        box = {"type": "array", "minItems": 4, "maxItems": 4,
+               "items": {"type": "number", "minimum": 0, "maximum": 1}}
+        fields = response["schema"]["properties"]
+        fields["version"]["enum"] = [PROPOSAL_VERSION_V3]
+        fields["source_coverage_findings"] = {"type": "array", "maxItems": 32, "items": _object({
+            "kind": {"type": "string", "enum": ["missing_readable_literal"]},
+            "literal": {"type": "string", "minLength": 1, "maxLength": 160},
+            "source_bbox": box, "insertion_context": _object({"paragraph_id": pid,
+                "position": {"type": "string", "enum": ["before", "after", "within"]}})})}
+        fields["source_layout_evidence"] = {"type": "array", "maxItems": len(ids), "items": _object({
+            "kind": {"type": "string", "enum": ["decorative_rule", "source_footer"]},
+            "paragraph_ids": {"type": "array", "minItems": 1, "maxItems": len(ids), "items": pid},
+            "bbox": box})}
+        response["schema"]["required"] += ["source_coverage_findings", "source_layout_evidence"]
+        response["name"] = "ordinary_source_layout_v3"
+    elif version != PROPOSAL_VERSION_V2:
+        fail("invalid_proposal_version")
+    return response
+
+
+def proposal_source_evidence(snapshot, view, proposal):
+    """Provider evidence is a proposal for explicit review, never a transcription certificate."""
+    if proposal.get("version") != PROPOSAL_VERSION_V3:
+        return {"version": "ordinary_source_evidence_v1", "findings": [], "layout": []}
+    page = proposal.get("page_number")
+    ids = page_ids(view, page)
+    def box(value):
+        if (type(value) is not list or len(value) != 4 or
+                any(type(v) not in {int, float} or not 0 <= v <= 1 for v in value) or
+                value[0] >= value[2] or value[1] >= value[3]):
+            fail("invalid_source_evidence_box")
+    findings = proposal.get("source_coverage_findings")
+    evidence = proposal.get("source_layout_evidence")
+    if type(findings) is not list or len(findings) > 32 or type(evidence) is not list or len(evidence) > len(ids):
+        fail("invalid_source_evidence")
+    normalized = []
+    for index, row in enumerate(findings):
+        if type(row) is not dict or set(row) != {"kind", "literal", "source_bbox", "insertion_context"}:
+            fail("invalid_source_finding")
+        literal = row["literal"]
+        context = row["insertion_context"]
+        if (row["kind"] != "missing_readable_literal" or type(literal) is not str or
+                not 1 <= len(literal) <= 160 or not literal.strip() or
+                any(unicodedata.category(c).startswith("C") for c in literal) or
+                type(context) is not dict or set(context) != {"paragraph_id", "position"} or
+                type(context["paragraph_id"]) is not str or context["paragraph_id"] not in ids or
+                context["position"] not in {"before", "after", "within"}):
+            fail("invalid_source_finding")
+        box(row["source_bbox"])
+        normalized.append({**deepcopy(row), "finding_id": digest(encode([page, index, row])),
+                           "page_number": page, "review_status": "unresolved"})
+    baseline = {row["id"]: row for row in snapshot["paragraphs"]}
+    choices = {}
+    for row in proposal.get("paragraphs", []):
+        if type(row) is not dict or type(row.get("paragraph_id")) is not str or row["paragraph_id"] not in ids:
+            fail("invalid_source_layout_evidence")
+        choices[row["paragraph_id"]] = row
+    if set(choices) != set(ids):
+        fail("invalid_source_layout_evidence")
+    panel_ids, column_ids = set(), set()
+    for band in proposal.get("bands", []):
+        if type(band) is not dict:
+            fail("invalid_source_layout_evidence")
+        if band.get("kind") == "flow":
+            groups = band.get("groups")
+        elif band.get("kind") == "columns" and type(band.get("cells")) is list:
+            groups = []
+            for cell in band["cells"]:
+                if type(cell) is not dict or type(cell.get("groups")) is not list:
+                    fail("invalid_source_layout_evidence")
+                groups.extend(cell["groups"])
+                for group in cell["groups"]:
+                    if type(group) is not dict or type(group.get("paragraph_ids")) is not list or any(type(pid) is not str for pid in group["paragraph_ids"]):fail("invalid_source_layout_evidence")
+                    column_ids.update(group["paragraph_ids"])
+        else:
+            fail("invalid_source_layout_evidence")
+        if type(groups) is not list:
+            fail("invalid_source_layout_evidence")
+        for group in groups:
+            if type(group) is not dict or type(group.get("paragraph_ids")) is not list or any(type(pid) is not str for pid in group["paragraph_ids"]):
+                fail("invalid_source_layout_evidence")
+            if group.get("panel"):
+                panel_ids.update(group["paragraph_ids"])
+    partition_rows = proposal.get("paragraph_partitions", [])
+    if type(partition_rows) is not list or any(type(row) is not dict or type(row.get("paragraph_id")) is not str for row in partition_rows):
+        fail("invalid_source_layout_evidence")
+    partitions = {row["paragraph_id"] for row in partition_rows}
+    used = set()
+    for row in evidence:
+        if type(row) is not dict or set(row) != {"kind", "paragraph_ids", "bbox"}:
+            fail("invalid_source_layout_evidence")
+        box(row["bbox"])
+        owned = row["paragraph_ids"]
+        if (type(owned) is not list or not owned or any(type(pid) is not str or pid not in ids for pid in owned) or
+                len(set(owned)) != len(owned) or used.intersection(owned)):
+            fail("invalid_source_layout_evidence")
+        used.update(owned)
+        indices = [ids.index(pid) for pid in owned]
+        if indices != list(range(indices[0], indices[0] + len(indices))):
+            fail("invalid_source_layout_evidence")
+        for pid in owned:
+            raw = baseline[pid]
+            if any(t["kind"] == "page_break" for t in raw["tokens"][:-1]):
+                fail("invalid_source_layout_evidence")
+            if raw.get("has_page_break") and (row["kind"] != "source_footer" or pid != owned[-1] or not raw["tokens"] or raw["tokens"][-1]["kind"] != "page_break"):
+                fail("invalid_source_layout_evidence")
+            if (pid in partitions or pid in panel_ids or pid in column_ids or raw.get("has_numbering") or "numPr" in raw.get("ppr_xml", "") or raw.get("has_field") or
+                    any(t["kind"] != "t" and not (row["kind"] == "source_footer" and t["kind"] == "page_break") for t in raw["tokens"])):
+                fail("invalid_source_layout_evidence")
+        if row["kind"] == "decorative_rule":
+            text = "".join(t["text"] for t in baseline[owned[0]]["tokens"] if t["kind"] == "t")
+            if (len(owned) != 1 or choices[owned[0]]["role"] != "body" or
+                    re.fullmatch(r"[_─━—–-]{3,}", text.strip()) is None or row["bbox"][3] - row["bbox"][1] > .03):
+                fail("invalid_decorative_rule_evidence")
+        elif row["kind"] == "source_footer":
+            if (indices[-1] != len(ids)-1 or row["bbox"][1] < .85 or
+                    any(not "".join(t["text"] for t in baseline[pid]["tokens"] if t["kind"] == "t").strip() for pid in owned) or
+                    any(choices[pid]["role"] not in {"body", "source_folio"} for pid in owned)):
+                fail("invalid_source_footer_evidence")
+        else:
+            fail("invalid_source_layout_evidence")
+    return {"version": "ordinary_source_evidence_v1", "page_number": page,
+            "findings": normalized, "layout": deepcopy(evidence), "source_coverage_verified": False}
+
 
 
 def _ids(band):
@@ -418,12 +545,14 @@ def normalize_proposals(snapshot, view, proposals):
         if type(proposal) is not dict:
             fail("invalid_proposal")
         expected_keys = {"version", "page_number", "paragraphs", "bands"}
-        if proposal.get("version") == PROPOSAL_VERSION_V2:
+        if proposal.get("version") in {PROPOSAL_VERSION_V2, PROPOSAL_VERSION_V3}:
             expected_keys.add("paragraph_partitions")
+        if proposal.get("version") == PROPOSAL_VERSION_V3:
+            expected_keys.update({"source_coverage_findings", "source_layout_evidence"})
         if set(proposal) != expected_keys:
             fail("invalid_proposal")
         page = proposal["page_number"]
-        if proposal["version"] not in {PROPOSAL_VERSION, PROPOSAL_VERSION_V2} or type(page) is not int or page in replacements:
+        if proposal["version"] not in {PROPOSAL_VERSION, PROPOSAL_VERSION_V2, PROPOSAL_VERSION_V3} or type(page) is not int or page in replacements:
             fail("invalid_proposal")
         ids = page_ids(view, page)
         if type(proposal["paragraphs"]) is not list or [p.get("paragraph_id") for p in proposal["paragraphs"] if type(p) is dict] != ids:
@@ -471,6 +600,7 @@ def normalize_proposals(snapshot, view, proposals):
                 fail("proposal_coverage")
         except (TypeError, KeyError):
             fail("invalid_proposal")
+        proposal_source_evidence(snapshot, view, proposal)
         replacements[page] = deepcopy(bands)
         id_page.update({pid: page for pid in ids})
     bands, inserted = [], set()

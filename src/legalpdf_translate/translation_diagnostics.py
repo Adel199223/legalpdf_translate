@@ -250,6 +250,66 @@ def summarize_extraction_integrity(
     }
 
 
+
+VISIBLE_DIAGNOSTICS_VERSION = "visible_translation_diagnostics_v1"
+_PROTOCOL_LITERAL = re.compile(r"\u2066\[\[([^\[\]\u2066-\u2069]+)\]\]\u2069")
+
+def visible_text_projection(text: str, target_lang: str) -> tuple[str, int]:
+    """Decode only the established balanced AR protocol, never ordinary brackets."""
+    if target_lang.upper() != "AR":
+        return text, 0
+    count = 0
+    def literal(match):
+        nonlocal count
+        count += 1
+        return match.group(1)
+    return _PROTOCOL_LITERAL.sub(literal, text), count
+
+def _visible_bidi_safety(text: str) -> dict[str, int]:
+    depth = 0
+    unbalanced = 0
+    for char in text:
+        if char in "\u2066\u2067\u2068":
+            depth += 1
+        elif char == "\u2069":
+            if depth:
+                depth -= 1
+            else:
+                unbalanced += 1
+    unsafe = len(re.findall(r"[\u202a-\u202e]", text))
+    return {"unsafe_bidi_control_count": unsafe,
+            "unbalanced_isolate_count": unbalanced + depth,
+            "remaining_isolate_control_count": len(re.findall(r"[\u2066-\u2069]", text)),
+            "visible_replacement_char_count": text.count("\ufffd")}
+
+def _missing_cited_anchors(source: str, output: str) -> int:
+    from .new_translation_blocks import _citation_heads, _digits
+    # Generic address/reference labels are not legal article heads.
+    def canonical_heads(value):
+        value = re.sub(r"\bart(s?)\.[º°](?=\s|$)", r"art\1.", value, flags=re.IGNORECASE)
+        return _citation_heads(_digits(value).replace("الفصل", "المادة"))
+    source_ids = canonical_heads(source)
+    output_ids = canonical_heads(output)
+    return sum((source_ids - output_ids).values()) + sum((output_ids - source_ids).values())
+
+def _unbalanced_brackets(text: str) -> int:
+    stack = []
+    defects = 0
+    matching = {")": "(", "]": "[", "}": "{"}
+    enumerator_closers = {m.end() - 1 for m in re.finditer(r"(?m)^[ \t]*(?:\d+|[^\W\d_])\)", text)}
+    for index, char in enumerate(text):
+        if char in "([{":
+            stack.append(char)
+        elif char in matching:
+            if char == ")" and not stack and index in enumerator_closers:
+                continue
+            if stack and stack[-1] == matching[char]:
+                stack.pop()
+            else:
+                defects += 1
+    return defects + len(stack)
+
+
 def run_all_quality_checks(
     *,
     source_text: str,
@@ -259,14 +319,45 @@ def run_all_quality_checks(
 ) -> dict[str, Any]:
     """Run all lightweight quality checks, return combined summary."""
     lang_check = check_target_language(output_text, target_lang)
-    numeric_check = check_numeric_preservation(source_text, output_text)
-    citation_check = check_citation_preservation(source_text, output_text)
-    structure_check = check_structure(source_text, output_text)
+    visible_source, source_protocol_count = visible_text_projection(source_text, target_lang)
+    visible_output, output_protocol_count = visible_text_projection(output_text, target_lang)
+    numeric_check = check_numeric_preservation(visible_source, visible_output)
+    citation_check = check_citation_preservation(visible_source, visible_output)
+    raw_citation = check_citation_preservation(source_text, output_text)
+    structure_check = check_structure(visible_source, visible_output)
     bidi_check = check_bidi_safety(output_text)
+    visible_bidi = _visible_bidi_safety(visible_output)
+    citation_missing = _missing_cited_anchors(visible_source, visible_output)
+    bracket_anomalies = _unbalanced_brackets(visible_output)
+    source_bracket_anomalies = _unbalanced_brackets(visible_source)
+    bracket_drift = max(0, bracket_anomalies - source_bracket_anomalies)
+    list_source = re.findall(r"(?m)^\s*(\d+)[.)]\s", visible_source)
+    list_output = re.findall(r"(?m)^\s*(\d+)[.)]\s", visible_output)
+    from collections import Counter
+    list_missing = sum((Counter(list_source) - Counter(list_output)).values())
+    letter_pattern = r"(?m)^[ \t]*([^\W\d_])[.)]\s"
+    source_letters = Counter(re.findall(letter_pattern, visible_source))
+    output_letters = Counter(re.findall(letter_pattern, visible_output))
+    letter_marker_changes = max(sum((source_letters - output_letters).values()), sum((output_letters - source_letters).values()))
+    protocol_anomalies = len(re.findall(r"\u2066\[\[|\]\]\u2069", visible_output)) if target_lang.upper() == "AR" else 0
     integrity_check = summarize_extraction_integrity(integrity_context)
     citation_marker_delta_abs = int(citation_check["citation_marker_delta_abs"])
     parenthesis_delta_abs = int(citation_check["parenthesis_delta_abs"])
     return {
+        "diagnostic_evidence_basis": VISIBLE_DIAGNOSTICS_VERSION,
+        "source_protocol_literal_count": source_protocol_count,
+        "output_protocol_literal_count": output_protocol_count,
+        "raw_citation_mismatches_count": raw_citation["citation_marker_delta_abs"] + raw_citation["parenthesis_delta_abs"],
+        "raw_bidi_control_count": bidi_check["bidi_control_count"],
+        "citation_actionable_missing_count": citation_missing + list_missing + letter_marker_changes + bracket_drift,
+        "list_marker_missing_count": list_missing,
+        "alphabetic_marker_change_count": letter_marker_changes,
+        "protocol_anomaly_count": protocol_anomalies,
+        "visible_bracket_anomaly_count": bracket_anomalies,
+        "source_bracket_anomaly_count": source_bracket_anomalies,
+        "actionable_bracket_drift_count": bracket_drift,
+        "bidi_actionable_count": visible_bidi["unsafe_bidi_control_count"] + visible_bidi["remaining_isolate_control_count"] + protocol_anomalies,
+        **visible_bidi,
         "language_ok": lang_check["language_ok"],
         "detected_lang": lang_check["detected_lang"],
         "numeric_mismatches_count": numeric_check["missing_count"] + numeric_check["extra_count"],
@@ -281,7 +372,7 @@ def run_all_quality_checks(
         "structure_warnings_count": int(structure_check["collapse_warning"]),
         "source_paragraphs": structure_check["source_paragraphs"],
         "output_paragraphs": structure_check["output_paragraphs"],
-        "bidi_warnings_count": int(bidi_check["bidi_warning"]) + int(bidi_check["replacement_warning"]),
+        "bidi_warnings_count": int(bool(visible_bidi["unsafe_bidi_control_count"] + visible_bidi["remaining_isolate_control_count"] + protocol_anomalies)) + int(bool(visible_bidi["visible_replacement_char_count"])),
         "bidi_control_count": bidi_check["bidi_control_count"],
         "replacement_char_count": bidi_check["replacement_char_count"],
         "extraction_integrity_warnings_count": integrity_check["extraction_integrity_warnings_count"],
@@ -353,6 +444,10 @@ def emit_validation_summary_event(
             "output_paragraphs": checks.get("output_paragraphs", 0),
             "bidi_warnings_count": checks.get("bidi_warnings_count", 0),
             "bidi_control_count": checks.get("bidi_control_count", 0),
+            "citation_actionable_missing_count": checks.get("citation_actionable_missing_count", 0),
+            "bidi_actionable_count": checks.get("bidi_actionable_count", 0),
+            "raw_citation_mismatches_count": checks.get("raw_citation_mismatches_count", 0),
+            "raw_bidi_control_count": checks.get("raw_bidi_control_count", 0),
             "replacement_char_count": checks.get("replacement_char_count", 0),
         },
         decisions={

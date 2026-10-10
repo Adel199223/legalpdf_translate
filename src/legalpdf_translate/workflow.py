@@ -2709,6 +2709,10 @@ class TranslationWorkflow:
         def _apply_quality_checks_metadata(checks: dict[str, Any]) -> None:
             for key in (
                 "numeric_mismatches_count",
+                "citation_actionable_missing_count",
+                "bidi_actionable_count",
+                "raw_citation_mismatches_count",
+                "raw_bidi_control_count",
                 "citation_mismatches_count",
                 "citation_marker_delta_abs",
                 "parenthesis_delta_abs",
@@ -2723,6 +2727,7 @@ class TranslationWorkflow:
                 "extraction_integrity_warnings_count",
             ):
                 page_metadata[key] = int(checks.get(key, 0) or 0)
+            page_metadata["diagnostic_evidence_basis"] = str(checks.get("diagnostic_evidence_basis", "") or "")
             page_metadata["numeric_missing_sample"] = [str(item) for item in checks.get("numeric_missing_sample", [])[:3]]
             page_metadata["source_paragraphs"] = int(checks.get("source_paragraphs", 0) or 0)
             page_metadata["output_paragraphs"] = int(checks.get("output_paragraphs", 0) or 0)

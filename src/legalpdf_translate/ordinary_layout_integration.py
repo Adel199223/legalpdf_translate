@@ -112,6 +112,12 @@ def delivery_job_snapshot(manager, job, *, mutation=False, baseline_id=None,
     snapshot["artifacts"]["output_docx"] = str(artifact.path)
     snapshot["delivery"] = {"generation": artifact.generation, "selection_id": artifact.selection_id,
         "sha256": artifact.sha256, "word_count": artifact.word_count, "kind": artifact.kind, "frozen": artifact.frozen}
+    if artifact.kind == "text_corrected":
+        snapshot["text_correction"] = deepcopy(state["text_correction"])
+        snapshot["result"]["selected_text_review"] = deepcopy(state["text_correction"])
+        snapshot["diagnostics"] = deepcopy(snapshot.get("diagnostics", {}))
+        snapshot["diagnostics"]["raw_run_diagnostics_historical"] = True
+        snapshot["diagnostics"]["current_delivery_text_approved"] = True
     costs = manager.layout_costs(job["job_id"])
     if isinstance(automatic, dict) and automatic.get("recovery_predecessor"):
         from .ordinary_auto_layout import verified_recovery_layout_costs
@@ -123,6 +129,19 @@ def delivery_job_snapshot(manager, job, *, mutation=False, baseline_id=None,
             if original_cost is not None and costs["complete"] else None)
         seed["api_cost"] = float(Decimal(str(seed.get("api_cost") or 0)) + Decimal(costs["known_cost_usd"]))
     return snapshot, artifact
+
+
+def arabic_review_job(manager, job):
+    """A correction gets its own Word review target; raw completion is untouched."""
+    if not job:
+        return job
+    state = manager.state(job["job_id"])
+    if (state.get("delivery") or {}).get("kind") != "text_corrected":
+        return job
+    result = deepcopy(job)
+    result["correction_review_copy"] = str(manager.service.text_corrected_review_copy(job["job_id"]))
+    result["text_revision_id"] = state["delivery"]["selection_id"]
+    return result
 
 
 def owned_form_values(job, form_values):

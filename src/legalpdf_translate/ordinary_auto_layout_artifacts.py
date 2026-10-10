@@ -93,7 +93,7 @@ class AutoCandidateArtifact:
 
 _MAP_EXTENSIONS = {"raw_source_map_sha256", "source_pdf_sha256",
                    "selected_physical_pages", "raw_snapshot_fingerprint",
-                   "proposal_evidence_sha256", "source_association_basis"}
+                   "proposal_evidence_sha256", "source_association_basis", "source_evidence"}
 
 
 def _checked_automatic_decisions(raw_snapshot, page_frames, decisions):
@@ -125,6 +125,8 @@ def _extended_source_map(base_map, raw_snapshot, proposal_evidence):
         "raw_snapshot_fingerprint": raw_snapshot.fingerprint,
         "proposal_evidence_sha256": _sha(_json(proposal_evidence)),
         "source_association_basis": "raw_writer_map"})
+    if "source_evidence" in proposal_evidence:
+        mapping["source_evidence"] = deepcopy(proposal_evidence["source_evidence"])
     for row in mapping["paragraphs"]:
         row["raw_source_page_number"] = owners[row["paragraph_id"]]
     return mapping
@@ -142,7 +144,8 @@ def _candidate_receipt(raw_snapshot, checked, proposal_evidence, docx_bytes, map
         "proposal_evidence_sha256": _sha(_json(proposal_evidence)),
         "target_lang": raw_snapshot.target_lang, "document_reviewed": False,
         "rendered_layout_acceptance": "not_evaluated",
-        "source_character_coverage": "not_proven", "exact_text_preserved": True}
+        "source_character_coverage": "not_proven", "exact_text_preserved": json.loads(map_bytes).get("exact_text_preserved", True),
+        **({"exact_meaningful_text_preserved":True,"source_layout_plan_sha256":json.loads(map_bytes)["source_layout_plan_sha256"]} if json.loads(map_bytes).get("writer_version")=="saved_docx_layout_writer_source_layout_v7" else {})}
 
 
 def _container_step(container, step):
@@ -304,7 +307,8 @@ def build_unreviewed_candidate(raw_docx_bytes: bytes, raw_snapshot: RawOrdinaryS
     checked = _checked_automatic_decisions(raw_snapshot, page_frames, decisions)
     rendered = build_unreviewed_docx(raw_docx_bytes, raw_snapshot.saved_snapshot,
                                      page_frames, checked, ordinary_context={"selected_pages":list(raw_snapshot.selected_pages),
-                                         "page_groups":[[page,list(ids)] for page,ids in raw_snapshot.page_groups]})
+                                         "page_groups":[[page,list(ids)] for page,ids in raw_snapshot.page_groups],
+                                         **({"source_evidence":proposal_evidence["source_evidence"]} if "source_evidence" in proposal_evidence else {})})
     source_map = _extended_source_map(rendered.source_map, raw_snapshot, proposal_evidence)
     map_bytes = _json(source_map)
     receipt = _candidate_receipt(raw_snapshot, checked, proposal_evidence,
@@ -341,8 +345,9 @@ def verify_unreviewed_candidate(raw_docx_bytes: bytes, raw_snapshot: RawOrdinary
                         snapshot=raw_snapshot.saved_snapshot, pages=page_frames,
                         decisions=checked, require_review=False,
                         ordinary_context={"selected_pages":list(raw_snapshot.selected_pages),
-                            "page_groups":[[page,list(ids)] for page,ids in raw_snapshot.page_groups]}
-                        if base_map.get("writer_version") == "saved_docx_layout_writer_ordinary_presentation_v6" else None)
+                            "page_groups":[[page,list(ids)] for page,ids in raw_snapshot.page_groups],
+                            **({"source_evidence":proposal_evidence["source_evidence"]} if base_map.get("writer_version") == "saved_docx_layout_writer_source_layout_v7" and "source_evidence" in proposal_evidence else {})}
+                        if base_map.get("writer_version") in {"saved_docx_layout_writer_ordinary_presentation_v6","saved_docx_layout_writer_source_layout_v7"} else None)
     expected_map = _extended_source_map(base_map, raw_snapshot, proposal_evidence)
     if artifact.source_map_bytes != _json(expected_map):
         _fail("candidate_provenance_changed")

@@ -65,6 +65,27 @@ def _candidate_fixture(tmp_path):
     return raw, snapshot, frames, decisions, evidence, artifact
 
 
+def test_retained_v6_candidate_with_v3_source_evidence_verifies(tmp_path):
+    from legalpdf_translate import ordinary_auto_layout_artifacts as artifacts
+    from legalpdf_translate.saved_docx_layout_writer import build_unreviewed_docx
+    raw, snapshot, frames, decisions, evidence, _ = _candidate_fixture(tmp_path)
+    evidence['source_evidence'] = {'version': 'ordinary_source_evidence_v1', 'pages': []}
+    context = {'selected_pages': list(snapshot.selected_pages),
+               'page_groups': [[page, list(ids)] for page, ids in snapshot.page_groups]}
+    checked = artifacts._checked_automatic_decisions(snapshot, frames, decisions)
+    rendered = build_unreviewed_docx(raw, snapshot.saved_snapshot, frames, checked,
+                                    ordinary_context=context)
+    assert rendered.source_map['writer_version'] == 'saved_docx_layout_writer_ordinary_presentation_v6'
+    mapping = artifacts._json(artifacts._extended_source_map(rendered.source_map, snapshot, evidence))
+    receipt = artifacts._json(artifacts._candidate_receipt(snapshot, checked, evidence,
+                                                          rendered.docx_bytes, mapping))
+    candidate = artifacts.AutoCandidateArtifact(rendered.docx_bytes, mapping, receipt,
+        artifacts._sha(rendered.docx_bytes), artifacts._sha(mapping), artifacts._sha(receipt))
+    before = (candidate.docx_bytes, candidate.source_map_bytes, candidate.receipt_bytes)
+    verify_unreviewed_candidate(raw, snapshot, frames, decisions, candidate, proposal_evidence=evidence)
+    assert before == (candidate.docx_bytes, candidate.source_map_bytes, candidate.receipt_bytes)
+
+
 def test_raw_binding_preserves_physical_pages_and_rejects_ambiguous_owner(tmp_path):
     raw, mapping = _raw(tmp_path)
     source_hash = hashlib.sha256(_source_pdf()).hexdigest()
