@@ -38,3 +38,19 @@ def test_primary_mode15_inserts_compat_when_missing(tmp_path):
     _ensure_primary_compatibility_mode15(path)
     with ZipFile(path) as archive:
         assert b'w:val="15"' in archive.read('word/settings.xml')
+
+
+def test_mode_placement_is_canonical_across_missing_old_and_current_modes(tmp_path):
+    other='<w:compatSetting w:name="otherSetting" w:val="1"/>'
+    base='<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:compat>{}</w:compat></w:settings>'
+    outputs=[]
+    for index, children in enumerate((other,
+        '<w:compatSetting w:name="compatibilityMode" w:val="14"/>'+other,
+        other+'<w:compatSetting w:name="compatibilityMode" w:val="15"/>')):
+        path=tmp_path/f'position-{index}.docx'
+        with ZipFile(path,'w') as archive:archive.writestr('word/settings.xml',base.format(children))
+        _ensure_primary_compatibility_mode15(path)
+        with ZipFile(path) as archive:outputs.append(archive.read('word/settings.xml'))
+        before=path.read_bytes();_ensure_primary_compatibility_mode15(path);assert path.read_bytes()==before
+    assert outputs[0]==outputs[1]==outputs[2]
+    assert outputs[0].index(other.encode()) < outputs[0].index(b'w:name="compatibilityMode"')

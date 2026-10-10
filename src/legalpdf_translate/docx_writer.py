@@ -791,22 +791,16 @@ def _ensure_primary_compatibility_mode15(docx_path: Path) -> None:
             r'xmlns:w\s*=\s*[\'"]http://schemas.openxmlformats.org/wordprocessingml/2006/main[\'"]', text) is None:
         raise ValueError("unsupported_primary_settings_namespace")
     setting = '<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/>'
-    # Replace all prior mode entries with exactly one; preserve other settings.
-    matches = list(_COMPAT_SETTING_RE.finditer(text))
-    if matches:
-        first = True
-        def replace_mode(_match):
-            nonlocal first
-            value = setting if first else ""
-            first = False
-            return value
-        modified = _COMPAT_SETTING_RE.sub(replace_mode, text)
-    elif re.search(r'<w:compat\b[^>]*/>', text):
-        modified = re.sub(r'<w:compat\b[^>]*/>', '<w:compat>' + setting + '</w:compat>', text, count=1)
-    elif '</w:compat>' in text:
-        modified = text.replace('</w:compat>', setting + '</w:compat>', 1)
+    # Canonical placement is necessary for old no-mode checkpoint rebuilds:
+    # the same settings must result from a template mode14 or retained no-mode.
+    # Preserve every non-mode byte and append one fixed entry to compat.
+    modified = _COMPAT_SETTING_RE.sub("", text)
+    if re.search(r'<w:compat\b[^>]*/>', modified):
+        modified = re.sub(r'<w:compat\b[^>]*/>', '<w:compat>' + setting + '</w:compat>', modified, count=1)
+    elif '</w:compat>' in modified:
+        modified = modified.replace('</w:compat>', setting + '</w:compat>', 1)
     else:
-        modified = text.replace('</w:settings>', '<w:compat>' + setting + '</w:compat></w:settings>', 1)
+        modified = modified.replace('</w:settings>', '<w:compat>' + setting + '</w:compat></w:settings>', 1)
     parsed = ET.fromstring(modified)
     modes = [node for node in parsed.iter(qn("w:compatSetting")) if node.get(qn("w:name")) == "compatibilityMode"]
     if len(modes) != 1 or modes[0].get(qn("w:val")) != "15":
