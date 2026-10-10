@@ -32,4 +32,3 @@ def system_separator_note(note, note_tag):
         return False
     return all(not (node.text or "").strip() and not (node.tail or "").strip()
                for node in note.iter())
-

@@ -189,6 +189,9 @@ def _validate_system_note_parts(members):
     relation_base = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
     types = _xml(members["[Content_Types].xml"])
     relations = _xml(members.get("word/_rels/document.xml.rels", b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>'))
+    if any(name in members for name in ("word/footnotes.xml", "word/endnotes.xml")):
+        if relations.tag != relationship_ns + "Relationships" or types.tag != content_ns + "Types":
+            _fail("unsupported_system_note_binding")
     for plural, singular in (("footnotes", "footnote"), ("endnotes", "endnote")):
         name = "word/" + plural + ".xml"
         bindings = [n for n in relations if n.get("Type", "").endswith("/" + plural)]
@@ -204,11 +207,13 @@ def _validate_system_note_parts(members):
                 or any(not system_separator_note(n, W + singular) for n in root)):
             _fail("unsupported_system_note_content")
         if (len(bindings) != 1 or bindings[0].tag != relationship_ns + "Relationship"
+                or len(bindings[0]) or (bindings[0].text or "").strip() or (bindings[0].tail or "").strip()
                 or set(bindings[0].attrib) - {"Id", "Type", "Target", "TargetMode"}
                 or bindings[0].get("Type") != relation_base + plural
                 or bindings[0].get("Target") != plural + ".xml"
                 or bindings[0].get("TargetMode", "Internal") != "Internal"
                 or len(overrides) != 1 or overrides[0].tag != content_ns + "Override"
+                or len(overrides[0]) or (overrides[0].text or "").strip() or (overrides[0].tail or "").strip()
                 or set(overrides[0].attrib) != {"PartName", "ContentType"}
                 or overrides[0].get("ContentType") != "application/vnd.openxmlformats-officedocument.wordprocessingml." + plural + "+xml"):
             _fail("unsupported_system_note_binding")

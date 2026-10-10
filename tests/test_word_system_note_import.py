@@ -36,6 +36,12 @@ def with_system_notes(raw, mutation=None):
         elif mutation == 'text': etree.SubElement(root[0][0][-1],W+'t').text='Meaningful note'
         elif mutation == 'unknown': etree.SubElement(root[0][0],W+'bookmarkStart')
         elif mutation == 'attribute': root[0].set(W+'unknown','1')
+        elif mutation == 'binding_child': etree.SubElement(binding,REL+'Unknown')
+        elif mutation == 'binding_text': binding.text='unknown'
+        elif mutation == 'override_child': etree.SubElement(override,CT+'Unknown')
+        elif mutation == 'override_text': override.text='unknown'
+        elif mutation == 'relations_root': relations.tag='{urn:unsupported}Relationships'
+        elif mutation == 'types_root': types.tag='{urn:unsupported}Types'
         elif mutation == 'missing_binding': relations.remove(binding)
         elif mutation == 'duplicate_binding': relations.append(etree.fromstring(etree.tostring(binding))) ; relations[-1].set('Id','duplicate')
         elif mutation == 'wrong_binding': binding.set('Type',BASE+'styles')
@@ -65,7 +71,7 @@ def test_system_notes_are_preserved_and_never_enter_paragraph_inventory(language
     assert saved==with_system_notes(original)
 
 
-@pytest.mark.parametrize('mutation',['real_note','duplicate','text','unknown','attribute','missing_binding','duplicate_binding','wrong_binding','external','missing_type','duplicate_type','wrong_type','orphan','reference','note_rels'])
+@pytest.mark.parametrize('mutation',['real_note','duplicate','text','unknown','attribute','missing_binding','duplicate_binding','wrong_binding','external','missing_type','duplicate_type','wrong_type','orphan','reference','note_rels','binding_child','binding_text','override_child','override_text','relations_root','types_root'])
 def test_notes_and_bad_bindings_remain_fatal(mutation):
     with pytest.raises(SavedDocxLayoutError): inspect_docx(with_system_notes(docx_bytes(),mutation),'EN')
 
@@ -125,3 +131,22 @@ def test_ordinary_prepare_rebases_word_serialization_without_changing_bytes(tmp_
         assert view['baseline_id']!=case.view['baseline_id']
         review=case.manager.service.saved.root/'reviews'/view['review']['review_id']
         assert (review/'original.docx').read_bytes()==saved
+
+
+
+def test_resolver_absence_and_owner_mismatch_keep_distinct_statuses(tmp_path,monkeypatch):
+    from dataclasses import replace
+    from tests.test_ordinary_layout_service import make_case
+    from tests.test_shadow_web_ordinary_layout_api import client_for,url
+    case=make_case(tmp_path,monkeypatch)
+    def absent(_):raise FileNotFoundError('private path must not leak')
+    with client_for(case) as client:
+        case.manager.job_resolver=absent
+        response=client.post(url(case,'/layout/prepare'),json={'prepare_nonce':'f'*32})
+        assert response.status_code==404
+        assert response.json()['diagnostics']['error']=='ordinary_layout_job_unavailable'
+        assert 'private path' not in response.text
+        case.manager.job_resolver=lambda _:replace(case.job,workspace_id='wrong-owner')
+        response=client.post(url(case,'/layout/prepare'),json={'prepare_nonce':'f'*32})
+        assert response.status_code==409
+        assert response.json()['diagnostics']['error']=='ordinary_layout_job_owner_mismatch'
