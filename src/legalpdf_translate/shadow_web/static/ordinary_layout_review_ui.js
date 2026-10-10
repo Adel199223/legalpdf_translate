@@ -4,6 +4,7 @@ import { mountSavedDocxLayout } from "./saved_docx_layout_ui.js";
 import { mountTextCorrection } from "./text_correction_ui.js";
 
 export function ordinaryLayoutMessage(code) {
+  if (code === "ordinary_layout_saved_word_unsupported") return "The saved Word file contains unsupported content. Original files are preserved.";
   if (/edited_layout_rebase_required/.test(code)) return "Word contains text changes. They remain preserved. Choose Review text changes in the text correction editor to compare and approve them.";
   if (/correction_output_review_required/.test(code)) return "Review the complete corrected output before saving the case.";
   if (/automatic_operation_pending_or_uncertain/.test(code)) return "An earlier layout request may have been billed. The app kept the original Word file and billing record; refresh its status before any new request.";
@@ -177,7 +178,7 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
     const view=state.view;
     header.append(el("h3","Source layout and delivery"));
     if (view?.suggestions?.some(item=>item.source_layout_review_required)) {
-      header.append(el("p","Source layout needs review: an optional decorative rule could not be safely applied; its text was retained.","saved-layout-status"));
+      header.append(el("p","Source layout needs review: an optional source-layout transformation could not be safely applied; its text was retained.","saved-layout-status"));
     }
     header.append(el("p",view?.delivery&&!view.delivery.stale&&!view.stale
       ? `${view.delivery.kind==="text_corrected"?"Approved text correction":view.delivery.kind==="reviewed"?"Reviewed formatted copy":view.delivery.kind==="automatic_unreviewed_edited"?"Word-edited formatted copy (source layout unreviewed)":view.delivery.kind==="automatic_unreviewed"?"Automatic formatted copy (unreviewed)":"Current translation"} selected · ${view.delivery.word_count} words${view.frozen?" · files locked for confirmation":""}.`

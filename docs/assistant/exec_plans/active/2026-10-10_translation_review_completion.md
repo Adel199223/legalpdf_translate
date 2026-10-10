@@ -1,5 +1,15 @@
 # Translation review completion and fresh end-to-end acceptance
 
+## Word system-note import boundary — October 10
+
+A normal Word save of the retained fallback added standard footnote/endnote separator parts. The current saved-DOCX parser refused them before ordinary rebase could proceed. This bounded follow-up accepts only strictly recognized reserved separator furniture with exact internal relationships and content types; substantive notes, references, duplicates and unknown content remain refused. Source and saved Word files stay immutable. Implementation continues on the isolated optional-footer branch after `5f74a6c`; no live mutation, provider or native action is performed by this worker. The parent plan remains active.
+
+## Second fresh live failure — optional footer capability
+
+The second installed fresh attempt is retained failed evidence: a terminal source-footer hint owns paragraphs inside a column band. Full base layout passes when only that optional transformation is omitted; this diagnostic projection does not authorize footer conversion or acceptance. The bounded repair validates every existing safety, terminal ownership, bounding-box and role condition before recording unsupported column containment as `source_footer_requires_plain_flow`. Text, paragraph IDs, bands and cells remain intact. The V7 plain-flow transformation guard is unchanged.
+
+Implementation is isolated in `translation-visible-fidelity/legalpdf_translate`, branch `feat/optional-footer-evidence-20261010`, from exact installed main `435536538a8f8a79033dbb9e1951095fb1f67a56`. The separate docs acceptance branch and earlier implementation history remain preserved. New capability and policy provenance must preserve v1 normalization receipts and historical verification; a paid raw response cannot be rewritten or relabelled. Source and failure evidence is private `live_acceptance_02`; offline candidate reconstruction and synthetic zero-dispatch recovery are distinct from current live acceptance. No implementation worker provider, native, Gmail or live-session action is authorized by this addendum. The parent plan remains active.
+
 ## Fresh live failure and bounded recovery — October 10
 
 The installed fresh run retained a paid V3 proposal but refused automatic publication because a proposed decorative rule belongs to a column band. Exact provider response, primary baseline and accounting are preserved under private `live_acceptance_01/layout_failure_01`; the strict structural guard is not waived. Optional-hint recovery is under independent design review, with no additional provider trial authorized by this checkpoint. The primary fallback also still removed compatibility mode 15, so new primary output requires an explicit modern settings value while historical removal helpers and candidate verification recipes remain unchanged.

@@ -14,7 +14,7 @@ from .ordinary_layout_contracts import (LayoutSuggestionPolicy, OrdinaryLayoutJo
     MAX_RESPONSE_BYTES, PROPOSAL_VERSION_V3, decode, digest, encode, fail, generation, identifier,
     job_identity, nonce, normalize_proposals, page_ids, proposal_schema, proposal_source_evidence)
 from .ordinary_layout_service import OrdinaryLayoutService, _directories, _read, _write, public
-from .saved_docx_layout import inspect_docx
+from .saved_docx_layout import inspect_docx, SavedDocxLayoutError
 from .usage_accounting import DispatchAccounting, accounting_context, _ceiling_for
 
 INSTRUCTIONS = """Propose recognizable layout for a legal translation; never translate or rewrite text.
@@ -99,6 +99,8 @@ class OrdinaryLayoutManager:
             return job
         except OrdinaryLayoutError:
             raise
+        except SavedDocxLayoutError:
+            fail("saved_word_unsupported", 422)
         except Exception:
             fail("job_unavailable", 404)
 
@@ -137,8 +139,9 @@ class OrdinaryLayoutManager:
                 state["suggestion_capability"] = {"available": True, **self._policy(job).public()}
             except OrdinaryLayoutError as exc:
                 state["suggestion_capability"] = {"available": False, "reason": exc.code}
-        except OrdinaryLayoutError:
-            state.update(attached=False, stale=True, suggestion_capability={"available": False, "reason": "ordinary_layout_job_unavailable"})
+        except OrdinaryLayoutError as exc:
+            reason = "ordinary_layout_saved_word_unsupported" if exc.code == "ordinary_layout_saved_word_unsupported" else "ordinary_layout_job_unavailable"
+            state.update(attached=False, stale=True, suggestion_capability={"available": False, "reason": reason})
         return state
 
     @public

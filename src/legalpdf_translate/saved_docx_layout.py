@@ -39,12 +39,13 @@ _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _FIXED_PARTS = frozenset({"[Content_Types].xml", "_rels/.rels", "docProps/core.xml",
     "docProps/app.xml", "docProps/thumbnail.jpeg", "word/document.xml",
     "word/_rels/document.xml.rels", "word/styles.xml", "word/stylesWithEffects.xml",
-    "word/settings.xml", "word/webSettings.xml", "word/fontTable.xml", "word/numbering.xml"})
+    "word/settings.xml", "word/webSettings.xml", "word/fontTable.xml", "word/numbering.xml",
+    "word/footnotes.xml", "word/endnotes.xml"})
 _PART_PATTERN = re.compile(r"(?:word/(?:theme/theme[0-9]+|header[0-9]+|footer[0-9]+)\.xml|"
     r"customXml/(?:item[0-9]+|itemProps[0-9]+)\.xml|customXml/_rels/item[0-9]+\.xml\.rels)\Z")
 _REL_TYPES = frozenset({"officeDocument", "metadata/core-properties", "extended-properties",
     "thumbnail", "styles", "stylesWithEffects", "settings", "webSettings", "fontTable", "theme",
-    "customXml", "customXmlProps", "numbering", "header", "footer"})
+    "customXml", "customXmlProps", "numbering", "header", "footer", "footnotes", "endnotes"})
 _RPROPS = frozenset({"rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps",
     "strike", "dstrike", "u", "color", "highlight", "sz", "szCs", "kern", "position",
     "spacing", "rtl", "cs", "lang", "vertAlign", "noProof", "snapToGrid"})
@@ -176,7 +177,62 @@ def _package(raw: bytes) -> tuple[dict[str, bytes], list]:
                     {"attachedTemplate", "mailMerge", "documentProtection", "writeProtection",
                      "mirrorMargins", "gutterAtTop"} for n in root.iter()):
                 _fail("unsupported_document_settings")
+    _validate_system_note_parts(members)
     return members, infos
+
+
+def _validate_system_note_parts(members):
+    """Permit only Word's reserved empty separator furniture, never source notes."""
+    from .word_system_notes import system_separator_note
+    relationship_ns = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+    content_ns = "{http://schemas.openxmlformats.org/package/2006/content-types}"
+    relation_base = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+    types = _xml(members["[Content_Types].xml"])
+    relations = _xml(members.get("word/_rels/document.xml.rels", b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>'))
+    if any(name in members for name in ("word/footnotes.xml", "word/endnotes.xml")):
+        if relations.tag != relationship_ns + "Relationships" or types.tag != content_ns + "Types":
+            _fail("unsupported_system_note_binding")
+    for plural, singular in (("footnotes", "footnote"), ("endnotes", "endnote")):
+        name = "word/" + plural + ".xml"
+        bindings = [n for n in relations if n.get("Type", "").endswith("/" + plural)]
+        overrides = [n for n in types if n.get("PartName") == "/" + name]
+        if name not in members:
+            if bindings or overrides: _fail("unsupported_system_note_binding")
+            continue
+        root = _xml(members[name])
+        if (root.tag != W + plural or len(root) != 2
+                or set(root.attrib) - {"{http://schemas.openxmlformats.org/markup-compatibility/2006}Ignorable"}
+                or (root.text or "").strip()
+                or {n.get(W + "id") for n in root} != {"-1", "0"}
+                or any(not system_separator_note(n, W + singular) for n in root)):
+            _fail("unsupported_system_note_content")
+        if (len(bindings) != 1 or bindings[0].tag != relationship_ns + "Relationship"
+                or len(bindings[0]) or (bindings[0].text or "").strip() or (bindings[0].tail or "").strip()
+                or set(bindings[0].attrib) - {"Id", "Type", "Target", "TargetMode"}
+                or bindings[0].get("Type") != relation_base + plural
+                or bindings[0].get("Target") != plural + ".xml"
+                or bindings[0].get("TargetMode", "Internal") != "Internal"
+                or len(overrides) != 1 or overrides[0].tag != content_ns + "Override"
+                or len(overrides[0]) or (overrides[0].text or "").strip() or (overrides[0].tail or "").strip()
+                or set(overrides[0].attrib) != {"PartName", "ContentType"}
+                or overrides[0].get("ContentType") != "application/vnd.openxmlformats-officedocument.wordprocessingml." + plural + "+xml"):
+            _fail("unsupported_system_note_binding")
+    for name, raw in members.items():
+        if name.endswith((".xml", ".rels")):
+            root = _xml(raw)
+            if any(n.tag in {W + "footnoteReference", W + "endnoteReference"} for n in root.iter()):
+                _fail("unsupported_note_reference")
+            if name.endswith(".rels"):
+                origin = "" if name == "_rels/.rels" else posixpath.dirname(name).removesuffix("/_rels")
+                for rel in root:
+                    target = posixpath.normpath(posixpath.join(origin, rel.get("Target", "")))
+                    if target in {"word/footnotes.xml", "word/endnotes.xml"}:
+                        plural = posixpath.basename(target).removesuffix(".xml")
+                        if name != "word/_rels/document.xml.rels" or rel.get("Type") != relation_base + plural:
+                            _fail("unsupported_system_note_binding")
+            if name.endswith(".rels") and name != "word/_rels/document.xml.rels":
+                if any(n.get("Type", "").endswith(("/footnotes", "/endnotes")) for n in root):
+                    _fail("unsupported_system_note_binding")
 
 
 def _properties(node, *, paragraph=False):

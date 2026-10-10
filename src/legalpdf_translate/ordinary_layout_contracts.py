@@ -262,7 +262,11 @@ def proposal_schema(page_number, ids, *, version=PROPOSAL_VERSION_V3):
     return response
 
 
-def proposal_source_evidence(snapshot, view, proposal):
+OPTIONAL_HINT_NORMALIZATION_V1 = "ordinary_optional_layout_hint_normalization_v1"
+OPTIONAL_HINT_NORMALIZATION_V2 = "ordinary_optional_layout_hint_normalization_v2"
+
+
+def proposal_source_evidence(snapshot, view, proposal, *, normalization_version=OPTIONAL_HINT_NORMALIZATION_V2):
     """Provider evidence is a proposal for explicit review, never a transcription certificate."""
     if proposal.get("version") != PROPOSAL_VERSION_V3:
         return {"version": "ordinary_source_evidence_v1", "findings": [], "layout": []}
@@ -329,6 +333,8 @@ def proposal_source_evidence(snapshot, view, proposal):
     if type(partition_rows) is not list or any(type(row) is not dict or type(row.get("paragraph_id")) is not str for row in partition_rows):
         fail("invalid_source_layout_evidence")
     partitions = {row["paragraph_id"] for row in partition_rows}
+    if normalization_version not in {OPTIONAL_HINT_NORMALIZATION_V1, OPTIONAL_HINT_NORMALIZATION_V2}:
+        fail("invalid_source_layout_normalization_version")
     used = set()
     accepted, rejected = [], []
     for evidence_index, row in enumerate(evidence):
@@ -362,18 +368,23 @@ def proposal_source_evidence(snapshot, view, proposal):
                     "paragraph_ids": deepcopy(owned), "reason": "decorative_rule_requires_plain_flow"})
                 continue
         elif row["kind"] == "source_footer":
-            if any(pid in column_ids for pid in owned):
-                fail("invalid_source_layout_evidence")
             if (indices[-1] != len(ids)-1 or row["bbox"][1] < .85 or
                     any(not "".join(t["text"] for t in baseline[pid]["tokens"] if t["kind"] == "t").strip() for pid in owned) or
                     any(choices[pid]["role"] not in {"body", "source_folio"} for pid in owned)):
                 fail("invalid_source_footer_evidence")
+            if any(pid in column_ids for pid in owned):
+                if normalization_version == OPTIONAL_HINT_NORMALIZATION_V1:
+                    fail("invalid_source_layout_evidence")
+                rejected.append({"index": evidence_index, "kind": row["kind"],
+                    "paragraph_ids": deepcopy(owned), "reason": "source_footer_requires_plain_flow"})
+                continue
         else:
             fail("invalid_source_layout_evidence")
         accepted.append(deepcopy(row))
     return {"version": "ordinary_source_evidence_v1", "page_number": page,
             "findings": normalized, "layout": accepted, "source_coverage_verified": False,
-            **({"normalization": {"version": "ordinary_optional_layout_hint_normalization_v1",
+            **({"normalization": {"version": OPTIONAL_HINT_NORMALIZATION_V2
+                 if any(row["kind"] == "source_footer" for row in rejected) else OPTIONAL_HINT_NORMALIZATION_V1,
                  "canonical_proposal_sha256": digest(encode(proposal)), "rejected_hints": rejected,
                  "review_required": True}} if rejected else {})}
 
@@ -383,7 +394,7 @@ def source_evidence_review_fields(records):
     """Current review warning, absent for historical or fully supported evidence."""
     rejected = [{"page_number": page["page_number"], **row}
                 for page in records
-                if page.get("normalization", {}).get("version") == "ordinary_optional_layout_hint_normalization_v1"
+                if page.get("normalization", {}).get("version") in {OPTIONAL_HINT_NORMALIZATION_V1, OPTIONAL_HINT_NORMALIZATION_V2}
                 for row in page["normalization"]["rejected_hints"]]
     return ({"source_layout_review_required": True, "source_layout_rejected_hints": rejected}
             if rejected else {})

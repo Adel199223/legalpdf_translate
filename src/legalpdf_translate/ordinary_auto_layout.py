@@ -22,6 +22,11 @@ _POLICY_RE = re.compile(r"source_image_unreviewed_v1:([a-f0-9]{64})\Z")
 
 def frozen_automatic_layout_policy() -> str:
     """Freeze local price, request and validation versions before translation."""
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v2")
+
+
+def _optional_hint_policy(normalization_version: str) -> str:
+    """Exact v1/v2 capability identities; no arbitrary historical-policy admission."""
     from .ordinary_layout_accounting import layout_accounting_policy
     from .ordinary_layout_contracts import PROPOSAL_VERSION_V3
     from .ordinary_layout_manager import INSTRUCTIONS
@@ -31,7 +36,7 @@ def frozen_automatic_layout_policy() -> str:
         "proposal_version": PROPOSAL_VERSION_V3,
         "automatic_writer_version": "saved_docx_layout_writer_source_layout_v7",
         "source_folio_direction_version": "numeric_run_ltr_v2",
-        "source_layout_normalization_version": "ordinary_optional_layout_hint_normalization_v1",
+        "source_layout_normalization_version": normalization_version,
         "instructions_sha256": hashlib.sha256(INSTRUCTIONS.encode("utf-8")).hexdigest(),
         "pricing_catalog": json.loads(accounting._pricing_json),
         "dispatch_limits": json.loads(accounting._limits_json)}
@@ -380,7 +385,9 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
                     from .saved_docx_layout import inspect_docx
                     initial_view = verified_record(operation / "proposal_initial_view.json")["view"]
                     baseline_bytes = bounded_read(operation.parent.parent / "reviewed.docx", storage.DOCX_MAX_BYTES)
-                    expected = proposal_source_evidence(inspect_docx(baseline_bytes, initial_view["target_lang"]), initial_view, proposal)
+                    from .ordinary_layout_contracts import OPTIONAL_HINT_NORMALIZATION_V2
+                    expected = proposal_source_evidence(inspect_docx(baseline_bytes, initial_view["target_lang"]), initial_view, proposal,
+                        normalization_version=records[0].get("normalization", {}).get("version", OPTIONAL_HINT_NORMALIZATION_V2))
                     expected["response_sha256"] = row["response_sha256"]
                     if records[0] != expected:
                         fail("source_evidence_response_changed", 409)
@@ -465,12 +472,19 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int], *
                 fail("source_evidence_initial_view_changed", 409)
             evidence_view = initial_record["view"]
             from .ordinary_layout_contracts import proposal_source_evidence
-            source_records = [proposal_source_evidence(inspect_docx(reviewed, evidence_view["target_lang"]), evidence_view, p) for p in proposals]
+            from .ordinary_layout_contracts import OPTIONAL_HINT_NORMALIZATION_V1, OPTIONAL_HINT_NORMALIZATION_V2
+            normalization_version = (OPTIONAL_HINT_NORMALIZATION_V1
+                if policy_fingerprint == _optional_hint_policy(OPTIONAL_HINT_NORMALIZATION_V1).split(":", 1)[1]
+                else OPTIONAL_HINT_NORMALIZATION_V2)
+            source_records = [proposal_source_evidence(inspect_docx(reviewed, evidence_view["target_lang"]), evidence_view, p,
+                normalization_version=normalization_version) for p in proposals]
             for record, proposal in zip(source_records, proposals):
                 record["response_sha256"] = hashlib.sha256(storage._read(operation / f"page-{proposal['page_number']:04d}.response.json", 2 * 1024 * 1024)).hexdigest()
             expected_sidecar = {"version": "ordinary_source_evidence_v1", "pages": source_records}
             if (any(page.get("normalization", {}).get("review_required") for page in source_records)
-                    and policy_fingerprint != frozen_automatic_layout_policy().split(":", 1)[1]):
+                    and not (policy_fingerprint == frozen_automatic_layout_policy().split(":", 1)[1]
+                        or (policy_fingerprint == _optional_hint_policy("ordinary_optional_layout_hint_normalization_v1").split(":", 1)[1]
+                            and all(page.get("normalization", {}).get("version") != "ordinary_optional_layout_hint_normalization_v2" for page in source_records)))):
                 fail("optional_hint_recovery_requires_current_policy", 409)
             sidecar = operation / "source_evidence.json"
             if sidecar.exists() and verified_record(sidecar) != expected_sidecar:
