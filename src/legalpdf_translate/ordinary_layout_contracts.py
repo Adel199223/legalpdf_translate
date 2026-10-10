@@ -262,11 +262,13 @@ def proposal_schema(page_number, ids, *, version=PROPOSAL_VERSION_V3):
     return response
 
 
+EMPHASIS_NORMALIZATION_V1 = "ordinary_optional_emphasis_normalization_v1"
+
 OPTIONAL_HINT_NORMALIZATION_V1 = "ordinary_optional_layout_hint_normalization_v1"
 OPTIONAL_HINT_NORMALIZATION_V2 = "ordinary_optional_layout_hint_normalization_v2"
 
 
-def proposal_source_evidence(snapshot, view, proposal, *, normalization_version=OPTIONAL_HINT_NORMALIZATION_V2):
+def proposal_source_evidence(snapshot, view, proposal, *, normalization_version=OPTIONAL_HINT_NORMALIZATION_V2, emphasis_normalization_version=EMPHASIS_NORMALIZATION_V1):
     """Provider evidence is a proposal for explicit review, never a transcription certificate."""
     if proposal.get("version") != PROPOSAL_VERSION_V3:
         return {"version": "ordinary_source_evidence_v1", "findings": [], "layout": []}
@@ -381,8 +383,20 @@ def proposal_source_evidence(snapshot, view, proposal, *, normalization_version=
         else:
             fail("invalid_source_layout_evidence")
         accepted.append(deepcopy(row))
+    rejected_emphasis = []
+    if emphasis_normalization_version not in {None, EMPHASIS_NORMALIZATION_V1}:
+        fail("invalid_emphasis_normalization_version")
+    if emphasis_normalization_version is not None:
+        by_id = {row["id"]: row for row in snapshot["paragraphs"]}
+        for choice in proposal["paragraphs"]:
+            dropped = []
+            _generated_emphasis(by_id[choice["paragraph_id"]], choice.get("emphasis", []), rejected=dropped)
+            rejected_emphasis.extend({"paragraph_id": choice["paragraph_id"], **item} for item in dropped)
     return {"version": "ordinary_source_evidence_v1", "page_number": page,
             "findings": normalized, "layout": accepted, "source_coverage_verified": False,
+            **({"optional_emphasis_normalization": {"version": EMPHASIS_NORMALIZATION_V1,
+                "canonical_proposal_sha256": digest(encode(proposal)),
+                "rejected_spans": rejected_emphasis, "review_required": True}} if rejected_emphasis else {}),
             **({"normalization": {"version": OPTIONAL_HINT_NORMALIZATION_V2
                  if any(row["kind"] == "source_footer" for row in rejected) else OPTIONAL_HINT_NORMALIZATION_V1,
                  "canonical_proposal_sha256": digest(encode(proposal)), "rejected_hints": rejected,
@@ -396,6 +410,11 @@ def source_evidence_review_fields(records):
                 for page in records
                 if page.get("normalization", {}).get("version") in {OPTIONAL_HINT_NORMALIZATION_V1, OPTIONAL_HINT_NORMALIZATION_V2}
                 for row in page["normalization"]["rejected_hints"]]
+    rejected.extend({"page_number": page["page_number"], "kind": "optional_emphasis",
+                     "paragraph_ids": [item["paragraph_id"]], **item}
+                    for page in records
+                    if page.get("optional_emphasis_normalization", {}).get("version") == EMPHASIS_NORMALIZATION_V1
+                    for item in page["optional_emphasis_normalization"]["rejected_spans"])
     return ({"source_layout_review_required": True, "source_layout_rejected_hints": rejected}
             if rejected else {})
 
@@ -530,8 +549,8 @@ def _canonical_columns_rows(bands, ids, choices):
     return result if [pid for band in result for pid in _ids(band)] == ids else bands
 
 
-def _generated_emphasis(row, spans):
-    """Drop only optional word-interior endpoints; never repair unsafe literals."""
+def _generated_emphasis(row, spans, *, drop_unsupported_edges=True, rejected=None):
+    """Drop unsupported optional presentation edges; never repair unsafe literals."""
     from .saved_docx_layout import _phrase_edge, _emphasis_end_edge, _protected_ranges
     if type(spans) is not list or len(spans) > 1000:
         fail("invalid_proposal_decisions")
@@ -561,14 +580,21 @@ def _generated_emphasis(row, spans):
                 or any(token["kind"] != "t" and start < token["end"] and end > token["start"] for token in row["tokens"])):
             fail("invalid_proposal_decisions")
         valid_start, valid_end = _phrase_edge(row["text"], start), _emphasis_end_edge(row["text"], end)
-        if (not valid_start and not word_interior(start)) or (not valid_end and not word_interior(end)):
+        unsupported = ((not valid_start and not word_interior(start))
+                       or (not valid_end and not word_interior(end)))
+        control_cut = any(0 < cut < len(row["text"]) and any(
+            unicodedata.category(char)[0] == "C" for char in row["text"][cut - 1:cut + 1])
+            for cut in (start, end))
+        if control_cut or (unsupported and not drop_unsupported_edges):
             fail("invalid_proposal_decisions")
         if valid_start and valid_end:
             retained.append(deepcopy(span))
+        elif rejected is not None:
+            rejected.append({"span": deepcopy(span), "reason": "unsupported_optional_emphasis_edge"})
     return retained
 
 
-def normalize_proposals(snapshot, view, proposals):
+def normalize_proposals(snapshot, view, proposals, *, emphasis_normalization_version=EMPHASIS_NORMALIZATION_V1):
     decisions = deepcopy(view["decisions"])
     by_id = {row["paragraph_id"]: index for index, row in enumerate(decisions["paragraphs"])}
     replacements, id_page = {}, {}
@@ -612,7 +638,9 @@ def normalize_proposals(snapshot, view, proposals):
                 "Suggested source box is empty or reversed; operator source association is required."
                 if unusable_box else "Source association requires operator review." if box is None else "")
             baseline = snapshot["paragraphs"][by_id[row["paragraph_id"]]]
-            row["emphasis"] = _generated_emphasis(baseline, row["emphasis"])
+            row["emphasis"] = _generated_emphasis(baseline, row["emphasis"],
+                drop_unsupported_edges=(emphasis_normalization_version is not None
+                    and proposal["version"] == PROPOSAL_VERSION_V3))
             has_visible_text = any(token["kind"] == "t" and any(
                 not char.isspace() and unicodedata.category(char)[0] in {"L", "N", "P", "S"}
                 for char in token["text"]) for token in baseline["tokens"])
@@ -632,7 +660,7 @@ def normalize_proposals(snapshot, view, proposals):
                 fail("proposal_coverage")
         except (TypeError, KeyError):
             fail("invalid_proposal")
-        proposal_source_evidence(snapshot, view, proposal)
+        proposal_source_evidence(snapshot, view, proposal, emphasis_normalization_version=emphasis_normalization_version)
         replacements[page] = deepcopy(bands)
         id_page.update({pid: page for pid in ids})
     bands, inserted = [], set()

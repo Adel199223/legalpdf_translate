@@ -320,3 +320,87 @@ console.log(JSON.stringify({invalid,recovered:reload.snapshot(),recovery:calls.s
     assert result["recovered"]["operation"]["status"] == "cancelled"
     assert all(item["body"] is None for item in result["recovery"])
     assert len(result["posts"]) == 2
+
+
+
+def test_definitive_select_rejection_releases_only_proven_nonce_for_normal_rebase():
+    result = probe(DOM + r'''
+const storage=memory(),calls=[];let saved=prepared();
+const job={job_id:scope.jobId,job_kind:'translate',status:'completed',result:{save_seed:{}}};
+const request=async(url,owner,opts={})=>{
+ const body=opts.body?JSON.parse(opts.body):null;calls.push({url,body});
+ if(body){saved.stale=true;const e=new Error('Rejected before write');e.status=409;e.payload={diagnostics:{error:'ordinary_layout_baseline_stale'}};throw e;}
+ return ordinaryEnvelope(saved);
+};
+globalThis.localStorage=storage;
+const mounted=ordinaryUi.mountOrdinaryLayoutReview({root,getScope:()=>scope,getJob:()=>job,request});
+await mounted.controller.read();await mounted.controller.select('original');
+const rebase=findButton('Use the latest saved Word changes');
+console.log(JSON.stringify({state:mounted.controller.snapshot(),rebaseDisabled:rebase.disabled,calls,stored:[...storage.data.values()],unsafeWrites}));
+''')
+    assert result['state']['pending'] is None
+    assert result['state']['verified'] is True and result['state']['view']['stale'] is True
+    assert result['rebaseDisabled'] is False
+    assert len([call for call in result['calls'] if call['body']]) == 1
+    assert all('"pending":null' in entry for entry in result['stored'])
+    assert result['unsafeWrites'] == 0
+
+
+def test_select_reconciliation_retains_uncertain_or_advanced_outcomes():
+    result = probe(r'''
+const rows=[];
+for(const scenario of ['network','500','other409','malformed','read_failure','bad_view','advanced','changed_baseline','owner_switch','disposed','post_success_read_failure','suggest']){
+ let owner={...scope},saved=prepared(),stage=false,c,reads=0;const calls=[],storage=memory();
+ const request=async(url,current,opts={})=>{
+  const body=opts.body?JSON.parse(opts.body):null;calls.push({body});
+  if(body){stage=true;
+   if(scenario==='post_success_read_failure')return ordinaryEnvelope({...saved,delivery_generation:1,delivery:{selection_id:body.selection_nonce,kind:'original',stale:false}});
+   if(scenario==='owner_switch')owner={...owner,jobId:'other-job'};
+   if(scenario==='disposed')c.dispose();
+   const e=new Error('uncertain');e.status=scenario==='network'?0:scenario==='500'?500:409;
+   e.payload=scenario==='malformed'?{}:{diagnostics:{error:scenario==='other409'?'ordinary_layout_nonce_conflict':'ordinary_layout_baseline_stale'}};throw e;
+  }
+  if(stage){reads++;
+   if(['read_failure','post_success_read_failure'].includes(scenario))throw new Error('status unavailable');
+   if(scenario==='bad_view')return ordinaryEnvelope({job_id:owner.jobId});
+   if(scenario==='advanced')saved.delivery_generation=1;
+   if(scenario==='changed_baseline')saved.baseline_id='d'.repeat(32);
+  }
+  return ordinaryEnvelope(saved);
+ };
+ c=ordinary.createOrdinaryLayoutController({getScope:()=>owner,request,storage,createNonce:nonce});await c.read();
+ if(scenario==='suggest')await c.suggest([1]);else await c.select('original');
+ const oldKey=`legalpdf:ordinary-layout:v1:${scope.runtimeMode}:${scope.workspaceId}:${scope.jobId}`;
+ rows.push({scenario,state:c.snapshot(),retained:JSON.parse(storage.getItem(oldKey)).pending,posts:calls.filter(x=>x.body).length,reads});
+}
+console.log(JSON.stringify(rows));
+''')
+    for case in result:
+        assert case['posts'] == 1
+        if case['scenario'] == 'post_success_read_failure':
+            assert case['retained'] is None  # POST itself returned nonce-proven delivery.
+            assert case['state']['verified'] is False
+        else:
+            assert case['retained'] is not None, case
+    for case in result:
+        if case['scenario'] in {'network','500','other409','malformed','suggest'}:
+            assert case['reads'] == 0
+
+
+def test_reload_recover_reconciles_same_select_nonce_without_new_selection():
+    result = probe(r'''
+const storage=memory(),calls=[];let saved=prepared(),reject=false;
+const options={getScope:()=>scope,storage,createNonce:nonce,request:async(url,owner,opts={})=>{
+ const body=opts.body?JSON.parse(opts.body):null;calls.push({body});
+ if(body){const e=new Error('uncertain');if(reject){e.status=409;e.payload={diagnostics:{code:'ordinary_layout_delivery_generation_conflict'}};}throw e;}
+ return ordinaryEnvelope(saved);
+}};
+const first=ordinary.createOrdinaryLayoutController(options);await first.read();await first.select('original');
+const old=first.snapshot().pending;first.dispose();reject=true;saved.stale=true;
+const reload=ordinary.createOrdinaryLayoutController(options);await reload.read();await reload.retry();
+console.log(JSON.stringify({old,final:reload.snapshot(),posts:calls.filter(x=>x.body)}));
+''')
+    assert result['final']['pending'] is None and result['final']['verified'] is True
+    assert len(result['posts']) == 2
+    assert result['posts'][0]['body'] == result['posts'][1]['body']
+    assert result['posts'][0]['body']['selection_nonce'] == result['old']['nonce']
