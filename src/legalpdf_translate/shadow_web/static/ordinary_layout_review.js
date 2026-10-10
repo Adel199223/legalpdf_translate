@@ -127,7 +127,23 @@ export function createOrdinaryLayoutController({getScope, request = fetchJson,
       else if (p.kind === "accept") {tail = "/layout/output-review"; body = {baseline_id:p.baseline,expected_generation:p.generation,artifact_id:p.artifactId,acceptance_nonce:p.nonce,all_pages_reviewed:true};}
       else {tail = "/delivery"; body = {baseline_id:p.baseline,expected_delivery_generation:p.generation,selection_nonce:p.nonce,kind:p.choice,
         review_id:p.reviewId,artifact_id:p.artifactId,expected_review_generation:p.reviewGeneration,keep_ordinary_confirmed:p.choice === "original"};}
-      const value = await call(tail, json(body));
+      let value;
+      try {value = await call(tail, json(body));}
+      catch (error) {
+        // Only the original nonpaid SELECT POST can prove a prewrite refusal.
+        // A failed status read after a successful POST is still uncertain.
+        const code = error?.payload?.diagnostics?.error || error?.payload?.diagnostics?.code;
+        if (p.kind !== "select" || error?.status !== 409
+          || !["ordinary_layout_baseline_stale", "ordinary_layout_delivery_generation_conflict"].includes(code)) throw error;
+        const fresh = await call("/layout");
+        accept(fresh); // Validates the owner, schema and monotonic generations.
+        if (!state.pending) return snapshot(); // A matching nonce proves success.
+        if (state.pending.kind === "select" && state.pending.nonce === p.nonce
+          && fresh.baseline_id === p.baseline && fresh.delivery_generation === p.generation) {
+          clearPending(); state.error = code; return snapshot();
+        }
+        throw error;
+      }
       if (p.kind === "suggest") {
         state.operation = copy(value);
         if (terminalSuggestion(value)) clearPending();

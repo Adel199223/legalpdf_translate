@@ -64,3 +64,24 @@ def test_cancel_endpoint_is_owned_idempotent_and_never_dispatches(tmp_path, monk
         assert client.post(url(case, f"/layout/suggestions/{operation}/cancel"), json=body).json() == first.json()
         assert client.post(url(case, f"/layout/suggestions/{operation}/cancel"),
             json={**body, "baseline_id": nonce()}).status_code == 409
+
+
+
+def test_changed_saved_word_select_is_prewrite_409_and_state_read_remains_available(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from tests.test_ordinary_layout_service import docx_bytes
+    case = make_case(tmp_path, monkeypatch)
+    case.state['job'] = replace(case.job, reviewed_docx=docx_bytes(suffix=' changed'))
+    with client_for(case) as client:
+        response = client.post(url(case, '/delivery'), json={
+            'baseline_id':case.view['baseline_id'], 'expected_delivery_generation':0,
+            'selection_nonce':nonce(), 'kind':'original', 'review_id':None, 'artifact_id':None,
+            'expected_review_generation':None, 'keep_ordinary_confirmed':True})
+        assert response.status_code == 409
+        assert response.json()['diagnostics']['error'] == 'ordinary_layout_baseline_stale'
+        fresh = client.get(url(case))
+        assert fresh.status_code == 200
+        view = fresh.json()['normalized_payload']['ordinary_layout']
+        assert view['stale'] is True and view['delivery_generation'] == 0
+        assert view['delivery'] is None and view['baseline_id'] == case.view['baseline_id']
+    assert not list(case.root.rglob('selection.json'))
