@@ -1284,7 +1284,7 @@ def _render_translation_diagnostics_markdown(
         lines.append("")
         lines.append("### D. Translation Quality Checks")
         lines.append("")
-        lines.append("> Citation Marker Δ counts legal-reference marker drift; Paren Δ counts parenthesis/bracket punctuation drift. Moderate drift is diagnostic unless the quality-risk policy also flags the page.")
+        lines.append("> Versioned rows use visible actionable citation evidence for warning selection. Citation Marker Δ and Paren Δ remain historical/advisory counts, not independently proven defects.")
         lines.append("")
         lines.append("| Page | Lang OK | Detected | Numeric Δ | Citation Marker Δ | Paren Δ | Struct Warn | Bidi Warn | Src Para | Out Para |")
         lines.append("|------|---------|----------|-----------|-------------------|---------|-------------|-----------|----------|----------|")
@@ -1316,10 +1316,13 @@ def _render_translation_diagnostics_markdown(
                     f"- Page {_page_idx}: missing {_samples[:3]}"
                 )
             # Track flagged pages for snippet gating
+            _actionable_citation = (row.get("citation_actionable_missing_count", 0)
+                if row.get("diagnostic_evidence_basis") == "visible_translation_diagnostics_v1"
+                else row.get("citation_mismatches_count", 0))
             _has_warning = (
                 not row.get("language_ok", True)
                 or int(row.get("numeric_mismatches_count", 0) or 0) > 0
-                or int(row.get("citation_mismatches_count", 0) or 0) > 0
+                or int(_actionable_citation or 0) > 0
                 or int(row.get("structure_warnings_count", 0) or 0) > 0
                 or int(row.get("bidi_warnings_count", 0) or 0) > 0
             )

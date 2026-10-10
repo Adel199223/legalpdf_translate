@@ -111,3 +111,19 @@ def test_portuguese_ordinal_article_abbreviation_preserves_anchor():
     source="nos termos do art.º 123.º do Código"
     assert checks(source,"بموجب المادة 123 من القانون")["citation_actionable_missing_count"] == 0
     assert checks(source,"بموجب المادة 124 من القانون")["citation_actionable_missing_count"] > 0
+
+
+def test_report_snippets_use_versioned_actionable_citations_with_legacy_fallback():
+    from legalpdf_translate.run_report import _render_translation_diagnostics_markdown
+    row={'page_index':1,'language_ok':True,'citation_mismatches_count':108,
+         'citation_actionable_missing_count':0,'diagnostic_evidence_basis':'visible_translation_diagnostics_v1'}
+    snippets=[{'page_number':1,'snippet':'SOURCE_SAMPLE'}]
+    lines=[];_render_translation_diagnostics_markdown(lines,{'validation_pages':[row]},snippets=snippets)
+    assert 'SOURCE_SAMPLE' not in '\n'.join(lines)
+    assert 'historical/advisory' in '\n'.join(lines)
+    row['citation_actionable_missing_count']=1
+    lines=[];_render_translation_diagnostics_markdown(lines,{'validation_pages':[row]},snippets=snippets)
+    assert 'Flagged' in '\n'.join(lines)
+    row.pop('diagnostic_evidence_basis')
+    lines=[];_render_translation_diagnostics_markdown(lines,{'validation_pages':[row]},snippets=snippets)
+    assert 'Flagged' in '\n'.join(lines)
