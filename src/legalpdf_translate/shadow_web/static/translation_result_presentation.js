@@ -174,7 +174,7 @@ export function deriveTranslationRecoveryState(job) {
     summaryLines.push(`Retry reason: ${retryReason}`);
   }
   if (reviewQueueCount > 0) {
-    summaryLines.push(`Flagged review pages: ${reviewQueueCount}`);
+    summaryLines.push(`${result.selected_text_review?"Original-run flagged pages (historical)":"Flagged review pages"}: ${reviewQueueCount}`);
   }
   if (missingSamples.length) {
     summaryLines.push(`Missing protected tokens after retry: ${missingSamples.join(", ")}`);
@@ -276,11 +276,12 @@ export function buildTranslationResultCardPresentation({
       summaryLines.push(...recovery.guidanceLines);
     } else {
       summaryLines.push(`Completed pages: ${result.completed_pages ?? 0}`);
+      if(result.selected_text_review)summaryLines.push(result.selected_text_review.output_review_required?"Text changes approved; review the complete corrected output.":"Corrected text and complete output reviewed. Original-run diagnostics remain available.");
       if (metrics.run_id) {
         summaryLines.push(`Run ID: ${metrics.run_id}`);
       }
       if (result.review_queue_count) {
-        summaryLines.push(`Flagged review pages: ${result.review_queue_count}`);
+        summaryLines.push(`${result.selected_text_review?"Original-run flagged pages (historical)":"Flagged review pages"}: ${result.review_queue_count}`);
       }
       if (result.error) {
         summaryLines.push(`Error: ${result.error}`);

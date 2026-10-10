@@ -1,8 +1,11 @@
 import { fetchJson } from "./api.js";
 import { createOrdinaryLayoutController, ordinaryLayoutUrl } from "./ordinary_layout_review.js";
 import { mountSavedDocxLayout } from "./saved_docx_layout_ui.js";
+import { mountTextCorrection } from "./text_correction_ui.js";
 
 export function ordinaryLayoutMessage(code) {
+  if (/edited_layout_rebase_required/.test(code)) return "Word contains text changes. They remain preserved. Choose Review text changes in the text correction editor to compare and approve them.";
+  if (/correction_output_review_required/.test(code)) return "Review the complete corrected output before saving the case.";
   if (/automatic_operation_pending_or_uncertain/.test(code)) return "An earlier layout request may have been billed. The app kept the original Word file and billing record; refresh its status before any new request.";
   if (/automatic_policy_changed|pricing_reference_expired/.test(code)) return "Automatic formatting is unavailable until the layout pricing is refreshed. Your original Word file is preserved.";
   if (/page_mapping|ambiguous_page/.test(code)) return "Confirm which translated paragraphs belong to each source page, save the review, then request a suggestion.";
@@ -22,7 +25,9 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
   const el = (tag, text, cls) => {const n = doc.createElement(tag); if (text != null) n.textContent = String(text); if (cls) n.className = cls; return n;};
   const header = el("div"), actions = el("div"), editorRoot = el("section"), outputs = el("div");
   editorRoot.setAttribute("aria-label", "This translation's source layout review");
-  root.append(header, actions, editorRoot, outputs);
+  const correctionRoot=el("section");correctionRoot.setAttribute("aria-label","Translation text correction");
+  root.append(header, correctionRoot, actions, editorRoot, outputs);
+  const correction=mountTextCorrection({root:correctionRoot,getScope,getJob,request,onApproved:async()=>{await controller.read();}});
   const scope = () => ({...getScope(),jobId:getJob()?.job_id || ""});
   const ownerKey = () => {const s=scope();return `${s.runtimeMode}:${s.workspaceId}:${s.jobId}`;};
   const button = (parent,text,action,disabled=false) => {
@@ -60,7 +65,7 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
   function mountEditor(state) {
     const view=state.view;
     const key=`${state.scope.runtimeMode}:${state.scope.workspaceId}:${state.scope.jobId}:${view?.baseline_id || ""}`;
-    if (!view?.review || !panelOpen) {editorRoot.hidden=true; return;}
+    if (!view?.review || !panelOpen || view?.delivery?.kind==="text_corrected") {editorRoot.hidden=true; return;}
     editorRoot.hidden=false;
     const locked=isEditorReadOnly();
     if (key===editorKey) {if(locked!==editorReadOnly){editorReadOnly=locked;editor.render();}return;}
@@ -83,7 +88,7 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
     if (!controller) return;
     const state=controller.snapshot(), view=state.view;
     actions.replaceChildren(); outputs.replaceChildren();
-    if (!panelOpen || !view?.review) return;
+    if (!panelOpen || !view?.review || view?.delivery?.kind==="text_corrected") return;
     const locked=state.busy || nativeOpening || Boolean(view.frozen) || !state.verified || view.stale || !view.attached;
     const busy=locked || editorBusy() || Boolean(state.pending);
     actions.append(el("h3","1. Review the source layout"),el("p","Review the source beside the current translation. Suggestions preserve the wording and require your review."));
@@ -162,6 +167,7 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
   function render() {
     if (!controller || disposed) return;
     const state=controller.snapshot(), job=getJob();
+    correction.render();
     const owner=`${state.scope.runtimeMode}:${state.scope.workspaceId}:${state.scope.jobId}`;
     if(owner!==lastOwner){lastOwner=owner;editor?.dispose();editor=null;editorKey="";panelOpen=false;selectedPages=new Set();outputChecks=new Set();lastSelection="";localError="";localStatus="";nativeOpening=false;editorRoot.replaceChildren();}
     root.hidden=!(job?.status==="completed"&&job.job_kind==="translate"&&job.result?.save_seed);
@@ -171,7 +177,7 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
     header.append(el("h3","Source layout and delivery"));
     const view=state.view;
     header.append(el("p",view?.delivery&&!view.delivery.stale&&!view.stale
-      ? `${view.delivery.kind==="reviewed"?"Reviewed formatted copy":view.delivery.kind==="automatic_unreviewed_edited"?"Word-edited formatted copy (source layout unreviewed)":view.delivery.kind==="automatic_unreviewed"?"Automatic formatted copy (unreviewed)":"Current translation"} selected · ${view.delivery.word_count} words${view.frozen?" · files locked for confirmation":""}.`
+      ? `${view.delivery.kind==="text_corrected"?"Approved text correction":view.delivery.kind==="reviewed"?"Reviewed formatted copy":view.delivery.kind==="automatic_unreviewed_edited"?"Word-edited formatted copy (source layout unreviewed)":view.delivery.kind==="automatic_unreviewed"?"Automatic formatted copy (unreviewed)":"Current translation"} selected · ${view.delivery.word_count} words${view.frozen?" · files locked for confirmation":""}.`
       : view?.review?"Choose a reviewed copy for delivery after checking its layout.":"Compare headers, headings, emphasis, notice panels, columns and spacing with the source before delivery."));
     if(state.error||localError){const warning=el("p",localError||ordinaryLayoutMessage(state.error),"saved-layout-error");warning.setAttribute("role","alert");header.append(warning);}
     if(localStatus)header.append(el("p",localStatus,"saved-layout-status"));
@@ -186,7 +192,7 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
     }
     if(view?.automatic_alias) header.append(el("p","This job reuses the same verified formatted copy and saved layout cost. To change its layout, return to the original job and rebase the review there."));
     if(contentReviewBlocked())header.append(el("p","Complete the Arabic wording review above before starting source-layout review."));
-    if(!view?.automatic_alias)button(header,panelOpen?"Hide layout review":"Review source layout",async()=>{
+    if(!view?.automatic_alias&&view?.delivery?.kind!=="text_corrected")button(header,panelOpen?"Hide layout review":"Review source layout",async()=>{
       const owner=ownerKey();
       if(panelOpen){panelOpen=false;return;}
       if(!controller.snapshot().view)await controller.read();
@@ -203,5 +209,5 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
   }
   controller=createOrdinaryLayoutController({getScope:scope,request,onChange:render});render();
   function update(job=getJob()) {if(disposed)return;controller.sync(); if(job?.ordinary_layout)controller.receive(job.ordinary_layout);else render();}
-  return {controller,update,render,refresh:refreshReview,dispose:()=>{disposed=true;controller.dispose();editor?.dispose();}};
+  return {controller,update,render,refresh:refreshReview,dispose:()=>{disposed=true;controller.dispose();editor?.dispose();correction.dispose();}};
 }
