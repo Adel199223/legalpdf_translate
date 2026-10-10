@@ -224,8 +224,8 @@ export function deriveTranslationCompletionPresentation(options = {}) {
         ? "The final Gmail reply step is ready."
         : "Finish saving every Gmail attachment to unlock the final reply step.",
       resultEmpty: "Gmail reply details will appear here after the final step.",
-      filenameLabel: "Final DOCX filename",
-      filenamePlaceholder: "Optional filename for the final Gmail DOCX",
+      filenameLabel: "Honorários DOCX filename",
+      filenamePlaceholder: "Optional filename for the honorários DOCX",
       buttonLabel: "Create Gmail reply",
     },
   };

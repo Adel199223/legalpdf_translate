@@ -15,6 +15,7 @@ HORIZONTAL_WRITER_VERSION = "saved_docx_layout_writer_ar_horizontal_v2"
 PARTITION_WRITER_VERSION = "saved_docx_layout_writer_partitions_v3"
 AUTOMATIC_MODERN_WRITER_VERSION = "saved_docx_layout_writer_automatic_modern_v4"
 AUTOMATIC_SEPARATED_WRITER_VERSION = "saved_docx_layout_writer_automatic_separated_v5"
+from .ordinary_presentation import VERSION as ORDINARY_PRESENTATION_WRITER_VERSION, derive as _ordinary_presentation, suppress_footer as _ordinary_footer, independent_check as _independent_ordinary_check
 W = model.W
 _P_ORDER = ("pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl",
     "numPr", "suppressLineNumbers", "pBdr", "shd", "tabs", "suppressAutoHyphens", "kinsoku",
@@ -585,7 +586,7 @@ def _independent_paragraph_check(original, actual, original_row, choice, context
 
 def validate_built_docx(docx_bytes: bytes, source_map: dict, *, original_docx: bytes,
                         snapshot: dict, pages: list, decisions: dict,
-                        require_review: bool = True) -> None:
+                        require_review: bool = True, ordinary_context: dict | None = None) -> None:
     """Reparse independently, check ownership/content, then exact approved scaffold."""
     actual_snapshot = model.inspect_docx(original_docx, snapshot["target_lang"])
     if actual_snapshot != snapshot:
@@ -598,18 +599,25 @@ def validate_built_docx(docx_bytes: bytes, source_map: dict, *, original_docx: b
     output, _ = model._package(docx_bytes)
     version = source_map.get("writer_version")
     partitioned = decisions["version"] == model.PARTITION_DECISIONS_VERSION
-    separated = version == AUTOMATIC_SEPARATED_WRITER_VERSION
-    modern = version in {AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION}
+    v6 = version == ORDINARY_PRESENTATION_WRITER_VERSION
+    if v6 and (require_review or ordinary_context is None):
+        model._fail("ordinary_writer_context_required")
+    presentation, presentation_plan = _ordinary_presentation(snapshot, pages, decisions, ordinary_context) if v6 else (decisions, None)
+    separated = version in {AUTOMATIC_SEPARATED_WRITER_VERSION, ORDINARY_PRESENTATION_WRITER_VERSION}
+    modern = version in {AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION, ORDINARY_PRESENTATION_WRITER_VERSION}
     if (version not in {WRITER_VERSION, HORIZONTAL_WRITER_VERSION, PARTITION_WRITER_VERSION,
-                       AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION}
+                       AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION, ORDINARY_PRESENTATION_WRITER_VERSION}
             or (modern and require_review)
             or (version == PARTITION_WRITER_VERSION and not partitioned)
-            or (partitioned and version not in {PARTITION_WRITER_VERSION, AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION})):
+            or (partitioned and version not in {PARTITION_WRITER_VERSION, AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION, ORDINARY_PRESENTATION_WRITER_VERSION})):
         model._fail("unsupported_writer_version")
     horizontal = (snapshot["target_lang"] == "AR" and
         (version == HORIZONTAL_WRITER_VERSION and not require_review
-         or version in {PARTITION_WRITER_VERSION, AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION}))
+         or version in {PARTITION_WRITER_VERSION, AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION, ORDINARY_PRESENTATION_WRITER_VERSION}))
     expected_parts = dict(original)
+    footer_parts = []
+    if v6:
+        expected_parts, footer_parts = _ordinary_footer(expected_parts, original_docx, snapshot["target_lang"], presentation_plan["suppress_generated_page"])
     if modern:
         expected_parts["word/settings.xml"] = _expected_modern_settings(original["word/settings.xml"])
     elif horizontal:
@@ -618,15 +626,16 @@ def validate_built_docx(docx_bytes: bytes, source_map: dict, *, original_docx: b
         model._fail("unaffected_package_changed")
     actual_root = model._xml(output["word/document.xml"])
     if horizontal:
-        plan = _horizontal_plan(original_root, snapshot, pages, decisions)
-    elif version in {WRITER_VERSION, PARTITION_WRITER_VERSION, AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION}:
+        plan = _horizontal_plan(original_root, snapshot, pages, presentation)
+    elif version in {WRITER_VERSION, PARTITION_WRITER_VERSION, AUTOMATIC_MODERN_WRITER_VERSION, AUTOMATIC_SEPARATED_WRITER_VERSION, ORDINARY_PRESENTATION_WRITER_VERSION}:
         plan = None
     else:
         model._fail("unsupported_writer_version")
-    expected_root, locations, structural = _assemble(original_root, snapshot, decisions,
+    expected_root, locations, structural = _assemble(original_root, snapshot, presentation,
         horizontal_plan=plan, separate_body_tables=separated)
     expected_map = _source_map(snapshot, pages, decisions, locations, structural, docx_bytes,
-                               require_review=require_review, horizontal_plan=plan, writer_version=version)
+                               require_review=require_review, horizontal_plan=plan, writer_version=version,
+                               presentation_plan=presentation_plan, footer_parts=footer_parts)
     if source_map != expected_map:
         model._fail("source_map_mismatch")
     if actual_root.tag != W + "document" or len(actual_root) != 1 or actual_root[0].tag != W + "body":
@@ -636,6 +645,7 @@ def validate_built_docx(docx_bytes: bytes, source_map: dict, *, original_docx: b
         model._fail("output_adjacent_body_tables")
     actual_paragraphs = list(actual_root[0].iter(W + "p"))
     located, owned = [], set()
+    by_id = {}
     originals = {row["id"]: p for row, p in zip(snapshot["paragraphs"], list(original_root[0])[:-1])}
     choices = {row["paragraph_id"]: row for row in decisions["paragraphs"]}
     for row in snapshot["paragraphs"]:
@@ -671,6 +681,12 @@ def validate_built_docx(docx_bytes: bytes, source_map: dict, *, original_docx: b
         if semantics != expected_semantics:
             model._fail("output_run_semantics_changed")
         located.extend(children)
+        by_id[row["id"]] = children
+    if v6:
+        first_child_ids = {children[0]: identifier for identifier, children in by_id.items()}
+        actual_ids = [first_child_ids[node] for node in actual_paragraphs if node in first_child_ids]
+        _independent_ordinary_check(snapshot, pages, decisions, ordinary_context, actual_ids, original, output)
+        located = [p for identifier in presentation_plan["rendered_paragraph_ids"] for p in by_id[identifier]]
     if [p for p in actual_paragraphs if p in owned] != located:
         model._fail("output_paragraph_order_changed")
     for path in structural:
@@ -685,7 +701,7 @@ def validate_built_docx(docx_bytes: bytes, source_map: dict, *, original_docx: b
 
 
 def _source_map(snapshot, pages, decisions, locations, structural, raw, *, writer_version,
-                require_review=True, horizontal_plan=None):
+                require_review=True, horizontal_plan=None, presentation_plan=None, footer_parts=None):
     mapping = {"version": model.VERSION, "writer_version": writer_version,
         "docx_sha256": model._sha(raw), "input_docx_sha256": snapshot["docx_sha256"],
         "decisions_sha256": model._sha(model._canonical(decisions)), "target_lang": snapshot["target_lang"],
@@ -708,6 +724,14 @@ def _source_map(snapshot, pages, decisions, locations, structural, raw, *, write
         mapping["structural_paragraph_qualification"] = "empty_spacer_cells_and_table_separation_anchors"
     if writer_version == AUTOMATIC_SEPARATED_WRITER_VERSION:
         mapping["structural_paragraph_qualification"] = "empty_spacer_cells_and_explicit_adjacent_body_table_separators_v5"
+    if presentation_plan is not None:
+        mapping["ordinary_presentation_plan"] = deepcopy(presentation_plan)
+        mapping["ordinary_presentation_plan_sha256"] = model._sha(model._canonical(presentation_plan))
+        mapping["rendered_paragraph_ids"] = presentation_plan["rendered_paragraph_ids"]
+        mapping["original_paragraph_ids"] = presentation_plan["original_paragraph_ids"]
+        mapping["original_order_preserved"] = not bool(presentation_plan["swaps"])
+        mapping["logical_order_preserved"] = not bool(presentation_plan["swaps"])
+        mapping["suppressed_generated_page_footer_parts"] = footer_parts or []
     if decisions["version"] == model.PARTITION_DECISIONS_VERSION:
         mapping["paragraph_partitions_sha256"] = model._sha(model._canonical(decisions["paragraph_partitions"]))
         mapping["partition_geometry_basis"] = "inherited_parent_source_association_not_precise_child_geometry"
@@ -750,7 +774,7 @@ def build_docx(docx_bytes: bytes, snapshot: dict, pages: list, decisions: dict) 
 
 
 def build_unreviewed_docx(docx_bytes: bytes, snapshot: dict, pages: list,
-                          decisions: dict) -> SavedDocxLayoutArtifact:
+                          decisions: dict, *, ordinary_context: dict | None = None) -> SavedDocxLayoutArtifact:
     """Build the same editable layout with explicit unreviewed provenance."""
     try:
         if model.inspect_docx(docx_bytes, snapshot["target_lang"]) != snapshot:
@@ -759,18 +783,20 @@ def build_unreviewed_docx(docx_bytes: bytes, snapshot: dict, pages: list,
         if checked["review"]["document_reviewed"] or checked["review"]["pages_reviewed"]:
             model._fail("automatic_review_claim")
         members, infos, original_root, _, _ = model._load_docx(docx_bytes)
-        plan = _horizontal_plan(original_root, snapshot, pages, checked) if snapshot["target_lang"] == "AR" else None
-        members = dict(members)
+        presentation, presentation_plan = _ordinary_presentation(snapshot, pages, checked, ordinary_context) if ordinary_context is not None else (checked, None)
+        plan = _horizontal_plan(original_root, snapshot, pages, presentation) if snapshot["target_lang"] == "AR" else None
+        members, footer_parts = _ordinary_footer(members, docx_bytes, snapshot["target_lang"], presentation_plan["suppress_generated_page"]) if presentation_plan is not None else (dict(members), [])
         members["word/settings.xml"] = _modern_compatibility_settings(members["word/settings.xml"])
-        root, locations, structural = _assemble(original_root, snapshot, checked, horizontal_plan=plan,
+        root, locations, structural = _assemble(original_root, snapshot, presentation, horizontal_plan=plan,
                                                 separate_body_tables=True)
         xml = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
         raw = _write(members, infos, xml)
         mapping = _source_map(snapshot, pages, checked, locations, structural, raw,
                               require_review=False, horizontal_plan=plan,
-                              writer_version=AUTOMATIC_SEPARATED_WRITER_VERSION)
+                              writer_version=ORDINARY_PRESENTATION_WRITER_VERSION if presentation_plan is not None else AUTOMATIC_SEPARATED_WRITER_VERSION,
+                              presentation_plan=presentation_plan, footer_parts=footer_parts)
         validate_built_docx(raw, mapping, original_docx=docx_bytes, snapshot=snapshot,
-                            pages=pages, decisions=checked, require_review=False)
+                            pages=pages, decisions=checked, require_review=False, ordinary_context=ordinary_context)
         return SavedDocxLayoutArtifact(raw, mapping)
     except model.SavedDocxLayoutError:
         raise
