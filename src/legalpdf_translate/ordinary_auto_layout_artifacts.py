@@ -93,7 +93,7 @@ class AutoCandidateArtifact:
 
 _MAP_EXTENSIONS = {"raw_source_map_sha256", "source_pdf_sha256",
                    "selected_physical_pages", "raw_snapshot_fingerprint",
-                   "proposal_evidence_sha256", "source_association_basis"}
+                   "proposal_evidence_sha256", "source_association_basis", "source_evidence"}
 
 
 def _checked_automatic_decisions(raw_snapshot, page_frames, decisions):
@@ -125,6 +125,8 @@ def _extended_source_map(base_map, raw_snapshot, proposal_evidence):
         "raw_snapshot_fingerprint": raw_snapshot.fingerprint,
         "proposal_evidence_sha256": _sha(_json(proposal_evidence)),
         "source_association_basis": "raw_writer_map"})
+    if "source_evidence" in proposal_evidence:
+        mapping["source_evidence"] = deepcopy(proposal_evidence["source_evidence"])
     for row in mapping["paragraphs"]:
         row["raw_source_page_number"] = owners[row["paragraph_id"]]
     return mapping

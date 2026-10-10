@@ -23,12 +23,12 @@ _POLICY_RE = re.compile(r"source_image_unreviewed_v1:([a-f0-9]{64})\Z")
 def frozen_automatic_layout_policy() -> str:
     """Freeze local price, request and validation versions before translation."""
     from .ordinary_layout_accounting import layout_accounting_policy
-    from .ordinary_layout_contracts import PROPOSAL_VERSION_V2
+    from .ordinary_layout_contracts import PROPOSAL_VERSION_V3
     from .ordinary_layout_manager import INSTRUCTIONS
 
     accounting = layout_accounting_policy()
     identity = {"version": ORDINARY_AUTO_LAYOUT_POLICY,
-        "proposal_version": PROPOSAL_VERSION_V2,
+        "proposal_version": PROPOSAL_VERSION_V3,
         "automatic_writer_version": "saved_docx_layout_writer_ordinary_presentation_v6",
         "instructions_sha256": hashlib.sha256(INSTRUCTIONS.encode("utf-8")).hexdigest(),
         "pricing_catalog": json.loads(accounting._pricing_json),
@@ -336,7 +336,7 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
     from .ordinary_layout_contracts import decode
     image_hashes = {page: hashlib.sha256(manager.service.saved.image(review_id, page)).hexdigest()
                     for page in selected_pages}
-    pages, response_versions = [], set()
+    pages, response_versions, source_evidence = [], set(), []
     with manager.service.scope(job_id) as folder:
         operation = folder / "baselines" / baseline_id / "suggestions" / operation_nonce
         _verified_retained_pages(operation, retained_pages or {})
@@ -352,7 +352,14 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
             retained_path = operation / f"page-{page:04d}.retained.json"
             if retained_path.exists():
                 row["retained_origin"] = verified_record(retained_path)
-            response_version = decode(response).get("version")
+            proposal = decode(response)
+            response_version = proposal.get("version")
+            if response_version == "ordinary_layout_proposal_v3":
+                from .ordinary_layout_contracts import proposal_source_evidence
+                from .saved_docx_layout import inspect_docx
+                reviewed = storage._read(folder / "baselines" / baseline_id / "reviewed.docx", storage.DOCX_MAX_BYTES)
+                view = manager.service.saved.read(review_id)
+                source_evidence.append(proposal_source_evidence(inspect_docx(reviewed, view["target_lang"]), view, proposal))
             if response_version != "ordinary_layout_proposal_v1":
                 row["proposal_schema_version"] = response_version
             response_versions.add(response_version)
@@ -363,7 +370,8 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
         "operation_nonce": operation_nonce, "intent_sha256": hashlib.sha256(intent).hexdigest(),
         "accounting_summary_sha256": hashlib.sha256(summary).hexdigest(),
         "requested_model": request_policy["model"], "effort": request_policy["effort"],
-        "proposal_schema_version": schema_version, "pages": pages}
+        "proposal_schema_version": schema_version, "pages": pages,
+        **({"source_evidence": {"version": "ordinary_source_evidence_v1", "pages": source_evidence}} if source_evidence else {})}
 
 
 def _recover_settled_result(manager, pointer: dict, selected_pages: list[int]) -> None:

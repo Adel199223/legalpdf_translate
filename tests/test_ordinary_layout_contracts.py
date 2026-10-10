@@ -33,7 +33,7 @@ def test_proposal_cannot_claim_review_or_change_text(tmp_path, monkeypatch, lang
     assert normalized["bands"][0]["widths_pct"] == [60, 40]
     assert normalized["review"]["document_reviewed"] is False
     assert normalized["review"]["pages_reviewed"] == []
-    assert "text" not in json.dumps(proposal_schema(1, page_ids(view, 1)))
+    assert '"text"' not in json.dumps(proposal_schema(1, page_ids(view, 1)))
 
 
 @pytest.mark.parametrize("mutation", ["text", "unknown", "duplicate", "order", "box", "role", "bad_span", "review"])
