@@ -347,6 +347,38 @@ class TextCorrectionMixin:
                 _put_immutable(working, storage._read(destination / "output.docx", storage.DOCX_MAX_BYTES))
             return working
 
+    def open_text_correction_word(self, job, parent):
+        with self.scope(job.job_id) as folder:
+            _, current, _ = self._correction_parent(folder, job)
+            if current != parent:
+                fail("correction_parent_stale", 409)
+            if (self.state(job.job_id).get("delivery") or {}).get("kind") != "text_corrected":
+                fail("correction_selection_required", 409)
+            working = self.text_corrected_review_copy(job.job_id)
+            from .word_automation import open_docx_in_word
+            result = open_docx_in_word(working)
+            return {"parent": current, "open_result": {"ok": bool(result.ok), "action": str(result.action),
+                "message": str(result.message), "failure_code": str(result.failure_code), "failure_phase": str(result.failure_phase)}}
+
+    def check_text_correction_word(self, job, parent):
+        with self.scope(job.job_id) as folder:
+            raw, current, _ = self._correction_parent(folder, job)
+            if current != parent:
+                fail("correction_parent_stale", 409)
+            if (self.state(job.job_id).get("delivery") or {}).get("kind") != "text_corrected":
+                fail("correction_selection_required", 409)
+            working = self.text_corrected_review_copy(job.job_id)
+            try:
+                changes = word_changes(raw, storage._read(working, storage.DOCX_MAX_BYTES))
+            except ValueError as exc:
+                if getattr(exc, "code", "") != "ordinary_layout_correction_no_text_changes":
+                    raise
+                changes = []
+            if changes:
+                fail("correction_word_text_changes_pending", 409)
+            self.adopt_text_corrected_word_edit(job.job_id)
+            return self.text_correction_state(job)
+
     def adopt_text_corrected_word_edit(self, job_id, *, without_changes=False):
         from .ordinary_layout_service import _write, _put_immutable
         from .ordinary_edited_revision import qualify_edited_docx

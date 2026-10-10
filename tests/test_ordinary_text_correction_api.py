@@ -50,6 +50,16 @@ def test_normal_correction_download_save_and_gmail_reuse_same_row(tmp_path, monk
         selected = client.post(base + f"/text-corrections/{draft['draft_id']}/approve" + scope, json=approval)
         assert selected.status_code == 200, selected.text
         view = selected.json()["normalized_payload"]["ordinary_layout"]
+        from legalpdf_translate.word_automation import WordAutomationResult
+        opened_paths = []
+        monkeypatch.setattr("legalpdf_translate.word_automation.open_docx_in_word",
+            lambda path: opened_paths.append(path) or WordAutomationResult(True, "open", "Fictional owned copy"))
+        parent = client.get(base + "/text-corrections" + scope).json()["normalized_payload"]["ordinary_layout"]["parent"]
+        assert client.post(base + "/text-corrections/word/open" + scope, json={"parent": state["parent"]}).status_code == 409
+        assert not opened_paths
+        assert client.post(base + "/text-corrections/word/open" + scope, json={"parent": parent}).status_code == 200
+        assert len(opened_paths) == 1 and opened_paths[0].name == "working.docx"
+        assert client.post(base + "/text-corrections/word/check" + scope, json={"parent": parent}).status_code == 200
         assert client.post(base + f"/text-corrections/{draft['draft_id']}/approve" + scope, json=approval).json() == selected.json()
         download = client.get(base + "/artifact/output_docx" + scope)
         assert hashlib.sha256(download.content).hexdigest() == view["delivery"]["sha256"]

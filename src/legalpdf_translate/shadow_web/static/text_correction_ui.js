@@ -18,7 +18,10 @@ export function mountTextCorrection({root,getScope,getJob,request=fetchJson,onAp
   const button=(parent,text,fn,disabled=false)=>{const b=el("button",text);b.type="button";b.disabled=disabled||busy;const bound=key();b.addEventListener("click",()=>{if(!disposed&&key()===bound)return run(fn);});parent.append(b);return b;};
   async function run(fn) {if(busy||disposed)return;const token=epoch;busy=true;error="";render(true);try{await fn();}catch(e){
     const code=e?.payload?.diagnostics?.error||e.message||"correction_failed";
-    if(token!==epoch||disposed)return;error=/structure_unsupported|unsupported_content|paragraph_controls/.test(code)
+    if(token!==epoch||disposed)return;error=/word_text_changes_pending/.test(code)
+      ?"Your Word text changes are preserved. Choose Review text changes saved in Word to compare and approve them."
+      :/duplicate_change/.test(code)?"A change for this paragraph is already pending. Review or clear the pending changes before editing it again."
+      :/structure_unsupported|unsupported_content|paragraph_controls/.test(code)
       ?"Your Word file is preserved. Its structure cannot be imported safely; enter the corrections in this editor instead."
       :/stale|changed|conflict/.test(code)?"The selected document changed. Refresh the correction and compare the current copy before approving."
       :/frozen/.test(code)?"This delivery is already locked for confirmation. Its files are preserved."
@@ -89,6 +92,11 @@ export function mountTextCorrection({root,getScope,getJob,request=fetchJson,onAp
     button(root,"Review these changes",async()=>{draft=await call("/text-corrections",{draft_nonce:nonce(),parent:view.parent,actions,import_word:false});},!actions.length);
     button(root,"Clear pending changes",async()=>{actions=[];},!actions.length);
     button(root,"Review text changes saved in Word",async()=>{draft=await call("/text-corrections",{draft_nonce:nonce(),parent:view.parent,actions:[],import_word:true});});
+    if(view.selected_kind==="text_corrected"){
+      button(root,"Open corrected document in Word",async()=>{const opened=await call("/text-corrections/word/open",{parent:view.parent});if(!opened.open_result?.ok)throw new Error(opened.open_result?.failure_code||"word_open_failed");});
+      button(root,"I saved the Word file",async()=>{await call("/text-corrections/word/check",{parent:view.parent});await read();await onApproved();});
+      root.append(el("p","Formatting-only Word changes can be accepted here. For wording changes, choose Review text changes saved in Word and approve the before-and-after preview."));
+    }
     for(const retained of view.drafts.filter(d=>d.status==="draft"&&d.parent_sha256===view.parent.sha256))button(root,"Review saved correction",async()=>{draft=retained;});
     if(view.output_review_required){
       const details=el("details");details.append(el("summary","Review the complete corrected output"));

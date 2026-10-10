@@ -67,6 +67,8 @@ class OrdinaryLayoutRoutes:
             ("/text-corrections/output-review", "POST", self.text_output_review),
             ("/text-corrections/source/{page_number}", "GET", self.text_source),
             ("/text-corrections/findings/{finding_id}", "POST", self.text_finding),
+            ("/text-corrections/word/open", "POST", self.text_word_open),
+            ("/text-corrections/word/check", "POST", self.text_word_check),
         ):
             app.add_api_route(PREFIX + suffix, endpoint, methods=[method])
 
@@ -171,3 +173,11 @@ class OrdinaryLayoutRoutes:
         return await self._call(request, job_id, lambda m, d: m.service.review_source_finding(
             self.correction_job(m, job_id), finding_id, d["parent"], d["disposition"], d["source_compared"]),
             {"parent", "disposition", "source_compared"})
+
+    async def text_word_open(self, request: Request, job_id: str):
+        return await self._call(request, job_id, lambda m, d: m.service.open_text_correction_word(
+            self.correction_job(m, job_id), d["parent"]), {"parent"})
+
+    async def text_word_check(self, request: Request, job_id: str):
+        return await self._call(request, job_id, lambda m, d: m.service.check_text_correction_word(
+            self.correction_job(m, job_id), d["parent"]), {"parent"})

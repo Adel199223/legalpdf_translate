@@ -304,3 +304,35 @@ def test_word_import_refuses_mapped_decorative_rule(tmp_path, monkeypatch):
     state=service.text_correction_state(case.job)
     with pytest.raises(OrdinaryLayoutError,match='paragraph_not_editable'):
         service.draft_text_correction(case.job,nonce(),state['parent'],[],import_word=True)
+
+
+def test_explicit_word_open_check_and_import_preserve_owned_copy(tmp_path, monkeypatch):
+    from legalpdf_translate.word_automation import WordAutomationResult
+    case=make_case(tmp_path,monkeypatch);service=case.manager.service
+    state=service.text_correction_state(case.job)
+    draft=service.draft_text_correction(case.job,nonce(),state['parent'],[action(state['paragraphs'][0]['paragraph_id'],'Approved fictional text')])
+    service.approve_text_correction(case.job,draft['draft_id'],nonce(),True,True,'')
+    current=service.text_correction_state(case.job);calls=[]
+    monkeypatch.setattr('legalpdf_translate.word_automation.open_docx_in_word',lambda path:calls.append(path) or WordAutomationResult(True,'open','Opened owned copy'))
+    with pytest.raises(OrdinaryLayoutError,match='stale'):
+        service.open_text_correction_word(case.job,state['parent'])
+    assert not calls
+    assert service.open_text_correction_word(case.job,current['parent'])['open_result']['ok']
+    working=calls[-1];doc=Document(working);doc.paragraphs[0].text='Explicit Word text edit';doc.save(working)
+    changed=working.read_bytes()
+    service.open_text_correction_word(case.job,current['parent']);assert working.read_bytes()==changed
+    with pytest.raises(OrdinaryLayoutError,match='text_changes_pending'):
+        service.check_text_correction_word(case.job,current['parent'])
+    imported=service.draft_text_correction(case.job,nonce(),current['parent'],[],import_word=True)
+    service.approve_text_correction(case.job,imported['draft_id'],nonce(),True,True,'')
+    current=service.text_correction_state(case.job);service.open_text_correction_word(case.job,current['parent'])
+    doc=Document(calls[-1]);doc.paragraphs[0].paragraph_format.alignment=2;doc.save(calls[-1])
+    formatted=service.check_text_correction_word(case.job,current['parent'])
+    assert formatted['parent']['sha256']!=current['parent']['sha256']
+    selected=service.state(case.job.job_id)['delivery']
+    service.review_text_output(case.job,selected['selection_id'],selected['generation'],True)
+    service.resolve_delivery(case.job.job_id,selected['generation'],nonce())
+    before=len(calls)
+    with pytest.raises(OrdinaryLayoutError,match='frozen'):
+        service.open_text_correction_word(case.job,formatted['parent'])
+    assert len(calls)==before
