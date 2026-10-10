@@ -332,6 +332,10 @@ def run_all_quality_checks(
     list_output = re.findall(r"(?m)^\s*(\d+)[.)]\s", visible_output)
     from collections import Counter
     list_missing = sum((Counter(list_source) - Counter(list_output)).values())
+    letter_pattern = r"(?m)^[ \t]*([^\W\d_])[.)]\s"
+    source_letters = Counter(re.findall(letter_pattern, visible_source))
+    output_letters = Counter(re.findall(letter_pattern, visible_output))
+    letter_marker_changes = max(sum((source_letters - output_letters).values()), sum((output_letters - source_letters).values()))
     protocol_anomalies = len(re.findall(r"\u2066\[\[|\]\]\u2069", visible_output)) if target_lang.upper() == "AR" else 0
     integrity_check = summarize_extraction_integrity(integrity_context)
     citation_marker_delta_abs = int(citation_check["citation_marker_delta_abs"])
@@ -342,8 +346,9 @@ def run_all_quality_checks(
         "output_protocol_literal_count": output_protocol_count,
         "raw_citation_mismatches_count": raw_citation["citation_marker_delta_abs"] + raw_citation["parenthesis_delta_abs"],
         "raw_bidi_control_count": bidi_check["bidi_control_count"],
-        "citation_actionable_missing_count": citation_missing + list_missing + bracket_drift,
+        "citation_actionable_missing_count": citation_missing + list_missing + letter_marker_changes + bracket_drift,
         "list_marker_missing_count": list_missing,
+        "alphabetic_marker_change_count": letter_marker_changes,
         "protocol_anomaly_count": protocol_anomalies,
         "visible_bracket_anomaly_count": bracket_anomalies,
         "source_bracket_anomaly_count": source_bracket_anomalies,

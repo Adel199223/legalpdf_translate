@@ -97,3 +97,11 @@ def test_new_misnested_output_remains_actionable():
 def test_legal_enumerators_are_script_neutral_and_inline_differences_relative():
     assert checks("a) First", "أ) أول")["actionable_bracket_drift_count"]==0
     assert checks("subparagraph a).", "point a).", "FR")["actionable_bracket_drift_count"]==0
+
+
+def test_alphabetic_marker_changes_are_reviewable_without_bracket_error():
+    changed = checks("a) First", "أ) أول")
+    assert changed["alphabetic_marker_change_count"] == 1
+    assert changed["citation_actionable_missing_count"] == 1
+    assert changed["actionable_bracket_drift_count"] == 0
+    assert checks("أ) أول", "أ) أول")["citation_actionable_missing_count"] == 0
