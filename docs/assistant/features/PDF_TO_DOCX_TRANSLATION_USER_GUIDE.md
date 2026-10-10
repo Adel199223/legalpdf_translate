@@ -38,9 +38,13 @@ This user guide is not canonical architecture truth. Defer to `APP_KNOWLEDGE.md`
 
 Fresh ordinary translations can produce a separate automatically formatted Word candidate from complete source page images and retained translated paragraphs. It may keep source-supported headings, columns, panels, emphasis and spacing. The app labels it **unreviewed**; inspect every actual output page, wording, names, numbers and order against the PDF before delivery. Translation length can change wrapping or page count. The raw Word file and its source-page map remain retained. [HANDOFF](../HANDOFF.md) identifies the installed build and real-document acceptance limits.
 
+In builds containing the optional-rule recovery fix, a separator line inside a column can remain as text when converting it to a Word rule is unsupported. The Finish drawer and layout review show a warning while keeping the usable layout. Inspect that line in Word before delivery; the warning does not mean wording was removed. Fresh primary files explicitly use modern Word compatibility mode.
+
 **Image Auto** includes the whole page image in the initial translation request even when selectable or OCR text exists. **Image Always** also supplies it. Extracted text is an aid: outlined writing, notes inside images and other visual text can be absent from the text layer. **Image Off** sends text only and displays a coverage qualification. None of these settings certifies completeness; check both the PDF and final Word file.
 
 If automatic layout fails after a fully settled recorded attempt, **Recover Source Layout** can make a separate paid layout request using the already translated wording. The app shows its current per-page bound and keeps the earlier charge and result. If a complete saved response was rejected locally and now passes validation, a bounded continuation reuses it and requests only missing page layouts. Each charge is counted once. This explicit action also works after an exact same-checkpoint Resume. Pending or uncertain charges, changed evidence and already selected outputs need resolution rather than another paid attempt. **Rebuild DOCX** is local and makes no new provider request when the retained evidence is intact. If no automatic candidate is available, inspect the raw file and make a current delivery choice before saving.
+
+Keep the app running until an unfinished Gmail batch is finalized. Its active email session is held in memory; restarting the app does not restore that unfinished batch for normal Save/draft completion. Re-preparing the email starts a separate batch.
 
 ## Readable Word output and local rebuilds
 

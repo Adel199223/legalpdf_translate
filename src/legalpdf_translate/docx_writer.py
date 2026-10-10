@@ -778,6 +778,47 @@ def _remove_compatibility_mode(docx_path: Path) -> None:
             tmp_path.unlink(missing_ok=True)
 
 
+def _ensure_primary_compatibility_mode15(docx_path: Path) -> None:
+    """Set modern mode for new primary output without changing other XML bytes.
+
+    The historical removal helper remains unchanged for retained recipes.
+    Newly assembled python-docx settings use the declared w namespace.
+    """
+    with ZipFile(docx_path, "r") as archive:
+        text = archive.read("word/settings.xml").decode("utf-8")
+    root = ET.fromstring(text)
+    if root.tag != qn("w:settings") or re.search(
+            r'xmlns:w\s*=\s*[\'"]http://schemas.openxmlformats.org/wordprocessingml/2006/main[\'"]', text) is None:
+        raise ValueError("unsupported_primary_settings_namespace")
+    setting = '<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/>'
+    # Canonical placement is necessary for old no-mode checkpoint rebuilds:
+    # the same settings must result from a template mode14 or retained no-mode.
+    # Preserve every non-mode byte and append one fixed entry to compat.
+    modified = _COMPAT_SETTING_RE.sub("", text)
+    if re.search(r'<w:compat\b[^>]*/>', modified):
+        modified = re.sub(r'<w:compat\b[^>]*/>', '<w:compat>' + setting + '</w:compat>', modified, count=1)
+    elif '</w:compat>' in modified:
+        modified = modified.replace('</w:compat>', setting + '</w:compat>', 1)
+    else:
+        modified = modified.replace('</w:settings>', '<w:compat>' + setting + '</w:compat></w:settings>', 1)
+    parsed = ET.fromstring(modified)
+    modes = [node for node in parsed.iter(qn("w:compatSetting")) if node.get(qn("w:name")) == "compatibilityMode"]
+    if len(modes) != 1 or modes[0].get(qn("w:val")) != "15":
+        raise ValueError("primary_compatibility_mode_not_set")
+    if modified == text:
+        return
+    temporary = docx_path.with_name(docx_path.name + '.mode15_tmp')
+    try:
+        with ZipFile(docx_path, 'r') as source, ZipFile(temporary, 'w') as target:
+            target.comment = source.comment
+            for item in source.infolist():
+                target.writestr(_clone_zipinfo_for_rewrite(item), modified.encode('utf-8')
+                    if item.filename == 'word/settings.xml' else source.read(item.filename))
+        os.replace(temporary, docx_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 _ROLE_STYLES = {
     "paragraph": "LegalPDF Body",
     "heading": "LegalPDF Heading",
@@ -2118,7 +2159,7 @@ def assemble_docx(
         stage="save",
         expected_visible_paragraphs=paragraph_count,
     )
-    _remove_compatibility_mode(result_path)
+    _ensure_primary_compatibility_mode15(result_path)
     _verify_docx_visible_content(
         result_path,
         stage="compatibility rewrite",

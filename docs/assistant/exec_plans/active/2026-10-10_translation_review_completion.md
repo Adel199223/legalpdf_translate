@@ -1,5 +1,11 @@
 # Translation review completion and fresh end-to-end acceptance
 
+## Fresh live failure and bounded recovery — October 10
+
+The installed fresh run retained a paid V3 proposal but refused automatic publication because a proposed decorative rule belongs to a column band. Exact provider response, primary baseline and accounting are preserved under private `live_acceptance_01/layout_failure_01`; the strict structural guard is not waived. Optional-hint recovery is under independent design review, with no additional provider trial authorized by this checkpoint. The primary fallback also still removed compatibility mode 15, so new primary output requires an explicit modern settings value while historical removal helpers and candidate verification recipes remain unchanged.
+
+The isolated implementation checkout is `translation-visible-fidelity/legalpdf_translate`, branch `feat/layout-evidence-recovery-20261010`, based exactly on installed main `a18f7494b7b0c9a32b8701540082bbbc6d76e39a`. Root integration is separately in `translation-review-completion/legalpdf_translate`, branch `feat/layout-evidence-integration-20261010`, at the same base. Current work is bounded repair, not final live acceptance or goal completion. No provider/native/Gmail operations are performed by the implementation worker.
+
 ## Goal and non-goals
 Fix every finding retained by the fresh Arabic Gmail retest: readable text beside graphics omitted from output, misleading citation/bidi warnings, missing ordinary text-correction approval, wrapped separator and source-footer placement. Then exercise the whole normal same-email Arabic workflow again. Minor source spacing may differ; content cannot be silently omitted. No mail sending, model-default changes, schema migration, history rewrite or unrelated cleanup.
 
@@ -91,3 +97,9 @@ The umbrella completion plan remains active through exact final-head hosted chec
 ## Hosted CI report assertion follow-up
 
 Hosted CI run 38058067424 for published head b72d9277ed136b369fcef3e25080a8e9b2c2c0c8 is retained failed evidence: shard 2 and the aggregate job failed, while the other three shards and contract jobs passed. The sole shard assertion expected the obsolete report explanation; the product correctly distinguishes versioned actionable citation evidence from historical/advisory marker and parenthesis counts. The test-only repair preserves table/sample assertions and passes the complete report module: 22 tests in 1.33 seconds. That module is outside all local validation selectors, so Full04 remains valid for its unchanged covered files. Root integrated the repair as 8ffccfebeba177d0cce43020cacaa245e54396c5; new exact-head exhaustive hosted CI remains pending. No canonical application or fresh live success is claimed. Original artifacts are preserved under private publication_01/ci_terminal_failure_01.
+
+## Fresh live optional-hint recovery follow-up
+
+The installed fresh workflow is preserved as failed diagnostic evidence, without case Save or a new draft. Its paid layout response contained an otherwise valid decorative-rule hint for a columns-owned paragraph; the strict transformation guard correctly refused it. The bounded successor normalization quarantines only this unsupported optional transformation, retains the literal rule text and valid footer evidence, and records a hash-bound, versioned review-required receipt. Schema, paragraph coverage, unsafe content and all other transformation eligibility failures remain fatal. The warning is visible in Finish Translation before Arabic review and in source-layout review.
+
+Exact retained-response qualification and production candidate reconstruction are offline, zero-provider proofs. Existing ordinary checkpoint recovery is tested separately; it does not restore the unfinished Gmail batch state after restart. After reviewed installation, acceptance requires one transparently new normal same-email workflow. Recipient placement remains a native readability question; this repair does not claim to correct its source geometry. Newly quarantined hints cannot be reconstructed under an older frozen policy at a missing-result crash cutpoint; that case refuses rather than relabeling historical success. Existing valid historical results remain unchanged. The umbrella plan remains active.

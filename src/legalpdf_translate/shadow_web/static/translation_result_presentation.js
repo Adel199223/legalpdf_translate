@@ -276,6 +276,9 @@ export function buildTranslationResultCardPresentation({
       summaryLines.push(...recovery.guidanceLines);
     } else {
       summaryLines.push(`Completed pages: ${result.completed_pages ?? 0}`);
+      if (result.automatic_layout?.source_layout_review_required) {
+        summaryLines.push("Source layout needs review: an optional decorative rule could not be safely applied; its text was retained.");
+      }
       if(result.selected_text_review)summaryLines.push(result.selected_text_review.output_review_required?"Text changes approved; review the complete corrected output.":"Corrected text and complete output reviewed. Original-run diagnostics remain available.");
       if (metrics.run_id) {
         summaryLines.push(`Run ID: ${metrics.run_id}`);
