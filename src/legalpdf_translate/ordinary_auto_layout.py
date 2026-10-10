@@ -22,10 +22,10 @@ _POLICY_RE = re.compile(r"source_image_unreviewed_v1:([a-f0-9]{64})\Z")
 
 def frozen_automatic_layout_policy() -> str:
     """Freeze local price, request and validation versions before translation."""
-    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v2")
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v2", emphasis_normalization=True)
 
 
-def _optional_hint_policy(normalization_version: str) -> str:
+def _optional_hint_policy(normalization_version: str, *, emphasis_normalization=False) -> str:
     """Exact v1/v2 capability identities; no arbitrary historical-policy admission."""
     from .ordinary_layout_accounting import layout_accounting_policy
     from .ordinary_layout_contracts import PROPOSAL_VERSION_V3
@@ -40,6 +40,8 @@ def _optional_hint_policy(normalization_version: str) -> str:
         "instructions_sha256": hashlib.sha256(INSTRUCTIONS.encode("utf-8")).hexdigest(),
         "pricing_catalog": json.loads(accounting._pricing_json),
         "dispatch_limits": json.loads(accounting._limits_json)}
+    if emphasis_normalization:
+        identity["optional_emphasis_normalization_version"] = "ordinary_optional_emphasis_normalization_v1"
     return ORDINARY_AUTO_LAYOUT_POLICY + ":" + hashlib.sha256(encode(identity)).hexdigest()
 
 
@@ -387,7 +389,9 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
                     baseline_bytes = bounded_read(operation.parent.parent / "reviewed.docx", storage.DOCX_MAX_BYTES)
                     from .ordinary_layout_contracts import OPTIONAL_HINT_NORMALIZATION_V2
                     expected = proposal_source_evidence(inspect_docx(baseline_bytes, initial_view["target_lang"]), initial_view, proposal,
-                        normalization_version=records[0].get("normalization", {}).get("version", OPTIONAL_HINT_NORMALIZATION_V2))
+                        normalization_version=records[0].get("normalization", {}).get("version", OPTIONAL_HINT_NORMALIZATION_V2),
+                        emphasis_normalization_version=("ordinary_optional_emphasis_normalization_v1"
+                            if policy == frozen_automatic_layout_policy() else None))
                     expected["response_sha256"] = row["response_sha256"]
                     if records[0] != expected:
                         fail("source_evidence_response_changed", 409)
@@ -460,6 +464,8 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int], *
             records = verified_record(sidecar_path)["pages"]
             source_result_fields = {"source_coverage_findings": [f for page in records for f in page["findings"]],
                 "source_layout_evidence_sha256": hashlib.sha256(encode(records)).hexdigest()}
+    emphasis_version = ("ordinary_optional_emphasis_normalization_v1"
+        if policy_fingerprint == frozen_automatic_layout_policy().split(":", 1)[1] else None)
     evidence_view = current["review"]
     if any(p.get("version") == "ordinary_layout_proposal_v3" for p in proposals):
         with manager.service.scope(origin) as folder:
@@ -477,14 +483,15 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int], *
                 if policy_fingerprint == _optional_hint_policy(OPTIONAL_HINT_NORMALIZATION_V1).split(":", 1)[1]
                 else OPTIONAL_HINT_NORMALIZATION_V2)
             source_records = [proposal_source_evidence(inspect_docx(reviewed, evidence_view["target_lang"]), evidence_view, p,
-                normalization_version=normalization_version) for p in proposals]
+                normalization_version=normalization_version, emphasis_normalization_version=emphasis_version) for p in proposals]
             for record, proposal in zip(source_records, proposals):
                 record["response_sha256"] = hashlib.sha256(storage._read(operation / f"page-{proposal['page_number']:04d}.response.json", 2 * 1024 * 1024)).hexdigest()
             expected_sidecar = {"version": "ordinary_source_evidence_v1", "pages": source_records}
             if (any(page.get("normalization", {}).get("review_required") for page in source_records)
                     and not (policy_fingerprint == frozen_automatic_layout_policy().split(":", 1)[1]
                         or (policy_fingerprint == _optional_hint_policy("ordinary_optional_layout_hint_normalization_v1").split(":", 1)[1]
-                            and all(page.get("normalization", {}).get("version") != "ordinary_optional_layout_hint_normalization_v2" for page in source_records)))):
+                            and all(page.get("normalization", {}).get("version") != "ordinary_optional_layout_hint_normalization_v2" for page in source_records))
+                        or policy_fingerprint == _optional_hint_policy("ordinary_optional_layout_hint_normalization_v2").split(":", 1)[1])):
                 fail("optional_hint_recovery_requires_current_policy", 409)
             sidecar = operation / "source_evidence.json"
             if sidecar.exists() and verified_record(sidecar) != expected_sidecar:
@@ -494,7 +501,7 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int], *
                 "source_layout_evidence_sha256": hashlib.sha256(encode(source_records)).hexdigest()}
     try:
         decisions = normalize_proposals(inspect_docx(reviewed, current["review"]["target_lang"]),
-            evidence_view, proposals)
+            evidence_view, proposals, emphasis_normalization_version=emphasis_version)
     except (OrdinaryLayoutError, ValueError):
         return
     if stored_decisions is not None and stored_decisions != decisions:
