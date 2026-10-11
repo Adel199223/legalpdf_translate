@@ -4,6 +4,7 @@
 
 Implementation and detached validation are complete; canonical installation and the one fresh Arabic end-to-end acceptance remain pending. Read private `formatting_order_folio_fix_20261011_01/Test_Report.md` and `publication_01/publication_receipt.json` for terminal status before continuing or replaying any operation. See the [implementation plan](exec_plans/completed/2026-10-11_formatting_order_folio_fix.md).
 
+The first hosted run failed three recovery checks and the original local Full was stopped after reproducing a failure; neither is a pass. A bounded saved-recipe repair passed the affected recovery and checkpoint checks. Final hosted checks and remaining validation belong to the private terminal receipts.
 
 Updated 2026-10-10. Read `AGENTS.md`, `agent.md`, this page and only the applicable current plan. Current user authority takes precedence over historical continuation text. Consumed provider/native helpers must not be replayed.
 

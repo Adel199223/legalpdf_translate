@@ -41,7 +41,9 @@ def test_new_workflow_rebuild_uses_retained_recipe(tmp_path,policy_kind,keep_pag
     workflow._record_docx_layout_review=lambda *a,**k:{}
     workflow._ordinary_auto_layout_policy=None
     policy=frozen_automatic_layout_policy() if policy_kind=="current" else _optional_hint_policy("ordinary_optional_layout_hint_normalization_v2",emphasis_normalization=True) if policy_kind=="historical" else None
-    state=SimpleNamespace(settings={"ordinary_auto_layout_policy":policy},pages={"1":{"status":"done"}},selection_page_count=1)
+    settings={"ordinary_auto_layout_policy":policy}
+    if policy_kind=="current": settings["primary_assembly_recipe"]={"version":"terminal_labeled_folio_v1","ordinary_auto_layout_policy":policy}
+    state=SimpleNamespace(settings=settings,pages={"1":{"status":"done"}},selection_page_count=1)
     pages=tmp_path/"pages";pages.mkdir();(pages/"page_0001.txt").write_text("Body.\nPage 1")
     config=SimpleNamespace(target_lang=TargetLang.EN,page_breaks=True,strip_bidi_controls=True)
     out,_=workflow._assemble_run_docx(config,pages_dir=pages,output_path=tmp_path/"out.docx",output_dir=tmp_path,run_dir=tmp_path,run_state=state,assembly_options={})

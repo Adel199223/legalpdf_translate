@@ -88,8 +88,28 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+class PrimaryAssemblyRecipeError(ValueError):
+    """An explicit persisted recipe cannot be treated as a missing checkpoint."""
+
+
+def primary_assembly_recipe(settings: dict) -> dict | None:
+    """Validate the saved assembly capability independently of current pricing."""
+    if "primary_assembly_recipe" not in settings:
+        return None
+    recipe = settings["primary_assembly_recipe"]
+    if (type(recipe) is not dict or set(recipe) != {"version", "ordinary_auto_layout_policy"}
+            or recipe["version"] != "terminal_labeled_folio_v1"
+            or type(recipe["ordinary_auto_layout_policy"]) is not str
+            or recipe["ordinary_auto_layout_policy"] != settings.get("ordinary_auto_layout_policy")):
+        raise PrimaryAssemblyRecipeError("Invalid saved primary assembly recipe.")
+    from .ordinary_auto_layout import valid_automatic_layout_policy
+    if not valid_automatic_layout_policy(recipe["ordinary_auto_layout_policy"]):
+        raise PrimaryAssemblyRecipeError("Invalid saved primary assembly recipe policy.")
+    return deepcopy(recipe)
+
+
 def settings_fingerprint(config: RunConfig, *, ordinary_source_review: dict | None = None,
-                         ordinary_auto_layout_policy: str | None = None) -> dict[str, Any]:
+                         ordinary_auto_layout_policy: str | None = None, primary_recipe: dict | None = None) -> dict[str, Any]:
     result = {
         "effort": config.effort.value,
         "effort_policy": config.effort_policy.value,
@@ -112,6 +132,9 @@ def settings_fingerprint(config: RunConfig, *, ordinary_source_review: dict | No
         result["ordinary_source_review"] = deepcopy(ordinary_source_review)
     if ordinary_auto_layout_policy is not None:
         result["ordinary_auto_layout_policy"] = ordinary_auto_layout_policy
+    if primary_recipe is not None:
+        result["primary_assembly_recipe"] = deepcopy(primary_recipe)
+        primary_assembly_recipe(result)
     return result
 
 
@@ -194,6 +217,7 @@ def new_run_state(
     protocol_identity: dict[str, Any] | None = None,
     ordinary_source_review: dict | None = None,
     ordinary_auto_layout_policy: str | None = None,
+    primary_recipe: dict | None = None,
 ) -> RunState:
     from .structured_artifacts import normalize_protocol_identity
 
@@ -222,7 +246,7 @@ def new_run_state(
         selection_end_page=selection_end_page,
         selection_page_count=selection_page_count,
         settings=settings_fingerprint(config, ordinary_source_review=ordinary_source_review,
-            ordinary_auto_layout_policy=ordinary_auto_layout_policy),
+            ordinary_auto_layout_policy=ordinary_auto_layout_policy, primary_recipe=primary_recipe),
         context_hash=context_hash,
         created_at=now,
         updated_at=now,
@@ -331,6 +355,7 @@ def load_run_state(path: Path) -> RunState | None:
         settings_obj = data["settings"]
         if not isinstance(settings_obj, dict):
             return None
+        primary_assembly_recipe(settings_obj)
         failure_context_obj = data.get("failure_context", {})
         failure_context = dict(failure_context_obj) if isinstance(failure_context_obj, dict) else {}
         from .structured_artifacts import normalize_protocol_identity
@@ -370,6 +395,8 @@ def load_run_state(path: Path) -> RunState | None:
             protocol_identity=protocol_identity,
             dispatch_accounting=data.get("dispatch_accounting", {}),
         )
+    except PrimaryAssemblyRecipeError:
+        raise
     except (TypeError, ValueError, KeyError):
         return None
 
@@ -399,6 +426,7 @@ def resume_incompatibility_reason(
     protocol_identity: dict[str, Any] | None = None,
     ordinary_source_review: dict | None = None,
     ordinary_auto_layout_policy: str | None = None,
+    primary_recipe: dict | None = None,
 ) -> str | None:
     from .structured_artifacts import StructuredArtifactError, normalize_protocol_identity
 
@@ -420,7 +448,7 @@ def resume_incompatibility_reason(
     if state.context_hash != context_hash:
         return "context mismatch."
     expected_settings = settings_fingerprint(config, ordinary_source_review=ordinary_source_review,
-        ordinary_auto_layout_policy=ordinary_auto_layout_policy)
+        ordinary_auto_layout_policy=ordinary_auto_layout_policy, primary_recipe=primary_recipe)
     checkpoint_settings = dict(state.settings)
     if checkpoint_settings.get("ordinary_auto_layout_policy") != ordinary_auto_layout_policy:
         return "ordinary automatic layout policy identity mismatch."
