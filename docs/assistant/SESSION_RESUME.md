@@ -1,5 +1,10 @@
 # SESSION_RESUME
 
+## October 11 focused formatting repair
+
+Implementation and detached validation are complete; canonical installation and the one fresh Arabic end-to-end acceptance remain pending. Read private `formatting_order_folio_fix_20261011_01/Test_Report.md` and `publication_01/publication_receipt.json` for terminal status before continuing or replaying any operation. See the [implementation plan](exec_plans/completed/2026-10-11_formatting_order_folio_fix.md).
+
+
 ## First resume stop
 
 This is the roadmap anchor file for `resume master plan`, `where did we leave off` and fresh-session continuity. Read [HANDOFF.md](HANDOFF.md), then only the applicable current plan. Historical checkpoints are evidence, not continuation authority.

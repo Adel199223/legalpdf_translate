@@ -1906,6 +1906,22 @@ def _write_source_map(result_path: Path, pages: list[dict], *, section_furniture
     os.replace(temporary, mapping_path)
 
 
+def _terminal_labeled_folios_cover(pages) -> bool:
+    """Closed text-derived folio evidence, not a PDF completeness certificate."""
+    if not pages or any(page.structure is not None for page in pages):
+        return False
+    label = re.compile(r"(?:page|p[aá]g(?:ina)?\.?|الصفحة|صفحة)\s*:?\s*([0-9٠-٩۰-۹]{1,4})(?:\s*(?:/|of|de|sur|من)\s*([0-9٠-٩۰-۹]{1,4}))?", re.I)
+    for page in pages:
+        lines = [line.strip() for line in page.text.splitlines() if line.strip()]
+        if not lines:
+            return False
+        visible = sanitize_bidi_controls(unwrap_internal_placeholders(lines[-1])).strip()
+        match = label.fullmatch(visible)
+        if not match or int(match[1]) != page.number or (match[2] is not None and not page.number <= int(match[2]) <= 9999):
+            return False
+    return True
+
+
 def assemble_docx(
     pages_dir: Path,
     output_path: Path,
@@ -1919,6 +1935,7 @@ def assemble_docx(
     page_numbers: list[int] | None = None,
     partial_output: bool = False,
     derive_source_continuations: bool = False,
+    terminal_folio_policy: str | None = None,
 ) -> Path:
     if derive_source_continuations and page_numbers is None:
         raise ValueError("Source continuation derivation requires a completed-page selection.")
@@ -1938,6 +1955,10 @@ def assemble_docx(
         raise RuntimeError(f"No page text files available for DOCX assembly: {pages_dir}")
 
     pages = [_load_assembly_page(path) for path in page_files]
+    if terminal_folio_policy not in {None, "terminal_labeled_folio_v1"}:
+        raise ValueError("Unknown primary folio policy.")
+    suppress_generated_page = (terminal_folio_policy is not None and page_numbers is not None
+        and not partial_output and up_to_page is None and _terminal_labeled_folios_cover(pages))
     # Validate section furniture against unchanged source/target payloads before
     # adding local-only paragraph links; the bound-pair contract stays strict.
     furniture_plan = _section_furniture_plan(pages, pages_dir, page_breaks=page_breaks,
@@ -1956,7 +1977,8 @@ def assemble_docx(
     _configure_styles(document, lang)
     current_size = _page_size(pages[0])
     _configure_section(document.sections[0], current_size)
-    _add_page_number_footer(document, lang)
+    if not suppress_generated_page:
+        _add_page_number_footer(document, lang)
     source_map: list[dict] = []
     last_paragraph = None
     last_block: dict | None = None
@@ -1995,6 +2017,7 @@ def assemble_docx(
         layout, layout_status, layout_review, layout_warnings = _validated_layout(structure)
         page_map = {
             "source_page_number": page.number,
+            **({"primary_folio_policy": "terminal_labeled_folio_v1", "generated_page_suppressed": suppress_generated_page, "folio_evidence_basis": "closed_terminal_translation_label_not_pdf_geometry"} if terminal_folio_policy else {}),
             "structure_status": page.structure_status,
             "source_sha256": structure.get("source_sha256"),
             "source_file_sha256": structure.get("source_file_sha256"),
@@ -2049,7 +2072,7 @@ def assemble_docx(
             if admitted and block["id"] in furniture_locations:
                 mapping.update(furniture_locations[block["id"]])
                 continue
-            if _is_page_number_footer(block):
+            if _is_page_number_footer(block) and not suppress_generated_page:
                 mapping["location"] = {"kind": "generated_footer_page_field"}
                 continue
             if role != "table_cell" and not sanitize_bidi_controls(unwrap_internal_placeholders(text)).strip():

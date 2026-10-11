@@ -1,5 +1,12 @@
 # APP_KNOWLEDGE
 
+## October 11 focused formatting repair
+
+Implementation and detached validation are complete; canonical installation and the one fresh Arabic end-to-end acceptance remain pending. Read private `formatting_order_folio_fix_20261011_01/Test_Report.md` and `publication_01/publication_receipt.json` for terminal status before continuing or replaying any operation. See the [implementation plan](docs/assistant/exec_plans/completed/2026-10-11_formatting_order_folio_fix.md).
+
+Generated V3 metadata columns may fall back to source-order flow only with exact coverage and plain metadata guards. The skipped column presentation remains an explicit review warning; manual decisions and historical recipes remain strict. Fresh ordinary legacy-TXT assembly can omit only the app-generated PAGE when every selected complete source page ends with an explicit matching labeled folio. Source labels remain intact; this is conservative translated-text evidence, not verified PDF geometry. Partial, ambiguous, mismatched and structured furniture outputs retain their previous numbering recipe. Offline rebuilds use the saved policy.
+
+
 ## Reproducible workstation recipe — 2026-09-30
 
 The workstation setup adds a read-only checker and exact-version WinGet recipe for Git, uv, Node, Dart, GitHub CLI and ripgrep. Python 3.11.9, uv 0.12.20, `uv.lock` and the existing environment setup/recovery behavior are preserved. `.node-version` (24.14.0) and `.dart-version` (3.11.0) supply the tested runtime baseline to local checks and CI. See [WORKSTATION_SETUP.md](docs/assistant/WORKSTATION_SETUP.md) for entry points and Windows/Word/manual requirements. Initial delivery was isolated and uncommitted in `feat/reproducible-workstation-20260930`. The user subsequently authorized both publication/merge and workstation application; current progress belongs to [HANDOFF.md](docs/assistant/HANDOFF.md), with exact outcomes in the retained publication/application receipt. Offline checks alone do not establish hosted CI or provisioning success.
