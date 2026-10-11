@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import unicodedata
+import math
 from typing import Any, Mapping
 
 from .saved_docx_layout import inspect_docx, validate_decisions
@@ -268,7 +269,10 @@ OPTIONAL_HINT_NORMALIZATION_V1 = "ordinary_optional_layout_hint_normalization_v1
 OPTIONAL_HINT_NORMALIZATION_V2 = "ordinary_optional_layout_hint_normalization_v2"
 
 
-def proposal_source_evidence(snapshot, view, proposal, *, normalization_version=OPTIONAL_HINT_NORMALIZATION_V2, emphasis_normalization_version=EMPHASIS_NORMALIZATION_V1):
+BAND_NORMALIZATION_V1 = "ordinary_metadata_band_normalization_v1"
+
+
+def proposal_source_evidence(snapshot, view, proposal, *, band_normalization_version=BAND_NORMALIZATION_V1, normalization_version=OPTIONAL_HINT_NORMALIZATION_V2, emphasis_normalization_version=EMPHASIS_NORMALIZATION_V1):
     """Provider evidence is a proposal for explicit review, never a transcription certificate."""
     if proposal.get("version") != PROPOSAL_VERSION_V3:
         return {"version": "ordinary_source_evidence_v1", "findings": [], "layout": []}
@@ -392,7 +396,9 @@ def proposal_source_evidence(snapshot, view, proposal, *, normalization_version=
             dropped = []
             _generated_emphasis(by_id[choice["paragraph_id"]], choice.get("emphasis", []), rejected=dropped)
             rejected_emphasis.extend({"paragraph_id": choice["paragraph_id"], **item} for item in dropped)
+    _, downgraded = _canonical_metadata_bands(snapshot, proposal, ids, band_normalization_version)
     return {"version": "ordinary_source_evidence_v1", "page_number": page,
+            **({"metadata_band_normalization": {"version": BAND_NORMALIZATION_V1, "canonical_proposal_sha256": digest(encode(proposal)), "rejected_bands": downgraded, "review_required": True}} if downgraded else {}),
             "findings": normalized, "layout": accepted, "source_coverage_verified": False,
             **({"optional_emphasis_normalization": {"version": EMPHASIS_NORMALIZATION_V1,
                 "canonical_proposal_sha256": digest(encode(proposal)),
@@ -415,6 +421,8 @@ def source_evidence_review_fields(records):
                     for page in records
                     if page.get("optional_emphasis_normalization", {}).get("version") == EMPHASIS_NORMALIZATION_V1
                     for item in page["optional_emphasis_normalization"]["rejected_spans"])
+    rejected.extend({"page_number": page["page_number"], "kind": "metadata_columns", **item}
+                    for page in records for item in page.get("metadata_band_normalization", {}).get("rejected_bands", []))
     return ({"source_layout_review_required": True, "source_layout_rejected_hints": rejected}
             if rejected else {})
 
@@ -594,7 +602,55 @@ def _generated_emphasis(row, spans, *, drop_unsupported_edges=True, rejected=Non
     return retained
 
 
-def normalize_proposals(snapshot, view, proposals, *, emphasis_normalization_version=EMPHASIS_NORMALIZATION_V1):
+
+def _canonical_metadata_bands(snapshot, proposal, ids, version):
+    """Downgrade only unsafe generated metadata ordering, never authored decisions."""
+    bands = deepcopy(proposal["bands"])
+    if version is None or proposal.get("version") != PROPOSAL_VERSION_V3:
+        return bands, []
+    if version != BAND_NORMALIZATION_V1:
+        fail("invalid_metadata_band_normalization_version")
+    try:
+        flat = [pid for band in bands for pid in _ids(band)]
+    except (TypeError, KeyError):
+        return bands, []
+    if any(type(pid) is not str for pid in flat) or len(flat) != len(ids) or len(set(flat)) != len(ids) or set(flat) != set(ids):
+        return bands, []
+    bands = _canonical_columns_rows(bands, ids, proposal["paragraphs"])
+    ordinal = {pid: i for i, pid in enumerate(ids)}
+    rows = {row["id"]: row for row in snapshot["paragraphs"]}
+    choices = {row["paragraph_id"]: row for row in proposal["paragraphs"]}
+    partitioned = {row["paragraph_id"] for row in proposal.get("paragraph_partitions", [])}
+    rejected = []
+    for index, band in enumerate(bands):
+        owned = _ids(band)
+        ordered = sorted(owned, key=ordinal.get)
+        if band.get("kind") != "columns" or owned == ordered:
+            continue
+        if ordered != ids[ordinal[ordered[0]]:ordinal[ordered[-1]] + 1]:
+            continue
+        # Require the same supported columns shape; no invalid container is rescued.
+        if set(band) != {"kind", "widths_pct", "gutter_pt", "cells"} or not 2 <= len(band["cells"]) <= 3:
+            continue
+        if len(band["widths_pct"]) != len(band["cells"]) or any(type(v) not in {int,float} or not math.isfinite(v) or not 10 <= v <= 90 for v in band["widths_pct"]) or abs(sum(band["widths_pct"])-100) > .001 or type(band["gutter_pt"]) not in {int,float} or not math.isfinite(band["gutter_pt"]) or not 0 <= band["gutter_pt"] <= 36:
+            continue
+        if any(type(cell) is not dict or set(cell) != {"groups"} or type(cell["groups"]) is not list or not cell["groups"] for cell in band["cells"]):
+            continue
+        groups = [group for cell in band["cells"] for group in cell["groups"]]
+        if any(type(g) is not dict or type(g.get("paragraph_ids")) is not list or not g["paragraph_ids"] for g in groups):
+            continue
+        if any(set(cell) != {"groups"} for cell in band["cells"]) or any(set(g) != {"paragraph_ids","panel"} or g["panel"] is not False for g in groups):
+            continue
+        if any(pid in partitioned or choices[pid]["role"] not in {"institution","reference","recipient"}
+               or "numPr" in rows[pid].get("ppr_xml", "") or rows[pid].get("has_page_break")
+               or any(token["kind"] != "t" or any((unicodedata.category(c) in {"Cc", "Cf"} and c not in "\u200e\u200f") for c in token.get("text", "")) for token in rows[pid]["tokens"]) for pid in owned):
+            continue
+        bands[index] = {"kind":"flow", "groups":[{"paragraph_ids":ordered,"panel":False}]}
+        rejected.append({"index":index,"paragraph_ids":ordered,"reason":"metadata_columns_reordered_as_flow"})
+    return bands, rejected
+
+
+def normalize_proposals(snapshot, view, proposals, *, band_normalization_version=BAND_NORMALIZATION_V1, emphasis_normalization_version=EMPHASIS_NORMALIZATION_V1):
     decisions = deepcopy(view["decisions"])
     by_id = {row["paragraph_id"]: index for index, row in enumerate(decisions["paragraphs"])}
     replacements, id_page = {}, {}
@@ -653,14 +709,15 @@ def normalize_proposals(snapshot, view, proposals, *, emphasis_normalization_ver
                     not (row["space_after_pt"] is None or type(row["space_after_pt"]) in {int, float} and row["space_after_pt"] == 0))):
                 fail("page_break_requires_flow")
             decisions["paragraphs"][by_id[row["paragraph_id"]]] = row
-        bands = _canonical_flow_groups(proposal["bands"], ids)
+        projected, _ = _canonical_metadata_bands(snapshot, proposal, ids, band_normalization_version)
+        bands = _canonical_flow_groups(projected, ids)
         bands = _canonical_columns_rows(bands, ids, proposal["paragraphs"])
         try:
             if [pid for band in bands for pid in _ids(band)] != ids:
                 fail("proposal_coverage")
         except (TypeError, KeyError):
             fail("invalid_proposal")
-        proposal_source_evidence(snapshot, view, proposal, emphasis_normalization_version=emphasis_normalization_version)
+        proposal_source_evidence(snapshot, view, proposal, band_normalization_version=band_normalization_version, emphasis_normalization_version=emphasis_normalization_version)
         replacements[page] = deepcopy(bands)
         id_page.update({pid: page for pid in ids})
     bands, inserted = [], set()

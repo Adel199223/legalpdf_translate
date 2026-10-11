@@ -1929,6 +1929,11 @@ class TranslationWorkflow:
                 return output, records
             declined = reviewed.notice_codes
             self._log("Reviewed formatting was declined: " + ", ".join(declined) + ". Using ordinary DOCX formatting.")
+        from .checkpoint import primary_assembly_recipe
+        if run_state is not None and primary_assembly_recipe(run_state.settings) is not None:
+            completed = list_completed_pages(run_state)
+            assembly_options = {**assembly_options, "terminal_folio_policy": "terminal_labeled_folio_v1",
+                "page_numbers": completed, "partial_output": len(completed) < run_state.selection_page_count}
         preparation = self._prepare_docx_layout(config, pages_dir, output_dir)
         output = assemble_docx(pages_dir, output_path, lang=config.target_lang,
             page_breaks=config.page_breaks, strip_bidi_controls=config.strip_bidi_controls,
@@ -1938,14 +1943,17 @@ class TranslationWorkflow:
         return output, records
 
     def _structured_assembly_options(self, state: RunState, pages_dir: Path, *, partial: bool = False) -> dict:
-        if not state.protocol_identity:
-            return {}
-        from .structured_artifacts import validate_structured_page
+        from .checkpoint import primary_assembly_recipe
         completed = list_completed_pages(state)
+        folio_options = ({"terminal_folio_policy": "terminal_labeled_folio_v1", "page_numbers": completed, "partial_output": partial}
+            if primary_assembly_recipe(state.settings) is not None else {})
+        if not state.protocol_identity:
+            return folio_options
+        from .structured_artifacts import validate_structured_page
         for number in completed:
             validate_structured_page(pages_dir, number, protocol_identity=state.protocol_identity,
                                      expected_commit=state.pages[str(number)].get("structured_commit"))
-        return {"page_numbers": completed, "partial_output": partial, "derive_source_continuations": True}
+        return {**folio_options, "page_numbers": completed, "partial_output": partial, "derive_source_continuations": True}
 
     def _prepare_docx_layout(
         self, config: RunConfig, pages_dir: Path, output_dir: Path,
@@ -4381,6 +4389,7 @@ class TranslationWorkflow:
                 ordinary_source_review=(self._reviewed_source_context.identity
                     if self._reviewed_source_context is not None else None),
                 ordinary_auto_layout_policy=self._ordinary_auto_layout_policy,
+                primary_recipe=existing.settings.get("primary_assembly_recipe"),
             )
             if mismatch_reason is None:
                 existing.frozen_outdir_abs = str(paths.frozen_outdir)
@@ -4410,6 +4419,9 @@ class TranslationWorkflow:
 
         if self._structured_run is None:
             clear_run_dirs(paths)
+        from .ordinary_auto_layout import frozen_automatic_layout_policy
+        primary_recipe = ({"version": "terminal_labeled_folio_v1", "ordinary_auto_layout_policy": self._ordinary_auto_layout_policy}
+            if self._ordinary_auto_layout_policy == frozen_automatic_layout_policy() else None)
         state = new_run_state(
             config=config,
             paths=paths,
@@ -4421,6 +4433,7 @@ class TranslationWorkflow:
             ordinary_source_review=(self._reviewed_source_context.identity
                 if self._reviewed_source_context is not None else None),
             ordinary_auto_layout_policy=self._ordinary_auto_layout_policy,
+            primary_recipe=primary_recipe,
         )
         save_run_state_atomic(paths.run_state_path, state)
         return state
