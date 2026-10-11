@@ -157,6 +157,18 @@ def test_settled_invalid_hint_recovers_without_dispatch_and_reuses_warning(tmp_p
             if hint_kind == 'decorative_rule' else frozen_automatic_layout_policy())
         _recover_settled_result(layout, pointer, [1], policy_fingerprint=reconstruction_policy.split(':')[1])
         assert _read(operation/'result.json') == original_result
+        # Former exact metadata/primary-v1 policy keeps its settled recipe.
+        previous_metadata_policy = _optional_hint_policy(
+            'ordinary_optional_layout_hint_normalization_v2',
+            emphasis_normalization=True, metadata_normalization=True)
+        (operation/'result.json').unlink()
+        (operation/'source_evidence.json').unlink()
+        _recover_settled_result(layout, pointer, [1], policy_fingerprint=previous_metadata_policy.split(':')[1])
+        assert _read(operation/'result.json') == original_result
+        previous_evidence = checked_evidence(layout, pointer['origin_job_id'], pointer['baseline_id'],
+            pointer['review_id'], pointer['operation_nonce'], (1,), previous_metadata_policy,
+            retained_pages=pointer.get('retained_pages', {}))
+        assert previous_evidence['source_evidence']['pages'] == _read(operation/'source_evidence.json')['pages']
         persisted_evidence = checked_evidence(layout, pointer['origin_job_id'], pointer['baseline_id'],
             pointer['review_id'], pointer['operation_nonce'], (1,), reconstruction_policy,
             retained_pages=pointer.get('retained_pages', {}))

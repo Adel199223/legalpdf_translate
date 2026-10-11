@@ -1,11 +1,16 @@
 # APP_KNOWLEDGE
 
-## October 11 focused formatting repair
+## October 11 Arabic abbreviated page-label repair
 
-Implementation and detached validation are complete; canonical installation and the one fresh Arabic end-to-end acceptance remain pending. Read private `formatting_order_folio_fix_20261011_01/Test_Report.md` and `publication_01/publication_receipt.json` for terminal status before continuing or replaying any operation. See the [implementation plan](docs/assistant/exec_plans/completed/2026-10-11_formatting_order_folio_fix.md).
+The later same-document test exposed one remaining numbering defect: a source label such as `ص. 1` was retained alongside the generated Word counter. The focused v2 primary-assembly recipe recognizes that explicit abbreviation only on complete, unstructured pages with matching page numbers. Original text remains intact. Historical v1 and absent recipes retain their saved behavior, including Resume across pricing changes; V6/V7 layout writers are unchanged.
 
-Generated V3 metadata columns may fall back to source-order flow only with exact coverage and plain metadata guards. The skipped column presentation remains an explicit review warning; manual decisions and historical recipes remain strict. Fresh ordinary legacy-TXT assembly can omit only the app-generated PAGE when every selected complete source page ends with an explicit matching labeled folio. Source labels remain intact; this is conservative translated-text evidence, not verified PDF geometry. Partial, ambiguous, mismatched and structured furniture outputs retain their previous numbering recipe. Final, partial and offline assembly use an explicit checkpoint recipe bound to the exact saved ordinary policy, independently of later pricing changes. Historical checkpoints without this recipe keep legacy behavior; malformed or mismatched recipes refuse output rewriting.
+The prior formatting repair is merged and installed at `a8de995c03b0a464cdf829859e9e32941089d29e`. Its full-label acceptance passed; the subsequent abbreviated-label failure is separately retained in private `same_document_confirmation_20261011_02/Test_Report.md`. Neither outcome should replace the other.
 
+Current validation, publication, installed identity and the newly authorized same-email Arabic acceptance belong to private `arabic_folio_label_fix_20261011_01/Test_Report.md` and `publication_01/publication_receipt.json`. An absent or incomplete terminal receipt is not acceptance. Continue only unfinished operations; do not replay consumed translations, saves or drafts. The fresh test preserves prior records/drafts and creates at most one unsent draft. No shutdown is requested.
+
+Checkpoint validation admits only explicit known recipe versions and binds each to the saved ordinary policy. Final, partial and offline assembly dispatch that saved version; malformed recipes refuse rewriting. A new policy identity selects v2 for fresh jobs while reconstructing the prior metadata policy under v1. Whole-line, exact-number, complete-selection and unstructured-page guards prevent narrative or ambiguous numbers from suppressing a counter. Partial output keeps generated numbering.
+
+The previous metadata-column source-order fallback remains guarded by exact coverage and plain metadata, with a visible review warning. This repair does not change it, translation models, extraction, routes, pricing, schema or Gmail contracts. See the [repair plan](docs/assistant/exec_plans/completed/2026-10-11_arabic_folio_abbreviation.md).
 
 ## Reproducible workstation recipe — 2026-09-30
 

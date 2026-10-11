@@ -46,7 +46,7 @@ def test_terminal_folio_recipe_survives_catalog_resume(tmp_path, monkeypatch):
     old_catalog = OrdinaryAccountingPolicy(old_catalog._pricing_json, old_catalog._limits_json,
         date(2026, 10, 9))
     app, jobs, translation_sdk, layout_requests = _app(tmp_path, monkeypatch,
-        ("English page one alpha 42\nPage 1",), (1,), failed_page=1, failure="incomplete")
+        ("نص عربي تجريبي\nص. 1",), (1,), failed_page=1, failure="incomplete")
     scope = "?mode=shadow&workspace=fictional"
     with TestClient(app) as client:
         with monkeypatch.context() as old:
@@ -55,7 +55,7 @@ def test_terminal_folio_recipe_survives_catalog_resume(tmp_path, monkeypatch):
             old.setattr(layout_accounting_module.OrdinaryLayoutAccounting, "policy",
                 lambda self, job: LayoutSuggestionPolicy("gpt-5.2", ".812", ".812",
                     max_output_tokens=8000, timeout_seconds=240.0))
-            original_id = _start(client, source, output, "EN", start=1, end=1, image_mode="off")
+            original_id = _start(client, source, output, "AR", start=1, end=1, image_mode="off")
             failed = _wait(jobs, original_id)
             assert failed["result"]["automatic_layout"]["status"] == "raw_fallback"
             assert layout_requests[0]["max_output_tokens"] == 8000
@@ -72,7 +72,7 @@ def test_terminal_folio_recipe_survives_catalog_resume(tmp_path, monkeypatch):
             app.state.shadow_context, "shadow", "fictional")
         manager.suggestion_policy = app.state.ordinary_layouts._accounting.policy
         manager.provider_factory = _success_layout_provider(app, layout_requests)
-        resumed_id = _start(client, source, output, "EN", start=1, end=1,
+        resumed_id = _start(client, source, output, "AR", start=1, end=1,
             image_mode="off", resume=True)
         resumed = _wait(jobs, resumed_id)
         assert resumed["result"]["automatic_layout"]["status"] == "raw_fallback"
@@ -89,7 +89,7 @@ def test_terminal_folio_recipe_survives_catalog_resume(tmp_path, monkeypatch):
         downloaded = client.get(f"/api/translation/jobs/{resumed_id}/artifact/output_docx" + scope)
         assert downloaded.status_code == 200 and sha256(downloaded.content).hexdigest() == shown["delivery"]["sha256"]
 
-@pytest.mark.parametrize("bad_recipe", [None, {"version":"unknown","ordinary_auto_layout_policy":"a"*64}, {"version":"terminal_labeled_folio_v1","ordinary_auto_layout_policy":"b"*64}, {"version":"terminal_labeled_folio_v1","ordinary_auto_layout_policy":"malformed"}])
+@pytest.mark.parametrize("bad_recipe", [None, {"version":"unknown","ordinary_auto_layout_policy":"a"*64}, {"version":"terminal_labeled_folio_v1","ordinary_auto_layout_policy":"b"*64}, {"version":"terminal_labeled_folio_v1","ordinary_auto_layout_policy":"malformed"}, {"version":[],"ordinary_auto_layout_policy":"malformed"}, {"version":{},"ordinary_auto_layout_policy":"malformed"}])
 def test_invalid_loaded_recipe_refuses_offline_rebuild_before_output_write(tmp_path, bad_recipe):
     from legalpdf_translate.checkpoint import build_run_paths, new_run_state, save_run_state_atomic, load_run_state, PrimaryAssemblyRecipeError
     from legalpdf_translate.types import RunConfig, TargetLang, ReasoningEffort, ImageMode

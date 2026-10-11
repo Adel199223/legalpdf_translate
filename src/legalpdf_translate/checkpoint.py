@@ -98,7 +98,8 @@ def primary_assembly_recipe(settings: dict) -> dict | None:
         return None
     recipe = settings["primary_assembly_recipe"]
     if (type(recipe) is not dict or set(recipe) != {"version", "ordinary_auto_layout_policy"}
-            or recipe["version"] != "terminal_labeled_folio_v1"
+            or type(recipe["version"]) is not str
+            or recipe["version"] not in {"terminal_labeled_folio_v1", "terminal_labeled_folio_v2"}
             or type(recipe["ordinary_auto_layout_policy"]) is not str
             or recipe["ordinary_auto_layout_policy"] != settings.get("ordinary_auto_layout_policy")):
         raise PrimaryAssemblyRecipeError("Invalid saved primary assembly recipe.")
