@@ -1922,6 +1922,22 @@ def _terminal_labeled_folios_cover(pages) -> bool:
     return True
 
 
+def _terminal_labeled_folios_cover_v2(pages) -> bool:
+    """V1 labels plus the explicit Arabic abbreviation; no bare initials."""
+    if not pages or any(page.structure is not None for page in pages):
+        return False
+    label = re.compile(r"(?:page|p[aá]g(?:ina)?\.?|الصفحة|صفحة|ص\.)\s*:?\s*([0-9٠-٩۰-۹]{1,4})(?:\s*(?:/|of|de|sur|من)\s*([0-9٠-٩۰-۹]{1,4}))?", re.I)
+    for page in pages:
+        lines = [line.strip() for line in page.text.splitlines() if line.strip()]
+        if not lines:
+            return False
+        visible = sanitize_bidi_controls(unwrap_internal_placeholders(lines[-1])).strip()
+        match = label.fullmatch(visible)
+        if not match or int(match[1]) != page.number or (match[2] is not None and not page.number <= int(match[2]) <= 9999):
+            return False
+    return True
+
+
 def assemble_docx(
     pages_dir: Path,
     output_path: Path,
@@ -1955,10 +1971,11 @@ def assemble_docx(
         raise RuntimeError(f"No page text files available for DOCX assembly: {pages_dir}")
 
     pages = [_load_assembly_page(path) for path in page_files]
-    if terminal_folio_policy not in {None, "terminal_labeled_folio_v1"}:
+    if terminal_folio_policy not in {None, "terminal_labeled_folio_v1", "terminal_labeled_folio_v2"}:
         raise ValueError("Unknown primary folio policy.")
     suppress_generated_page = (terminal_folio_policy is not None and page_numbers is not None
-        and not partial_output and up_to_page is None and _terminal_labeled_folios_cover(pages))
+        and not partial_output and up_to_page is None
+        and (_terminal_labeled_folios_cover_v2(pages) if terminal_folio_policy == "terminal_labeled_folio_v2" else _terminal_labeled_folios_cover(pages)))
     # Validate section furniture against unchanged source/target payloads before
     # adding local-only paragraph links; the bound-pair contract stays strict.
     furniture_plan = _section_furniture_plan(pages, pages_dir, page_breaks=page_breaks,
@@ -2017,7 +2034,7 @@ def assemble_docx(
         layout, layout_status, layout_review, layout_warnings = _validated_layout(structure)
         page_map = {
             "source_page_number": page.number,
-            **({"primary_folio_policy": "terminal_labeled_folio_v1", "generated_page_suppressed": suppress_generated_page, "folio_evidence_basis": "closed_terminal_translation_label_not_pdf_geometry"} if terminal_folio_policy else {}),
+            **({"primary_folio_policy": terminal_folio_policy, "generated_page_suppressed": suppress_generated_page, "folio_evidence_basis": "closed_terminal_translation_label_not_pdf_geometry"} if terminal_folio_policy else {}),
             "structure_status": page.structure_status,
             "source_sha256": structure.get("source_sha256"),
             "source_file_sha256": structure.get("source_file_sha256"),

@@ -168,6 +168,12 @@ Pre-fix Full finished at2026-09-26T11:13:55Z with exit0 and655 selected passes/n
 
 The original FRlong uncertainty stays shelved without changing its hold/block or partial outcome. Current user authority permits bounded readiness work, not replay of consumed operations or removal of unknown usage. Exact validation text replaced here is preserved in `gmail_formatting_readiness_20260924_01/docs_sync_ar02_gmail_closeout_01/beforeimages/docs/assistant/VALIDATION.md` and `gmail_formatting_readiness_20260924_01/docs_sync_ar02_gmail_closeout_01/beforeimages_gmail05_sync_01/docs/assistant/VALIDATION.md`; earlier beforeimages and all failure/fallback receipts remain intact.
 
+## Arabic abbreviated folio regression — October 11
+
+For primary page-label changes, verify the observed abbreviation causally using retained translated text as well as one authorized fresh same-document workflow. Cover v1/v2 and absent recipes, saved-policy reconstruction and Resume across catalog changes, malformed explicit recipes, wrong/nonterminal/bare labels, partial and structured output. New primary output must pass the existing V6/V7 production build and verification without adding a counter. Native Word screenshots establish visible numbering; XML checks alone do not. Keep historical original files and recipes unchanged.
+
+Exact current validation and live acceptance are retained under private `arabic_folio_label_fix_20261011_01`. Separate targeted, selected Full and exhaustive exact-head hosted results. Record failures honestly; a paid rerun that chooses another label does not replace the retained abbreviation regression.
+
 ## Interpreter and isolation
 
 Project tests use `C:/Users/FA507/.codex/legalpdf_translate/.venv311/Scripts/python.exe`, available as `.\.venv311\Scripts\python.exe` in a configured worktree. Do not use bare/global Python for pytest. Run from the intended worktree and record its path, branch and HEAD.

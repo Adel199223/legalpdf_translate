@@ -1,10 +1,14 @@
 # Current handoff
 
-## October 11 focused formatting repair
+## October 11 Arabic abbreviated page-label repair
 
-Implementation and detached validation are complete; canonical installation and the one fresh Arabic end-to-end acceptance remain pending. Read private `formatting_order_folio_fix_20261011_01/Test_Report.md` and `publication_01/publication_receipt.json` for terminal status before continuing or replaying any operation. See the [implementation plan](exec_plans/completed/2026-10-11_formatting_order_folio_fix.md).
+The later same-document test exposed one remaining numbering defect: a source label such as `ص. 1` was retained alongside the generated Word counter. The focused v2 primary-assembly recipe recognizes that explicit abbreviation only on complete, unstructured pages with matching page numbers. Original text remains intact. Historical v1 and absent recipes retain their saved behavior, including Resume across pricing changes; V6/V7 layout writers are unchanged.
 
-The first hosted run failed three recovery checks and the original local Full was stopped after reproducing a failure; neither is a pass. A bounded saved-recipe repair passed the affected recovery and checkpoint checks. Final hosted checks and remaining validation belong to the private terminal receipts.
+The prior formatting repair is merged and installed at `a8de995c03b0a464cdf829859e9e32941089d29e`. Its full-label acceptance passed; the subsequent abbreviated-label failure is separately retained in private `same_document_confirmation_20261011_02/Test_Report.md`. Neither outcome should replace the other.
+
+Current validation, publication, installed identity and the newly authorized same-email Arabic acceptance belong to private `arabic_folio_label_fix_20261011_01/Test_Report.md` and `publication_01/publication_receipt.json`. An absent or incomplete terminal receipt is not acceptance. Continue only unfinished operations; do not replay consumed translations, saves or drafts. The fresh test preserves prior records/drafts and creates at most one unsent draft. No shutdown is requested.
+
+See the [bounded repair plan](exec_plans/completed/2026-10-11_arabic_folio_abbreviation.md).
 
 Updated 2026-10-10. Read `AGENTS.md`, `agent.md`, this page and only the applicable current plan. Current user authority takes precedence over historical continuation text. Consumed provider/native helpers must not be replayed.
 
