@@ -1,5 +1,11 @@
 # Validation guide
 
+## October 12 court workflow repair — pending integration acceptance
+
+The [active plan](exec_plans/active/2026-10-12_court_workflow_repair.md) separates offline validation from approved live application and real-document acceptance. Final integrated focused runs passed 377 Arabic-related cases and 98 combined recovery/correction/browser cases; these overlap other runs. Recovery's 30 cases and real-data read-only capsule02 import preserve two separate sessions, raw accounting, selected correction history and pending review, with 569 protected originals unchanged.
+
+Full01 ran 2,124 selected executions, including 191 formatting cases: 2,123 passed and one Qt desktop sidebar-width test failed, with nine expected intake deselections. Exit 1 after 2,567.195 seconds is retained as a qualified result, not a green Full. The identical single-test failure reproduces using unchanged baseline Qt/test files and is unrelated to the browser repair; explicit DPI96 does not resolve it and the exact font/platform cause remains unproven. All product/test/script pins stayed unchanged; only two deliberate documentation fixes changed among 1,189 captured paths. Agent-doc and workspace-hygiene validators subsequently passed via direct Dart. Earlier Standard01 passed 262 cases with the documented dartdev AOT wrapper failure and successful direct fallback. Private `court_request_20261012_01/repair_validation_01` owns logs, hashes, beforeimages and qualification evidence. No live acceptance or hosted CI success is inferred.
+
 ## Translation review completion — qualified closeout
 
 The count repair at head `9335055bd90f1aa9c08c7fe751e68e11b0f071a8` passed 40 focused checks, Standard10 (261 tests), selected Full09 (2,122 executions including 191 formatting cases; nine expected intake deselections) and exact-head hosted CI38085511288 (8,107 unique tests exactly once, seven successful jobs and five verified archives). Full09 exited 0 in 2,670.735 seconds with all 1,171 pins unchanged; its log SHA256 is `9e61b8c1f3d5f543f15d5df3b8c76a63c7f819ae5132f0ae7c42b14e7d8156f3`. Known Dart AOT wrapper failures retained their successful direct-Dart fallback qualification. Independent source, terminal Full and hosted evidence reviews passed.

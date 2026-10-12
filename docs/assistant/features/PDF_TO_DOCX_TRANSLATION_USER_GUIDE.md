@@ -70,6 +70,8 @@ Automatic Word-to-PDF export is not needed for translation DOCX creation. Transl
 
 ## Correct wording after translation
 
+In builds containing the October 12 repair, a text paragraph ending with one ordinary page break supports wording replacement while retaining that break. Adding or deleting that paragraph, moving the break, or changing fields and other unsupported controls remains blocked. After approval, inspect the entire corrected Word document again. Check [installed-build status](../HANDOFF.md) before assuming this repair is available.
+
 In builds containing the October 10 translation-review completion update, use **Correct translated text** to replace, add or remove wording in a completed ordinary translation. Compare with the source, review the before/after changes, approve the corrected copy, then inspect its complete Word layout. **Review text changes saved in Word** can import supported edits from the app's working copy for the same explicit approval. Rebuilding alone does not import Word edits. See the [correction steps](REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md#correct-wording-in-a-completed-translation) and [current installed-build status](../HANDOFF.md).
 
 The chosen revision supplies the final word count, download and Gmail attachment. The original translation and API charges are retained. Source-image findings can help locate possibly missing text, but you must verify them against the source; no findings does not mean the translation is complete.
@@ -320,6 +322,8 @@ This Gmail-draft branch always applies to translation honorários. Interpretatio
 - Gmail-intake interpretation notice exports create a threaded reply draft and attach the honorários PDF only
 
 ## Gmail Intake Batch Replies
+
+In builds containing the October 12 repair, **Resume Recovery** and **Continue Gmail step** reopen the retained run for the current attachment. They do not start a paid retry. Use **Resume Translation** afterward when you intend to retry failed pages. If the retained job is unavailable, recovery reports that condition without preparing a fresh run; **Redo current attachment** remains separate. A browser refresh and an app-server restart have different recovery limits; unfinished sessions in older builds are not restored automatically after a server restart.
 Use this when the source files already arrived in Gmail and you want one reply draft back in the same thread.
 
 ### Setup

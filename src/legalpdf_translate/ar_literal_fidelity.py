@@ -93,6 +93,15 @@ def _address_correction_exemptions(primary, corrected, required, source):
 
 
 def correction_preserves_additional_literals(primary, corrected, required, source=None):
+    from .ar_source_fields import canonicalize_source_address_literals
+    primary_canonical, canonical_required, _, primary_error = canonicalize_source_address_literals(primary, source, required)
+    corrected_canonical, _, _, corrected_error = canonicalize_source_address_literals(corrected, source, required)
+    if corrected_error:
+        return False
+    if not primary_error:
+        primary = primary_canonical
+        corrected = corrected_canonical
+        required = canonical_required
     primary = regroup_source_numeric_tokens(primary, source)
     corrected = regroup_source_numeric_tokens(corrected, source)
     prior = Counter(match[1] for match in TOKEN.finditer(primary))

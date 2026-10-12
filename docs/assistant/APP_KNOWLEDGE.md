@@ -4,6 +4,8 @@ This bridge is intentionally shorter. Defer to [root APP_KNOWLEDGE.md](../../APP
 
 ## Start here
 
+The [October 12 court repair](exec_plans/active/2026-10-12_court_workflow_repair.md) is isolated implementation for Arabic literal boundaries, safe page-ending wording corrections and retained-job Gmail recovery. Local checks do not establish installation or completion of the two real translations. Follow [HANDOFF.md](HANDOFF.md) for the live-update gate and preservation evidence.
+
 The [October 9 repair](exec_plans/completed/2026-10-09_deep_structure_fidelity.md) preserves raw translation/page ownership and builds a separate verified, explicitly unreviewed source-image layout candidate. Eligible explicit Recover reuses settled responses and requests only missing page layouts. Arabic Word finishing uses visible RTL/right-alignment controls and qualified saved-edit adoption. All 27 selected source pages have qualified actual source/native/download/normal Save acceptance. [HANDOFF.md](HANDOFF.md) owns current validation/publication status; the stable private `structure_deep_20261009_01/publication_final_01/publication_receipt.json` owns exact final-head CI, merge and installed-build evidence.
 
 The [October 3 audit](exec_plans/completed/2026-10-03_sent_structure_audit.md) records seven sent reference files and 21 native pages with qualified close fidelity and unverified generation provenance. Its offline legacy diagnostics motivated the later repair. Original findings and superseded operational snapshots remain dated history, not current instructions to repeat accepted work.

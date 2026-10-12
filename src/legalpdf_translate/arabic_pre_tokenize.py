@@ -93,6 +93,8 @@ def _anchored_literal_spans(segment: str) -> list[_Span]:
     offset = 0
     for raw in segment.splitlines(keepends=True):
         value = raw.strip()
+        if any(char in raw for char in "\v\f\x1c\x1d\x1e\x85\u2028\u2029"):
+            value = ""
         start = offset + len(raw) - len(raw.lstrip())
         lines.append((value, start, start + len(value)))
         offset += len(raw)
@@ -155,6 +157,8 @@ def _trimmed_group_span(match: re.Match[str], group: str, segment: str) -> _Span
 
 def _collect_full_value_spans(segment: str) -> list[_Span]:
     spans: list[_Span] = _anchored_literal_spans(segment)
+    from .ar_source_fields import source_address_fields
+    spans.extend(_Span(field.start, field.end) for field in source_address_fields(segment))
     for regex in (SENSITIVE_NAME_LINE_RE, SENSITIVE_ADDRESS_LINE_RE, SENSITIVE_CASE_LINE_RE):
         for match in regex.finditer(segment):
             span = _trimmed_group_span(match, "value", segment)

@@ -22,7 +22,7 @@ export function mountTextCorrection({root,getScope,getJob,request=fetchJson,onAp
       ?"Your Word text changes are preserved. Choose Review text changes saved in Word to compare and approve them."
       :/duplicate_change/.test(code)?"A change for this paragraph is already pending. Review or clear the pending changes before editing it again."
       :/structure_unsupported|unsupported_content|paragraph_controls/.test(code)
-      ?"Your Word file is preserved. Its structure cannot be imported safely; enter the corrections in this editor instead."
+      ?"Your current delivery and Word edits are preserved. Keep paragraph controls and page breaks unchanged, and use an editable paragraph for wording corrections."
       :/stale|changed|conflict/.test(code)?"The selected document changed. Refresh the correction and compare the current copy before approving."
       :/frozen/.test(code)?"This delivery is already locked for confirmation. Its files are preserved."
       :"The correction could not be completed. Your current delivery and Word edits are preserved.";

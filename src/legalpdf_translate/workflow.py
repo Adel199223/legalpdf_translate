@@ -2882,6 +2882,10 @@ class TranslationWorkflow:
             expected_ar_tokens=expected_ar_tokens,
             ar_source_text=source_text,
         )
+        from .failed_output_evidence import retain_failed_output
+        retain_failed_output(paths.run_dir, keep_intermediates=config.keep_intermediates,
+            page=page_number, attempt=1, raw_output=initial.raw_output,
+            evaluation=initial_eval, expected_tokens=expected_ar_tokens)
         _record_ar_eval_diagnostics(initial_eval, attempt=1)
         _apply_evaluation_metadata(initial_eval)
         if initial_eval.ok and initial_eval.normalized_text is not None:
@@ -3109,6 +3113,10 @@ class TranslationWorkflow:
             ar_source_text=source_text,
             primary_normalized_text=initial_eval.normalized_text,
         )
+        retain_failed_output(paths.run_dir, keep_intermediates=config.keep_intermediates,
+            page=page_number, attempt=2, raw_output=retry.raw_output,
+            evaluation=retry_eval, expected_tokens=expected_ar_tokens,
+            primary_normalized_text=initial_eval.normalized_text)
         _record_ar_eval_diagnostics(retry_eval, attempt=2)
         _apply_evaluation_metadata(retry_eval)
         if retry_eval.ok and retry_eval.normalized_text is not None:

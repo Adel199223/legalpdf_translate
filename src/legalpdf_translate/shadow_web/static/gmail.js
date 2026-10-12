@@ -523,6 +523,7 @@ function currentGmailStage() {
   return deriveGmailStage({
     loadResult: gmailState.loadResult,
     activeSession: gmailState.activeSession,
+    suggestedTranslationLaunch: gmailState.suggestedTranslationLaunch,
     reviewDrawerOpen: gmailState.reviewDrawerOpen,
     translationUi: translationUiSnapshot(),
     interpretationUi: interpretationUiSnapshot(),
@@ -576,7 +577,14 @@ function loadSuggestedTranslationLaunch({ closeCompletionDrawer = false } = {}) 
   return true;
 }
 
-function applyGmailStageActionPlan(plan) {
+async function applyGmailStageActionPlan(plan) {
+  if (plan.restoreTranslationJob) {
+    const launch = gmailState.suggestedTranslationLaunch;
+    if (!gmailState.hooks.restoreGmailTranslationJob) throw new Error("Translation recovery is unavailable.");
+    await gmailState.hooks.restoreGmailTranslationJob(launch, {
+      isCurrent: () => gmailState.suggestedTranslationLaunch === launch,
+    });
+  }
   if (plan.applyTranslationLaunch && gmailState.suggestedTranslationLaunch) {
     gmailState.hooks.applyTranslationLaunch?.(gmailState.suggestedTranslationLaunch);
   }
@@ -607,13 +615,22 @@ function applyGmailStageActionPlan(plan) {
   }
 }
 
-function runStageAction(action) {
+async function runStageAction(action) {
   const plan = buildGmailStageActionPlan({
     action,
     suggestedTranslationLaunch: gmailState.suggestedTranslationLaunch,
     interpretationSeed: gmailState.interpretationSeed,
   });
-  applyGmailStageActionPlan(plan);
+  await runGmailAction({
+    buttonIds: ["gmail-resume-step", "gmail-workspace-strip-action", "gmail-load-translation-launch"],
+    busyLabel: "Opening...",
+    action: () => applyGmailStageActionPlan(plan),
+    failureFeedback: {
+      panelSlot: "gmail-session",
+      diagnosticsSlot: "gmail-session",
+      fallback: "The retained Gmail translation could not be opened.",
+    },
+  });
 }
 
 async function runRedoCurrentTranslation() {
@@ -2471,7 +2488,8 @@ export function initializeGmailUi(hooks) {
 
   qs("gmail-load-translation-launch")?.addEventListener("click", () => {
     if (gmailState.suggestedTranslationLaunch) {
-      runStageAction("resume-translation-running");
+      runStageAction(currentGmailStage() === "translation_prepared"
+        ? "resume-translation-prepared" : "resume-translation-running");
     }
   });
 

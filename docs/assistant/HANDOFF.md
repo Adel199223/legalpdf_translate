@@ -1,5 +1,15 @@
 # Current handoff
 
+## October 12 court request — repair in progress
+
+The user authorized using the app for the latest court request, selected usual formal legal Arabic, then explicitly authorized fixing the blocking defects and finishing. The [active repair plan](exec_plans/active/2026-10-12_court_workflow_repair.md) is current continuation authority. Implementation is isolated from canonical main `9250d61f0fbba55f58723894674f8f362fe641fa`; publication/application still needs separate approval after a concrete tested rollout is ready.
+
+The notice failed page 1 twice while pages 2–3 remain retained. Rejected response bodies were unavailable, so source-derived literal-grouping reproductions establish a possible mechanism, not the exact rejected response. The accusation completed four pages and has three approved wording edits, but a necessary measurement-clause correction is blocked by the old page-break restriction. Neither document has final review acceptance; no case save, fee document or reply draft exists for this request. Do not replay successful pages or discard previous charges.
+
+Private evidence is under `court_request_20261012_01`, including `recovery_capture_01` with raw job bootstrap, selected-job overlays and both Gmail sessions. Retain their distinct ownership. Latest failed notice job: `tx-c50df1d59a89`; completed accusation: `tx-ec2029bf5ec6`. Capsule02 and its temporary-source sidecar passed a read-only restoration of both sessions, with all 569 protected original files unchanged. The canonical live process remains unchanged; live application still requires approval.
+
+Integrated focused checks passed (377 Arabic-related cases and 98 combined recovery/correction/browser cases, overlapping other validation). Full01 completed 2,124 selected executions: 2,123 passed and one unchanged Qt desktop sidebar-width test failed. The same failure reproduces on baseline and is deferred; Full is qualified, not green. No product/test/script changed during Full; two intentional documentation corrections were separately validated. Final offline accusation probe04 has four reviewed native Word pages and 927 words, with the deduction sentence and road-reference direction/spacing corrected through normal correction actions. It is not the live selected delivery. Private `Live_Update_Review.md` contains the proposed local update and completion sequence; no remote publication or email sending is authorized.
+
 ## October 11 Arabic abbreviated page-label repair
 
 The later same-document test exposed one remaining numbering defect: a source label such as `ص. 1` was retained alongside the generated Word counter. The focused v2 primary-assembly recipe recognizes that explicit abbreviation only on complete, unstructured pages with matching page numbers. Original text remains intact. Historical v1 and absent recipes retain their saved behavior, including Resume across pricing changes; V6/V7 layout writers are unchanged.

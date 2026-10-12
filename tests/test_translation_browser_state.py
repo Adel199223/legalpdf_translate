@@ -205,6 +205,7 @@ function installEnvironment(url) {
   const fetchCalls = [];
   const fetchQueue = [];
   const scheduledTimeouts = [];
+  const timeoutCallbacks = [];
 
   function getElement(id) {
     if (!elements.has(id)) {
@@ -261,6 +262,7 @@ function installEnvironment(url) {
     removeEventListener() {},
     setTimeout(_callback, delay) {
       scheduledTimeouts.push(delay);
+      timeoutCallbacks.push({callback:_callback,delay});
       return 1;
     },
     clearTimeout() {},
@@ -309,6 +311,7 @@ function installEnvironment(url) {
     elements,
     fetchCalls,
     scheduledTimeouts,
+    timeoutCallbacks,
     enqueueFetch(handler) {
       fetchQueue.push(handler);
     },
@@ -1542,6 +1545,54 @@ for (const estimate of [.13810825, null]) {
     estimate:scenario.env.element("translation-estimated-api-cost").value};
 }
 
+{
+  const scenario = await setupScenario("gmail-recover-failed");
+  const launch = preparedLaunch();
+  scenario.translationModule.applyTranslationLaunch(launch);
+  const job = {job_id:"tx-retained",job_kind:"translate",status:"failed",
+    status_text:"Translation failed on page 1",config:{...launch,effort:"high",workers:3},
+    progress:{selected_index:2,selected_total:3},result:{failed_page:1,completed_pages:2},
+    actions:{resume:true,rebuild:true},diagnostics:{},artifacts:{}};
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{active_jobs:[job]}}));
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{job}}));
+  await scenario.translationModule.restoreGmailTranslationJob(launch);
+  results.gmailRecoveredFailure = {...captureUi(scenario.env,scenario.translationModule),
+    requests:scenario.env.fetchCalls.map(call=>({method:call.method,path:call.path})),
+    resumeChecked:scenario.env.element("translation-resume").checked};
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{active_jobs:[]}}));
+  let missingError="";
+  try { await scenario.translationModule.restoreGmailTranslationJob(launch); } catch(error) { missingError=error.message; }
+  results.gmailMissingRecovery={error:missingError,snapshot:scenario.translationModule.getTranslationUiSnapshot()};
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{active_jobs:[job]}}));
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{job}}));
+  let staleError="";
+  try { await scenario.translationModule.restoreGmailTranslationJob(launch,{isCurrent:()=>false}); } catch(error) { staleError=error.message; }
+  results.gmailStaleRecovery={error:staleError,snapshot:scenario.translationModule.getTranslationUiSnapshot()};
+}
+
+{
+  const scenario=await setupScenario("gmail-recovery-late-poll");
+  const launch=preparedLaunch();
+  const old={job_id:"tx-old-poll",job_kind:"translate",status:"running",config:{...launch},actions:{cancel:true},result:{},diagnostics:{},artifacts:{}};
+  scenario.translationModule.renderTranslationJob(old);
+  const late=deferred();scenario.env.enqueueFetch(()=>late.promise);
+  const pending=scenario.env.timeoutCallbacks.findLast(item=>item.delay===1500).callback();
+  const retained={...old,job_id:"tx-retained-new",status:"failed",actions:{resume:true}};
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{active_jobs:[retained]}}));
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{job:retained}}));
+  await scenario.translationModule.restoreGmailTranslationJob(launch);
+  late.resolve(responseJson({normalized_payload:{job:old}}));await pending;
+  results.gmailLatePoll={snapshot:scenario.translationModule.getTranslationUiSnapshot(),requests:scenario.env.fetchCalls.length};
+  const delayed=deferred();
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{active_jobs:[retained]}}));
+  scenario.env.enqueueFetch(()=>delayed.promise);
+  const recovery=scenario.translationModule.restoreGmailTranslationJob(launch).catch(error=>error.message);
+  await waitForAsyncWork();
+  scenario.translationModule.renderTranslationJob({...retained,job_id:"tx-newer-choice"});
+  delayed.resolve(responseJson({normalized_payload:{job:retained}}));
+  results.gmailLateRecovery={error:await recovery,snapshot:scenario.translationModule.getTranslationUiSnapshot()};
+}
+
 console.log(JSON.stringify(results));
 """
     return run_browser_esm_json_probe(
@@ -1706,6 +1757,30 @@ def test_translation_browser_idle_and_prepared_action_states() -> None:
     prepared_mismatch = results["preparedTargetMismatch"]
     assert prepared_mismatch["sourceCardTarget"] == "Current Gmail job target: EN"
     assert prepared_mismatch["sourceCardDefaultTarget"] == "Default target for new jobs: AR"
+
+
+def test_gmail_recovery_reopens_retained_failure_without_starting_or_resetting() -> None:
+    results = _probe_results()
+    recovered = results["gmailRecoveredFailure"]
+    assert recovered["snapshot"]["currentJobId"] == "tx-retained"
+    assert recovered["snapshot"]["currentJobStatus"] == "failed"
+    assert recovered["snapshot"]["hasPreparedLaunch"] is False
+    assert recovered["snapshot"]["translationResumeDisabled"] is False
+    assert recovered["resumeChecked"] is True
+    assert all(item["method"] == "GET" for item in recovered["requests"])
+    assert [item["path"].split("?")[0] for item in recovered["requests"]] == [
+        "/api/translation/history", "/api/translation/jobs/tx-retained",
+    ]
+    assert "unavailable" in results["gmailMissingRecovery"]["error"]
+    assert "changed" in results["gmailStaleRecovery"]["error"]
+    for key in ("gmailMissingRecovery", "gmailStaleRecovery"):
+        assert results[key]["snapshot"]["currentJobId"] == "tx-retained"
+        assert results[key]["snapshot"]["currentJobStatus"] == "failed"
+    assert results["gmailLatePoll"]["snapshot"]["currentJobId"] == "tx-retained-new"
+    assert results["gmailLatePoll"]["snapshot"]["currentJobStatus"] == "failed"
+    assert results["gmailLatePoll"]["requests"] == 3
+    assert "changed" in results["gmailLateRecovery"]["error"]
+    assert results["gmailLateRecovery"]["snapshot"]["currentJobId"] == "tx-newer-choice"
 
 
 def test_translation_browser_failed_local_replacement_restores_prepared_gmail_source() -> None:

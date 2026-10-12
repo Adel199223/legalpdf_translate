@@ -1,4 +1,5 @@
 import { fetchJson } from "./api.js";
+import { fetchGmailTranslationForRecovery } from "./gmail_translation_recovery.js";
 import { updateTranslationFinance } from "./translation_finance.js";
 import { mountSourceReview } from "./source_review_ui.js";
 import { mountFormattingReview } from "./formatting_review_ui.js";
@@ -89,6 +90,11 @@ let lastTranslationUiSnapshotKey = "";
 let sourceReviewUi = null;
 let formattingReviewUi = null;
 let ordinaryLayoutUi = null;
+let translationNavigationEpoch = 0;
+
+function translationRequestOwner() {
+  return JSON.stringify([appState.runtimeMode, appState.workspaceId, translationState.currentJobId, translationNavigationEpoch]);
+}
 
 function applyActionFailureFeedback(
   error,
@@ -1590,7 +1596,9 @@ function currentArabicReviewRequestPayload(extra = {}) {
 function scheduleArabicReviewPoll(delayMs = 500) {
   stopArabicReviewPolling();
   translationState.arabicReviewPollTimer = window.setTimeout(() => {
+    const owner = translationRequestOwner();
     refreshArabicReviewState().catch((error) => {
+      if (owner !== translationRequestOwner()) return;
       applyActionFailureFeedback(error, {
         panelSlot: "translation-save",
         diagnosticsSlot: "translation-save",
@@ -1602,6 +1610,7 @@ function scheduleArabicReviewPoll(delayMs = 500) {
 
 async function refreshArabicReviewState({ allowRestore = false } = {}) {
   stopArabicReviewPolling();
+  const owner = translationRequestOwner();
   const reviewTargetKnown = translationState.currentJob
     ? currentCompletedTranslationJobRequiresArabicReview()
     : Boolean(currentArabicReviewState().completion_key) || allowRestore;
@@ -1621,9 +1630,11 @@ async function refreshArabicReviewState({ allowRestore = false } = {}) {
     ? `/api/translation/arabic-review/state?${params.toString()}`
     : "/api/translation/arabic-review/state";
   const payload = await fetchJson(url, appState);
+  if (owner !== translationRequestOwner()) return currentArabicReviewState();
   const review = normalizeArabicReviewState(payload.normalized_payload?.arabic_review);
   if (allowRestore && !translationState.currentJobId && review.required && !review.resolved && review.job_id) {
     const restored = await fetchJson(`/api/translation/jobs/${review.job_id}`, appState);
+    if (owner !== translationRequestOwner()) return currentArabicReviewState();
     renderTranslationJob(restored.normalized_payload?.job || null);
     return currentArabicReviewState();
   }
@@ -1687,9 +1698,11 @@ async function continueArabicReview(continuation) {
 }
 
 async function restorePendingArabicReview() {
+  const owner = translationRequestOwner();
   try {
     await refreshArabicReviewState({ allowRestore: true });
   } catch (error) {
+    if (owner !== translationRequestOwner()) return;
     clearArabicReviewState();
     applyActionFailureFeedback(error, {
       panelSlot: "translation-save",
@@ -1808,6 +1821,33 @@ export function applyTranslationLaunch(launch) {
     },
   );
   renderTranslationPreparedState();
+}
+
+export async function restoreGmailTranslationJob(launch, { isCurrent = () => true } = {}) {
+  const owner = translationRequestOwner();
+  const runtimeMode = appState.runtimeMode;
+  const workspaceId = appState.workspaceId;
+  const job = await fetchGmailTranslationForRecovery(launch, fetchJson, appState);
+  if (!isCurrent() || owner !== translationRequestOwner() || runtimeMode !== appState.runtimeMode || workspaceId !== appState.workspaceId) {
+    throw new Error("The Gmail session changed while recovery was loading. Reopen the current step.");
+  }
+  dispatchNewJobTask("translation");
+  translationNavigationEpoch += 1;
+  stopPolling();
+  stopArabicReviewPolling();
+  clearManualSourceSelection();
+  translationState.currentRowId = null;
+  applyTranslationSeed(job.result?.save_seed || blankSaveSeed(), { rowId: null });
+  const config = job.config || {};
+  for (const key of ["output_dir", "target_lang", "effort", "effort_policy", "image_mode", "ocr_mode", "ocr_engine", "start_page", "end_page", "max_pages", "workers", "context_file", "glossary_file", "context_text"]) {
+    if (config[key] !== undefined) setFieldValue(`translation-${key.replaceAll("_", "-")}`, config[key] ?? "");
+  }
+  for (const key of ["page_breaks", "keep_intermediates"]) {
+    if (typeof config[key] === "boolean") setCheckbox(`translation-${key.replaceAll("_", "-")}`, config[key]);
+  }
+  setCheckbox("translation-resume", Boolean(job.actions?.resume));
+  renderTranslationJob(job);
+  return job;
 }
 
 export function maybeRestorePreparedTranslationLaunch(launch, { activeView = appState.activeView } = {}) {
@@ -1971,6 +2011,7 @@ function shouldOpenTranslationJobDiagnostics(job, recovery = deriveTranslationRe
 }
 
 function renderTranslationJob(job) {
+  if (translationState.currentJobId !== (job?.job_id || "")) translationNavigationEpoch += 1;
   translationState.currentJob = job || null;
   translationState.currentJobId = job?.job_id || "";
   if (job) {
@@ -2079,7 +2120,9 @@ function renderTranslationJob(job) {
     stopPolling();
   }
   if (currentCompletedTranslationJobRequiresArabicReview()) {
+    const owner = translationRequestOwner();
     refreshArabicReviewState().catch((error) => {
+      if (owner !== translationRequestOwner()) return;
       clearArabicReviewState();
       applyActionFailureFeedback(error, {
         panelSlot: "translation-save",
@@ -2261,11 +2304,15 @@ async function pollCurrentJob() {
   if (!translationState.currentJobId) {
     return;
   }
+  const owner = translationRequestOwner();
+  const jobId = translationState.currentJobId;
   try {
-    const payload = await fetchJson(`/api/translation/jobs/${translationState.currentJobId}`, appState);
+    const payload = await fetchJson(`/api/translation/jobs/${jobId}`, appState);
+    if (owner !== translationRequestOwner()) return;
     renderTranslationJob(payload.normalized_payload.job || null);
     await refreshTranslationHistory();
   } catch (error) {
+    if (owner !== translationRequestOwner()) return;
     applyActionFailureFeedback(error, {
       panelSlot: "translation",
       diagnosticsSlot: "translation-job",

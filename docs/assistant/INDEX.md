@@ -58,6 +58,7 @@
 - `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
 - `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
 - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
+- `docs/assistant/workflows/TERMINAL_RECOVERY_WORKFLOW.md`
 - `docs/assistant/workflows/FEATURE_WORKFLOW.md` (compat shim)
 - `docs/assistant/workflows/DATA_WORKFLOW.md` (compat shim)
 

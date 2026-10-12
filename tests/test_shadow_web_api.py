@@ -14147,7 +14147,8 @@ def test_gmail_stage_action_plan_module_builds_stage_action_effects() -> None:
     direct_translation_start = gmail_js.index('qs("gmail-load-translation-launch")')
     direct_translation_end = gmail_js.index('qs("gmail-load-interpretation-seed")', direct_translation_start)
     direct_translation_block = gmail_js[direct_translation_start:direct_translation_end]
-    assert 'runStageAction("resume-translation-running")' in direct_translation_block
+    assert 'currentGmailStage() === "translation_prepared"' in direct_translation_block
+    assert '"resume-translation-prepared" : "resume-translation-running"' in direct_translation_block
 
     direct_interpretation_start = gmail_js.index('qs("gmail-load-interpretation-seed")')
     direct_interpretation_end = gmail_js.index(
@@ -14215,7 +14216,8 @@ console.log(JSON.stringify({
     assert results["exportType"] == "function"
     assert results["planned"]["recovery"] == {
         "activeView": "new-job",
-        "applyTranslationLaunch": True,
+        "applyTranslationLaunch": False,
+        "restoreTranslationJob": True,
         "applyInterpretationSeed": False,
         "openInterpretationReviewDrawer": False,
         "openTranslationCompletionDrawer": False,
@@ -14224,7 +14226,11 @@ console.log(JSON.stringify({
         "openReviewDrawer": False,
         "closeSessionDrawer": True,
     }
-    assert results["planned"]["prepared"] == results["planned"]["recovery"]
+    assert results["planned"]["prepared"] == {
+        **results["planned"]["recovery"],
+        "applyTranslationLaunch": True,
+        "restoreTranslationJob": False,
+    }
     assert results["planned"]["runningNoLaunch"] == {
         **results["planned"]["recovery"],
         "applyTranslationLaunch": False,
@@ -14238,6 +14244,7 @@ console.log(JSON.stringify({
         "activeView": "",
         "applyTranslationLaunch": False,
         "openBatchFinalizeDrawer": True,
+        "restoreTranslationJob": False,
         "closeSessionDrawer": False,
     }
     assert results["planned"]["restoredFinalize"] == {
@@ -14247,6 +14254,7 @@ console.log(JSON.stringify({
     assert results["planned"]["interpretationSeed"] == {
         "activeView": "new-job",
         "applyTranslationLaunch": False,
+        "restoreTranslationJob": False,
         "applyInterpretationSeed": True,
         "openInterpretationReviewDrawer": False,
         "openTranslationCompletionDrawer": False,
@@ -14263,6 +14271,7 @@ console.log(JSON.stringify({
     assert results["planned"]["review"] == {
         "activeView": "",
         "applyTranslationLaunch": False,
+        "restoreTranslationJob": False,
         "applyInterpretationSeed": False,
         "openInterpretationReviewDrawer": False,
         "openTranslationCompletionDrawer": False,

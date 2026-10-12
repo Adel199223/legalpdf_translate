@@ -54,6 +54,21 @@
   ],
   "workflows": [
     {
+      "id": "terminal_browser_recovery",
+      "doc": "docs/assistant/workflows/TERMINAL_RECOVERY_WORKFLOW.md",
+      "scope": "Explicit local recovery of pinned terminal browser jobs and prepared Gmail sessions across an approved update",
+      "primary_files": [
+        "src/legalpdf_translate/terminal_recovery.py",
+        "src/legalpdf_translate/shadow_web/server.py"
+      ],
+      "targeted_tests": [
+        "tests/test_terminal_recovery.py"
+      ],
+      "validation_commands": [
+        ".\\.venv311\\Scripts\\python.exe -m pytest -q tests/test_terminal_recovery.py"
+      ]
+    },
+    {
       "id": "feature_workflow",
       "doc": "docs/assistant/workflows/FEATURE_WORKFLOW.md",
       "scope": "template-compatible feature workflow routing",

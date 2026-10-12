@@ -95,19 +95,43 @@ def evaluate_output(
             ar_violation_samples=None,
         )
 
-    normalized, ar_autofix_applied_count = normalize_output_text_with_stats(
-        parsed.inner_content,
-        lang=lang,
-        expected_ar_tokens=expected_ar_tokens,
-    )
+    normalization_input = parsed.inner_content
+    normalization_tokens = expected_ar_tokens
+    source_wrapper_count = 0
     if lang == TargetLang.AR:
+        from ..ar_source_fields import canonicalize_source_address_literals
+        prepared, prepared_tokens, source_wrapper_count, preparation_error = canonicalize_source_address_literals(
+            normalization_input, ar_source_text, expected_ar_tokens)
+        if preparation_error is None:
+            # Claim complete source fields before generic token wrapping can
+            # create overlapping wrappers for a field and its contained value.
+            normalization_input, normalization_tokens = prepared, prepared_tokens
+        else:
+            source_wrapper_count = 0
+    normalized, ar_autofix_applied_count = normalize_output_text_with_stats(
+        normalization_input,
+        lang=lang,
+        expected_ar_tokens=normalization_tokens,
+    )
+    ar_autofix_applied_count += source_wrapper_count
+    if lang == TargetLang.AR:
+        from ..ar_source_fields import canonicalize_source_address_literals
+        normalized, canonical_ar_tokens, address_count, address_error = canonicalize_source_address_literals(
+            normalized, ar_source_text, expected_ar_tokens)
+        ar_autofix_applied_count += address_count
+        if address_error:
+            details = dict(validate_ar(normalized, expected_tokens=expected_ar_tokens).details or {})
+            details["source_address_violation"] = address_error
+            # Retain the ordinary locked-token retry/event contract, including
+            # when a complete field fails beyond its older postcode token.
+            return OutputEvaluation(ok=False, normalized_text=normalized, defect_reason="Expected locked token mismatch.", parser_failed=False, validator_failed=True, outside_text=False, block_count=1, ar_autofix_applied_count=int(ar_autofix_applied_count), ar_token_details=details, ar_violation_kind="expected_token_mismatch", ar_violation_samples=_ar_violation_samples(details))
         from ..output_normalize import regroup_source_bound_ar_numeric_tokens
         normalized, regroup_count = regroup_source_bound_ar_numeric_tokens(normalized, source_text=ar_source_text, expected_tokens=expected_ar_tokens)
         ar_autofix_applied_count += regroup_count
     if lang in (TargetLang.EN, TargetLang.FR):
         validation = validate_enfr(normalized, lang=lang)
     else:
-        validation = validate_ar(normalized, expected_tokens=expected_ar_tokens)
+        validation = validate_ar(normalized, expected_tokens=canonical_ar_tokens)
     token_details = validation.details
     if lang == TargetLang.AR and primary_normalized_text is not None:
         from ..ar_literal_fidelity import correction_preserves_additional_literals

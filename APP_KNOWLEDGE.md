@@ -1,5 +1,11 @@
 # APP_KNOWLEDGE
 
+## October 12 court workflow repair — isolated implementation
+
+The [active repair](docs/assistant/exec_plans/active/2026-10-12_court_workflow_repair.md) addresses source-proven Arabic literal boundaries, composite LTR fields, wording correction around retained trailing page breaks, and Gmail recovery that reopens an existing job. Literal equivalence must preserve exact source characters and multiplicity; correction must retain pagination and reject unsupported controls. Recovery navigation verifies session, message, thread, attachment, source, language and start page before displaying the newest matching run. It never dispatches translation or silently prepares a replacement run.
+
+Terminal jobs and unfinished Gmail sessions remain in-memory in the installed baseline. The isolated [local recovery workflow](docs/assistant/workflows/TERMINAL_RECOVERY_WORKFLOW.md) keeps raw registry snapshots separate from selected-delivery/cost overlays and pins retained artifacts by hash. Read-only import preserves ownership, correction history and pending review without provider, save or draft actions. Explicit missing-source restoration can recreate only the original owned Gmail temp files from a verified backup, never overwrite existing files. This is not an installed or accepted live build; [HANDOFF.md](docs/assistant/HANDOFF.md) owns current status.
+
 ## October 11 Arabic abbreviated page-label repair
 
 The later same-document test exposed one remaining numbering defect: a source label such as `ص. 1` was retained alongside the generated Word counter. The focused v2 primary-assembly recipe recognizes that explicit abbreviation only on complete, unstructured pages with matching page numbers. Original text remains intact. Historical v1 and absent recipes retain their saved behavior, including Resume across pricing changes; V6/V7 layout writers are unchanged.

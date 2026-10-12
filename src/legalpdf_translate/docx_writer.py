@@ -156,6 +156,34 @@ def _rtl_boundary_space_runs(segments: list[tuple[str, str]]) -> list[tuple[str,
     return _merge_directional_runs(result)
 
 
+def _keep_latin_composite_spaces_ltr(segments: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Token wrappers are not visual boundaries within a Latin reference.
+
+    Join only horizontal separators between LTR chunks in an island containing
+    Latin letters. Arabic, punctuation-only RTL chunks, explicit direction
+    scopes and line breaks terminate the island. Digits-only groups keep their
+    existing closed numeric/phone rules. All characters remain unchanged.
+    """
+    result = list(segments)
+    index = 0
+    while index < len(result):
+        if result[index][0] != "ltr" or any(char in result[index][1] for char in "\u2067\u2068\u202a\u202b\u202c\u202d\u202e"):
+            index += 1
+            continue
+        end = index
+        while (end + 2 < len(result) and result[end + 1][1]
+               and all(char in " \t\u00a0" for char in result[end + 1][1])
+               and result[end + 2][0] == "ltr"
+               and not any(char in result[end + 2][1] for char in "\r\n\u2067\u2068\u202a\u202b\u202c\u202d\u202e")):
+            end += 2
+        island = "".join(chunk for _, chunk in result[index:end + 1])
+        if end > index and any(unicodedata.name(char, "").startswith("LATIN ") for char in island):
+            for separator in range(index + 1, end, 2):
+                result[separator] = ("ltr", result[separator][1])
+        index = end + 1
+    return _merge_directional_runs(result)
+
+
 def _segment_directional_runs(text: str) -> tuple[list[tuple[str, str]], bool]:
     if not text:
         return [], False
@@ -445,7 +473,8 @@ def _segment_rtl_placeholder_aware_line(
         tail_runs, _ = _segment_directional_runs(tail)
         pieces.extend(tail_runs)
 
-    merged_segments = _merge_directional_runs(_keep_clock_separators_ltr(pieces))
+    merged_segments = _keep_latin_composite_spaces_ltr(
+        _merge_directional_runs(_keep_clock_separators_ltr(pieces)))
     has_rtl = any(kind == "rtl" for kind, _ in merged_segments)
     has_ltr = any(kind == "ltr" for kind, _ in merged_segments)
     if has_rtl and has_ltr:
