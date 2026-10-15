@@ -1,6 +1,6 @@
 """Word-added separator parts survive import; substantive notes stay unsupported."""
 from io import BytesIO
-from zipfile import ZipFile
+from zipfile import ZipFile, ZipInfo
 from lxml import etree
 import pytest
 from legalpdf_translate.saved_docx_layout import inspect_docx, SavedDocxLayoutError, W
@@ -58,8 +58,17 @@ def with_system_notes(raw, mutation=None):
     parts['[Content_Types].xml']=etree.tostring(types)
     out=BytesIO()
     with ZipFile(out,'w') as archive:
-        for name,data in parts.items(): archive.writestr(name,data)
+        for name,data in parts.items():
+            archive.writestr(ZipInfo(name,date_time=(1980,1,1,0,0,0)),data)
     return out.getvalue()
+
+
+def test_system_note_fixture_bytes_do_not_depend_on_clock(monkeypatch):
+    original=docx_bytes('EN')
+    monkeypatch.setattr('zipfile.time.localtime',lambda *_: (2026,10,15,10,0,0,3,288,-1))
+    first=with_system_notes(original)
+    monkeypatch.setattr('zipfile.time.localtime',lambda *_: (2026,10,15,10,0,2,3,288,-1))
+    assert first==with_system_notes(original)
 
 
 @pytest.mark.parametrize('language',['EN','FR','AR'])
