@@ -21,6 +21,7 @@ _DOCX_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 _HONORARIOS_SIGNATURE_MARKERS = (
     "Venho por este meio requerer o pagamento dos honorários",
     "O documento traduzido contém",
+    "Total de palavras traduzidas:",
     "O Pagamento deverá ser efetuado para o seguinte IBAN",
 )
 _HONORARIOS_GMAIL_BODY_PREFIX = """Bom dia,

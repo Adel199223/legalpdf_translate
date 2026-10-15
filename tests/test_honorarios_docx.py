@@ -123,7 +123,7 @@ def test_build_honorarios_paragraph_texts_uses_locked_template() -> None:
             "tradutor no âmbito do processo acima identificado.",
             "left",
         ),
-        ("O documento traduzido contém 1666 palavras.", "left"),
+        ("Total de palavras traduzidas: 1666.", "left"),
         ("Este serviço inclui a taxa IVA de 23% e não tem retenção de IRS.", "left"),
         (f"O Pagamento deverá ser efetuado para o seguinte IBAN: {profile.iban}", "left"),
         ("", "left"),
@@ -187,7 +187,7 @@ def test_generate_honorarios_docx_avoids_overwriting_existing_translation(tmp_pa
     assert saved.stem.startswith(expected_name)
     assert saved.exists()
     doc = Document(saved)
-    assert any("264 palavras" in paragraph.text for paragraph in doc.paragraphs)
+    assert any("Total de palavras traduzidas: 264." in paragraph.text for paragraph in doc.paragraphs)
 
 
 def test_build_honorarios_paragraph_texts_keeps_case_city_only_in_closing_date() -> None:
@@ -319,7 +319,7 @@ def test_translation_docx_recipient_addresses_the_named_institution(
 
     assert paragraphs[2].text == expected_recipient
     assert "\n" not in paragraphs[2].text
-    assert paragraphs[8].text == "O documento traduzido contém 120 palavras."
+    assert paragraphs[8].text == "Total de palavras traduzidas: 120."
     assert paragraphs[16].text == f"{city}, 10 de março de 2026"
 
 
@@ -3344,7 +3344,7 @@ def test_save_to_joblog_gmail_draft_blocks_contaminated_translation_docx(tmp_pat
     _write_docx_with_paragraphs(
         translated,
         "Venho por este meio requerer o pagamento dos honorários devidos.",
-        "O documento traduzido contém 264 palavras.",
+        "Total de palavras traduzidas: 264.",
         "O Pagamento deverá ser efetuado para o seguinte IBAN: PT50003506490000832760029",
     )
     honorarios.write_bytes(b"%PDF-1.7")
@@ -3403,7 +3403,7 @@ def test_joblog_gmail_draft_blocks_contaminated_historical_translation_docx(
     _write_docx_with_paragraphs(
         translated,
         "Venho por este meio requerer o pagamento dos honorários devidos.",
-        "O documento traduzido contém 264 palavras.",
+        "Total de palavras traduzidas: 264.",
     )
     honorarios.write_bytes(b"%PDF-1.7")
     captured: dict[str, object] = {}

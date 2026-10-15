@@ -82,7 +82,8 @@ def _load_result(
 
 @pytest.mark.parametrize("save_first", [False, True])
 @pytest.mark.parametrize("readable", [False, True])
-def test_confirm_translation_recounts_staged_docx_and_reuses_saved_row(tmp_path: Path, monkeypatch, save_first, readable) -> None:
+@pytest.mark.parametrize("manual_costs", [(0.55, 0.66), (0, 0)])
+def test_confirm_translation_recounts_staged_docx_and_reuses_saved_row(tmp_path: Path, monkeypatch, save_first, readable, manual_costs) -> None:
     from .test_translation_completion_metrics import completion_job, completion_seed, write_docx
     from legalpdf_translate import translation_service
     import legalpdf_translate.gmail_browser_service as gmail_service
@@ -124,7 +125,8 @@ def test_confirm_translation_recounts_staged_docx_and_reuses_saved_row(tmp_path:
     def confirm():
         return manager.confirm_current_batch_translation(runtime_mode="shadow", workspace_id="fictional",
             settings_path=settings, job_log_db_path=database, translation_jobs=SimpleNamespace(get_job=lambda _: job),
-            job_id="fictional-job", form_values=seed, row_id=row_id)
+            job_id="fictional-job", form_values={**seed, "api_cost": manual_costs[0],
+                "estimated_api_cost": manual_costs[1]}, row_id=row_id)
     if not readable:
         with pytest.raises(ValueError, match="reviewed translation DOCX could not be read"):
             confirm()
@@ -146,6 +148,8 @@ def test_confirm_translation_recounts_staged_docx_and_reuses_saved_row(tmp_path:
     assert history[0]["row"]["word_count"] == 9
     assert history[0]["row"]["expected_total"] == .81
     assert history[0]["row"]["profit"] is None
+    assert history[0]["row"]["api_cost"] == manual_costs[0]
+    assert history[0]["row"]["estimated_api_cost"] == manual_costs[1]
     if save_first:
         assert response["normalized_payload"]["saved_result"]["row_id"] == row_id
 

@@ -275,7 +275,20 @@ export function buildTranslationResultCardPresentation({
       }
       summaryLines.push(...recovery.guidanceLines);
     } else {
-      summaryLines.push(`Completed pages: ${result.completed_pages ?? 0}`);
+      if (result.completed_pages == null && ["queued", "running", "cancel_requested"].includes(job.status)) {
+        const progress = objectOrEmpty(job.progress);
+        // The workflow emits its DONE count here, including on resume/failure.
+        const completedPages = progress.selected_index;
+        const selectedTotal = progress.selected_total;
+        if (Number.isInteger(completedPages) && completedPages >= 0
+          && Number.isInteger(selectedTotal) && selectedTotal > 0 && completedPages <= selectedTotal) {
+          summaryLines.push(`Completed pages: ${completedPages} of ${selectedTotal}`);
+        } else {
+          summaryLines.push("Waiting for page progress.");
+        }
+      } else {
+        summaryLines.push(`Completed pages: ${result.completed_pages ?? 0}`);
+      }
       if (result.automatic_layout?.source_layout_review_required) {
         summaryLines.push("Source layout needs review: an optional source-layout transformation could not be safely applied; its text was retained.");
       }

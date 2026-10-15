@@ -77,6 +77,8 @@ export function deriveTranslationCompletionPresentation(options = {}) {
   const rebuildCompleted = Boolean(job?.job_kind === "rebuild" && job?.status === "completed");
   const translationCompleted = Boolean(job?.job_kind === "translate" && job?.status === "completed");
   const blockedOnArabicReview = Boolean(review.required && !review.resolved);
+  const blockedOnOutputReview = Boolean(job?.ordinary_layout?.delivery?.output_review_required
+    || job?.ordinary_layout?.text_correction?.output_review_required);
   const gmailStep = gmailCurrentStep && typeof gmailCurrentStep === "object" ? gmailCurrentStep : {};
   const gmailStepFilename = String(gmailStep.filename || "").trim();
   const gmailStepBatchLabel = String(gmailStep.batchLabel || "").trim() || "Gmail";
@@ -158,8 +160,16 @@ export function deriveTranslationCompletionPresentation(options = {}) {
   if (blockedOnArabicReview) {
     drawerStatus = review.message || "Review the Arabic document in Word before you save the case record.";
     saveStatus = review.message || "Review the Arabic document in Word before you save the case record.";
+    resultChipLabel = "Review required";
+    resultChipTone = "warn";
   } else if (review.required && review.resolved && (translationCompleted || hasSaveSeed)) {
     saveStatus = "Arabic document review is complete. Save the case record when you are ready.";
+  }
+  if (blockedOnOutputReview) {
+    drawerStatus = "Review the complete corrected output before saving the case.";
+    saveStatus = drawerStatus;
+    resultChipLabel = "Review required";
+    resultChipTone = "warn";
   }
   const coverageNotice = String(job?.diagnostics?.source_coverage_notice || "").trim();
   if (translationCompleted && !rowLoaded && coverageNotice) {
@@ -171,10 +181,10 @@ export function deriveTranslationCompletionPresentation(options = {}) {
   const gmailAttachmentReady = Boolean(gmailBatchContext || gmailStep.visible);
   const gmailCurrentAttachment = {
     ready: gmailAttachmentReady,
-    title: blockedOnArabicReview
+    title: blockedOnOutputReview ? "Review the complete corrected output before saving this Gmail attachment." : blockedOnArabicReview
       ? "Review the Arabic document in Word before you save this Gmail attachment."
       : "This Gmail attachment is ready to save.",
-    copy: blockedOnArabicReview
+    copy: blockedOnOutputReview ? "Confirm the complete corrected output review in the text correction editor." : blockedOnArabicReview
       ? (review.message || "Open the translated DOCX in Word, save it there, then return here to save this Gmail attachment.")
       : gmailStepHasMoreItems
         ? "Save this translated attachment, then continue with the next Gmail step."
@@ -201,7 +211,7 @@ export function deriveTranslationCompletionPresentation(options = {}) {
     saveButtonLabel: "Save case record",
     arabicReview: {
       title: "Review Arabic document in Word",
-      copy: blockedOnArabicReview
+      copy: blockedOnOutputReview ? "Confirm the complete corrected output review in the text correction editor." : blockedOnArabicReview
         ? (review.message || "Open the translated DOCX in Word, make any alignment or formatting fixes, save it, then return here.")
         : review.required && review.resolved
           ? "The Arabic document review is complete. Save the case record or continue with the Gmail step when you are ready."

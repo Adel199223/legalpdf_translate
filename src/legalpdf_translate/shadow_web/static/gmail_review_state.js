@@ -404,10 +404,16 @@ export function buildGmailReviewLoadResetState({ payload = null } = {}) {
   const normalizedPayload = payload?.normalized_payload && typeof payload.normalized_payload === "object"
     ? payload.normalized_payload
     : {};
+  const messageContext = normalizedPayload.load_result?.intake_context || {};
   return {
     bootstrapPatch: {
       review_event_id: normalizedPayload.review_event_id,
       message_signature: normalizedPayload.message_signature,
+      current_handoff_context: messageContext,
+      handoff_session_id: messageContext.handoff_session_id || "",
+      pending_intake_context: {},
+      pending_status: "",
+      pending_review_open: false,
     },
     browserPdfState: new Map(),
     loadResult: normalizedPayload.load_result || null,

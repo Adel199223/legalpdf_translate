@@ -19,6 +19,12 @@ _LABEL = re.compile(r"(?i)^(?:Morada|Endereço|Endereco|Address|Domicílio|Domic
 _STREET = re.compile(r"(?i)^(?:Rua|R\.|Avenida|Av\.|Largo|Lg\.|Travessa|Tv\.|Praça|Praca|Estrada|Alameda|Quinta)\s+")
 _PROSE = {"deve", "pagar", "comparecer", "enviar", "documentos", "obrigação", "obrigacao", "prazo", "tribunal"}
 _LIMIT = 120_000
+_INLINE_STREET = re.compile(
+    r"(?<![\w./-])(?:Rua|Avenida|Av\.|Largo|Travessa|Praça|Praca|Estrada|Alameda)[ \t]+", re.I)
+_INLINE_NUMBER = re.compile(
+    r"(?:[ \t]*,[ \t]*|[ \t]+)(?:no[ \t]+)?n\.?[º°o]\.?[ \t]*[0-9]+(?:[A-Za-z])?"
+    r"(?![\w/-]|[.,:][0-9])", re.I)
+_INLINE_TOWN = re.compile(r",[ \t]+em[ \t]+(?P<town>[^,;!?\r\n]+)")
 
 
 @dataclass(frozen=True)
@@ -70,6 +76,35 @@ def source_address_fields(text: str) -> list[SourceAddressField]:
             field_start = start + (label.end() if label else 0)
             fields.append(SourceAddressField(field_start, field_start + len(address), address))
     return sorted(set(fields), key=lambda field: field.start)
+
+
+def _inline_address_fields(text: str, existing: list[SourceAddressField]):
+    """Bound inline streets by an explicit house marker and optional locality.
+
+    This affects wrapper equivalence only, not source pretokenization or saved
+    protocol. Never claim generic numbers/prose, extend across a line boundary,
+    or shorten an already proven complete address field.
+    """
+    fields = []
+    for street in _INLINE_STREET.finditer(text):
+        end = street.end()
+        while end < len(text) and end - street.start() < 220 and text[end] not in "\r\n" + _HARD:
+            end += 1
+        fragment = text[street.end():end]
+        number = _INLINE_NUMBER.search(fragment)
+        if number is None or not _locality(fragment[:number.start()]):
+            continue
+        field_end = street.end() + number.end()
+        town = _INLINE_TOWN.match(text, field_end)
+        if town and _locality(town["town"].rstrip(" .")):
+            field_end = town.end() - len(town["town"]) + len(town["town"].rstrip(" ."))
+        field = SourceAddressField(street.start(), field_end, text[street.start():field_end])
+        if field.end - field.start > 220:
+            continue
+        if any(prior.start < field.end and prior.end > field.start for prior in existing + fields):
+            continue
+        fields.append(field)
+    return fields
 
 
 def _view(text: str):
@@ -136,8 +171,12 @@ def canonicalize_source_address_literals(text: str, source: str | None,
     visible, positions, target_tokens = target_view
     remaining = Counter(expected)
     owned_required = Counter()
+    inline_owned = Counter()
     fields = []
-    for field in source_address_fields(source_visible):
+    source_fields = source_address_fields(source_visible)
+    inline_fields = _inline_address_fields(source_visible, source_fields)
+    source_fields = sorted(source_fields + inline_fields, key=lambda field: field.start)
+    for field in source_fields:
         owned = [token for token in source_tokens if token[0] < field.end and token[1] > field.start]
         if not owned or any(token[0] < field.start or token[1] > field.end for token in owned):
             continue
@@ -146,6 +185,8 @@ def canonicalize_source_address_literals(text: str, source: str | None,
             continue
         remaining.subtract(needed)
         owned_required.update(needed)
+        if field in inline_fields:
+            inline_owned.update(needed)
         fields.append(field)
     if not fields:
         return text, expected, 0, None
@@ -167,6 +208,11 @@ def canonicalize_source_address_literals(text: str, source: str | None,
         return text, expected, 0, "source_address_coverage_mismatch"
     if [value for _, _, value in found] != expected_fields:
         return text, expected, 0, "source_address_association_mismatch"
+    if inline_owned:
+        outside = Counter(token[2] for token in target_tokens
+                          if not any(start <= token[0] and token[1] <= end for start, end, _ in found))
+        if any(outside[value] != remaining[value] for value in inline_owned):
+            return text, expected, 0, "source_address_token_multiplicity_mismatch"
     replacements = []
     for start, end, value in found:
         owned = [token for token in target_tokens if token[0] < end and token[1] > start]

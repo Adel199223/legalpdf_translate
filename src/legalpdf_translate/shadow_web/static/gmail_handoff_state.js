@@ -83,7 +83,9 @@ export function deriveClientLaunchSessionSchemaVersion({ payload = null, href = 
 }
 
 export function deriveGmailBootstrapMessageContext({ bootstrap = null } = {}) {
-  return bootstrap?.defaults?.message_context || {};
+  return normalizeText(bootstrap?.current_handoff_context?.message_id)
+    ? bootstrap.current_handoff_context
+    : bootstrap?.defaults?.message_context || {};
 }
 
 export function deriveGmailPendingIntakeContext({ bootstrap = null } = {}) {
@@ -115,6 +117,10 @@ export function deriveGmailSourceUrl({
   const handoffContext = currentHandoffContext || current_handoff_context;
   const pendingContext = pendingIntakeContext || pending_intake_context;
   const diagnostics = clickDiagnostics || click_diagnostics;
+  if (normalizeText(handoffContext?.message_id)) {
+    // A known current message with no URL must not inherit a past click's URL.
+    return normalizeText(sourceUrl || handoffContext.source_gmail_url || "");
+  }
   return normalizeText(
     sourceUrl
     || handoffContext?.source_gmail_url

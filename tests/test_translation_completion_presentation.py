@@ -257,6 +257,8 @@ console.log(JSON.stringify({
     assert loaded_row["resultTitle"] == "Saved case record loaded."
 
     arabic_required = results["cases"]["arabicRequired"]
+    assert arabic_required["resultChipLabel"] == "Review required"
+    assert arabic_required["resultChipTone"] == "warn"
     assert arabic_required["drawerStatus"] == "Review malicious <img src=x onerror=alert(1)><script>bad()</script>"
     assert arabic_required["saveStatus"] == "Review malicious <img src=x onerror=alert(1)><script>bad()</script>"
     assert arabic_required["arabicReview"]["chipLabel"] == "Waiting"
@@ -266,11 +268,14 @@ console.log(JSON.stringify({
     )
 
     arabic_missing = results["cases"]["arabicMissing"]
+    assert arabic_missing["resultChipLabel"] == "Review required"
     assert arabic_missing["arabicReview"]["chipLabel"] == "Required"
     assert arabic_missing["arabicReview"]["chipTone"] == "warn"
     assert arabic_missing["drawerStatus"] == "Review the Arabic document in Word before you save the case record."
 
     arabic_resolved = results["cases"]["arabicResolved"]
+    assert arabic_resolved["resultChipLabel"] == "Ready"
+    assert arabic_resolved["resultChipTone"] == "ok"
     assert arabic_resolved["saveStatus"] == "Arabic document review is complete. Save the case record when you are ready."
     assert arabic_resolved["arabicReview"]["chipLabel"] == "Done"
     assert arabic_resolved["arabicReview"]["chipTone"] == "ok"

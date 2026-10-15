@@ -768,7 +768,10 @@ function forgetConsumedReviewEvent() {
 
 function applyBootstrapDefaults(data) {
   const presentation = buildGmailContextDefaultsPresentation({
-    defaults: data?.defaults,
+    defaults: {
+      ...data?.defaults,
+      message_context: deriveGmailBootstrapMessageContext({ bootstrap: data }),
+    },
   });
   renderGmailContextDefaultsInto({
     messageId: qs("gmail-message-id"),
@@ -1496,6 +1499,10 @@ function applyGmailReviewLoadResetState(reviewLoadState = {}) {
   gmailState.batchFinalizeDrawerSource = reviewLoadState.batchFinalizeDrawerSource;
   gmailState.batchFinalizeResult = reviewLoadState.batchFinalizeResult;
   gmailState.lastFinalizationReportPayload = reviewLoadState.lastFinalizationReportPayload;
+  if (gmailState.loadResult?.ok && gmailState.loadResult?.message && qs("gmail-subject")) {
+    qs("gmail-subject").value = gmailState.loadResult.message.subject || "";
+  }
+  updateReturnToGmailAction();
 }
 
 export function renderGmailBootstrap(payload) {
@@ -1592,6 +1599,7 @@ async function loadMessage() {
       subject: fieldValue("gmail-subject"),
       accountEmail: fieldValue("gmail-account-email"),
       sourceGmailUrl: currentSourceGmailUrl(),
+      currentMessageContext: bootstrapMessageContext(),
     })),
   });
   const reviewLoadState = buildGmailReviewLoadResetState({ payload });

@@ -27,7 +27,7 @@ def offline(monkeypatch):
     class ReferenceDate(date):
         @classmethod
         def today(cls):
-            return cls(2026, 10, 9)
+            return cls(2026, 10, 15)
 
     monkeypatch.setattr(policy_module, "date", ReferenceDate)
     monkeypatch.delenv("LEGALPDF_TRANSLATION_PROTOCOL", raising=False)

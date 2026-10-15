@@ -1,7 +1,9 @@
 """Caller-owned, offline pricing policy; never credentials or remote discovery.
 
-Public reference checked 2026-10-09:
+Public references checked 2026-10-15:
+https://developers.openai.com/api/docs/pricing
 https://developers.openai.com/api/docs/models/gpt-5.2
+https://developers.openai.com/api/docs/models/gpt-4o-mini
 Only public standard USD pricing is represented. Auto-tier hard caps deliberately
 remain unavailable until a finite verified tier policy is explicitly supplied.
 """
@@ -56,18 +58,34 @@ def ordinary_accounting_policy() -> OrdinaryAccountingPolicy:
             "provider": "openai", "pricing_model": model, "service_tier": "default",
             "billing_scope": "openai_public_api", "currency": "USD", "source_url": source,
         }
+    ocr_source = "https://developers.openai.com/api/docs/models/gpt-4o-mini"
+    pricing_source = "https://developers.openai.com/api/docs/pricing"
+    for model in ("gpt-4o-mini", "gpt-4o-mini-2024-07-18"):
+        models[f"openai:{model}|default|openai_public_api|USD"] = {
+            "input_per_1m": .15, "cached_input_per_1m": .075, "output_per_1m": .60,
+            "provider": "openai", "pricing_model": model, "service_tier": "default",
+            "billing_scope": "openai_public_api", "currency": "USD", "source_url": pricing_source,
+        }
     policy = OrdinaryAccountingPolicy.from_mapping(pricing={
-        "snapshot_id": "openai_public_standard_2026_10_09",
-        "verified_at": "2026-10-09", "source": source, "models": models,
+        "snapshot_id": "openai_public_standard_2026_10_15",
+        "verified_at": "2026-10-15", "source": pricing_source, "models": models,
     }, limits={"openai:*:gpt-5.2": {
         "requested_model": "gpt-5.2", "allowed_actual_models": ["gpt-5.2-2025-12-11"],
         "billing_scope": "openai_public_api", "currency": "USD",
         "allowed_base_urls": ["https://api.openai.com/v1"],
         "max_input_tokens": 400000, "max_output_tokens": 128000,
         "apply_output_bound_only_when_hard": True,
-        "bound_source_url": source, "bound_verified_at": "2026-10-09",
+        "bound_source_url": source, "bound_verified_at": "2026-10-15",
         # No allowed_actual_service_tiers: project auto policy has not been verified.
+    }, "openai:ocr:gpt-4o-mini": {
+        "requested_model": "gpt-4o-mini", "allowed_actual_models": ["gpt-4o-mini-2024-07-18"],
+        "billing_scope": "openai_public_api", "currency": "USD",
+        "allowed_base_urls": ["https://api.openai.com/v1"],
+        "max_input_tokens": 128000, "max_output_tokens": 16384,
+        "apply_output_bound_only_when_hard": True,
+        "bound_source_url": ocr_source, "bound_verified_at": "2026-10-15",
+        # No image token bound or verified auto-tier policy: hard OCR stays gated.
     }})
     # Only the bundled public reference has this local freshness window. No
     # remote refresh or silent new approval; saved runs retain their own catalog.
-    return OrdinaryAccountingPolicy(policy._pricing_json, policy._limits_json, date(2026, 10, 9))
+    return OrdinaryAccountingPolicy(policy._pricing_json, policy._limits_json, date(2026, 10, 15))

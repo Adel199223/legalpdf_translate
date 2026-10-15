@@ -268,7 +268,7 @@ def test_validate_translated_docx_artifacts_rejects_honorarios_like_translation(
     _write_docx(
         translated,
         "Venho por este meio requerer o pagamento dos honorários devidos.",
-        "O documento traduzido contém 264 palavras.",
+        "Total de palavras traduzidas: 264.",
         "O Pagamento deverá ser efetuado para o seguinte IBAN: PT50003506490000832760029",
     )
     honorarios.write_bytes(b"%PDF-1.7")
