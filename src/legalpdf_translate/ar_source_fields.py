@@ -155,6 +155,48 @@ def _occurrences(text: str, literal: str):
     return result
 
 
+def _separate_inline_parts(field, owned):
+    """Only a source-locked house number may leave the Portuguese connective."""
+    marker = _INLINE_NUMBER.search(field.value)
+    number = re.search(r"[0-9]+[A-Za-z]?\Z", field.value)
+    if marker is None or number is None or marker.end() != len(field.value):
+        return None
+    if len(owned) != 1 or owned[0][:3] != (field.start + number.start(), field.end, number[0]):
+        return None
+    return field.value[:marker.start()], number[0]
+
+
+def _separate_inline_occurrences(visible, target_tokens, source_visible, field, owned):
+    """Prove exact street/house wrappers joined only by the Arabic number label.
+
+    This does not regroup or rewrite the visible connective. A whole primary
+    literal therefore remains subject to the independent correction loss guard.
+    """
+    parts = _separate_inline_parts(field, owned)
+    if parts is None:
+        return []
+    street, number = parts
+    streets = _occurrences(visible, street)
+    if len(streets) != len(_occurrences(source_visible, street)):
+        return []
+    result = []
+    for start, end in streets:
+        if not any(token[:3] == (start, end, street) for token in target_tokens):
+            continue
+        following = next((token for token in target_tokens if token[0] >= end), None)
+        if following is None or following[2] != number:
+            continue
+        a, b = following[:2]
+        if not re.fullmatch(r"[ \t]*(?:[,،][ \t]*)?رقم[ \t]+", visible[end:a]):
+            continue
+        if (a, b) not in _occurrences(visible, number):
+            continue
+        if b + 1 < len(visible) and visible[b] in ".,:" and visible[b + 1].isdecimal():
+            continue
+        result.append((start, b, field.value))
+    return result
+
+
 def canonicalize_source_address_literals(text: str, source: str | None,
                                         expected: list[str] | None):
     """Return text/expectations/count/error; only exact source-proven wrappers change.
@@ -171,6 +213,7 @@ def canonicalize_source_address_literals(text: str, source: str | None,
     visible, positions, target_tokens = target_view
     remaining = Counter(expected)
     owned_required = Counter()
+    owned_by_field = {}
     inline_owned = Counter()
     fields = []
     source_fields = source_address_fields(source_visible)
@@ -185,6 +228,7 @@ def canonicalize_source_address_literals(text: str, source: str | None,
             continue
         remaining.subtract(needed)
         owned_required.update(needed)
+        owned_by_field[field] = owned
         if field in inline_fields:
             inline_owned.update(needed)
         fields.append(field)
@@ -194,6 +238,12 @@ def canonicalize_source_address_literals(text: str, source: str | None,
     candidates = []
     for value in set(expected_fields):
         candidates.extend((start, end, value) for start, end in _occurrences(visible, value))
+    separate = set()
+    for field in fields:
+        if field in inline_fields:
+            separate.update(_separate_inline_occurrences(visible, target_tokens, source_visible,
+                                                        field, owned_by_field[field]))
+    candidates.extend(separate)
     # A locality inside a complete street address belongs to that larger field,
     # not to a second standalone occurrence elsewhere in the source. Own each
     # visible character at most once before checking exact counts and order.
@@ -214,7 +264,10 @@ def canonicalize_source_address_literals(text: str, source: str | None,
         if any(outside[value] != remaining[value] for value in inline_owned):
             return text, expected, 0, "source_address_token_multiplicity_mismatch"
     replacements = []
+    separate_values = Counter(value for start, end, value in found if (start, end, value) in separate)
     for start, end, value in found:
+        if (start, end, value) in separate:
+            continue
         owned = [token for token in target_tokens if token[0] < end and token[1] > start]
         if any(token[0] < start or token[1] > end for token in owned):
             return text, expected, 0, "source_address_wrapper_crosses_field"
@@ -234,10 +287,18 @@ def canonicalize_source_address_literals(text: str, source: str | None,
     assert _view(result)[0] == visible
     canonical_expected = []
     remove = owned_required.copy()
+    keep_separate = separate_values.copy()
+    canonical_fields = []
+    for field in fields:
+        if keep_separate[field.value]:
+            keep_separate[field.value] -= 1
+            remove.subtract(Counter(token[2] for token in owned_by_field[field]))
+        else:
+            canonical_fields.append(field.value)
     for value in expected:
         if remove[value]:
             remove[value] -= 1
         else:
             canonical_expected.append(value)
-    canonical_expected.extend(expected_fields)
+    canonical_expected.extend(canonical_fields)
     return result, canonical_expected, changed, None
