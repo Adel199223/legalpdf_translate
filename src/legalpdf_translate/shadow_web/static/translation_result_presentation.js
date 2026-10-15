@@ -40,6 +40,33 @@ function modeStrength(value) {
   return 0;
 }
 
+function failedPageAlreadyUsedImage(job) {
+  const result = objectOrEmpty(job?.result);
+  const failure = objectOrEmpty(result.failure_context);
+  const progress = objectOrEmpty(job?.progress);
+  const resultPage = Number(result.failed_page);
+  const contextPage = Number(failure.page_number);
+  const validPage = (page) => Number.isInteger(page) && page > 0;
+  if (validPage(resultPage) && validPage(contextPage) && resultPage !== contextPage) {
+    return false;
+  }
+  const failedPage = validPage(resultPage) ? resultPage : contextPage;
+  if (!validPage(failedPage)) {
+    return false;
+  }
+  const evidence = [];
+  if (contextPage === failedPage) {
+    const requestType = String(failure.request_type || "").trim().toLowerCase();
+    if (requestType === "image_backed" || requestType === "text_only") {
+      evidence.push(requestType === "image_backed");
+    }
+  }
+  if (Number(progress.real_page) === failedPage && typeof progress.image_used === "boolean") {
+    evidence.push(progress.image_used);
+  }
+  return evidence.includes(true) && !evidence.includes(false);
+}
+
 function advisorRerunHint(job) {
   const advisor = normalizeAdvisorRecommendation(job?.result?.advisor_recommendation);
   const retryReason = String(job?.result?.failure_context?.retry_reason || "").trim();
@@ -47,7 +74,8 @@ function advisorRerunHint(job) {
   const currentOcrMode = String(job?.config?.ocr_mode || "").trim().toLowerCase();
   const currentImageMode = String(job?.config?.image_mode || "").trim().toLowerCase();
   const strongerOcr = modeStrength(advisor.recommended_ocr_mode) > modeStrength(currentOcrMode);
-  const strongerImage = modeStrength(advisor.recommended_image_mode) > modeStrength(currentImageMode);
+  const strongerImage = modeStrength(advisor.recommended_image_mode) > modeStrength(currentImageMode)
+    && !failedPageAlreadyUsedImage(job);
   const stronger = targetLang === "AR" && retryReason === "ar_token_violation" && (strongerOcr || strongerImage);
   if (!stronger) {
     return {
@@ -186,7 +214,9 @@ export function deriveTranslationRecoveryState(job) {
   }
   const guidanceLines = [
     "Resume Translation reruns the same config against the same source.",
-    "Change OCR or image settings first, then use Start Translate for a new run.",
+    failedPageAlreadyUsedImage(job)
+      ? "The failed page already used an image. Review the validator details before deciding whether to rerun."
+      : "Change OCR or image settings first, then use Start Translate for a new run.",
     "Rebuild DOCX only assembles completed pages and does not complete a failed translation.",
   ];
   const statusMessage = job.status === "cancelled"
