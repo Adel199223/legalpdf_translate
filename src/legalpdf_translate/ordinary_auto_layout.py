@@ -22,11 +22,11 @@ _POLICY_RE = re.compile(r"source_image_unreviewed_v1:([a-f0-9]{64})\Z")
 
 def frozen_automatic_layout_policy() -> str:
     """Freeze local price, request and validation versions before translation."""
-    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v2", emphasis_normalization=True, metadata_normalization=True, primary_folio_version="terminal_labeled_folio_v2")
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3", emphasis_normalization=True, metadata_normalization=True, primary_folio_version="terminal_labeled_folio_v2")
 
 
 def _optional_hint_policy(normalization_version: str, *, emphasis_normalization=False, metadata_normalization=False, primary_folio_version="terminal_labeled_folio_v1") -> str:
-    """Exact v1/v2 capability identities; no arbitrary historical-policy admission."""
+    """Exact versioned capability identities; no arbitrary historical-policy admission."""
     from .ordinary_layout_accounting import layout_accounting_policy
     from .ordinary_layout_contracts import PROPOSAL_VERSION_V3
     from .ordinary_layout_manager import INSTRUCTIONS
@@ -52,7 +52,23 @@ def _metadata_normalization_policies() -> set[str]:
     """Exact old/new primary recipes share the same saved layout semantics."""
     return {frozen_automatic_layout_policy(), _optional_hint_policy(
         "ordinary_optional_layout_hint_normalization_v2", emphasis_normalization=True,
-        metadata_normalization=True)}
+        metadata_normalization=True), _optional_hint_policy(
+        "ordinary_optional_layout_hint_normalization_v2", emphasis_normalization=True,
+        metadata_normalization=True, primary_folio_version="terminal_labeled_folio_v2")}
+
+
+def _source_normalization_version(policy_fingerprint):
+    """Old paid operations must keep their original optional-hint recipe."""
+    from .ordinary_layout_contracts import (OPTIONAL_HINT_NORMALIZATION_V1,
+        OPTIONAL_HINT_NORMALIZATION_V2, OPTIONAL_HINT_NORMALIZATION_V3)
+    current_recipe = _optional_hint_policy(OPTIONAL_HINT_NORMALIZATION_V3,
+        emphasis_normalization=True, metadata_normalization=True,
+        primary_folio_version="terminal_labeled_folio_v2")
+    if policy_fingerprint == current_recipe.split(":", 1)[1]:
+        return OPTIONAL_HINT_NORMALIZATION_V3
+    if policy_fingerprint == _optional_hint_policy(OPTIONAL_HINT_NORMALIZATION_V1).split(":", 1)[1]:
+        return OPTIONAL_HINT_NORMALIZATION_V1
+    return OPTIONAL_HINT_NORMALIZATION_V2
 
 
 def valid_automatic_layout_policy(value: str) -> bool:
@@ -86,7 +102,8 @@ def _direct_revalidation(root: Path, result: dict, policy: dict) -> bool:
         and result.get("error_code") in {"ordinary_layout_page_break_requires_flow",
                                        "ordinary_layout_proposal_coverage",
                                        "ordinary_layout_invalid_proposal_decisions",
-                                       "ordinary_layout_invalid_source_layout_evidence"}
+                                       "ordinary_layout_invalid_source_layout_evidence",
+                                       "ordinary_layout_invalid_source_footer_evidence"}
         and policy.get("max_output_tokens") == 32000
         and policy.get("timeout_seconds") == 480.0)
 
@@ -219,6 +236,7 @@ def _retained_continuation(manager, root: Path, identity: dict, predecessor: dic
         allowed_errors.add("ordinary_layout_proposal_coverage")
         allowed_errors.add("ordinary_layout_invalid_proposal_decisions")
         allowed_errors.add("ordinary_layout_invalid_source_layout_evidence")
+        allowed_errors.add("ordinary_layout_invalid_source_footer_evidence")
     if (result.get("error_code") not in allowed_errors or policy.get("max_output_tokens") != 32000
             or direct and policy.get("timeout_seconds") != 480.0):
         fail("automatic_retained_response_unavailable", 409)
@@ -397,9 +415,12 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
                     from .saved_docx_layout import inspect_docx
                     initial_view = verified_record(operation / "proposal_initial_view.json")["view"]
                     baseline_bytes = bounded_read(operation.parent.parent / "reviewed.docx", storage.DOCX_MAX_BYTES)
-                    from .ordinary_layout_contracts import OPTIONAL_HINT_NORMALIZATION_V2
+                    from .ordinary_layout_contracts import OPTIONAL_HINT_NORMALIZATION_V3
+                    if (records[0].get("normalization", {}).get("version") == OPTIONAL_HINT_NORMALIZATION_V3
+                            and _source_normalization_version(policy.split(":", 1)[1]) != OPTIONAL_HINT_NORMALIZATION_V3):
+                        fail("source_evidence_response_changed", 409)
                     expected = proposal_source_evidence(inspect_docx(baseline_bytes, initial_view["target_lang"]), initial_view, proposal,
-                        normalization_version=records[0].get("normalization", {}).get("version", OPTIONAL_HINT_NORMALIZATION_V2),
+                        normalization_version=records[0].get("normalization", {}).get("version", _source_normalization_version(policy.split(":", 1)[1])),
                         band_normalization_version=("ordinary_metadata_band_normalization_v1" if policy in _metadata_normalization_policies() else None),
                         emphasis_normalization_version=("ordinary_optional_emphasis_normalization_v1"
                             if policy in (_metadata_normalization_policies() | {_optional_hint_policy("ordinary_optional_layout_hint_normalization_v2", emphasis_normalization=True)}) else None))
@@ -478,6 +499,7 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int], *
     emphasis_version = ("ordinary_optional_emphasis_normalization_v1"
         if policy_fingerprint in ({p.split(":", 1)[1] for p in _metadata_normalization_policies()} | {_optional_hint_policy("ordinary_optional_layout_hint_normalization_v2", emphasis_normalization=True).split(":", 1)[1]}) else None)
     evidence_view = current["review"]
+    normalization_version = _source_normalization_version(policy_fingerprint)
     if any(p.get("version") == "ordinary_layout_proposal_v3" for p in proposals):
         with manager.service.scope(origin) as folder:
             operation = folder / "baselines" / baseline_id / "suggestions" / operation_nonce
@@ -489,10 +511,6 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int], *
                 fail("source_evidence_initial_view_changed", 409)
             evidence_view = initial_record["view"]
             from .ordinary_layout_contracts import proposal_source_evidence
-            from .ordinary_layout_contracts import OPTIONAL_HINT_NORMALIZATION_V1, OPTIONAL_HINT_NORMALIZATION_V2
-            normalization_version = (OPTIONAL_HINT_NORMALIZATION_V1
-                if policy_fingerprint == _optional_hint_policy(OPTIONAL_HINT_NORMALIZATION_V1).split(":", 1)[1]
-                else OPTIONAL_HINT_NORMALIZATION_V2)
             source_records = [proposal_source_evidence(inspect_docx(reviewed, evidence_view["target_lang"]), evidence_view, p,
                 normalization_version=normalization_version, band_normalization_version=("ordinary_metadata_band_normalization_v1" if policy_fingerprint in {p.split(":", 1)[1] for p in _metadata_normalization_policies()} else None), emphasis_normalization_version=emphasis_version) for p in proposals]
             for record, proposal in zip(source_records, proposals):
@@ -513,7 +531,7 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int], *
                 "source_layout_evidence_sha256": hashlib.sha256(encode(source_records)).hexdigest()}
     try:
         decisions = normalize_proposals(inspect_docx(reviewed, current["review"]["target_lang"]),
-            evidence_view, proposals, band_normalization_version=("ordinary_metadata_band_normalization_v1" if policy_fingerprint in {p.split(":", 1)[1] for p in _metadata_normalization_policies()} else None), emphasis_normalization_version=emphasis_version)
+            evidence_view, proposals, normalization_version=normalization_version, band_normalization_version=("ordinary_metadata_band_normalization_v1" if policy_fingerprint in {p.split(":", 1)[1] for p in _metadata_normalization_policies()} else None), emphasis_normalization_version=emphasis_version)
     except (OrdinaryLayoutError, ValueError):
         return
     if stored_decisions is not None and stored_decisions != decisions:
