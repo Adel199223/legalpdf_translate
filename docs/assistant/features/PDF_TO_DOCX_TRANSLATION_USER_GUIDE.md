@@ -74,6 +74,8 @@ In builds containing the October 12 repair, a text paragraph ending with one ord
 
 In builds containing the October 10 translation-review completion update, use **Correct translated text** to replace, add or remove wording in a completed ordinary translation. Compare with the source, review the before/after changes, approve the corrected copy, then inspect its complete Word layout. **Review text changes saved in Word** can import supported edits from the app's working copy for the same explicit approval. Rebuilding alone does not import Word edits. See the [correction steps](REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md#correct-wording-in-a-completed-translation) and [current installed-build status](../HANDOFF.md).
 
+In builds containing the October 15 repair, wording approval refreshes review status for that selected copy. Inspect the complete output and finish the separate Arabic Word review when required before Save or Gmail confirmation. Review of an earlier copy does not approve a later correction. While either required review remains pending, the result shows **Review required** and Save remains unavailable. Check [installed-build status](../HANDOFF.md).
+
 The chosen revision supplies the final word count, download and Gmail attachment. The original translation and API charges are retained. Source-image findings can help locate possibly missing text, but you must verify them against the source; no findings does not mean the translation is complete.
 
 ## If Warnings Appear Before The Run Starts
@@ -190,6 +192,10 @@ The updated translation guidance asks every language to preserve uncertainty, co
 ## Save to Job Log
 
 In builds containing the future-translation fixes, the standard rate is **EUR 0.027 per word for English, French and Arabic**, with totals rounded to cents. Counts and rates update the calculated total immediately; choose **Set total manually** when you intend a different fee, including zero. Existing saved rows retain their historical amounts and profit. API cost is USD and fees are EUR, so a new profit stays uncalculated. Check the [current handoff](../HANDOFF.md) for application status and the separate saved-rate correction.
+
+In builds containing the October 15 repair, manual API costs survive recount/Save for the same document, including explicit zero. They reset on another job or selected revision. Computed layout costs remain read-only. A manual estimate does not settle unknown historical charges. These fixes require a build verified in the [current handoff](../HANDOFF.md).
+
+The app counts whitespace-separated tokens in supported document stories; native Word can count punctuation differently. Review the displayed count before generating fees. Existing fee files/drafts do not update when you edit a historical row. Total wording supports one document or a combined batch.
 
 For completed translations, **Source layout and delivery** lets you review source associations, correct the geometry manually, build and inspect a separate formatted Word copy, then explicitly select it for normal saving and Gmail staging. The original remains preserved. See the [step-by-step review guide](REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md#review-a-completed-translations-layout). Once a layout review is prepared, resolve pending operations and choose a current delivery copy before saving.
 

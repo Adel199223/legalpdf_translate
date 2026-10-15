@@ -1,10 +1,18 @@
 # APP_KNOWLEDGE
 
-## October 12 court workflow repair — isolated implementation
+## October 15 email workflow repairs — validated implementation
 
-The [active repair](docs/assistant/exec_plans/active/2026-10-12_court_workflow_repair.md) addresses source-proven Arabic literal boundaries, composite LTR fields, wording correction around retained trailing page breaks, and Gmail recovery that reopens an existing job. Literal equivalence must preserve exact source characters and multiplicity; correction must retain pagination and reject unsupported controls. Recovery navigation verifies session, message, thread, attachment, source, language and start page before displaying the newest matching run. It never dispatches translation or silently prepares a replacement run.
+The [current repair](docs/assistant/exec_plans/completed/2026-10-15_email_retest_and_repairs.md) follows a real exact-message retest. Manual Gmail intake owns its current message, thread and account; a new context cannot inherit a previous URL, subject or pending handoff. Editable API costs retain explicit values, including zero, through same-delivery recounts; a changed job/selected revision resets ownership. Computed layout accounting remains read-only.
 
-Terminal jobs and unfinished Gmail sessions remain in-memory in the installed baseline. The isolated [local recovery workflow](docs/assistant/workflows/TERMINAL_RECOVERY_WORKFLOW.md) keeps raw registry snapshots separate from selected-delivery/cost overlays and pins retained artifacts by hash. Read-only import preserves ownership, correction history and pending review without provider, save or draft actions. Explicit missing-source restoration can recreate only the original owned Gmail temp files from a verified backup, never overwrite existing files. This is not an installed or accepted live build; [HANDOFF.md](docs/assistant/HANDOFF.md) owns current status.
+Active progress uses validated completed/selected page counts. A new immutable accounting policy includes verified public/default OCR rates for future jobs; historical snapshots and unknown charges remain frozen. Arabic inline address regrouping requires exact source text and multiplicity, preserves unrelated occurrences and changes only wrapper equivalence. It never replaces content review. Single-document and combined fee wording uses a count-neutral total.
+
+Completion review belongs to the selected delivery. Wording approval, full-output inspection and Arabic Word review remain distinct gates; old asynchronous responses must not unlock a newer selection. [HANDOFF.md](docs/assistant/HANDOFF.md) owns validation/application status. Private `email_retest_20261015_01/rollout_capture_01/final_postflight_01/receipt.json` owns the exact locally installed Git SHA, served runtime/asset identity, restored failed-job/session ownership and rollout preservation checks. An absent or failed receipt means local application is still pending; a source commit or passing local tests alone is not installation. No remote publication, hosted CI success or email sending is claimed.
+
+### Installed October 12 recovery baseline
+
+Canonical main a69a2dcc811d5b220729e28265fb2f76bcc36a19 contains the prior court repair: source-proven Arabic literal boundaries, safe page-ending wording correction and exact retained-job Gmail recovery. Recovery verifies session, message, thread, attachment, source, language and start page before showing the matching run. It never silently dispatches or prepares another run.
+
+The [terminal recovery workflow](docs/assistant/workflows/TERMINAL_RECOVERY_WORKFLOW.md) pins raw snapshots separately from selected-delivery/cost overlays. Explicit import supports terminal jobs with prepared, unconfirmed sessions and unchanged original paths. Confirmed/finalized sessions remain outside that contract. Do not falsify session state to restart a completed manual delivery. The previously stale installation paragraph has a private exact beforeimage.
 
 ## October 11 Arabic abbreviated page-label repair
 

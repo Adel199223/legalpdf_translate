@@ -27,6 +27,14 @@ Expected persistence behavior:
 - Minimize/Close/Escape should preserve the selected attachment, start page, preview page, and show a restore chip.
 - Restore chips should bring back the existing Review or Preview state instead of resetting it.
 
+## Exact-message recovery and completed drafts
+
+When manually loading another message, verify message, thread and connected account together. A prior URL or subject is not evidence for the new message. Check current attachments before preparing. Failed browser safety inspection means the extension action was not accepted; manual intake is a separately qualified path.
+
+If the app blocks, retain its job, failed responses and charges. Reviewed copies and an explicitly requested unsent reply may be completed independently, with exact recipient/thread and downloaded-attachment verification. Do not finalize a partial batch afterward merely to make the UI look complete: it can duplicate the existing draft. Record manual completion and retain its files before an approved runtime change.
+
+A partially confirmed/finalized batch cannot be made importable by clearing confirmation fields. Keep its durable row, reviewed files and private session evidence; distinguish retained evidence from an actively restored session. See the [recovery workflow](workflows/TERMINAL_RECOVERY_WORKFLOW.md). A final local-application receipt must verify the actual canonical build, owned listener, preserved saved rows/settings/selected bytes and only the eligible restored session. A scoped jobs list is not proof that no other workspace is active; combine it with the retained runtime/task ownership record. Archive completed manual-delivery evidence without recreating or finalizing that batch.
+
 ## Launch Canonical Main Runtime
 From the primary repo on `main`:
 

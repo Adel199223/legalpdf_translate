@@ -1,5 +1,17 @@
 # External Source Registry
 
+## Default OCR accounting policy — 2026-10-15
+
+Official OpenAI references verified 2026-10-15 for future scanned jobs:
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-4o-mini | Default OCR alias and capacities | `gpt-4o-mini` documents snapshot `gpt-4o-mini-2024-07-18`, image input, Responses support, 128,000 context and 16,384 maximum output tokens. | 2026-10-15 |
+| https://developers.openai.com/api/docs/pricing | Standard public USD attribution | Per million tokens: GPT-4o Mini input 0.15, cached input 0.075, output 0.60; GPT-5.2 input 1.75, cached input 0.175, output 14. Only actual default-tier usage at the verified public endpoint receives these prices. | 2026-10-15 |
+| https://developers.openai.com/api/docs/models/gpt-5.2 | Retained translation alias and capacities | Snapshot `gpt-5.2-2025-12-11`, 400,000 context and 128,000 maximum output remain documented. | 2026-10-15 |
+
+The refreshed ordinary catalog includes the default OCR alias and exact snapshot. This is public-price attribution rather than invoice reconciliation. Omitted request tier/output settings remain unchanged; no verified auto-tier or OCR image-token reservation bound is introduced. Unsupported returned models, tiers and endpoints remain unknown and block dependent paid layout. Existing run catalogs and unknown receipts remain frozen; this future-run fix does not retrospectively settle them. The [completed implementation plan](exec_plans/completed/2026-10-15_ocr_accounting_policy.md) records the bounded policy tests; [HANDOFF.md](HANDOFF.md) owns local application status.
+
 ## Local Edge extension setup — 2026-10-10
 
 Microsoft's [sideload an extension guide](https://learn.microsoft.com/en-us/microsoft-edge/extensions/getting-started/extension-sideloading), verified 2026-10-10, requires Edge Developer mode before **Load unpacked**. LegalPDF Gmail Intake uses this local unpacked installation. The user enabled the extension manually; a genuine same-message handoff then passed on canonical main. This check did not change browser settings through automation or repeat translation/finalization.

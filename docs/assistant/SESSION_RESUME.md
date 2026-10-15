@@ -1,5 +1,9 @@
 # SESSION_RESUME
 
+## Current scoped work — October 15 closeout
+
+Read [HANDOFF.md](HANDOFF.md), then the [completed email retest plan](exec_plans/completed/2026-10-15_email_retest_and_repairs.md). Both requested reply drafts are verified and unsent after independent correction/review; the declaration requires the user's signature. Implementation, final local validation and isolated visible UI acceptance are complete. Private `email_retest_20261015_01/rollout_capture_01/final_postflight_01/receipt.json` owns the exact locally installed Git SHA, served runtime/asset identity, restored failed-job/session ownership and rollout preservation checks. An absent or failed receipt means local application is still pending; a source commit or passing local tests alone is not installation. No remote publication, hosted CI success or email sending is claimed. Continue only any unfinished authorized local-application/verification step; never recreate the retired notice batch or replay completed calls, saves or drafts. The October 12 deliveries are already consumed. Older sections remain historical evidence. The roadmap stays dormant.
+
 ## October 11 Arabic abbreviated page-label repair
 
 The later same-document test exposed one remaining numbering defect: a source label such as `ص. 1` was retained alongside the generated Word counter. The focused v2 primary-assembly recipe recognizes that explicit abbreviation only on complete, unstructured pages with matching page numbers. Original text remains intact. Historical v1 and absent recipes retain their saved behavior, including Resume across pricing changes; V6/V7 layout writers are unchanged.
