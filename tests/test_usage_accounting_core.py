@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+import hashlib
 import json
 from pathlib import Path
 
@@ -55,6 +56,40 @@ def _usage() -> dict[str, int]:
         "cached_input_tokens": 20,
         "cache_write_tokens": 10,
     }
+
+
+def test_pinned_existing_accounting_is_read_only_and_never_creates_lock(tmp_path):
+    identity = {"source_sha256": "1" * 64, "protocol": "fictional"}
+    original = DispatchAccounting(tmp_path / "original", run_identity=identity, pricing_snapshot=_snapshot())
+    folder = tmp_path / "restored"; folder.mkdir()
+    journal = folder / "dispatch_accounting.json"
+    journal.write_bytes(original.journal_path.read_bytes())
+    pin = hashlib.sha256(journal.read_bytes()).hexdigest()
+    restored = DispatchAccounting(folder, run_identity=identity, _existing_journal_sha256=pin)
+    before = journal.read_bytes()
+    assert restored.summary() == original.summary()
+    assert restored.can_retry
+    for mutate in (
+        lambda: restored.begin(provider="openai", requested_model="model-a", request_hash="a" * 64),
+        lambda: restored.finish(None, outcome="succeeded"),
+        lambda: restored._finish(None, outcome="succeeded"),
+        lambda: restored._append_begin_event({}, "fictional"),
+        lambda: restored._save_unlocked({}),
+    ):
+        with pytest.raises(DispatchAccountingError, match="read-only"):
+            mutate()
+    assert journal.read_bytes() == before
+    assert set(folder.iterdir()) == {journal}
+    journal.write_bytes(before + b" ")
+    with pytest.raises(DispatchAccountingError, match="Pinned dispatch journal changed"):
+        restored.summary()
+
+
+def test_pinned_restore_never_creates_missing_journal_or_directory(tmp_path):
+    missing = tmp_path / "missing"
+    with pytest.raises(DispatchAccountingError):
+        DispatchAccounting(missing, run_identity={}, _existing_journal_sha256="a" * 64)
+    assert not missing.exists()
 
 
 def test_inclusive_output_and_cache_breakdowns_are_not_double_priced() -> None:

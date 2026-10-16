@@ -21,8 +21,10 @@ Don't use this workflow when work is active or the task is ordinary browser refr
 ## Primary Files
 
 - `src/legalpdf_translate/terminal_recovery.py`
+- `src/legalpdf_translate/usage_accounting.py`
 - `src/legalpdf_translate/shadow_web/server.py`
 - `tests/test_terminal_recovery.py`
+- `tests/test_terminal_accounting_restore.py`
 
 ## Minimal Commands
 
@@ -56,6 +58,8 @@ After explicit update/restart approval, use the usual canonical server entry poi
 
 The source-restoration flag is an explicit filesystem action. It can recreate only missing files under the original owned Gmail temp directories from the pinned sidecar. It rejects changed existing files, additional files, invalid paths, symlinks/reparse points, missing non-source evidence and backup tampering. It never overwrites files or relocates sources. Omit the flag when all original source paths remain available. Normal import and `--validate` remain read-only except for temporary in-memory registries and OS locking of existing initialized lock files.
 
+Serialize validation and import against the same retained workspace. A concurrent capsule probe or browser poll can hold an existing lock; wait for that owned activity to finish and retry the same check. Do not delete or bypass lock files.
+
 Startup checks settings/layout ownership against the new app before source restoration, validates the complete capsule, reconstructs config from checkpoint and unchanged settings, resolves trusted ordinary-layout bytes locally and verifies persisted ownership manifests. It compares selected delivery and correction history/costs against the separate GET overlay, preserving raw completion accounting and pending output review. It installs both registries only after all validation passes. An invalid import prevents serving. Repeat import of the same capsule into those same registries is a no-op; a conflicting/nonempty registry is refused.
 
 ## Targeted Tests
@@ -63,13 +67,13 @@ Startup checks settings/layout ownership against the new app before source resto
 PowerShell:
 
 ```powershell
-.\.venv311\Scripts\python.exe -m pytest -q tests/test_terminal_recovery.py
+.\.venv311\Scripts\python.exe -m pytest -q tests/test_terminal_recovery.py tests/test_terminal_accounting_restore.py tests/test_usage_accounting_core.py tests/test_institutional_footer_retained_recovery.py
 ```
 
 POSIX syntax for an existing compatible isolated environment:
 
 ```bash
-.venv311/bin/python -m pytest -q tests/test_terminal_recovery.py
+.venv311/bin/python -m pytest -q tests/test_terminal_recovery.py tests/test_terminal_accounting_restore.py tests/test_usage_accounting_core.py tests/test_institutional_footer_retained_recovery.py
 ```
 
 Live Gmail rollout uses the canonical Windows installation. The test syntax does not authorize another host or feature-worktree live operation.
@@ -82,7 +86,7 @@ Any missing or changed pinned evidence blocks import. Preserve the old process u
 
 1. Retain raw bootstrap, separate GET overlays and Gmail captures privately; pin the capsule SHA independently.
 2. Verify original-source backup and read-only import before requesting live application approval.
-3. After approved startup, verify canonical identity, original jobs/workspaces, selected corrected bytes, raw costs and pending review.
+3. After approved startup, verify canonical identity, original jobs/workspaces, selected corrected bytes, raw costs and pending review. For completed jobs that need layout recovery, also verify accounting availability and unchanged prior budget values before using the recovery control.
 4. Resume only unfinished work through normal controls; manually review final files before Save or Gmail finalization.
 5. Preserve original failures, charges, sources and capsule evidence; record limits separately from document acceptance.
 
@@ -90,6 +94,8 @@ Any missing or changed pinned evidence blocks import. Preserve the old process u
 
 Only retained terminal translate/rebuild jobs and prepared, unconfirmed translation sessions with the original local paths are supported. Active work, reviewed-source provenance requiring in-memory handles, confirmed/finalized sessions and unavailable originals fail explicitly. No cross-session adoption or batch merging is performed.
 
-The old completed accounting object is not reconstructed: paid layout actions on a restored completed job can remain unavailable. Existing local correction, selected download and failed translation Resume retain their normal controls. Import never clears an uncertain charge, creates a reservation, accepts a native review or declares legal/content acceptance. Manually review the actual final output before Save/Gmail finalization.
+Verified soft-budget accounting is reconstructed from the capsule-pinned journal, its saved pricing catalog and dispatch limits. The restored accountant is read-only: it rechecks the pinned bytes and cannot append events or dispatch requests. Normal layout recovery may use its verified cumulative cost and existing layout budget, preserving predecessor charges. Import itself never creates a reservation or authorizes a provider request.
 
-Fictional adversarial coverage is in `tests/test_terminal_recovery.py`. The parent workflow owns integrated Standard/Full validation and approval; a local dry run is evidence of bounded restoration, not live workflow acceptance.
+Missing or mismatched accounting evidence blocks import. Historical jobs without accounting, unsupported hard budgets and missing saved pricing remain unavailable for layout authorization; unknown or in-flight costs remain blocked. Failed predecessors can share an advanced cumulative journal with a completed successor, so their older raw cost records are preserved rather than rewritten. Existing local correction, selected download and failed translation Resume retain their normal controls. Import never clears an uncertain charge, accepts a native review or declares legal/content acceptance. Manually review the actual final output before Save/Gmail finalization.
+
+Fictional adversarial coverage is in the targeted modules above, including capsule import into fresh app registries followed by retained layout recovery and retry of an interrupted intent. The parent workflow owns integrated Standard/Full validation and approval; a local dry run is evidence of bounded restoration, not live workflow acceptance.

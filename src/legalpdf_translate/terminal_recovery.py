@@ -466,6 +466,55 @@ def _config(raw, target, capsule):
     return config, state
 
 
+def _restore_accountant(raw, config, state, capsule):
+    """Recover frozen soft accounting without writing or authorizing dispatch."""
+    from .usage_accounting import DispatchAccounting, DispatchAccountingError
+    from .types import BudgetExceedPolicy
+    reference = state.dispatch_accounting
+    if not reference:
+        return None  # Historical evidence never proves zero spend.
+    if not isinstance(reference, dict):
+        _fail("accounting_identity_mismatch")
+    if type(reference.get("historical_incomplete", False)) is not bool:
+        _fail("accounting_identity_mismatch")
+    accounting_id = reference.get("id")
+    if type(accounting_id) is not str or not re.fullmatch(r"[a-f0-9]{32}", accounting_id):
+        _fail("accounting_identity_mismatch")
+    path = _pinned(capsule, Path(raw["result"]["run_dir"]) / "accounting" / accounting_id / "dispatch_accounting.json")
+    saved = _json(path)
+    identity = saved.get("run_identity")
+    events = saved.get("events")
+    if not isinstance(identity, dict) or not isinstance(events, list) or any(not isinstance(event, dict) for event in events):
+        _fail("accounting_identity_mismatch")
+    model = identity.get("model")
+    expected = {"accounting_id": accounting_id, "source_sha256": state.pdf_fingerprint,
+        "context_hash": state.context_hash, "language": state.lang,
+        "protocol": state.protocol_identity.get("protocol", "legacy_text_v1"),
+        "model": model, "protocol_identity": dict(state.protocol_identity),
+        "selection": [state.selection_start_page, state.selection_end_page],
+        "run_started_at": state.run_started_at}
+    if (identity != expected or type(model) is not str or not model.strip()
+            or state.protocol_identity.get("model", model) != model
+            or any(event.get("requested_model") != model for event in events
+                if event.get("event") == "begin" and event.get("purpose") in {"translation", "correction"})):
+        _fail("accounting_identity_mismatch")
+    # A persistent cap must never be silently replaced by a soft accountant.
+    # Unsupported hard budgets stay visible but unavailable for new layout work.
+    if (not isinstance(saved.get("dispatch_limits"), dict)
+            or any(not isinstance(value, dict) for value in saved["dispatch_limits"].values())):
+        _fail("accounting_evidence_invalid")
+    if (saved.get("budget_context") != {"hard": False}
+            or config.budget_cap_usd is not None and config.budget_on_exceed == BudgetExceedPolicy.BLOCK
+            or saved.get("pricing_catalog") is None):
+        return None
+    try:
+        return DispatchAccounting(path.parent, run_identity=expected,
+            historical_incomplete=bool(reference.get("historical_incomplete", False)),
+            _existing_journal_sha256=capsule["files"][str(path)]["sha256"])
+    except (DispatchAccountingError, ValueError, TypeError, KeyError):
+        _fail("accounting_evidence_invalid")
+
+
 def _restore_job(raw, target, capsule, jobs):
     if any(key in raw for key in ("delivery", "ordinary_layout", "layout_costs", "text_correction")):
         _fail("raw_job_is_delivery_overlay")
@@ -486,6 +535,7 @@ def _restore_job(raw, target, capsule, jobs):
         diagnostics_payload=deepcopy(raw["diagnostics"]), log_tail=list(raw["logs"]),
         result_payload=deepcopy(raw["result"]), artifacts_payload=deepcopy(raw["artifacts"]), _config=config,
         _ordinary_auto_layout_policy=state.settings.get("ordinary_auto_layout_policy"))
+    job._completed_accountant = _restore_accountant(raw, config, state, capsule)
     jobs._jobs[job.job_id] = job
     return job
 
