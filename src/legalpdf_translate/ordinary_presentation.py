@@ -8,7 +8,8 @@ W = model.W
 VERSION = 'saved_docx_layout_writer_ordinary_presentation_v6'
 
 def derive(snapshot, pages, decisions, context):
-    if type(context) is not dict or set(context) != {'selected_pages', 'page_groups'}:
+    if (type(context) is not dict or set(context) not in ({'selected_pages', 'page_groups'},
+            {'selected_pages', 'page_groups', 'local_source_folio_proof'})):
         model._fail('invalid_ordinary_writer_context')
     selected = context['selected_pages']
     groups = context['page_groups']
@@ -82,8 +83,12 @@ def derive(snapshot, pages, decisions, context):
         if (box[1] >= .85*height and box[3]-box[1] <= .12*height
                 and re.fullmatch(r'(?:(?:page|página|pagina|pág\.?|pag\.?|p\.?|صفحة|الصفحة)\s*)?[0-9\u0660-\u0669\u06f0-\u06f9]{1,4}(?:\s*(?:/|of|de|sur|من)\s*[0-9\u0660-\u0669\u06f0-\u06f9]{1,4})?',text,re.I)):
             folios.add(source)
+    from .ordinary_source_folio_proof import target_spans
+    spans = target_spans(snapshot, pages, decisions, context)
     plan = {'context':deepcopy(context),'original_paragraph_ids':original,'rendered_paragraph_ids':rendered,
-            'swaps':swaps,'suppress_generated_page':folios == set(selected)}
+            'swaps':swaps,'suppress_generated_page':folios == set(selected) or bool(spans)}
+    if 'local_source_folio_proof' in context:
+        plan['local_source_folio_spans'] = spans
     return presentation, plan
 
 def _v6_page_signature(nsmap, lang):
@@ -164,7 +169,8 @@ def independent_check(snapshot,pages,decisions,context,actual_ids,original_membe
         r=c['regions'][0];b=r['bbox_px'];f=frames[page];text=row['text'].translate({ord(ch):None for ch in '\u200e\u200f\u2066\u2067\u2069'}).strip()
         if (r['page_number']==page and b[1]>=.85*f['height_px'] and b[3]-b[1]<=.12*f['height_px']
                 and re.fullmatch(r'(?:(?:page|página|pagina|pág\.?|pag\.?|p\.?|صفحة|الصفحة)\s*)?[0-9\u0660-\u0669\u06f0-\u06f9]{1,4}(?:\s*(?:/|of|de|sur|من)\s*[0-9\u0660-\u0669\u06f0-\u06f9]{1,4})?',text,re.I)):covered.add(page)
-    if covered!=set(context['selected_pages']):model._fail('output_footer_source_coverage')
+    from .ordinary_source_folio_proof import target_spans
+    if covered!=set(context['selected_pages']) and not target_spans(snapshot,pages,decisions,context):model._fail('output_footer_source_coverage')
     rels=model._xml(original_members['word/_rels/document.xml.rels']);targets={r.get('Id'):'word/'+r.get('Target','') for r in rels}
     doc=model._xml(original_members['word/document.xml']);referenced={targets.get(r.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')) for r in doc.iter(W+'footerReference')}
     font,halfpoints = ('Arial','22') if snapshot['target_lang']=='AR' else ('Times New Roman','21')

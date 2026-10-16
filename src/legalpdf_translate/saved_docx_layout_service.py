@@ -830,7 +830,7 @@ class SavedDocxLayoutService:
             _fail("invalid_ordinary_binding")
         pages_selected = tuple(selected_pages) if type(selected_pages) in {list, tuple} else ()
         with self._scope(review_id) as folder:
-            manifest, snapshot, _ = self._load(folder)
+            manifest, snapshot, pages = self._load(folder)
             generations, _, _ = self._generations(folder)
             if expected_generation != len(generations):
                 _fail("generation_conflict", 409)
@@ -840,6 +840,17 @@ class SavedDocxLayoutService:
                 selected_pages=pages_selected, target_lang=manifest["target_lang"])
             if mapped.saved_snapshot != snapshot:
                 _fail("ordinary_snapshot_mismatch", 409)
+            from .ordinary_source_folio_proof import KEY, RECIPE_KEY, VERSION, derive_proof
+            if KEY in proposal_evidence:
+                _fail("ordinary_source_folio_proof_untrusted", 409)
+            if RECIPE_KEY in proposal_evidence:
+                from .ordinary_auto_layout import frozen_automatic_layout_policy
+                if (proposal_evidence[RECIPE_KEY] != VERSION
+                        or policy_fingerprint != frozen_automatic_layout_policy().split(":", 1)[1]):
+                    _fail("ordinary_source_folio_recipe_changed", 409)
+                proposal_evidence = {**proposal_evidence, KEY: derive_proof(
+                    _read(folder / "source.pdf", PDF_MAX_BYTES), pages, pages_selected,
+                    mapped.source_pdf_sha256)}
             base = {"version": "ordinary_binding_v1", "review_id": review_id,
                 "raw_docx_sha256": mapped.raw_docx_sha256,
                 "raw_source_map_sha256": mapped.raw_source_map_sha256,
@@ -938,7 +949,8 @@ class SavedDocxLayoutService:
         artifact = AutoCandidateArtifact(values["docx"], values["source_map"], values["core_receipt"],
             _sha(values["docx"]), _sha(values["source_map"]), _sha(values["core_receipt"]))
         verify_unreviewed_candidate(_read(folder / "original.docx", DOCX_MAX_BYTES), mapped,
-            pages, decisions, artifact, proposal_evidence=evidence["proposal_evidence"])
+            pages, decisions, artifact, proposal_evidence=evidence["proposal_evidence"],
+            source_pdf_bytes=_read(folder / "source.pdf", PDF_MAX_BYTES))
         receipt = _decode(values["receipt"])
         if (receipt != artifact.receipt | {"review_id": folder.name,
                 "candidate_id": intent["candidate_id"], "generation": generation,
@@ -1000,7 +1012,8 @@ class SavedDocxLayoutService:
             intent_raw = _write(attempt / "intent.json", intent)
             raw_docx = _read(folder / "original.docx", DOCX_MAX_BYTES)
             artifact = build_unreviewed_candidate(raw_docx, mapped, pages, decisions,
-                proposal_evidence=evidence["proposal_evidence"])
+                proposal_evidence=evidence["proposal_evidence"],
+                source_pdf_bytes=_read(folder / "source.pdf", PDF_MAX_BYTES))
             receipt = artifact.receipt | {"review_id": review_id,
                 "candidate_id": candidate_id, "generation": expected_generation,
                 "policy_fingerprint": base["policy_fingerprint"], "provider_dispatch_count": 0}

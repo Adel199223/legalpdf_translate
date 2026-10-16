@@ -22,10 +22,10 @@ _POLICY_RE = re.compile(r"source_image_unreviewed_v1:([a-f0-9]{64})\Z")
 
 def frozen_automatic_layout_policy() -> str:
     """Freeze local price, request and validation versions before translation."""
-    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3", emphasis_normalization=True, metadata_normalization=True, primary_folio_version="terminal_labeled_folio_v2")
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3", emphasis_normalization=True, metadata_normalization=True, primary_folio_version="terminal_labeled_folio_v2", source_folio_proof=True)
 
 
-def _optional_hint_policy(normalization_version: str, *, emphasis_normalization=False, metadata_normalization=False, primary_folio_version="terminal_labeled_folio_v1") -> str:
+def _optional_hint_policy(normalization_version: str, *, emphasis_normalization=False, metadata_normalization=False, primary_folio_version="terminal_labeled_folio_v1", source_folio_proof=False) -> str:
     """Exact versioned capability identities; no arbitrary historical-policy admission."""
     from .ordinary_layout_accounting import layout_accounting_policy
     from .ordinary_layout_contracts import PROPOSAL_VERSION_V3
@@ -45,12 +45,17 @@ def _optional_hint_policy(normalization_version: str, *, emphasis_normalization=
     if metadata_normalization:
         identity["metadata_band_normalization_version"] = "ordinary_metadata_band_normalization_v1"
         identity["primary_folio_version"] = primary_folio_version
+    if source_folio_proof:
+        from .ordinary_source_folio_proof import VERSION
+        identity["local_source_folio_proof_version"] = VERSION
     return ORDINARY_AUTO_LAYOUT_POLICY + ":" + hashlib.sha256(encode(identity)).hexdigest()
 
 
 def _metadata_normalization_policies() -> set[str]:
     """Exact old/new primary recipes share the same saved layout semantics."""
     return {frozen_automatic_layout_policy(), _optional_hint_policy(
+        "ordinary_optional_layout_hint_normalization_v3", emphasis_normalization=True,
+        metadata_normalization=True, primary_folio_version="terminal_labeled_folio_v2"), _optional_hint_policy(
         "ordinary_optional_layout_hint_normalization_v2", emphasis_normalization=True,
         metadata_normalization=True), _optional_hint_policy(
         "ordinary_optional_layout_hint_normalization_v2", emphasis_normalization=True,
@@ -64,7 +69,7 @@ def _source_normalization_version(policy_fingerprint):
     current_recipe = _optional_hint_policy(OPTIONAL_HINT_NORMALIZATION_V3,
         emphasis_normalization=True, metadata_normalization=True,
         primary_folio_version="terminal_labeled_folio_v2")
-    if policy_fingerprint == current_recipe.split(":", 1)[1]:
+    if policy_fingerprint in {current_recipe.split(":", 1)[1], frozen_automatic_layout_policy().split(":", 1)[1]}:
         return OPTIONAL_HINT_NORMALIZATION_V3
     if policy_fingerprint == _optional_hint_policy(OPTIONAL_HINT_NORMALIZATION_V1).split(":", 1)[1]:
         return OPTIONAL_HINT_NORMALIZATION_V1
@@ -439,6 +444,8 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
         "accounting_summary_sha256": hashlib.sha256(summary).hexdigest(),
         "requested_model": request_policy["model"], "effort": request_policy["effort"],
         "proposal_schema_version": schema_version, "pages": pages,
+        **({"local_source_folio_proof_version": "ordinary_source_folio_span_proof_v1"}
+            if policy == frozen_automatic_layout_policy() else {}),
         **({"source_evidence": {"version": "ordinary_source_evidence_v1", "pages": source_evidence}} if source_evidence else {})}
 
 

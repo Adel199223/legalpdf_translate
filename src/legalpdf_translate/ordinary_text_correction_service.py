@@ -5,7 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from . import saved_docx_layout_service as storage
-from .ordinary_layout_contracts import DeliveryArtifact, digest, encode, fail, job_identity, nonce, generation
+from .ordinary_layout_contracts import DeliveryArtifact, OrdinaryLayoutError, digest, encode, fail, job_identity, nonce, generation
 from .ordinary_text_correction import paragraphs, apply_actions, word_changes, count_correction_words, imported_word_map
 
 VERSION = "ordinary_text_correction_v1"
@@ -26,6 +26,37 @@ def _qualify_corrected_formatting(base, edited):
 
 
 class TextCorrectionMixin:
+    def _generated_page_origin(self, folder):
+        from .ordinary_layout_service import _read
+        source = folder
+        if (folder / "alias.json").exists():
+            source = self.folder(_read(folder / "alias.json")["origin_job_id"])
+        if not (source / "automatic.json").is_file():
+            fail("generated_page_removal_origin_unavailable", 409)
+        _, manifest = self._baseline(source)
+        candidate = self._verified_automatic(source, manifest, _read(source / "automatic.json"))
+        return candidate.docx_bytes, manifest["identity"]["target_lang"]
+
+    def _corrected_word_qualification(self, folder, base, edited):
+        try:
+            _qualify_corrected_formatting(base, edited)
+            return base, edited, None
+        except OrdinaryLayoutError as exc:
+            if exc.code not in {"ordinary_layout_correction_word_section_changed", "ordinary_layout_edited_layout_rebase_required"}:
+                raise
+        from .ordinary_generated_page_removal import certified_removal
+        origin, language = self._generated_page_origin(folder)
+        normalized_base, normalized_edited, certificate = certified_removal(origin, base, edited, language)
+        _qualify_corrected_formatting(normalized_base, normalized_edited)
+        return normalized_base, normalized_edited, certificate
+
+    def _corrected_word_map(self, base, edited, mapping, qualification):
+        normalized_base, normalized_edited, certificate = qualification
+        if certificate is None:
+            return imported_word_map(base, edited, mapping)
+        from .ordinary_generated_page_removal import removal_paragraph_map
+        return removal_paragraph_map(base, edited, mapping, normalized_base, normalized_edited, certificate)
+
     def _correction_findings(self, folder, view):
         from .ordinary_layout_service import _read
         findings = {}
@@ -275,8 +306,10 @@ class TextCorrectionMixin:
             fail("correction_revision_changed", 409)
         request = record["request"]
         if record.get("formatting_only"):
-            _qualify_corrected_formatting(base, output)
-            if imported_word_map(base,output,record['base_paragraph_map'])!=record['paragraph_map']:
+            qualification = self._corrected_word_qualification(folder, base, output)
+            if qualification[2] != record.get("generated_page_removal"):
+                fail('correction_revision_changed',409)
+            if self._corrected_word_map(base,output,record['base_paragraph_map'],qualification)!=record['paragraph_map']:
                 fail('correction_revision_changed',409)
         elif request["import_word"]:
             changes = word_changes(base, output)
@@ -373,12 +406,21 @@ class TextCorrectionMixin:
             if (self.state(job.job_id).get("delivery") or {}).get("kind") != "text_corrected":
                 fail("correction_selection_required", 409)
             working = self.text_corrected_review_copy(job.job_id)
+            edited = storage._read(working, storage.DOCX_MAX_BYTES)
             try:
-                changes = word_changes(raw, storage._read(working, storage.DOCX_MAX_BYTES))
+                changes = word_changes(raw, edited)
             except ValueError as exc:
-                if getattr(exc, "code", "") != "ordinary_layout_correction_no_text_changes":
+                code = getattr(exc, "code", "")
+                if code == "ordinary_layout_correction_no_text_changes":
+                    changes = []
+                elif code in {"ordinary_layout_correction_word_section_changed",
+                        "ordinary_layout_correction_word_structure_unsupported", "ordinary_layout_correction_paragraph_controls"}:
+                    qualification = self._corrected_word_qualification(folder, raw, edited)
+                    if qualification[2] is None:
+                        raise
+                    changes = []
+                else:
                     raise
-                changes = []
             if changes:
                 fail("correction_word_text_changes_pending", 409)
             self.adopt_text_corrected_word_edit(job.job_id)
@@ -400,7 +442,7 @@ class TextCorrectionMixin:
             if without_changes:
                 fail("edited_revision_changes_detected", 409)
             parent_raw=storage._read(folder / "deliveries" / parent["selection_id"] / "output.docx", storage.DOCX_MAX_BYTES)
-            _qualify_corrected_formatting(parent_raw, raw)
+            qualification = self._corrected_word_qualification(folder, parent_raw, raw)
             revision = digest(encode({"parent": parent["selection_id"], "sha256": digest(raw)}))[:32]
             destination = storage._mkdir(folder / "text_corrections" / revision)
             _put_immutable(destination / "parent.docx", storage._read(folder / "deliveries" / parent["selection_id"] / "output.docx", storage.DOCX_MAX_BYTES))
@@ -411,7 +453,11 @@ class TextCorrectionMixin:
                 word_count=count_correction_words(raw), formatting_only=True, changes=[],
                 request={"import_word": False, "actions": []},
                 base_paragraph_map=prior["paragraph_map"],
-                paragraph_map=imported_word_map(parent_raw,raw,prior['paragraph_map']))
+                paragraph_map=self._corrected_word_map(parent_raw,raw,prior['paragraph_map'],qualification))
+            if qualification[2] is not None:
+                record["generated_page_removal"] = qualification[2]
+            else:
+                record.pop("generated_page_removal", None)
             _write(folder / "text_corrections" / (revision + ".json"), record)
             self._verify_correction(folder, revision)
             delivered = storage._mkdir(folder / "deliveries" / revision)
