@@ -1,5 +1,9 @@
 # Current handoff
 
+## October 17 recent draft cleanup
+
+The later user-authorized cleanup consolidated the same-thread drafts into the latest existing unsent reply: the previously reviewed 736-word notice, the latest corrected 773-word order, and the reviewed combined fee PDF for 1,509 words. The opening is plural and original reply headers/signature remain exact. Only after full remote MIME verification, the obsolete older duplicate message was moved to Trash; it no longer appears in the draft list. The separate declaration remains pending the user’s signature, and both unrelated 2025 drafts remain unchanged. No email was sent. Private `draft_cleanup_20261017_01/consolidation_verification.json`, `after_cleanup.private.json`, `final_mime_check.json` and `cleanup_review_receipt.json` own the cleanup evidence; `shutdown_receipt.json` owns any subsequently accepted normal operating-system shutdown request. This supersedes the prior single-order-only draft state, without replaying app/provider/Save actions.
+
 ## October 17 Gmail wording correction
 
 The [wording repair](exec_plans/completed/2026-10-17_gmail_template_number.md) uses `a tradução solicitada` for one translated DOCX and `as traduções solicitadas` for several, excluding the fee PDF. Manual single-translation subjects use `Tradução`; original reply subjects/threads, signatures, attachment order and interpretation wording retain their existing behavior.
