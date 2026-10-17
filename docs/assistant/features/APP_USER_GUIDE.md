@@ -182,6 +182,7 @@ This recovery does not require weakening Word security settings or repairing/rei
 20. If one translation file resolves to a different case or court, stop and split the work into separate batches.
 21. After the last translation file, or after the interpretation honorários export generates its PDF, the app can create one Gmail reply draft in the original thread.
 22. Translation Gmail drafts attach the translated DOCX files plus the generated honorários PDF. In builds with the October 10 delivery follow-up, each translation download/attachment uses its source filename plus the target language, such as `Notice_AR.docx`. The **Honorários DOCX filename** field names the separate fee document and its matching PDF. Check [HANDOFF](../HANDOFF.md) for installed status.
+    In builds containing the October 17 wording repair, the email says `a tradução solicitada` for one translated DOCX and `as traduções solicitadas` for several; the fee PDF does not count as a translation. Original Gmail reply subjects are retained, and manual single-translation drafts use `Tradução` in their new subject. Existing drafts are not automatically rewritten; check [HANDOFF](../HANDOFF.md) for installed status.
 23. Interpretation Gmail drafts attach only the generated honorários PDF. They do not attach the original notice or any translated DOCX.
 24. When the original Gmail message explicitly names a reply email, the app now prefers that reply address for the Gmail draft instead of a weaker derived guess.
 25. The app creates a draft only. It does not send the email automatically.

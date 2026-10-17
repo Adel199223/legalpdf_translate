@@ -26,7 +26,7 @@ _HONORARIOS_SIGNATURE_MARKERS = (
 )
 _HONORARIOS_GMAIL_BODY_PREFIX = """Bom dia,
 
-Segue em anexo as traduções conforme solicitadas, bem como o requerimento de honorários. 
+Envio em anexo {translation_description} e o requerimento de honorários.
 
 Estou à disposição para quaisquer esclarecimentos adicionais que se façam necessários.
 
@@ -70,19 +70,24 @@ class GmailPrereqStatus:
 
 
 def build_honorarios_gmail_subject(case_number: str) -> str:
-    return f"Traduções e requerimento de honorários - Processo {case_number.strip()}"
+    return f"Tradução e requerimento de honorários - Processo {case_number.strip()}"
 
 
 def build_manual_interpretation_honorarios_gmail_subject(case_number: str) -> str:
     return f"Requerimento de honorários - Processo {case_number.strip()}"
 
 
-def build_honorarios_gmail_body(profile: UserProfile) -> str:
+def build_honorarios_gmail_body(profile: UserProfile, *, translation_count: int) -> str:
+    translation_description = "a tradução solicitada" if translation_count == 1 else "as traduções solicitadas"
     signature_lines = ["Atenciosamente,", profile.document_name.strip()]
     phone_number = profile.phone_number.strip()
     if phone_number:
         signature_lines.append(phone_number)
-    return _HONORARIOS_GMAIL_BODY_PREFIX + "\n".join(signature_lines) + "\n"
+    return (
+        _HONORARIOS_GMAIL_BODY_PREFIX.format(translation_description=translation_description)
+        + "\n".join(signature_lines)
+        + "\n"
+    )
 
 
 def build_interpretation_honorarios_gmail_body(profile: UserProfile) -> str:
@@ -125,7 +130,7 @@ def build_honorarios_gmail_request(
         account_email=sender_account,
         to_email=recipient,
         subject=build_honorarios_gmail_subject(process_number),
-        body=build_honorarios_gmail_body(profile),
+        body=build_honorarios_gmail_body(profile, translation_count=1),
         attachments=(resolved_translation, resolved_honorarios),
     )
 
@@ -169,7 +174,7 @@ def build_gmail_batch_reply_request(
         account_email=sender_account,
         to_email=recipient,
         subject=original_subject,
-        body=build_honorarios_gmail_body(profile),
+        body=build_honorarios_gmail_body(profile, translation_count=len(resolved_translations)),
         attachments=resolved_translations + (resolved_honorarios,),
         reply_to_message_id=reply_message_id,
     )

@@ -1,5 +1,11 @@
 # Current handoff
 
+## October 17 Gmail wording correction
+
+The [wording repair](exec_plans/completed/2026-10-17_gmail_template_number.md) uses `a tradução solicitada` for one translated DOCX and `as traduções solicitadas` for several, excluding the fee PDF. Manual single-translation subjects use `Tradução`; original reply subjects/threads, signatures, attachment order and interpretation wording retain their existing behavior.
+
+The existing unsent reply was corrected in place: same draft/thread/reply headers/signature and exact two attachment byte sequences, with all four other drafts unchanged, no new draft and no send. Private `gmail_template_number_20261017_01/draft_edit/verification_receipt.json` and `draft_edit/fresh_checkpoint_01.json` own that separate live result. Focused 54, Standard 267 and selected Full 2,153 passed; [VALIDATION.md](VALIDATION.md) records qualifications. Local application is confirmed only by a successful private `gmail_template_number_20261017_01/local_application_receipt.json`, which owns the exact canonical commit/import and runtime status. An absent or failed receipt means application remains unconfirmed; source tests and the existing-draft edit do not establish installation.
+
 ## October 15–17 order rerun — qualified workflow complete
 
 The [completed order plan](exec_plans/completed/2026-10-15_order_end_to_end_rerun.md) records actual source/content/native/download/Save/fee/unsent-draft acceptance and preserved failures. Five cumulative translation calls cost USD0.44442860; three original layout responses cost USD0.22631, for known estimated USD0.67073860, counted once. Normal Recover reused all three retained responses with zero new provider dispatches.

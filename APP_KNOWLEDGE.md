@@ -1,5 +1,9 @@
 # APP_KNOWLEDGE
 
+## October 17 Gmail translation-count wording
+
+The [completed wording repair](docs/assistant/exec_plans/completed/2026-10-17_gmail_template_number.md) derives singular/plural email wording from translated DOCX count, excluding the fee PDF. Manual single-translation subjects use `Tradução`; reply subjects/threads and interpretation wording retain their existing behavior. [HANDOFF.md](docs/assistant/HANDOFF.md) records the separately verified existing-draft correction and receipt-gated local application; [VALIDATION.md](docs/assistant/VALIDATION.md) records the checks. Source-test completion alone does not establish installation.
+
 ## October 15–17 order workflow refinements — receipt-bound implementation
 
 Reviewed local product commit `a8863276b5db2cb2def2127d9d04fc33b5157ebd` contains the following bounded repairs. [HANDOFF.md](docs/assistant/HANDOFF.md) owns their actual installed and selected-delivery acceptance status; the earlier email-retest installation below is historical.
