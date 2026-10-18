@@ -6170,7 +6170,7 @@ console.log(JSON.stringify({
         ],
     }
     assert results["loadedUnavailable"]["title"] == "Gmail message needs attention."
-    assert results["loadedUnavailable"]["message"] == "No subject"
+    assert results["loadedUnavailable"]["message"] == "Message details unavailable"
     assert results["loadedUnavailable"]["label"] == "Needs attention"
     assert results["loadedUnavailable"]["tone"] == "warn"
     assert results["loadedUnavailable"]["gridItems"][0]["value"] == "Unavailable"

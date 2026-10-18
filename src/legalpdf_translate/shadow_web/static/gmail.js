@@ -1,4 +1,5 @@
 import { fetchJson } from "./api.js";
+import { gmailFailedLoadPayload } from "./gmail_load_failure.js";
 import { applyActionFailureFeedbackToUi } from "./action_feedback_presentation.js";
 import { appState, setActiveView } from "./state.js";
 import {
@@ -1616,6 +1617,12 @@ async function loadMessage() {
       sourceGmailUrl: currentSourceGmailUrl(),
       currentMessageContext: bootstrapMessageContext(),
     })),
+  }).catch((error) => {
+    const failedPayload = gmailFailedLoadPayload(error);
+    if (!failedPayload) {
+      throw error;
+    }
+    return failedPayload;
   });
   const reviewLoadState = buildGmailReviewLoadResetState({ payload });
   applyGmailReviewLoadResetState(reviewLoadState);

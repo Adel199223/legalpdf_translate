@@ -1,3 +1,5 @@
+import { gmailLoadFailureMessage } from "./gmail_load_failure.js";
+
 export function buildGmailMessageResultPresentation({
   loadResult = null,
   defaults = {},
@@ -62,11 +64,10 @@ export function buildGmailMessageResultPresentation({
   const retainedSubject = failed
     ? loadResult.intake_context?.subject || defaults.subject || pendingContext.subject || ""
     : "";
-  const failureMessage = String(loadResult.status_message || "").trim()
-    || "Gmail message could not be loaded. Open Advanced message details to review the message and try again.";
+  const failureMessage = gmailLoadFailureMessage(loadResult);
   return {
     title: loadResult.ok ? "Gmail message ready to review." : "Gmail message needs attention.",
-    message: message.subject || retainedSubject || "No subject",
+    message: message.subject || retainedSubject || (failed ? "Message details unavailable" : "No subject"),
     label: loadResult.ok ? "Ready" : "Needs attention",
     tone: loadResult.ok
       ? "ok"

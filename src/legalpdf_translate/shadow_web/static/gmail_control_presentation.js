@@ -1,4 +1,5 @@
 import { isPreviewStateOpen } from "./gmail_review_state.js";
+import { gmailLoadFailureMessage } from "./gmail_load_failure.js";
 
 const GMAIL_REVIEW_CHROME_STATUS_TEXT = "Step 1: Choose workflow. Step 2: Pick attachment(s). Step 3: Preview or set start page if needed. Step 4: Continue.";
 const GMAIL_REVIEW_LOAD_FALLBACK_MESSAGE = "Gmail message load complete.";
@@ -94,7 +95,9 @@ export function buildGmailReviewLoadOutcomePresentation({
   }
 
   const payloadStatus = String(payload?.status || "").trim();
-  const statusMessage = payloadLoadResult?.status_message || GMAIL_REVIEW_LOAD_FALLBACK_MESSAGE;
+  const statusMessage = activeLoadResult?.ok === false
+    ? gmailLoadFailureMessage(activeLoadResult)
+    : payloadLoadResult?.status_message || GMAIL_REVIEW_LOAD_FALLBACK_MESSAGE;
   return {
     panelStatus: {
       tone: payloadStatus === "ok" ? "ok" : payloadStatus === "unavailable" ? "warn" : "bad",
