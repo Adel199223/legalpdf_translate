@@ -10,6 +10,7 @@ NUMERIC = re.compile(r"[0-9]+(?:[.,:/-][0-9]+)*")
 SEPARATORS = re.compile(r"[\s=/€$£¥]*")
 _MAX_GROUP_WORK = 200_000
 _MAX_GROUP_STATES = 10_000
+_MAX_SOURCE_LINE_WORK = 200_000
 
 
 def visible_text(text):
@@ -95,7 +96,63 @@ def _address_correction_exemptions(primary, corrected, required, source):
     return exemptions
 
 
-def _adjacent_groups_preserve(primary_view, corrected_view, protected_values):
+def _source_line_restoration_groups(primary_view, corrected_view, source):
+    """Allocate unique exact source CR/LF blocks flattened only to ASCII spaces."""
+    from .ar_source_fields import _view, _occurrences, source_address_line_blocks
+    source_view = _view(source) if source else None
+    if source_view is None:
+        return []
+    source_visible = source_view[0]
+    blocks = source_address_line_blocks(source_visible)
+    flattened = [re.sub(r"\r\n|\r|\n", " ", field.value) for field in blocks]
+    counts = Counter(flattened)
+    result, associations = [], []
+    # Each witness entails full exact-occurrence scans plus two token scans.
+    # Charge their upper bounds before scanning; no unbounded quadratic proof.
+    scan_work = len(source_visible)
+    witness_work = len(source_visible) * 2 + sum(2 * len(view[0]) + len(view[2]) for view in (primary_view, corrected_view))
+
+    def whole_group(view, start, end):
+        visible, _, tokens = view
+        owned = [(index, token) for index, token in enumerate(tokens)
+                 if token[0] < end and token[1] > start]
+        if (not owned or owned[0][1][0] != start or owned[-1][1][1] != end
+                or any(token[0] < start or token[1] > end for _, token in owned)):
+            return None
+        for (_, left), (_, right) in zip(owned, owned[1:]):
+            if not all(char.isspace() or unicodedata.category(char).startswith("P")
+                       for char in visible[left[1]:right[0]]):
+                return None
+        return sum(1 << index for index, _ in owned)
+
+    for field, flat in zip(blocks, flattened):
+        scan_work += witness_work
+        if scan_work > _MAX_SOURCE_LINE_WORK:
+            return []
+        if (counts[flat] != 1 or len(_occurrences(source_visible, field.value)) != 1
+                or _occurrences(source_visible, flat)):
+            continue
+        before = _occurrences(primary_view[0], flat)
+        after = _occurrences(corrected_view[0], field.value)
+        prior_restored = _occurrences(primary_view[0], field.value)
+        still_flat = _occurrences(corrected_view[0], flat)
+        if len(before) + len(prior_restored) != 1 or len(after) + len(still_flat) != 1:
+            continue
+        associations.append(((before or prior_restored)[0][0], (after or still_flat)[0][0]))
+        if not before or not after:
+            continue
+        left = whole_group(primary_view, *before[0])
+        right = whole_group(corrected_view, *after[0])
+        if left is not None and right is not None:
+            result.append((left, right))
+    # Restored blocks must keep their source association, including when several
+    # otherwise unique addresses appear in the same correction.
+    if any(a[0] >= b[0] or a[1] >= b[1] for a, b in zip(associations, associations[1:])):
+        return []
+    return result
+
+
+def _adjacent_groups_preserve(primary_view, corrected_view, protected_values, source=None):
     """Allocate exact whole-token groups once on each side of a correction.
 
     Group boundaries are always token boundaries, never substring boundaries.
@@ -147,6 +204,16 @@ def _adjacent_groups_preserve(primary_view, corrected_view, protected_values):
                     end += 1
                 else:
                     break
+
+    for owned, used in _source_line_restoration_groups(primary_view, corrected_view, source):
+        covered = owned & needed
+        comparisons += covered.bit_count()
+        if comparisons > _MAX_GROUP_WORK:
+            return False
+        while covered:
+            bit = covered & -covered
+            candidates[bit.bit_length() - 1].add((owned, used))
+            covered ^= bit
 
     pending, seen = [(0, 0)], set()
     while pending:
@@ -204,4 +271,4 @@ def correction_preserves_additional_literals(primary, corrected, required, sourc
         return True
     # Required occurrences also reserve their own span during regrouping. A
     # number inside a preserved street must not replace a second required number.
-    return _adjacent_groups_preserve(_view(primary), _view(corrected), set(prior) - exemptions)
+    return _adjacent_groups_preserve(_view(primary), _view(corrected), set(prior) - exemptions, source)

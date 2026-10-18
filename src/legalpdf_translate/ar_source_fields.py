@@ -78,6 +78,44 @@ def source_address_fields(text: str) -> list[SourceAddressField]:
     return sorted(set(fields), key=lambda field: field.start)
 
 
+def source_address_line_blocks(text: str) -> list[SourceAddressField]:
+    """Exact two/three-line postal witnesses; no whitespace normalization.
+
+    This narrower correction-only proof does not alter source tokenization or
+    the existing single-field equivalence rules. Only CR/LF delimiters count as
+    line boundaries; indentation and inline whitespace remain literal content.
+    """
+    if len(text) > _LIMIT:
+        return []
+    lines = list(re.finditer(r"([^\r\n]*)(\r\n|\r|\n|$)", text))
+    blocks = []
+    postal_pattern = re.compile(r"[0-9]{4}(?:-[0-9]{3})?[ \t]+(?P<town>.+)\Z")
+    for index, line in enumerate(lines):
+        street = line[1]
+        if not _STREET.match(street) or len(street) > 140:
+            continue
+        if (set(re.findall(r"\w+", street.casefold())) & _PROSE
+                or not all(_latin(c) or c.isdecimal() or unicodedata.category(c).startswith("M")
+                           or c in " \t-–—.,/()ºª'’:" for c in street)):
+            continue
+        for size in (2, 3):
+            group = lines[index:index + size]
+            if len(group) != size or not all(item[2] for item in group[:-1]):
+                continue
+            values = [item[1] for item in group]
+            if any(not value or len(value) > 140 or any(c in value for c in _HARD)
+                   for value in values):
+                continue
+            postal = postal_pattern.fullmatch(values[-1])
+            if not postal or not _locality(postal["town"]):
+                continue
+            if size == 3 and not _locality(values[1]):
+                continue
+            start, end = line.start(), group[-1].end(1)
+            blocks.append(SourceAddressField(start, end, text[start:end]))
+    return blocks
+
+
 def _inline_address_fields(text: str, existing: list[SourceAddressField]):
     """Bound inline streets by an explicit house marker and optional locality.
 
