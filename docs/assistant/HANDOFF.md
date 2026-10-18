@@ -1,5 +1,15 @@
 # Current handoff
 
+## October 18 new request — qualified local closeout
+
+The independently corrected 929-word Arabic DOCX has three reviewed native Word pages; its one-page fee PDF was also reviewed. One helper-created reply remains unsent, with exact body/attachments and preserved prior drafts confirmed by a fresh read-only check. The fiscal identifier appears in the reply body only; the saved profile and canonical fee template are unchanged. No app Save, Gmail confirmation or Send occurred.
+
+Source repair `38dc462` passed exact-head Standard/Full and is installed on canonical main. Both retained jobs, the unconfirmed prepared session and protected originals passed verification. Normal New Job/Recent Work browser smoke passed.
+
+The actual Gmail attempt and its single paid Resume retain failed outcomes and charges. Qualified retained full-evaluator evidence supports the accepted source-line repair; no third paid retry was needed or initiated.
+
+Next is root-owned docs-only canonical synchronization/restart, confirmed only by successful private `oct15_request_20261018_01/final_closeout_01/receipt.json`; that later outcome is not yet established. Do not replay consumed attempts or finalize another draft. [VALIDATION](VALIDATION.md) and the [completed request plan](exec_plans/completed/2026-10-18_oct15_request_review.md) retain exact evidence and qualifications.
+
 ## October 17 recent draft cleanup
 
 The later user-authorized cleanup consolidated the same-thread drafts into the latest existing unsent reply: the previously reviewed 736-word notice, the latest corrected 773-word order, and the reviewed combined fee PDF for 1,509 words. The opening is plural and original reply headers/signature remain exact. Only after full remote MIME verification, the obsolete older duplicate message was moved to Trash; it no longer appears in the draft list. The separate declaration remains pending the user’s signature, and both unrelated 2025 drafts remain unchanged. No email was sent. Private `draft_cleanup_20261017_01/consolidation_verification.json`, `after_cleanup.private.json`, `final_mime_check.json` and `cleanup_review_receipt.json` own the cleanup evidence; `shutdown_receipt.json` owns any subsequently accepted normal operating-system shutdown request. This supersedes the prior single-order-only draft state, without replaying app/provider/Save actions.

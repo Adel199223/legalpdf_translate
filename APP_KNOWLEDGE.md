@@ -1,5 +1,15 @@
 # APP_KNOWLEDGE
 
+## October 18 request behavior refinements
+
+A failed manual Gmail load applies the failed review state, disables preparation and shows concise reconnect guidance for expired or revoked authorization. Raw helper responses remain technical evidence; stale message-found/ready copy cannot imply successful intake.
+
+Fresh ordinary translations receive full-page Auto images and automatic layout when no prior run work exists, even with Resume checked. Genuine checkpoints and other retained artifacts keep conservative resume handling and their saved recipe.
+
+Arabic correction fidelity accepts exact whole groups of adjacent protected tokens with disjoint occurrence ownership, including required literals. A narrow source-line witness can restore original address line breaks only with unique source/primary/correction occurrences, preserved source order and bounded proof. Case, diacritics, punctuation, numbers, multiplicity and nonwhitespace text remain protected; missing or ambiguous proof, malformed wrappers and true loss stay rejected.
+
+Automatic layout remains unreviewed until source/output review. [HANDOFF](docs/assistant/HANDOFF.md) owns current acceptance and next actions; [VALIDATION](docs/assistant/VALIDATION.md) owns counts, accounting and reconstruction qualifications.
+
 ## October 17 Gmail translation-count wording
 
 The [completed wording repair](docs/assistant/exec_plans/completed/2026-10-17_gmail_template_number.md) derives singular/plural email wording from translated DOCX count, excluding the fee PDF. Manual single-translation subjects use `Tradução`; reply subjects/threads and interpretation wording retain their existing behavior. [HANDOFF.md](docs/assistant/HANDOFF.md) records the separately verified existing-draft correction and receipt-gated local application; [VALIDATION.md](docs/assistant/VALIDATION.md) records the checks. Source-test completion alone does not establish installation.

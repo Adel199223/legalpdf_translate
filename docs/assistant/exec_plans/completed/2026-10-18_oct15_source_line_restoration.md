@@ -61,3 +61,11 @@ Current bounded implementation authorization supersedes historical stage tokens;
 
 ### Handoff boundary
 Implementation and targeted review are complete. Keep this plan active until parent integration/closeout; parent owns Standard/Full validation on the clean committed child tree and any separately authorized application. Canonical main/live services, provider calls, Gmail and the parent's dirty integration docs were untouched. Local logical commit only; no push.
+
+### Parent acceptance and qualified closeout — 2026-10-18
+
+Parent accepted commit `38dc462cd72053f620f7c227b086c7c73c201ddd` after 271 focused cases, 41 independent boundary probes and the qualified retained full-evaluator comparison above. Final exact-head Standard passed 267 cases in 59.954 seconds; selected Full passed 2,160 executions with nine true intake exclusions in 2,740.159 seconds, both exit 0. All 1,221 file pins, 58 package versions and exact imports stayed unchanged; known Dart AOT wrapper failures retained successful direct-Dart fallbacks. Private `validation_source_line_final_01/receipt.json` owns this result.
+
+Canonical source installation02 passed, binding main/source head to this exact commit, backend identity `38dc462`, asset `73534205c101`, both raw failed jobs/separate nine-field GET overlays, the prepared unconfirmed session and all six preservation checks. Actual New Job/Recent Work navigation passed without Resume, Start, Save or Gmail finalization. Private `local_application_02/application_receipt.json` owns application.
+
+Original-source-pack reconstruction remains qualified; original runtime source bytes were not retained. No third paid retry or publication occurred. The bounded child implementation/acceptance scope is complete. Root retains the independent reviewed delivery and paid failures/accounting; any later docs-only canonical synchronization/restart remains separately gated by successful private `final_closeout_01/receipt.json`.
