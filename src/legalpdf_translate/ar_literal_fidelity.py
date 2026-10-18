@@ -1,12 +1,15 @@
 """Source-bound wrapper regrouping and correction literal preservation."""
 from collections import Counter
 import re
+import unicodedata
 
 from .output_normalize import LRI, PDI
 
 TOKEN = re.compile(r"(?:\u2066)?\[\[([^\[\]]+)\]\](?:\u2069)?")
 NUMERIC = re.compile(r"[0-9]+(?:[.,:/-][0-9]+)*")
 SEPARATORS = re.compile(r"[\s=/€$£¥]*")
+_MAX_GROUP_WORK = 200_000
+_MAX_GROUP_STATES = 10_000
 
 
 def visible_text(text):
@@ -92,8 +95,96 @@ def _address_correction_exemptions(primary, corrected, required, source):
     return exemptions
 
 
+def _adjacent_groups_preserve(primary_view, corrected_view, protected_values):
+    """Allocate exact whole-token groups once on each side of a correction.
+
+    Group boundaries are always token boundaries, never substring boundaries.
+    Unprotected words/numbers cannot bridge a group; visible separators remain
+    exact. This permits wrapper splits/merges without reusing a nested occurrence.
+    """
+    before, _, prior = primary_view
+    after, _, corrected = corrected_view
+    needed = sum(1 << index for index, token in enumerate(prior)
+                 if token[2] in protected_values)
+    if not needed:
+        return True
+
+    def can_extend(visible, tokens, index):
+        return index + 1 < len(tokens) and all(
+            char.isspace() or unicodedata.category(char).startswith("P")
+            for char in visible[tokens[index][1]:tokens[index + 1][0]])
+
+    candidates = {index: set() for index in range(len(prior)) if needed & (1 << index)}
+    comparisons = 0
+    for start in range(len(prior)):
+        for target in range(len(corrected)):
+            end, target_end = start, target
+            while True:
+                comparisons += 1
+                if comparisons > _MAX_GROUP_WORK:
+                    return False  # Ambiguous regrouping never weakens fidelity.
+                left = before[prior[start][0]:prior[end][1]]
+                right = after[corrected[target][0]:corrected[target_end][1]]
+                if left == right:
+                    owned = ((1 << (end + 1)) - (1 << start))
+                    used = ((1 << (target_end + 1)) - (1 << target))
+                    covered = owned & needed
+                    comparisons += covered.bit_count()
+                    if comparisons > _MAX_GROUP_WORK:
+                        return False
+                    while covered:
+                        bit = covered & -covered
+                        candidates[bit.bit_length() - 1].add((owned, used))
+                        covered ^= bit
+                    if not (can_extend(before, prior, end)
+                            and can_extend(after, corrected, target_end)):
+                        break
+                    end += 1
+                    target_end += 1
+                elif left.startswith(right) and can_extend(after, corrected, target_end):
+                    target_end += 1
+                elif right.startswith(left) and can_extend(before, prior, end):
+                    end += 1
+                else:
+                    break
+
+    pending, seen = [(0, 0)], set()
+    while pending:
+        owned, used = pending.pop()
+        if needed & ~owned == 0:
+            return True
+        if (owned, used) in seen:
+            continue
+        seen.add((owned, used))
+        if len(seen) > _MAX_GROUP_STATES:
+            return False
+        options = []
+        for index, matches in candidates.items():
+            if owned & (1 << index):
+                continue
+            available = []
+            for left, right in matches:
+                comparisons += 1
+                if comparisons > _MAX_GROUP_WORK:
+                    return False
+                if not left & owned and not right & used:
+                    available.append((left, right))
+            if not available:
+                options = []
+                break
+            if not options or len(available) < len(options):
+                options = available
+        for left, right in options:
+            if len(pending) + len(seen) >= _MAX_GROUP_STATES:
+                return False
+            pending.append((owned | left, used | right))
+    return False
+
+
 def correction_preserves_additional_literals(primary, corrected, required, source=None):
-    from .ar_source_fields import canonicalize_source_address_literals
+    from .ar_source_fields import canonicalize_source_address_literals, _view
+    if _view(primary) is None or _view(corrected) is None:
+        return False
     primary_canonical, canonical_required, _, primary_error = canonicalize_source_address_literals(primary, source, required)
     corrected_canonical, corrected_required, _, corrected_error = canonicalize_source_address_literals(corrected, source, required)
     if corrected_error:
@@ -108,4 +199,9 @@ def correction_preserves_additional_literals(primary, corrected, required, sourc
     after = Counter(match[1] for match in TOKEN.finditer(corrected))
     additional = prior - Counter(required or [])
     exemptions = _address_correction_exemptions(primary, corrected, required, source)
-    return all(value in exemptions or after[value] >= prior[value] for value in additional)
+    protected = set(additional) - exemptions
+    if all(after[value] >= prior[value] for value in protected):
+        return True
+    # Required occurrences also reserve their own span during regrouping. A
+    # number inside a preserved street must not replace a second required number.
+    return _adjacent_groups_preserve(_view(primary), _view(corrected), set(prior) - exemptions)
