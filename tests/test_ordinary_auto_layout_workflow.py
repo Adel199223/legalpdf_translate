@@ -254,6 +254,78 @@ def _wait(manager, job_id):
     pytest.fail("Browser translation did not settle in time")
 
 
+@pytest.mark.parametrize("prior", ["missing", "empty", "lock_only"])
+def test_resume_checked_without_prior_run_keeps_fresh_images_and_layout(tmp_path, monkeypatch, prior):
+    source = tmp_path / "fictional.pdf"
+    output = tmp_path / "output"
+    output.mkdir()
+    _source(source, ("digital",))
+    from legalpdf_translate.checkpoint import build_run_paths
+    from legalpdf_translate.types import TargetLang
+    paths = build_run_paths(output, source, TargetLang.EN)
+    if prior != "missing":
+        paths.run_dir.mkdir()
+    if prior == "lock_only":
+        (paths.run_dir / ".run_workspace.lock").write_bytes(b"0")
+    app, manager, sdk, layout_requests = _app(tmp_path, monkeypatch,
+        ("English page alpha 42",), (1,))
+    with TestClient(app) as client:
+        job_id = _start(client, source, output, "EN", start=1, end=1,
+                        image_mode="auto", resume=True)
+        job = _wait(manager, job_id)
+    assert job["status"] == "completed", (job["status_text"], job["logs"], job["diagnostics"])
+    assert job["config"]["resume"] is True
+    assert job["result"]["automatic_layout"]["status"] == "automatic_unreviewed"
+    assert len(sdk.requests) == len(layout_requests) == 1
+    assert any(part.get("type") == "input_image"
+               for item in sdk.requests[0]["input"] for part in item.get("content", [])
+               if isinstance(part, dict))
+    state = json.loads(paths.run_state_path.read_text())
+    assert state["settings"]["ordinary_auto_layout_policy"]
+    events = [json.loads(line) for line in (paths.run_dir / "run_events.jsonl").read_text().splitlines()]
+    decision = next(event["decisions"] for event in events if event["event_type"] == "page_image_decision")
+    assert decision["image_used"] is True
+    assert decision["reason"] == "ordinary_full_page_visual_source"
+
+
+def test_real_legacy_checkpoint_resume_does_not_purchase_new_layout(tmp_path, monkeypatch):
+    source = tmp_path / "fictional.pdf"
+    output = tmp_path / "output"
+    output.mkdir()
+    _source(source, ("digital",))
+    app, manager, sdk, layout_requests = _app(tmp_path, monkeypatch,
+        ("English retained translation 42",), (1,))
+    automatic_runner = manager._automatic_layout_runner
+    # Produce a genuine legacy checkpoint through the actual workflow.
+    manager._automatic_layout_runner = None
+    with TestClient(app) as client:
+        original = _wait(manager, _start(client, source, output, "EN", start=1, end=1,
+                                        image_mode="auto", resume=False))
+        assert original["status"] == "completed", original
+        run_dir = Path(original["result"]["run_dir"])
+        before = json.loads((run_dir / "run_state.json").read_text())
+        assert "ordinary_auto_layout_policy" not in before["settings"]
+        assert len(sdk.requests) == 1 and not layout_requests
+        manager._automatic_layout_runner = automatic_runner
+        resumed = _wait(manager, _start(client, source, output, "EN", start=1, end=1,
+                                       image_mode="auto", resume=True))
+    assert resumed["status"] == "completed", (resumed["status_text"], resumed["logs"], resumed["diagnostics"])
+    assert "automatic_layout" not in resumed["result"]
+    after = json.loads((run_dir / "run_state.json").read_text())
+    assert after["settings"] == before["settings"]
+    assert after["dispatch_accounting"] == before["dispatch_accounting"]
+    assert len(sdk.requests) == 1 and not layout_requests
+
+
+@pytest.mark.parametrize("artifact", ["run_state.json", "accounting/orphan.json", "pages/page_0001.txt"])
+def test_damaged_or_orphaned_run_is_not_classified_as_fresh(tmp_path, artifact):
+    path = tmp_path / "run" / artifact
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"unreadable retained evidence")
+    assert translation_service._has_prior_run_evidence(tmp_path / "run")
+    assert path.read_bytes() == b"unreadable retained evidence"
+
+
 @pytest.mark.parametrize("lang,kinds,start,end,image_mode", [
     ("EN", ("digital", "digital"), 1, 2, "off"),
     ("FR", ("digital", "raster", "digital"), 2, 3, "always"),

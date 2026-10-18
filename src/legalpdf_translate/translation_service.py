@@ -815,6 +815,18 @@ def _serialize_run_config(config: RunConfig) -> dict[str, Any]:
     }
 
 
+def _has_prior_run_evidence(run_dir: Path) -> bool:
+    """Resume preferences alone do not turn an empty folder into a saved run.
+
+    Retain even unreadable checkpoints and orphaned accounting/page artifacts as
+    prior evidence. The workflow owns their validation and pinned recipe recovery.
+    A workspace lock by itself contains no run state.
+    """
+    return run_dir.exists() and any(
+        item.name != ".run_workspace.lock" for item in run_dir.iterdir()
+    )
+
+
 def build_translation_bootstrap(
     *,
     settings_path: Path,
@@ -1823,14 +1835,13 @@ class TranslationJobManager:
             if (job_kind not in {"translate", "rebuild"} or type(reviewed_source_context) is not OrdinaryReviewedSourceContext
                     or not callable(reviewed_source_loader)):
                 raise ValueError("ordinary_source_review_job_context_invalid")
-        reservation_key = _run_dir_key(
-            build_run_paths(
-                config.output_dir,
-                config.pdf_path,
-                config.target_lang,
-                gmail_batch_context=config.gmail_batch_context,
-            ).run_dir
-        )
+        reserved_run_dir = build_run_paths(
+            config.output_dir,
+            config.pdf_path,
+            config.target_lang,
+            gmail_batch_context=config.gmail_batch_context,
+        ).run_dir
+        reservation_key = _run_dir_key(reserved_run_dir)
         self._reserve(reservation_key)
         job_id = f"tx-{uuid.uuid4().hex[:12]}"
         created_at = _utc_now_iso()
@@ -1888,7 +1899,8 @@ class TranslationJobManager:
                     from .translation_policy import resolve_ordinary_auto_layout_policy, resolve_translation_protocol
                     auto_policy = resolve_ordinary_auto_layout_policy(
                         protocol=resolve_translation_protocol(),
-                        fresh_browser_job=not config.resume and self._automatic_layout_runner is not None,
+                        fresh_browser_job=self._automatic_layout_runner is not None and (
+                            not config.resume or not _has_prior_run_evidence(reserved_run_dir)),
                         reviewed_source=selected_context is not None)
                     if auto_policy and self._automatic_layout_runner is None:
                         raise ValueError("ordinary_auto_layout_runner_unavailable")
