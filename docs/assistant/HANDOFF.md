@@ -8,7 +8,7 @@ Source repair `38dc462` passed exact-head Standard/Full and is installed on cano
 
 The actual Gmail attempt and its single paid Resume retain failed outcomes and charges. Qualified retained full-evaluator evidence supports the accepted source-line repair; no third paid retry was needed or initiated.
 
-Next is root-owned docs-only canonical synchronization/restart, confirmed only by successful private `oct15_request_20261018_01/final_closeout_01/receipt.json`; that later outcome is not yet established. Do not replay consumed attempts or finalize another draft. [VALIDATION](VALIDATION.md) and the [completed request plan](exec_plans/completed/2026-10-18_oct15_request_review.md) retain exact evidence and qualifications.
+The final docs/runtime SHA and completion are owned by private `oct15_request_20261018_01/final_closeout_01/receipt.json`: a successful receipt establishes completion; absent or failed means docs synchronization remains pending. Do not replay consumed attempts or finalize another draft. [VALIDATION](VALIDATION.md) and the [completed request plan](exec_plans/completed/2026-10-18_oct15_request_review.md) retain exact evidence and qualifications.
 
 ## October 17 recent draft cleanup
 

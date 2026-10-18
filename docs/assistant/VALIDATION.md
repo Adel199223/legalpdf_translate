@@ -10,7 +10,7 @@ Focused runs of 276, 58, 199 and later 271 cases overlap; 41 independent source-
 
 The retained Gmail run has six dispatches and cumulative known USD0.60193, including Resume's USD0.1665223 increment, with no unknown/in-flight calls at the forensic checkpoint. Completed pages/state and historical event/ledger prefixes remain exact. The earlier unbound manual attempt/accounting is separate; failed jobs retain their historical outcome. No third paid retry was needed or performed.
 
-`local_application_02/application_receipt.json` verifies canonical main/backend `38dc462`, asset `73534205c101`, both raw jobs and nine GET-overlay fields each, the prepared unconfirmed session and all six preservation checks. Actual New Job/Recent Work saved-case navigation passed without Resume/Start/Save/Gmail finalization. Later docs-only canonical synchronization/restart remains unconfirmed until successful `final_closeout_01/receipt.json`; that future receipt is not inferred from source installation.
+`local_application_02/application_receipt.json` verifies canonical main/backend `38dc462`, asset `73534205c101`, both raw jobs and nine GET-overlay fields each, the prepared unconfirmed session and all six preservation checks. Actual New Job/Recent Work saved-case navigation passed without Resume/Start/Save/Gmail finalization. Final docs/runtime SHA and docs synchronization/completion are owned by `final_closeout_01/receipt.json`: a successful receipt establishes completion; absent or failed means synchronization remains pending. Source installation alone does not establish that result.
 
 ## October 17 Gmail translation-count wording
 
