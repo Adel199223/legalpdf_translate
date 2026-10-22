@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import math
 import hashlib
 import json
 import os
 import random
+import re
 import time
 from copy import copy, deepcopy
 from dataclasses import dataclass, field
@@ -29,7 +31,7 @@ from .secrets_store import get_ocr_key, get_openai_key
 from .usage_accounting import MemoryDispatchAccounting, current_accounting_binding
 
 _AUTH_TEST_ACCOUNTING = MemoryDispatchAccounting()
-_TRANSLATION_MODELS = frozenset({"gpt-5.2", "gpt-5.6-terra", "gpt-5.6-sol"})
+_TRANSLATION_MODELS = frozenset({"gpt-5.2", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"})
 
 
 @dataclass(slots=True)
@@ -66,6 +68,9 @@ class ApiCallError(RuntimeError):
     model: str = ""
     effort: str = ""
     attempt_usage: list[dict[str, Any]] = field(default_factory=list)
+    # Retained privately by run-owned evidence handlers; never expose through
+    # the public error message or dataclass representation.
+    raw_output: str | None = field(default=None, repr=False)
 
     def __str__(self) -> str:
         return self.message
@@ -246,6 +251,15 @@ class OpenAIResponsesClient:
             cloned._logger = logger
         return cloned
 
+    def for_semantic_review(self, *, model: str) -> OpenAIResponsesClient:
+        """Dedicated real role, retaining configured transport/retries and primary."""
+        from .semantic_review_model_policy import MODEL
+        if model != MODEL:
+            raise ValueError("An approved dedicated semantic model is required.")
+        selected = self.clone()
+        selected._model = model
+        return selected
+
     def local_credential_preflight(self) -> TranslationAuthTestResult:
         """Check local configuration only; the first work request proves auth."""
         return TranslationAuthTestResult(
@@ -266,12 +280,14 @@ class OpenAIResponsesClient:
     def prepare_page_request(
         self, *, instructions: str, prompt_text: str, effort: str,
         image_data_url: str | None = None, image_detail: str = "low",
+        image_data_urls: list[str] | tuple[str, ...] | None = None,
         response_format: dict[str, Any] | None = None, max_output_tokens: int | None = None,
         timeout_seconds: float | None = None, cancel_check: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """Pure preparation of the exact bounded request; never dispatch/approve it."""
         request = _build_page_request(instructions=instructions, prompt_text=prompt_text,
             effort=effort, image_data_url=image_data_url, image_detail=image_detail,
+            image_data_urls=image_data_urls,
             response_format=response_format, max_output_tokens=max_output_tokens, model=self.model)
         active = _active_accountant(self._dispatch_accounting)
         _, limits = _dispatch_limits(active, provider="openai", purpose=None, model=request["model"])
@@ -285,13 +301,14 @@ class OpenAIResponsesClient:
         effort: str,
         image_data_url: str | None = None,
         image_detail: str = "low",
+        image_data_urls: list[str] | tuple[str, ...] | None = None,
         timeout_seconds: float | None = None,
         response_format: dict[str, Any] | None = None,
         max_output_tokens: int | None = None,
         cancel_check: Callable[[], bool] | None = None,
     ) -> ApiCallResult:
         # Existing callers, including their request shape and retry policy, stay legacy.
-        if response_format is None and max_output_tokens is None and cancel_check is None:
+        if image_data_urls is None and response_format is None and max_output_tokens is None and cancel_check is None:
             return self._create_legacy_page_response(
                 instructions=instructions, prompt_text=prompt_text, effort=effort,
                 image_data_url=image_data_url, image_detail=image_detail, timeout_seconds=timeout_seconds,
@@ -308,6 +325,7 @@ class OpenAIResponsesClient:
             raise ValueError("A strict named JSON-schema response format is required.")
         page_request = _build_page_request(instructions=instructions, prompt_text=prompt_text,
             effort=effort, image_data_url=image_data_url, image_detail=image_detail,
+            image_data_urls=image_data_urls,
             response_format=response_format, max_output_tokens=max_output_tokens, model=self.model)
 
         last_error: Exception | None = None
@@ -322,6 +340,7 @@ class OpenAIResponsesClient:
         refused = False
         incomplete_reason: str | None = None
         actual_model = self.model
+        retained_output: str | None = None
         overall_timeout_seconds = (
             float(timeout_seconds)
             if timeout_seconds is not None
@@ -343,6 +362,7 @@ class OpenAIResponsesClient:
                 usage=dict(usage), response_id=response_id, response_status=response_status,
                 refused=refused, incomplete_reason=incomplete_reason, model=actual_model, effort=effort,
                 attempt_usage=deepcopy(attempt_usage),
+                raw_output=retained_output,
             )
 
         def _check_cancel() -> None:
@@ -376,6 +396,7 @@ class OpenAIResponsesClient:
             recorded = False
             usage, response_id, response_status = {}, None, ""
             refused, incomplete_reason, actual_model = False, None, self.model
+            retained_output = None
             try:
                 if self._pre_call_jitter_seconds > 0:
                     jitter_seconds = min(random.uniform(0.0, self._pre_call_jitter_seconds), remaining_budget)
@@ -404,14 +425,17 @@ class OpenAIResponsesClient:
                     "refused": refused, "incomplete_reason": incomplete_reason,
                 })
                 recorded = True
+                try:
+                    retained_output = _extract_output_text(response)
+                except RuntimeError:
+                    retained_output = None
                 if refused:
                     raise _failure("RefusalResponseError", "The provider refused this response; it was not accepted.")
                 if response_status != "completed" or _has_incomplete_message(response):
                     raise _failure("IncompleteResponseError", "The provider response did not complete; partial text was not accepted.")
-                try:
-                    output = _extract_output_text(response)
-                except RuntimeError:
+                if retained_output is None:
                     raise _failure("EmptyResponseError", "The provider response contained no usable text.") from None
+                output = retained_output
                 if not output.strip():
                     raise _failure("EmptyResponseError", "The provider response contained no usable text.")
                 _check_cancel()
@@ -434,6 +458,12 @@ class OpenAIResponsesClient:
                     usage = _extract_usage(error_response) if error_response is not None else {}
                     response_id = _field(error_response, "id")
                     actual_model = _field(error_response, "model") or self.model
+                    if self.model == "gpt-6-astra":
+                        try:
+                            retained_output = _extract_output_text(error_response)
+                        except RuntimeError:
+                            retained_output = None
+                        response_status = _field(error_response, "status") or ""
                     attempt_usage.append({"attempt": attempt + 1, "usage": dict(usage), "response_id": response_id,
                                           "model": actual_model, "effort": effort, "status": "transport_failed"})
                 last_error = exc
@@ -728,6 +758,7 @@ def _run_translation_auth_test_request(
 
 def _build_page_request(*, instructions: str, prompt_text: str, effort: str,
                         image_data_url: str | None = None, image_detail: str = "low",
+                        image_data_urls: list[str] | tuple[str, ...] | None = None,
                         response_format: dict[str, Any] | None = None,
                         max_output_tokens: int | None = None,
                         model: str = OPENAI_MODEL) -> dict[str, Any]:
@@ -739,8 +770,11 @@ def _build_page_request(*, instructions: str, prompt_text: str, effort: str,
         or not isinstance(response_format.get("name"), str) or not response_format["name"]
     ):
         raise ValueError("A strict named JSON-schema response format is required.")
+    images = _validated_page_images(image_data_url, image_data_urls)
     content = [{"type": "input_text", "text": prompt_text}]
-    if image_data_url:
+    if images is not None:
+        content.extend({"type": "input_image", "image_url": url, "detail": image_detail} for url in images)
+    elif image_data_url:
         content.append({"type": "input_image", "image_url": image_data_url, "detail": image_detail})
     request = {"model": model, "instructions": instructions,
                "input": [{"role": "user", "content": content}],
@@ -750,6 +784,29 @@ def _build_page_request(*, instructions: str, prompt_text: str, effort: str,
     if max_output_tokens is not None:
         request["max_output_tokens"] = max_output_tokens
     return request
+
+
+def _validated_page_images(
+    image_data_url: str | None, image_data_urls: list[str] | tuple[str, ...] | None,
+) -> tuple[str, ...] | None:
+    """Validate only explicit plural input; historical single-image values stay untouched."""
+    if image_data_urls is None:
+        return None
+    if image_data_url is not None:
+        raise ValueError("Single-image and multiple-image inputs cannot be combined.")
+    if not isinstance(image_data_urls, (list, tuple)) or not 1 <= len(image_data_urls) <= 12:
+        raise ValueError("image_data_urls must be a list or tuple containing 1 to 12 image data URLs.")
+    images = tuple(image_data_urls)
+    for url in images:
+        if not isinstance(url, str) or re.fullmatch(
+            r"data:image/[A-Za-z0-9][A-Za-z0-9.+-]*;base64,[A-Za-z0-9+/]+={0,2}", url,
+        ) is None:
+            raise ValueError("Each image must be a nonempty base64 image data URL.")
+        try:
+            base64.b64decode(url.split(",", 1)[1], validate=True)
+        except ValueError:
+            raise ValueError("Each image must be a valid base64 image data URL.") from None
+    return images
 
 
 def _apply_openai_dispatch_limits(request: dict[str, Any], accountant: Any,
@@ -843,14 +900,16 @@ def _error_response(exc: BaseException) -> Any:
 
 def _finish_openai_attempt(accountant: Any, ticket: Any, *, response: Any, outcome: str,
                            error_code: str | None = None, billing_scope: str | None = None,
-                           currency: str = "USD") -> None:
-    usage = _extract_usage(response)
+                           currency: str = "USD", strict_semantic: bool = False,
+                           semantic_response_evidence=None) -> Any:
+    usage = _field(response, "usage") if strict_semantic else _extract_usage(response)
     response_id, actual_model = _field(response, "id"), _field(response, "model")
     try:
-        accountant.finish(ticket, outcome=outcome, usage=usage, response_id=response_id,
+        return accountant.finish(ticket, outcome=outcome, usage=usage, response_id=response_id,
                           actual_model=actual_model, error_code=error_code,
                           actual_service_tier=_field(response, "service_tier"),
-                          actual_billing_scope=billing_scope, currency=currency)
+                          actual_billing_scope=billing_scope, currency=currency,
+                          **({"semantic_response_evidence": semantic_response_evidence} if strict_semantic else {}))
     except Exception as exc:
         # Accounting storage failure must not discard the response's billed
         # usage from the app error. Retain only content-free response evidence.
@@ -871,6 +930,24 @@ def _accounted_openai_create(
         request = _apply_openai_dispatch_limits(request, active, limits)
         billing_scope = _trusted_billing_scope(client, limits)
         currency = limits.get("currency", "USD")
+        from .semantic_review_billing import MODEL as semantic_model, strict_limits
+        strict_semantic = request["model"] == semantic_model
+        if strict_semantic:
+            from .usage_accounting import DispatchAccounting
+            from .semantic_review_model_policy import validate_policy, KEY
+            if (not isinstance(active, DispatchAccounting) or purpose != "semantic_audit"
+                    or not strict_limits(limits) or billing_scope != "openai_public_api" or currency != "USD"):
+                raise ValueError("Dedicated semantic review requires its native billing policy.")
+            validate_policy(active.run_identity.get(KEY))
+            if active.hard_budget:
+                raise ValueError("Dedicated semantic review has no verified strict BLOCK reservation envelope.")
+            raw_create = getattr(getattr(client.responses, "with_raw_response", None), "create", None)
+            if not callable(raw_create):
+                raise ValueError("Dedicated semantic review requires raw SDK response evidence.")
+            snapshot = active.pricing_snapshot
+            if snapshot is None or snapshot.resolve("openai", semantic_model, service_tier="default",
+                    billing_scope=billing_scope, currency=currency).status != "available":
+                raise ValueError("Dedicated semantic review requires its immutable native price catalog.")
         if active.hard_budget and billing_scope is None:
             raise ValueError("Hard-budget dispatch requires a verified billing endpoint and scope.")
         request_hash, observed = _request_accounting_details(request)
@@ -919,19 +996,52 @@ def _accounted_openai_create(
                 actual_model=request["model"], response_id=None, error_code=type(exc).__name__)
             exc._legalpdf_not_dispatched = True  # type: ignore[attr-defined]
             raise
-        response = client.responses.create(**request)
+        if strict_semantic:
+            raw_response = raw_create(**request)
+            response, semantic_response_proof = active.retain_semantic_response(ticket, raw_response.content)
+        else:
+            response = client.responses.create(**request)
     except BaseException as exc:
         if getattr(exc, "_legalpdf_not_dispatched", False):
             raise
         evidence = _error_response(exc)
-        _finish_openai_attempt(active, ticket, response=evidence,
+        strict_arguments = {}
+        if strict_semantic:
+            raw = getattr(getattr(exc, "response", None), "content", None)
+            evidence, semantic_response_proof = active.retain_semantic_response(ticket,
+                raw if isinstance(raw, bytes) else b"")
+            strict_arguments = {"strict_semantic": True, "semantic_response_evidence": semantic_response_proof}
+            exc.body = evidence
+        finish = _finish_openai_attempt(active, ticket, response=evidence,
             outcome="timeout" if isinstance(exc, APITimeoutError) else "failed", error_code=type(exc).__name__,
-            billing_scope=billing_scope, currency=currency)
+            billing_scope=billing_scope, currency=currency, **strict_arguments)
+        if strict_semantic and (not isinstance(finish, dict) or finish.get("cost_usd") is None):
+            raise _semantic_billing_failure(evidence, request) from exc
         raise
-    _finish_openai_attempt(active, ticket, response=response,
+    finish = _finish_openai_attempt(active, ticket, response=response,
                           outcome="refused" if _has_refusal(response) else "succeeded",
-                          billing_scope=billing_scope, currency=currency)
+                          billing_scope=billing_scope, currency=currency,
+                          **({"strict_semantic": True, "semantic_response_evidence": semantic_response_proof}
+                              if strict_semantic else {}))
+    if strict_semantic and (not isinstance(finish, dict) or finish.get("cost_usd") is None):
+        raise _semantic_billing_failure(response, request)
     return response
+
+
+def _semantic_billing_failure(response, request):
+    try:
+        output = _extract_output_text(response)
+    except RuntimeError:
+        output = None
+    reason = _field(_field(response, "incomplete_details"), "reason")
+    return ApiCallError(message="Dedicated semantic review billing evidence is unsupported; no further dispatch is allowed.",
+        status_code=None, exception_class="SemanticReviewBillingError", transport_retries_count=0,
+        last_backoff_seconds=0, total_backoff_seconds=0, rate_limit_hit=False,
+        usage=_extract_usage(response), response_id=_field(response, "id"),
+        response_status=_field(response, "status") or "", refused=_has_refusal(response),
+        incomplete_reason=reason if reason in {"max_output_tokens", "content_filter", "steered"} else None,
+        model=_field(response, "model") or "", effort=request.get("reasoning", {}).get("effort", ""),
+        raw_output=output)
 
 
 def _is_retryable(exc: Exception) -> bool:

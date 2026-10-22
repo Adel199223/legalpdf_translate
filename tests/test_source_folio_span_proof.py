@@ -166,9 +166,11 @@ def test_historical_evidence_keeps_old_behavior_and_new_policy_has_distinct_iden
     assert _source_normalization_version(old.split(":", 1)[1]) == "ordinary_optional_layout_hint_normalization_v3"
 
 
-def test_service_generates_proof_locally_and_replays_from_retained_source(tmp_path):
+@pytest.mark.parametrize("policy_kind", ["fresh", "prior_source_v3", "prior_labeled_v2"])
+def test_service_generates_proof_locally_and_replays_from_retained_source(tmp_path, policy_kind):
     from legalpdf_translate.saved_docx_layout_service import SavedDocxLayoutService
-    from legalpdf_translate.ordinary_auto_layout import frozen_automatic_layout_policy
+    from legalpdf_translate.ordinary_auto_layout import (
+        frozen_automatic_layout_policy, _source_bound_v3_policy, _optional_hint_policy)
     values = fixture(tmp_path); raw, _, _, _, _, pdf, mapping = values
     service = SavedDocxLayoutService(tmp_path / "app", mode="shadow", workspace_id="fixture")
     imported = service.import_document(pdf, raw, "AR", uuid.uuid4().hex)
@@ -183,8 +185,23 @@ def test_service_generates_proof_locally_and_replays_from_retained_source(tmp_pa
             choice.update(role="source_folio", regions=[{"page_number":page,"bbox_px":[0,frame["height_px"]*.9,frame["width_px"],frame["height_px"]*.98]}])
     saved = service.save_decisions(review_id, view["generation"], uuid.uuid4().hex, decisions)
     evidence = {"version":"fictional_proposal_v1", "document_reviewed":False, RECIPE_KEY:VERSION}
-    service.attach_ordinary_binding(review_id, mapping, (1,2,3), frozen_automatic_layout_policy().split(":",1)[1], evidence, expected_generation=saved["generation"])
+    policy = (frozen_automatic_layout_policy() if policy_kind == "fresh" else
+        _source_bound_v3_policy() if policy_kind == "prior_source_v3" else
+        _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3",
+            emphasis_normalization=True, metadata_normalization=True,
+            primary_folio_version="terminal_labeled_folio_v2", source_folio_proof=True))
+    fingerprint = policy.split(":",1)[1]
+    service.attach_ordinary_binding(review_id, mapping, (1,2,3), fingerprint, evidence, expected_generation=saved["generation"])
+    # Retained generation/evidence can be reattached without rewriting it.
+    folder = service._folder(review_id)
+    retained = {str(p.relative_to(folder)): p.read_bytes() for p in folder.rglob("*.json")}
+    service.attach_ordinary_binding(review_id, mapping, (1,2,3), fingerprint, evidence, expected_generation=saved["generation"])
+    assert retained == {str(p.relative_to(folder)): p.read_bytes() for p in folder.rglob("*.json")}
     built = service.build_unreviewed_candidate(review_id, saved["generation"], uuid.uuid4().hex)
     verified = service.verified_unreviewed_candidate(review_id,built["candidate_id"])
     assert not has_page(verified.docx_bytes)
     assert KEY not in evidence
+    with pytest.raises(ValueError, match="ordinary_source_folio_direction_changed"):
+        service.attach_ordinary_binding(review_id, mapping, (1,2,3), fingerprint,
+            {**evidence, "source_folio_direction_version": "numeric_run_ltr_v3"},
+            expected_generation=saved["generation"])

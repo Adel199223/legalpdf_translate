@@ -84,6 +84,7 @@ class OcrResult:
     structure: dict[str, Any] | None = None
     structure_metadata: dict[str, Any] | None = None
     local_evidence: LocalOcrEvidence | None = field(default=None, repr=False)
+    text_transport_evidence: dict[str, Any] | None = field(default=None, repr=False)
 
 
 class OCREngine(Protocol):
@@ -127,6 +128,7 @@ class OcrEngineConfig:
     api_model: str | None = None
     api_key_env_name: str = OPENAI_OCR_DEFAULT_ENV
     api_timeout_seconds: float = float(DEFAULT_OCR_API_TIMEOUT_SECONDS)
+    text_transport_policy: str | None = None
 
 
 def ocr_engine_config_from_run_config(config: RunConfig) -> OcrEngineConfig:
@@ -603,6 +605,7 @@ class ApiOcrEngine:
         model: str,
         base_url: str | None = None,
         timeout_seconds: float = float(DEFAULT_OCR_API_TIMEOUT_SECONDS),
+        text_transport_policy: str | None = None,
     ) -> None:
         if not api_key.strip():
             raise ValueError("OCR API key is required for API OCR engine.")
@@ -616,6 +619,11 @@ class ApiOcrEngine:
         self._model = model.strip()
         self._timeout_seconds = max(0.1, float(timeout_seconds))
         self._dispatch_accounting = MemoryDispatchAccounting()
+        self._text_transport_policy = text_transport_policy
+        if text_transport_policy is not None:
+            from .ocr_text_transport import POLICY, OcrTextTransportError
+            if text_transport_policy != POLICY:
+                raise OcrTextTransportError("unsupported_policy")
 
     def ocr_image(
         self,
@@ -625,6 +633,20 @@ class ApiOcrEngine:
         source_type: Literal["pdf", "image"] = "pdf",
     ) -> OcrResult:
         _ = source_type
+        if self._text_transport_policy is not None:
+            from . import ocr_text_transport as transport
+            encoded = base64.b64encode(image_bytes).decode("ascii")
+            prompt = transport.INSTRUCTIONS + (f" Language hint: {lang_hint}." if lang_hint else "")
+            text, evidence = transport.acquire(client=self._client, fallback_accountant=self._dispatch_accounting,
+                image_bytes=image_bytes, request={"model": self._model, "input": [{"role": "user", "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": "data:image/png;base64,"+encoded, "detail": "high"}]}],
+                    "text": {"format": transport.response_format()}, "store": False, "timeout": self._timeout_seconds})
+            return OcrResult(text=text, engine="api", failed_reason=None, chars=len(text),
+                quality_score=_text_quality_score(text), selected_pass="api_single_pass",
+                attempts=[{"pass":"api_single_pass", "lang":_source_profile_from_hint(lang_hint), "psm":0,
+                    "status":"ok", "reason":"", "chars":len(text), "score":_text_quality_score(text)}],
+                text_transport_evidence=evidence)
         prompt = "Extract all visible text. Preserve line breaks. No commentary. Return plain text only."
         if lang_hint:
             prompt += f" Language hint: {lang_hint}."
@@ -966,6 +988,11 @@ test_ocr_provider_connection.__test__ = False
 
 def build_ocr_engine(config: OcrEngineConfig) -> OCREngine:
     provider = normalize_ocr_api_provider(config.api_provider)
+    if config.text_transport_policy is not None:
+        from .ocr_text_transport import POLICY, OcrTextTransportError
+        if (config.text_transport_policy != POLICY or provider != OcrApiProvider.OPENAI
+                or config.policy == OcrEnginePolicy.LOCAL):
+            raise OcrTextTransportError("unsupported_configuration")
     if config.policy == OcrEnginePolicy.LOCAL:
         return LocalTesseractEngine(strict_unavailable=True)
 
@@ -985,6 +1012,7 @@ def build_ocr_engine(config: OcrEngineConfig) -> OCREngine:
             model=model,
             base_url=config.api_base_url,
             timeout_seconds=float(config.api_timeout_seconds or DEFAULT_OCR_API_TIMEOUT_SECONDS),
+            **({"text_transport_policy": config.text_transport_policy} if config.text_transport_policy is not None else {}),
         )
 
     # local_then_api
@@ -1005,5 +1033,6 @@ def build_ocr_engine(config: OcrEngineConfig) -> OCREngine:
                 model=model,
                 base_url=config.api_base_url,
                 timeout_seconds=float(config.api_timeout_seconds or DEFAULT_OCR_API_TIMEOUT_SECONDS),
+                **({"text_transport_policy": config.text_transport_policy} if config.text_transport_policy is not None else {}),
             )
     return LocalThenApiEngine(local_engine=local_engine, api_engine=api_engine)

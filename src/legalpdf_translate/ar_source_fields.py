@@ -19,6 +19,10 @@ _LABEL = re.compile(r"(?i)^(?:Morada|Endereço|Endereco|Address|Domicílio|Domic
 _STREET = re.compile(r"(?i)^(?:Rua|R\.|Avenida|Av\.|Largo|Lg\.|Travessa|Tv\.|Praça|Praca|Estrada|Alameda|Quinta)\s+")
 _PROSE = {"deve", "pagar", "comparecer", "enviar", "documentos", "obrigação", "obrigacao", "prazo", "tribunal"}
 _LIMIT = 120_000
+SOURCE_FIELD_POLICY = "baseline_label_value_v1"
+_LABELED_POSTAL = re.compile(
+    r"(?i)^(?:C[oó]digo[ \t]+Postal|Postal[ \t]+Code|Postcode|Code[ \t]+Postal)[ \t]*:[ \t]*"
+    r"(?P<value>[0-9]{4}(?:-|[ \t]+)[0-9]{3}[ \t]+(?P<town>.+))\Z")
 _INLINE_STREET = re.compile(
     r"(?<![\w./-])(?:Rua|Avenida|Av\.|Largo|Travessa|Praça|Praca|Estrada|Alameda)[ \t]+", re.I)
 _INLINE_NUMBER = re.compile(
@@ -48,8 +52,10 @@ def _locality(value: str) -> bool:
         and all(word[:1].isupper() or word in {"de", "da", "do", "das", "dos"} for word in words))
 
 
-def source_address_fields(text: str) -> list[SourceAddressField]:
+def source_address_fields(text: str, *, source_field_policy: str | None = None) -> list[SourceAddressField]:
     """Return exact bounded lines: labelled addresses or proven postal chains."""
+    if source_field_policy not in {None, SOURCE_FIELD_POLICY}:
+        raise ValueError("Unknown source field policy.")
     lines = []
     offset = 0
     for raw in text.splitlines(keepends=True):
@@ -60,11 +66,22 @@ def source_address_fields(text: str) -> list[SourceAddressField]:
         offset += len(raw)
     fields = []
     for index, (value, start) in enumerate(lines):
+        if source_field_policy == SOURCE_FIELD_POLICY:
+            labeled_postal = _LABELED_POSTAL.fullmatch(value)
+            if labeled_postal and _locality(labeled_postal["town"]):
+                fields.append(SourceAddressField(start + labeled_postal.start("value"),
+                    start + labeled_postal.end("value"), labeled_postal["value"]))
         postal = _POSTAL.fullmatch(value)
         if postal and _locality(postal["town"]):
             fields.append(SourceAddressField(start, start + len(value), value))
         label = _LABEL.match(value)
         address = value[label.end():] if label else value
+        field_start = start + (label.end() if label else 0)
+        # A standalone address label may own only the immediately following
+        # proven street line, never a subsequent generic label or postal label.
+        if (source_field_policy == SOURCE_FIELD_POLICY and label and not address
+                and index + 1 < len(lines)):
+            address, field_start = lines[index + 1]
         if not _STREET.match(address) or not any(_latin(c) for c in address):
             continue
         if (set(re.findall(r"\w+", address.casefold())) & _PROSE
@@ -73,7 +90,6 @@ def source_address_fields(text: str) -> list[SourceAddressField]:
             continue
         next_postal = _POSTAL.fullmatch(lines[index + 1][0]) if index + 1 < len(lines) else None
         if label or next_postal and _locality(next_postal["town"]):
-            field_start = start + (label.end() if label else 0)
             fields.append(SourceAddressField(field_start, field_start + len(address), address))
     return sorted(set(fields), key=lambda field: field.start)
 
@@ -114,6 +130,103 @@ def source_address_line_blocks(text: str) -> list[SourceAddressField]:
             start, end = line.start(), group[-1].end(1)
             blocks.append(SourceAddressField(start, end, text[start:end]))
     return blocks
+
+
+def source_required_prefixed_address_line_blocks(source: str, required) -> list[SourceAddressField]:
+    """V2-only complete locked street/postal pairs, never substring evidence.
+
+    This is wrapper-equivalence evidence, not a source tokenizer. Both adjacent
+    lines must already be unique whole required tokens. No new field ownership
+    is inferred for unprotected text or for numeric substrings in a postal row.
+    """
+    if not isinstance(source, str) or len(source) > _LIMIT:
+        return []
+    # Outside isolates may describe unrelated extraction runs, but must be
+    # balanced and unnested and never enclose a token-owned isolate/line. Do
+    # not derive proof from _view's removal of unowned formatting controls.
+    depth, cursor, enclosed_tokens = 0, 0, set()
+    for match in list(_TOKEN.finditer(source)) + [None]:
+        boundary = match.start() if match else len(source)
+        for char in source[cursor:boundary]:
+            if char == _LRI:
+                if depth:
+                    return []
+                depth = 1
+            elif char == _PDI:
+                if not depth:
+                    return []
+                depth = 0
+            elif (unicodedata.category(char) == "Cf"
+                  or unicodedata.category(char) == "Cc" and char not in "\t\r\n"):
+                return []
+        if depth and (match is None or match[0].startswith(_LRI)):
+            return []
+        if match:
+            if depth:
+                enclosed_tokens.add((match.start(), match.end()))
+            if any(unicodedata.category(char) == "Cf"
+                   or unicodedata.category(char) == "Cc" and char not in "\t\r\n"
+                   for char in match[1]):
+                return []
+            cursor = match.end()
+    view = _view(source)
+    if (view is None or not isinstance(required, (list, tuple))
+            or not 1 <= len(required) <= 512
+            or any(not isinstance(value, str) or not value or len(value) > 256 for value in required)):
+        return []
+    visible, _, tokens = view
+    if len(tokens) > 512:
+        return []
+    counts, source_counts = Counter(required), Counter(token[2] for token in tokens)
+    lines = list(re.finditer(r"([^\r\n]*)(\r\n|\r|\n|$)", visible))
+    marker = re.compile(r"(?<![\w.])" + _STREET.pattern.removeprefix("(?i)^"), re.I)
+    postal_pattern = re.compile(r"[0-9]{4}(?:-[0-9]{3})?[ \t]+(?P<town>.+)\Z")
+    result, work = [], len(source)
+    for index, line in enumerate(lines[:-1]):
+        street, postal = line[1], lines[index + 1][1]
+        if not line[2] or not street or not postal or len(street) > 140 or len(postal) > 140:
+            continue
+        markers = list(marker.finditer(street))
+        if len(markers) != 1:
+            continue
+        before = street[:markers[0].start()]
+        prefix = re.fullmatch(r"(.+?)[ \t]+[-–—][ \t]+", before)
+        if (prefix is None or len(prefix[1]) > 80 or not _locality(prefix[1])
+                or not any(_latin(c) for c in street[markers[0].end():])
+                or set(re.findall(r"\w+", street.casefold())) & _PROSE
+                or not all(_latin(c) or c.isdecimal() or unicodedata.category(c).startswith("M")
+                           or c in " \t-–—.,/()ºª'’" for c in street)):
+            continue
+        post = postal_pattern.fullmatch(postal)
+        if post is None or not _locality(post["town"]):
+            continue
+        rows = ((line.start(1), line.end(1), street),
+                (lines[index + 1].start(1), lines[index + 1].end(1), postal))
+        valid = True
+        for start, end, value in rows:
+            work += len(visible) + len(tokens)
+            if work > 200_000:
+                return []
+            owned = [token for token in tokens if token[0] < end and token[1] > start]
+            if (len(owned) != 1 or owned[0][:3] != (start, end, value)
+                    or counts[value] != 1 or source_counts[value] != 1
+                    or _occurrences(visible, value) != [(start, end)]):
+                valid = False
+                break
+        if valid:
+            start, end = rows[0][0], rows[1][1]
+            # Reject invisible source controls between the two complete tokens;
+            # the original newline itself is the only restoration permission.
+            left, right = next(t for t in tokens if t[:3] == rows[0]), next(t for t in tokens if t[:3] == rows[1])
+            if (source[left[4]:right[3]] != line[2]
+                    or (left[3], left[4]) in enclosed_tokens or (right[3], right[4]) in enclosed_tokens
+                    or left[3] and source[left[3] - 1] not in "\r\n"
+                    or right[4] < len(source) and source[right[4]] not in "\r\n"):
+                continue
+            result.append(SourceAddressField(start, end, visible[start:end]))
+            if len(result) > 32:
+                return []
+    return result
 
 
 def _inline_address_fields(text: str, existing: list[SourceAddressField]):
@@ -225,7 +338,7 @@ def _separate_inline_occurrences(visible, target_tokens, source_visible, field, 
         if following is None or following[2] != number:
             continue
         a, b = following[:2]
-        if not re.fullmatch(r"[ \t]*(?:[,،][ \t]*)?رقم[ \t]+", visible[end:a]):
+        if not re.fullmatch(r"[ \t]*(?:[,،][ \t]*)?(?:رقم|بالرقم)[ \t]+", visible[end:a]):
             continue
         if (a, b) not in _occurrences(visible, number):
             continue
@@ -236,7 +349,7 @@ def _separate_inline_occurrences(visible, target_tokens, source_visible, field, 
 
 
 def canonicalize_source_address_literals(text: str, source: str | None,
-                                        expected: list[str] | None):
+                                        expected: list[str] | None, *, source_field_policy: str | None = None):
     """Return text/expectations/count/error; only exact source-proven wrappers change.
 
     Complete field occurrence counts and source order must agree. Wrappers that
@@ -254,7 +367,8 @@ def canonicalize_source_address_literals(text: str, source: str | None,
     owned_by_field = {}
     inline_owned = Counter()
     fields = []
-    source_fields = source_address_fields(source_visible)
+    source_fields = source_address_fields(source_visible,
+        **({"source_field_policy": source_field_policy} if source_field_policy is not None else {}))
     inline_fields = _inline_address_fields(source_visible, source_fields)
     source_fields = sorted(source_fields + inline_fields, key=lambda field: field.start)
     for field in source_fields:

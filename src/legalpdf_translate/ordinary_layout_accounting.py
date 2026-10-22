@@ -290,6 +290,49 @@ class OrdinaryLayoutAccounting:
             "run_id": job.run_id, "operation_nonce": operation_nonce, "binding": dict(job.binding)},
             budget_context=budget, **arguments)
 
+    def completed_rebuild(self, job, folder, identity_sha256, prior_layout_cost_usd):
+        """Authorize local replay with existing budget primitives and no new capacity."""
+        source, _, cost = self._source(job)
+        prior = money(prior_layout_cost_usd)
+        identity = {"completed_rebuild_identity_sha256": identity_sha256,
+            "original_accounting_identity": source.run_identity, "missing_pages": [], "max_new_calls": 0}
+        cap = Decimal(0)
+        record = {"authorization_kind": "server_owned_completed_unreviewed_rebuild_v1",
+            "identity": identity, "translation_cost_usd": str(cost), "prior_layout_cost_usd": str(prior),
+            "cap_usd": str(cap), "retained_only": True}
+        path = folder / "authorization.json"
+        with self._lock:
+            if path.exists():
+                if decode(path.read_bytes()) != record:
+                    fail("budget_binding_changed", 409)
+            else:
+                # One immutable authorization; this is not failed recovery.
+                atomic_json(path, record)
+            if source.hard_budget:
+                budget = source.budget_context
+            else:
+                budget_path = folder / "budget.json"
+                budget = ReservationBudget(budget_path, cap_usd=cap, identity=identity,
+                    create=not budget_path.exists())
+            if budget is None:
+                fail("durable_accounting_required", 503)
+        ceiling = verified_page_ceiling()
+        policy = LayoutSuggestionPolicy(MODEL, str(ceiling), str(ceiling * len(job.selected_pages)))
+
+        def accountant(native_job, operation_nonce, operation_dir, selected_policy):
+            from .ordinary_layout_service import _read
+            intent = _read(operation_dir / "intent.json")
+            private = intent["request"]["policy"]
+            if (private.get("retained_only") is not True or private.get("missing_pages") != []
+                    or private.get("max_new_calls") != 0
+                    or private.get("completed_rebuild_identity_sha256") != identity_sha256
+                    or decode(path.read_bytes()) != record):
+                fail("budget_binding_changed", 409)
+            return DispatchAccounting(operation_dir / "accounting", run_identity={"job_id": native_job.job_id,
+                "run_id": native_job.run_id, "operation_nonce": operation_nonce, "binding": dict(native_job.binding)},
+                budget_context=budget, **layout_accounting_policy().accounting_arguments())
+        return policy, accountant
+
     @staticmethod
     def provider(job, policy):
         from .openai_client import OpenAIResponsesClient

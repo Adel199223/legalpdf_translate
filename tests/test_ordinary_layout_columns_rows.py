@@ -158,9 +158,9 @@ def test_settled_coverage_failure_retains_L1_and_sends_only_L2_then_Save(tmp_pat
                 max_transport_retries=0,pre_call_jitter_seconds=0)
         manager.provider_factory = provider
         normalize = manager_module.normalize_proposals
-        def previous_guard(snapshot,view,proposals):
+        def previous_guard(snapshot,view,proposals,**kwargs):
             if proposals[0]['page_number'] == 1: fail('proposal_coverage')
-            return normalize(snapshot,view,proposals)
+            return normalize(snapshot,view,proposals,**kwargs)
         if resume is None:
             # Fresh SDK completion also exercises the new generated-response
             # path, without a retained-replay-only success standing in for it.

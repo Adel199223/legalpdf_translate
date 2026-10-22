@@ -1594,6 +1594,18 @@ def create_shadow_app(
         translation_jobs.set_automatic_layout_cancel(_cancel_automatic_ordinary_layout)
         translation_jobs.set_automatic_layout_recovery_runner(_recover_automatic_ordinary_layout)
 
+        def _rebuild_automatic_ordinary_layout(job_id: str):
+            from legalpdf_translate.ordinary_auto_layout import run_completed_unreviewed_rebuild
+            job = translation_jobs.get_job(job_id)
+            if not job:
+                raise ValueError("ordinary_auto_layout_job_unavailable")
+            manager = ordinary_layouts.manager_for_context(shadow_context, job["runtime_mode"], job["workspace_id"])
+            return run_completed_unreviewed_rebuild(manager, ordinary_layouts._accounting, job_id,
+                cancel_requested=translation_jobs.automatic_layout_cancel_requested,
+                begin_publication=translation_jobs.begin_automatic_layout_publication)
+
+        translation_jobs.set_automatic_layout_rebuild_runner(_rebuild_automatic_ordinary_layout)
+
     @app.post("/api/translation/jobs/{job_id}/layout/budget")
     async def api_ordinary_layout_budget(request: Request, job_id: str):
         from .ordinary_layout_routes import payload, response, error_response

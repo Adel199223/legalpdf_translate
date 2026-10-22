@@ -1,0 +1,71 @@
+{
+  "schema": "prechange-layout-policy-identities-v1",
+  "policies": {
+    "_heading_columns_v4_policy": {
+      "policy": "source_image_unreviewed_v1:a1f0b680bfd07d5c2ca3a7d11d47939c96f8639271a38764897fdeabd346f81a",
+      "band": "ordinary_metadata_band_normalization_v4",
+      "source": "ordinary_optional_layout_hint_normalization_v3",
+      "clock": "clock_h_colon_ltr_v1",
+      "folio": true,
+      "metadata": true
+    },
+    "_clock_direction_policy": {
+      "policy": "source_image_unreviewed_v1:d3c89ef63893696d339f350c00500a4cd865f594ce56ed9a45472bb350b5e0b7",
+      "band": "ordinary_metadata_band_normalization_v3",
+      "source": "ordinary_optional_layout_hint_normalization_v3",
+      "clock": "clock_h_colon_ltr_v1",
+      "folio": true,
+      "metadata": true
+    },
+    "_body_columns_v3_policy": {
+      "policy": "source_image_unreviewed_v1:1e4a11e243d8a6a27dd7fa30c54e4475dfae4a3f74a68e789eef1be15362ab4b",
+      "band": "ordinary_metadata_band_normalization_v3",
+      "source": "ordinary_optional_layout_hint_normalization_v3",
+      "clock": null,
+      "folio": true,
+      "metadata": true
+    },
+    "_source_bound_v4_policy": {
+      "policy": "source_image_unreviewed_v1:bb15bab385eb54f074c00da06fdadfe607c48e2d1933532f590160d80f54ae01",
+      "band": "ordinary_metadata_band_normalization_v2",
+      "source": "ordinary_optional_layout_hint_normalization_v3",
+      "clock": null,
+      "folio": true,
+      "metadata": true
+    },
+    "_source_bound_v3_policy": {
+      "policy": "source_image_unreviewed_v1:b6277898f059d84cc7a7171d24663adb7f542534fa5ad5a98b5ae607289eb960",
+      "band": "ordinary_metadata_band_normalization_v2",
+      "source": "ordinary_optional_layout_hint_normalization_v3",
+      "clock": null,
+      "folio": true,
+      "metadata": true
+    },
+    "optional_v1": {
+      "policy": "source_image_unreviewed_v1:7dcb79d5cba51275f898bc8d5f5746ea96f5adfb32aadc5389a658e049702a15",
+      "band": null,
+      "source": "ordinary_optional_layout_hint_normalization_v1",
+      "clock": null,
+      "folio": false,
+      "metadata": false
+    },
+    "optional_v2": {
+      "policy": "source_image_unreviewed_v1:8e3a25732055b8c87d1f0bfe37a6d1ec1b265ffd8eec73a1077538c8c85b974c",
+      "band": null,
+      "source": "ordinary_optional_layout_hint_normalization_v2",
+      "clock": null,
+      "folio": false,
+      "metadata": false
+    },
+    "optional_v3": {
+      "policy": "source_image_unreviewed_v1:df8007f4ecb1a3b4a6cad90c0caf80113029c7a6e0ead689dcfd20a79051a9a4",
+      "band": null,
+      "source": "ordinary_optional_layout_hint_normalization_v2",
+      "clock": null,
+      "folio": false,
+      "metadata": false
+    }
+  },
+  "instructions_sha256": "64bd523ddc088c76e0f402131bb36b6ec916bad34f0ebee0fcb101ade37ed260",
+  "proposal_schema_sha256": "ac99f1e814ebf6e4070ac60456d872b8285e409b945ba2a439faa49e12bb5e2a"
+}

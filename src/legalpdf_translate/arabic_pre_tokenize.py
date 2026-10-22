@@ -155,13 +155,32 @@ def _trimmed_group_span(match: re.Match[str], group: str, segment: str) -> _Span
     return _Span(start, end)
 
 
-def _collect_full_value_spans(segment: str) -> list[_Span]:
+def _collect_full_value_spans(segment: str, *, source_field_policy: str | None = None) -> list[_Span]:
     spans: list[_Span] = _anchored_literal_spans(segment)
     from .ar_source_fields import source_address_fields
-    spans.extend(_Span(field.start, field.end) for field in source_address_fields(segment))
+    fields = source_address_fields(segment,
+        **({"source_field_policy": source_field_policy} if source_field_policy is not None else {}))
+    spans.extend(_Span(field.start, field.end) for field in fields)
+    source_field_ranges = {(field.start, field.end, field.value) for field in fields}
     for regex in (SENSITIVE_NAME_LINE_RE, SENSITIVE_ADDRESS_LINE_RE, SENSITIVE_CASE_LINE_RE):
         for match in regex.finditer(segment):
+            if source_field_policy is not None:
+                prefix, value = match["prefix"], match["value"]
+                # \s in the historical patterns can consume CR/LF and claim
+                # the next field label as this field's value. Never lock that
+                # label; preserve it as ordinary source text for translation.
+                if (any(c in prefix for c in "\v\f\x1c\x1d\x1e\x85\u2028\u2029")
+                        or len(re.findall(r"\r\n|\r|\n", prefix)) > 1
+                        or re.match(r"[ \t]*[^\W\d_][\w .()/-]{0,59}:", value)):
+                    continue
             span = _trimmed_group_span(match, "value", segment)
+            if (source_field_policy is not None and span is not None
+                    and re.search(r"\r|\n", match["prefix"])):
+                value = segment[span.start:span.end]
+                if regex is SENSITIVE_NAME_LINE_RE and not _plausible_latin_name(value):
+                    continue
+                if regex is SENSITIVE_ADDRESS_LINE_RE and (span.start, span.end, value) not in source_field_ranges:
+                    continue
             if span is not None:
                 spans.append(span)
 
@@ -175,8 +194,8 @@ def _collect_full_value_spans(segment: str) -> list[_Span]:
     return spans
 
 
-def _collect_spans(segment: str) -> list[_Span]:
-    spans = _collect_full_value_spans(segment)
+def _collect_spans(segment: str, *, source_field_policy: str | None = None) -> list[_Span]:
+    spans = _collect_full_value_spans(segment, source_field_policy=source_field_policy)
     currency_spans = [_Span(match.start("amount"), match.end("amount"))
                       for match in CURRENCY_DECIMAL_RE.finditer(segment)]
     spans.extend(currency_spans)
@@ -226,8 +245,8 @@ def is_safe_ar_identifier_token_content(value: str) -> bool:
     return IDENTIFIER_VALUE_RE.fullmatch(normalized) is not None
 
 
-def _wrap_plain_segment(segment: str) -> str:
-    spans = _merge_spans(_collect_spans(segment))
+def _wrap_plain_segment(segment: str, *, source_field_policy: str | None = None) -> str:
+    spans = _merge_spans(_collect_spans(segment, source_field_policy=source_field_policy))
     if not spans:
         return segment
     result: list[str] = []
@@ -249,8 +268,11 @@ def _wrap_plain_segment(segment: str) -> str:
     return "".join(result)
 
 
-def pretokenize_arabic_source(text: str) -> str:
+def pretokenize_arabic_source(text: str, *, source_field_policy: str | None = None) -> str:
     """Wrap conservative identifier-like spans in [[...]] without altering layout."""
+    from .ar_source_fields import SOURCE_FIELD_POLICY
+    if source_field_policy not in {None, SOURCE_FIELD_POLICY}:
+        raise ValueError("Unknown source field policy.")
     if not text:
         return text
 
@@ -258,11 +280,11 @@ def pretokenize_arabic_source(text: str) -> str:
     cursor = 0
     for token_match in EXISTING_TOKEN_RE.finditer(text):
         if token_match.start() > cursor:
-            pieces.append(_wrap_plain_segment(text[cursor : token_match.start()]))
+            pieces.append(_wrap_plain_segment(text[cursor : token_match.start()], source_field_policy=source_field_policy))
         pieces.append(token_match.group(0))
         cursor = token_match.end()
     if cursor < len(text):
-        pieces.append(_wrap_plain_segment(text[cursor:]))
+        pieces.append(_wrap_plain_segment(text[cursor:], source_field_policy=source_field_policy))
     return "".join(pieces)
 
 

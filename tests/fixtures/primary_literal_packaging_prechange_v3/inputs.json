@@ -1,0 +1,38 @@
+{
+  "settings": {
+    "ordinary_semantic_audit_recipe": {
+      "version": "ordinary_semantic_audit_v3",
+      "model": "gpt-5.2",
+      "reasoning_effort": "high",
+      "effort_policy": "adaptive",
+      "target_language": "AR",
+      "max_output_tokens": 32000,
+      "timeout_seconds": 480,
+      "ordinary_auto_layout_policy": "source_image_unreviewed_v1:bb15bab385eb54f074c00da06fdadfe607c48e2d1933532f590160d80f54ae01",
+      "source_image_policy": "configured_image_mode_v1",
+      "configured_image_mode": "off",
+      "context_sha256": "103b72fc3f7dda8e3f07b5cb69782df63a50f95d084d496c60e122f001e7ef69",
+      "context_binding_version": "resolved_context_v1",
+      "terminology_policy": "source_matched_primary_terms_v1",
+      "source_field_policy": "baseline_label_value_v1",
+      "review_protocol": "source_inventory_correct_verify_v1"
+    },
+    "ordinary_auto_layout_policy": "source_image_unreviewed_v1:bb15bab385eb54f074c00da06fdadfe607c48e2d1933532f590160d80f54ae01",
+    "image_mode": "off"
+  },
+  "context_text": "Fictional retained context.",
+  "context_hash": "103b72fc3f7dda8e3f07b5cb69782df63a50f95d084d496c60e122f001e7ef69",
+  "pdf_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source_args": {
+    "page_number": 1,
+    "source_text": "Morada: [[Rua Exemplo, 14]]\n[[1234-567]] [[EXAMPLE]]",
+    "original_source_text": "Morada: Rua Exemplo, 14\n1234-567 EXAMPLE",
+    "expected_ar_tokens": [
+      "Rua Exemplo, 14",
+      "1234-567",
+      "EXAMPLE"
+    ],
+    "image_data_url": null,
+    "applicable_terminology": []
+  }
+}

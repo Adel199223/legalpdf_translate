@@ -61,6 +61,7 @@ from .cost_guardrails import (
     resolve_pricing,
 )
 from .docx_writer import assemble_docx
+from .workflow_semantic_audit import SemanticIntegrationError
 from .glossary import (
     cap_entries_for_prompt,
     GlossaryEntry,
@@ -755,6 +756,7 @@ class TranslationWorkflow:
 
     def _run_locked(self, config: RunConfig, *, output_preprobed: bool = False) -> RunSummary:
         run_started_perf = time.perf_counter()
+        self._translation_model = self._provided_client.model if isinstance(self._provided_client, OpenAIResponsesClient) else OPENAI_MODEL
         self._translation_protocol = self._configured_translation_protocol
         self._structured_run = None
         self._cancel_event.clear()
@@ -888,6 +890,7 @@ class TranslationWorkflow:
             existing_state=existing_state,
             pdf_fingerprint=pdf_fingerprint,
             context_hash=context_hash,
+            context_text=context_text,
             total_pages=total_pages,
             selected_pages=selected_pages,
             selection_start_page=selection_start_page,
@@ -903,6 +906,9 @@ class TranslationWorkflow:
         run_state.finished_at = None
         save_run_state_atomic(paths.run_state_path, run_state)
         self._last_state = run_state
+
+        from .checkpoint import ordinary_semantic_audit_recipe
+        semantic_recipe = ordinary_semantic_audit_recipe(run_state.settings)
         self._record_event(
             event_type="run_state_ready",
             stage="checkpoint",
@@ -968,6 +974,8 @@ class TranslationWorkflow:
                                          else gui_settings.get("perf_max_transport_retries", 4)),
             "backoff_cap_seconds": float(gui_settings.get("perf_backoff_cap_seconds", 12.0) or 12.0),
         } if self._reviewed_source_context is not None else {})
+        if semantic_recipe is not None and provided_client is None:
+            ordinary_client_options["model"] = semantic_recipe["model"]
 
         def _get_thread_client() -> OpenAIResponsesClient | Any:
             cached = getattr(thread_local, "client", None)
@@ -988,6 +996,15 @@ class TranslationWorkflow:
                 )
             thread_local.client = client_instance
             return client_instance
+
+        def _get_semantic_client():
+            client = _get_thread_client()
+            if semantic_recipe is not None and "semantic_review_model_policy" in semantic_recipe:
+                from .semantic_review_model_policy import effective_model
+                if not isinstance(client, OpenAIResponsesClient):
+                    raise SemanticIntegrationError("dedicated_review_client_required")
+                return client.for_semantic_review(model=effective_model(semantic_recipe))
+            return client
 
         pending_pages: list[int] = []
         for page_number in selected_pages:
@@ -1011,6 +1028,11 @@ class TranslationWorkflow:
             selected_pages=selected_pages,
             selected_pages_count=selection_page_count,
         )
+        if semantic_recipe is not None and "semantic_review_model_policy" in semantic_recipe:
+            self._budget_pre_run_packet.update(estimated_cost_usd=None, estimation_status="unavailable",
+                estimation_reason="semantic_review_not_forecast",
+                pricing_explanation="The primary-only forecast excludes three-stage semantic review. "
+                    "Native dispatch accounting measures the full bill.")
         self._cost_estimation_status = str(self._budget_pre_run_packet.get("estimation_status", "unavailable") or "unavailable")
         pre_run_estimated_cost = self._budget_pre_run_packet.get("estimated_cost_usd")
         if isinstance(pre_run_estimated_cost, (int, float)):
@@ -1395,20 +1417,31 @@ class TranslationWorkflow:
         if (failed_page is None and not self._cancel_event.is_set() and run_state.failed_count == 0
                 and completed_pages == selection_page_count):
             try:
+                from .workflow_semantic_audit import select_pages
+                assembly_pages, _audit = select_pages(state=run_state, config=config,
+                    run_dir=paths.run_dir, pages_dir=paths.pages_dir,
+                    client=_get_semantic_client() if semantic_recipe is not None else None,
+                    accountant=self._dispatch_accounting, cancel_check=self._cancel_event.is_set)
+            except Exception as exc:  # Preserve the semantic stage separately from DOCX failure.
+                error = exc if isinstance(exc, SemanticIntegrationError) else SemanticIntegrationError("operation_failed")
+                return self._semantic_failure_summary(config, paths, run_state, error)
+            if self._cancel_event.is_set():
+                return self._semantic_failure_summary(config, paths, run_state, SemanticIntegrationError("cancelled"))
+            try:
                 docx_started = time.perf_counter()
                 _docx_stats: dict[str, int] = {}
-                _layout_preparation = self._prepare_docx_layout(config, paths.pages_dir, paths.frozen_outdir,
+                _layout_preparation = self._prepare_docx_layout(config, assembly_pages, paths.frozen_outdir,
                                                                cancelled=self._cancel_event.is_set)
                 output_docx = assemble_docx(
-                    paths.pages_dir,
+                    assembly_pages,
                     paths.final_docx_path,
                     lang=config.target_lang,
                     page_breaks=config.page_breaks,
                     strip_bidi_controls=config.strip_bidi_controls,
                     stats=_docx_stats,
-                    **self._structured_assembly_options(run_state, paths.pages_dir),
+                    **self._structured_assembly_options(run_state, assembly_pages),
                 )
-                self._record_docx_layout_review(output_docx, paths.pages_dir, run_state, _layout_preparation)
+                self._record_docx_layout_review(output_docx, assembly_pages, run_state, _layout_preparation)
                 self._run_stage_timings_ms["docx_rebuild"] = round((time.perf_counter() - docx_started) * 1000.0, 3)
                 if self._diagnostics_admin_mode:
                     from .translation_diagnostics import emit_docx_write_event
@@ -1775,10 +1808,15 @@ class TranslationWorkflow:
     def rebuild_docx(self, config: RunConfig, *, formatting_revision_id: str | None = None,
                      formatting_review_profile: str = "strict_ai_test_v1") -> Path:
         config = self._normalize_config(config)
-        self._validate_config(config)
+        self._validate_config(replace(config, context_file=None, glossary_file=None))
         if formatting_revision_id is None and formatting_review_profile != "strict_ai_test_v1":
             raise ValueError("An explicit formatting revision is required for the selected review profile.")
         with self._run_workspace_scope(config, reviewed=formatting_revision_id is not None) as (_, state):
+            from .checkpoint import ordinary_semantic_audit_recipe
+            recipe = ordinary_semantic_audit_recipe(state.settings) if state is not None else None
+            # A v2/v3 rebuild uses immutable run-owned guidance, never today's files.
+            if recipe is None or recipe["version"] == "ordinary_semantic_audit_v1":
+                self._validate_config(config)
             return self._rebuild_docx_locked(config, retained_state=state,
                 formatting_revision_id=formatting_revision_id, formatting_review_profile=formatting_review_profile)
 
@@ -1871,6 +1909,9 @@ class TranslationWorkflow:
 
     @staticmethod
     def _require_rebuild_checkpoint(pages_dir: Path, state: RunState | None) -> None:
+        if state is None and any((pages_dir.parent / name).exists()
+                                 for name in ("semantic_source", "semantic_audit")):
+            raise SemanticIntegrationError("recipe_missing")
         has_commits = any(pages_dir.glob("page_*.commit.json"))
         has_sidecars = (any(pages_dir.glob("page_*.source_structure.json"))
                         or any(pages_dir.glob("page_*.structure.json")))
@@ -1891,6 +1932,15 @@ class TranslationWorkflow:
         completed = list_completed_pages(self._last_state)
         if not completed:
             return None
+        from .checkpoint import ordinary_semantic_audit_recipe
+        if ordinary_semantic_audit_recipe(self._last_state.settings) is not None:
+            # An explicit primary partial is diagnostic evidence, never an
+            # accepted substitute for the missing/failed final audit selection.
+            self._log("Unapproved primary partial: whole-document semantic audit has not accepted this output.")
+            return assemble_docx(self._last_paths.pages_dir, self._last_paths.partial_docx_path,
+                lang=self._last_config.target_lang, page_breaks=self._last_config.page_breaks,
+                strip_bidi_controls=self._last_config.strip_bidi_controls,
+                page_numbers=completed, partial_output=True)
         layout_preparation = self._prepare_docx_layout(
             self._last_config, self._last_paths.pages_dir, self._last_paths.frozen_outdir,
             cancelled=self._cancel_event.is_set,
@@ -1914,6 +1964,10 @@ class TranslationWorkflow:
             assembly_options: dict, formatting_revision_id: str | None = None,
             formatting_review_profile: str = "strict_ai_test_v1") -> tuple[Path, dict]:
         """Common offline assembly seam; caller holds the run workspace lock."""
+        if run_state is not None:
+            from .workflow_semantic_audit import select_pages
+            pages_dir, _audit = select_pages(state=run_state, config=config,
+                run_dir=run_dir, pages_dir=pages_dir)
         reviewed = None
         declined = ()
         if formatting_revision_id is not None:
@@ -1933,7 +1987,7 @@ class TranslationWorkflow:
         recipe = primary_assembly_recipe(run_state.settings) if run_state is not None else None
         if recipe is not None:
             completed = list_completed_pages(run_state)
-            assembly_options = {**assembly_options, "terminal_folio_policy": recipe["version"],
+            assembly_options = {**assembly_options, **self._primary_folio_options(run_state, config),
                 "page_numbers": completed, "partial_output": len(completed) < run_state.selection_page_count}
         preparation = self._prepare_docx_layout(config, pages_dir, output_dir)
         output = assemble_docx(pages_dir, output_path, lang=config.target_lang,
@@ -1947,7 +2001,8 @@ class TranslationWorkflow:
         from .checkpoint import primary_assembly_recipe
         completed = list_completed_pages(state)
         recipe = primary_assembly_recipe(state.settings)
-        folio_options = ({"terminal_folio_policy": recipe["version"], "page_numbers": completed, "partial_output": partial}
+        folio_options = ({**self._primary_folio_options(state, getattr(self, "_last_config", None)),
+                          "page_numbers": completed, "partial_output": partial}
             if recipe is not None else {})
         if not state.protocol_identity:
             return folio_options
@@ -1956,6 +2011,22 @@ class TranslationWorkflow:
             validate_structured_page(pages_dir, number, protocol_identity=state.protocol_identity,
                                      expected_commit=state.pages[str(number)].get("structured_commit"))
         return {**folio_options, "page_numbers": completed, "partial_output": partial, "derive_source_continuations": True}
+
+    @staticmethod
+    def _primary_folio_options(state: RunState, config: RunConfig | None) -> dict:
+        from .checkpoint import primary_assembly_recipe
+        recipe = primary_assembly_recipe(state.settings)
+        if recipe is None:
+            return {}
+        options = {"terminal_folio_policy": recipe["version"]}
+        if recipe["version"] in {"terminal_source_bound_folio_v3", "terminal_source_bound_folio_v4"}:
+            if config is None:
+                raise ValueError("Saved primary folio source is unavailable.")
+            source = config.pdf_path.read_bytes()
+            if sha256_of_bytes(source) != state.pdf_fingerprint:
+                raise ValueError("Saved primary folio source changed.")
+            options.update(terminal_folio_source_pdf=source, terminal_folio_source_sha256=state.pdf_fingerprint)
+        return options
 
     def _prepare_docx_layout(
         self, config: RunConfig, pages_dir: Path, output_dir: Path,
@@ -2054,12 +2125,22 @@ class TranslationWorkflow:
                     if request_reason == "required"
                     else local_only_ocr_engine_config_from_run_config(config)
                 )
+                from .checkpoint import ordinary_semantic_audit_recipe
+                saved = ordinary_semantic_audit_recipe(self._last_state.settings) if self._last_state is not None else None
+                strict_ocr = saved.get("ocr_text_transport_policy") if saved and request_reason == "required" else None
+                if strict_ocr is not None:
+                    from .ocr_text_transport import POLICY, OcrTextTransportError
+                    if strict_ocr != POLICY or config.ocr_api_provider.value != "openai":
+                        raise OcrTextTransportError("unsupported_configuration")
+                    engine_config.text_transport_policy = strict_ocr
                 try:
                     factory = self._ocr_engine_factory if self._ocr_engine_factory is not None else build_ocr_engine
                     engine = factory(engine_config)
                     configured = True
                     self._ocr_provider_configured = True
                 except Exception:
+                    if strict_ocr is not None:
+                        raise OcrTextTransportError("engine_construction_failed") from None
                     engine = None
                     configured = False
                 if request_reason == "required":
@@ -2169,8 +2250,18 @@ class TranslationWorkflow:
                 page_number=page_number, total_pages=total_pages, context_text=context_text,
                 started=started_monotonic)
         extract_started = time.perf_counter()
+        from .checkpoint import ordinary_semantic_audit_recipe
+        saved_audit = ordinary_semantic_audit_recipe(self._last_state.settings) if self._last_state is not None else None
+        source_field_options = ({"source_field_policy": saved_audit["source_field_policy"]}
+            if saved_audit is not None and saved_audit["version"] in {"ordinary_semantic_audit_v2", "ordinary_semantic_audit_v3"} else {})
+        extraction_options = dict(source_field_options)
+        if saved_audit is not None and saved_audit["version"] == "ordinary_semantic_audit_v3" and "source_question_row_policy" in saved_audit:
+            extraction_options["source_question_row_policy"] = saved_audit["source_question_row_policy"]
+        primary_literal_options = ({"literal_wrapper_policy": saved_audit["primary_literal_packaging_version"]}
+            if saved_audit is not None and saved_audit["version"] == "ordinary_semantic_audit_v3"
+                and "primary_literal_packaging_version" in saved_audit else {})
         ordered = (self._structured_run.ordered_pages[page_number] if self._structured_run is not None
-                   else extract_ordered_page_text(config.pdf_path, page_number - 1))
+                   else extract_ordered_page_text(config.pdf_path, page_number - 1, **extraction_options))
         extract_seconds = time.perf_counter() - extract_started
         extracted_text = ordered.text
         extraction_quality = classify_extracted_text_quality(extracted_text)
@@ -2326,8 +2417,14 @@ class TranslationWorkflow:
         if ocr_requested and ocr_engine is not None:
             ocr_attempted = True
             ocr_started = time.perf_counter()
+            def acquire_ocr(operation, *args, **kwargs):
+                if saved_audit and saved_audit.get("ocr_text_transport_policy"):
+                    from .ocr_text_transport import scope
+                    with scope(paths.run_dir, page_number, self._last_state.pdf_fingerprint):
+                        return operation(*args, **kwargs)
+                return operation(*args, **kwargs)
             if crop_recovery_path and integrity_assessment.crop_rect is not None:
-                ocr_result = ocr_pdf_page_crop_text(
+                ocr_result = acquire_ocr(ocr_pdf_page_crop_text,
                     config.pdf_path,
                     page_number,
                     integrity_assessment.crop_rect,
@@ -2345,7 +2442,7 @@ class TranslationWorkflow:
                     force_visual_grounding = True
                     ocr_result.failed_reason = ocr_result.failed_reason or "crop_merge_rejected"
             else:
-                ocr_result = ocr_pdf_page_text(
+                ocr_result = acquire_ocr(ocr_pdf_page_text,
                     config.pdf_path,
                     page_number,
                     mode=OcrMode.ALWAYS,
@@ -2454,7 +2551,7 @@ class TranslationWorkflow:
             )
         expected_ar_tokens: list[str] | None = None
         if config.target_lang == TargetLang.AR and self._structured_run is None:
-            source_text = pretokenize_arabic_source(source_text)
+            source_text = pretokenize_arabic_source(source_text, **source_field_options)
             all_tokens = extract_locked_tokens(source_text)
             expected_ar_tokens = [token for token in all_tokens if not is_portuguese_month_date_token(token)]
             page_metadata["ar_locked_tokens_expected"] = int(len(expected_ar_tokens))
@@ -2601,9 +2698,19 @@ class TranslationWorkflow:
                 "is an aid and may omit visible text. Include each passage once, preserve verbatim identifiers, "
                 "and do not infer illegible content.\n<<<END VISUAL SOURCE GUIDANCE>>>"
             )
+        applicable_terminology = []
         prompt_text = self._append_glossary_prompt(
             prompt_text, config.target_lang, source_text=glossary_source_text, page_index=page_number,
+            audit_terminology=applicable_terminology,
         )
+        from .workflow_semantic_audit import capture_source
+        page_metadata.update(capture_source(state=self._last_state, run_dir=paths.run_dir,
+            page_number=page_number, source_text=source_text, original_source_text=glossary_source_text,
+            expected_ar_tokens=expected_ar_tokens, image_data_url=image_data_url,
+            applicable_terminology=applicable_terminology,
+            text_transport_evidence=ocr_result.text_transport_evidence,
+            api_ocr_used=bool(ocr_used_for_source and ocr_result.engine == "api"),
+            merged_ocr_source=merged_visual_source_text is not None))
         prompt_text = self._append_prompt_addendum(prompt_text, config.target_lang)
         page_metadata["prompt_build_ms"] = round((time.perf_counter() - _prompt_build_t0) * 1000.0, 3)
 
@@ -2881,6 +2988,8 @@ class TranslationWorkflow:
             config.target_lang,
             expected_ar_tokens=expected_ar_tokens,
             ar_source_text=source_text,
+            **source_field_options,
+            **primary_literal_options,
         )
         from .failed_output_evidence import retain_failed_output
         retain_failed_output(paths.run_dir, keep_intermediates=config.keep_intermediates,
@@ -2932,6 +3041,7 @@ class TranslationWorkflow:
                 violation_kind=initial_eval.ar_violation_kind,
                 defect_reason=initial_eval.defect_reason,
                 token_details=initial_eval.ar_token_details,
+                **primary_literal_options,
             )
             if initial_eval.ar_violation_kind == "latin_or_digits_outside_wrapped_tokens":
                 page_metadata["retry_prompt_type"] = "ar_wrap_correction"
@@ -3112,6 +3222,8 @@ class TranslationWorkflow:
             expected_ar_tokens=expected_ar_tokens,
             ar_source_text=source_text,
             primary_normalized_text=initial_eval.normalized_text,
+            **source_field_options,
+            **(primary_literal_options if primary_literal_options.get("literal_wrapper_policy") == "lossless_source_components_v2" else {}),
         )
         retain_failed_output(paths.run_dir, keep_intermediates=config.keep_intermediates,
             page=page_number, attempt=2, raw_output=retry.raw_output,
@@ -3170,6 +3282,7 @@ class TranslationWorkflow:
 
     def _append_glossary_prompt(
         self, prompt_text: str, lang: TargetLang, *, source_text: str, page_index: int | None = None,
+        audit_terminology: list | None = None,
     ) -> str:
         entries = self._prompt_glossaries_by_lang.get(lang.value, [])
         priority_entries = [
@@ -3243,6 +3356,12 @@ class TranslationWorkflow:
         )
         if glossary_block == "":
             return prompt_text
+        if audit_terminology is not None:
+            from .pt_legal_glossary_aliases import source_matches_glossary_entry
+            audit_terminology.extend({"source_text": entry.source_text,
+                "preferred_translation": entry.preferred_translation, "match_mode": entry.match_mode,
+                "source_lang": entry.source_lang, "tier": int(entry.tier)} for entry in capped_entries
+                if source_matches_glossary_entry(source_text, entry))
         return f"{prompt_text}\n{glossary_block}"
 
     def _append_prompt_addendum(self, prompt_text: str, lang: TargetLang) -> str:
@@ -3266,13 +3385,19 @@ class TranslationWorkflow:
         expected_ar_tokens: list[str] | None = None,
         ar_source_text: str | None = None,
         primary_normalized_text: str | None = None,
+        source_field_policy: str | None = None,
+        literal_wrapper_policy: str | None = None,
     ) -> OutputEvaluation:
+        options = {"source_field_policy": source_field_policy} if source_field_policy is not None else {}
+        if literal_wrapper_policy is not None:
+            options["literal_wrapper_policy"] = literal_wrapper_policy
         return evaluate_workflow_output(
             raw_output,
             lang,
             expected_ar_tokens=expected_ar_tokens,
             ar_source_text=ar_source_text,
             primary_normalized_text=primary_normalized_text,
+            **options,
         )
 
     def _accumulate_usage_totals(self, page_metadata: dict[str, object], usage: dict[str, Any]) -> None:
@@ -3304,6 +3429,13 @@ class TranslationWorkflow:
             self._structured_run.check_source()
         from .usage_accounting import DispatchAccounting
 
+        from .checkpoint import ordinary_semantic_audit_recipe
+        from .semantic_review_model_policy import identity_fields
+        saved_semantic = ordinary_semantic_audit_recipe(run_state.settings)
+        semantic_identity = identity_fields(saved_semantic) if saved_semantic is not None else {}
+        if (semantic_identity and config.budget_cap_usd is not None
+                and config.budget_on_exceed == BudgetExceedPolicy.BLOCK):
+            raise ValueError("Dedicated semantic review has no verified strict BLOCK reservation envelope.")
         reference = run_state.dispatch_accounting
         if not isinstance(reference, dict):
             raise ValueError("Invalid saved dispatch accounting identity; preserve this run for recovery.")
@@ -3332,6 +3464,7 @@ class TranslationWorkflow:
                     "protocol_identity": dict(run_state.protocol_identity),
                     "selection": [run_state.selection_start_page, run_state.selection_end_page],
                     "run_started_at": run_state.run_started_at}
+        identity.update(semantic_identity)
         arguments = dict(run_dir=journal_dir, run_identity=identity,
                          historical_incomplete=bool(reference.get("historical_incomplete", False)))
         if self._accounting_factory is not None:
@@ -3342,8 +3475,12 @@ class TranslationWorkflow:
                 from .budget_reservations import ReservationBudget
                 budget = ReservationBudget(journal_dir / "budget.json", cap_usd=str(config.budget_cap_usd),
                                            identity=identity, create=not bool(run_state.dispatch_accounting))
+            accounting_policy = self._accounting_policy
+            if semantic_identity:
+                from .accounting_policy import with_semantic_review_policy
+                accounting_policy = with_semantic_review_policy(accounting_policy, semantic_identity["semantic_review_model_policy"])
             accountant = DispatchAccounting(**arguments, budget_context=budget,
-                                            **self._accounting_policy.accounting_arguments())
+                                            **accounting_policy.accounting_arguments())
         if config.budget_cap_usd is not None and config.budget_on_exceed == BudgetExceedPolicy.BLOCK:
             from .budget_reservations import money
             bound_budget = getattr(accountant, "budget_context", None)
@@ -3429,6 +3566,17 @@ class TranslationWorkflow:
         total_output_tokens = sum(int(page.get("output_tokens", 0) or 0) for _, page in page_rows)
         total_reasoning_tokens = sum(int(page.get("reasoning_tokens", 0) or 0) for _, page in page_rows)
         total_tokens = sum(int(page.get("total_tokens", 0) or 0) for _, page in page_rows)
+        from .checkpoint import ordinary_semantic_audit_recipe
+        semantic_rollup = None
+        if ordinary_semantic_audit_recipe(run_state.settings) is not None:
+            from .workflow_semantic_audit import dispatch_rollup
+            semantic_rollup = dispatch_rollup(state=run_state, run_dir=paths.run_dir,
+                                            accountant=self._dispatch_accounting)
+            audit_tokens = semantic_rollup["totals"]
+            total_input_tokens += audit_tokens["input_tokens"]
+            total_output_tokens += audit_tokens["output_tokens"]
+            total_reasoning_tokens += audit_tokens["reasoning_tokens"]
+            total_tokens += audit_tokens["total_tokens"]
 
         pages_with_images = sum(1 for _, page in page_rows if bool(page.get("image_used", False)))
         pages_with_retries = sum(1 for _, page in page_rows if bool(page.get("retry_used", False)))
@@ -3777,6 +3925,8 @@ class TranslationWorkflow:
             }
         if self._diagnostics_admin_mode:
             api_calls_total = sum(int(page.get("api_calls_count", 0) or 0) for _, page in page_rows)
+            if semantic_rollup is not None:
+                api_calls_total += semantic_rollup["provider_dispatch_count"]
             backoff_wait_seconds_total = sum(
                 float(page.get("backoff_wait_seconds_total", 0.0) or 0.0) for _, page in page_rows
             )
@@ -3847,6 +3997,18 @@ class TranslationWorkflow:
                 "events_path": str(paths.run_dir / "run_events.jsonl"),
                 "page_rollups": page_rollups,
             }
+        if semantic_rollup is not None:
+            payload["ordinary_semantic_audit"] = {
+                "recipe": ordinary_semantic_audit_recipe(run_state.settings),
+                "manifest_path": str(paths.run_dir / "semantic_audit" / "manifest.json"),
+                "accounting": semantic_rollup, "human_review_completed": False,
+                "visual_coverage": "text_only_configured_image_off"
+                    if config.image_mode == ImageMode.OFF else "source_image_available",
+            }
+        from .checkpoint import ordinary_semantic_audit_qualification
+        semantic_qualification = ordinary_semantic_audit_qualification(run_state.settings)
+        if semantic_qualification is not None:
+            payload["ordinary_semantic_audit"] = {**semantic_qualification, "human_review_completed": False}
         currency = os.getenv("LEGALPDF_COST_CURRENCY", "").strip()
         if currency:
             payload["cost_currency"] = currency.upper()
@@ -4239,6 +4401,10 @@ class TranslationWorkflow:
             gmail_batch_context=config.gmail_batch_context,
         )
         existing = load_run_state(paths.run_state_path)
+        semantic_evidence = any((paths.run_dir / name).exists()
+                                for name in ("semantic_source", "semantic_audit"))
+        if semantic_evidence and (existing is None or not config.resume):
+            raise SemanticIntegrationError("preserve_existing_evidence")
         accounting_dir = paths.run_dir / "accounting"
         protected_accounting = bool(config.resume and (
             (existing is not None and existing.dispatch_accounting)
@@ -4255,6 +4421,14 @@ class TranslationWorkflow:
             if self._ordinary_auto_layout_policy is not None and self._ordinary_auto_layout_policy != recorded_auto:
                 raise ValueError("Ordinary automatic layout policy changed on resume.")
             self._ordinary_auto_layout_policy = recorded_auto
+            from .checkpoint import ordinary_semantic_audit_recipe
+            saved_semantic = ordinary_semantic_audit_recipe(existing.settings)
+            if saved_semantic is not None:
+                if self._provided_client is not None and self._translation_model != saved_semantic["model"]:
+                    raise SemanticIntegrationError("model_changed")
+                self._translation_model = saved_semantic["model"]
+            from .workflow_semantic_audit import validate_retained_source_pins
+            validate_retained_source_pins(state=existing, run_dir=paths.run_dir)
         if self._translation_protocol not in {"legacy_text_v1", "legal_blocks_v2"}:
             raise ValueError("Checkpoint translation protocol is not supported.")
         has_structured_files = paths.pages_dir.exists() and (
@@ -4350,6 +4524,7 @@ class TranslationWorkflow:
         existing_state: RunState | None,
         pdf_fingerprint: str,
         context_hash: str,
+        context_text: str | None,
         total_pages: int,
         selected_pages: list[int],
         selection_start_page: int,
@@ -4400,8 +4575,13 @@ class TranslationWorkflow:
                     if self._reviewed_source_context is not None else None),
                 ordinary_auto_layout_policy=self._ordinary_auto_layout_policy,
                 primary_recipe=existing.settings.get("primary_assembly_recipe"),
+                semantic_recipe=existing.settings.get("ordinary_semantic_audit_recipe"),
+                semantic_qualification=existing.settings.get("ordinary_semantic_audit_qualification"),
             )
             if mismatch_reason is None:
+                from .workflow_semantic_audit import validate_context
+                validate_context(state=existing, run_dir=paths.run_dir,
+                    context_text=context_text, context_hash=context_hash)
                 existing.frozen_outdir_abs = str(paths.frozen_outdir)
                 existing.run_dir_abs = str(paths.run_dir)
                 existing.run_started_at = paths.run_started_at
@@ -4430,8 +4610,17 @@ class TranslationWorkflow:
         if self._structured_run is None:
             clear_run_dirs(paths)
         from .ordinary_auto_layout import frozen_automatic_layout_policy
-        primary_recipe = ({"version": "terminal_labeled_folio_v2", "ordinary_auto_layout_policy": self._ordinary_auto_layout_policy}
+        primary_recipe = ({"version": "terminal_source_bound_folio_v4", "ordinary_auto_layout_policy": self._ordinary_auto_layout_policy}
             if self._ordinary_auto_layout_policy == frozen_automatic_layout_policy() else None)
+        from .workflow_semantic_audit import fresh_recipe
+        semantic_eligible = (config.target_lang == TargetLang.AR and self._structured_run is None
+                and self._ordinary_auto_layout_policy == frozen_automatic_layout_policy())
+        semantic_recipe = (fresh_recipe(config, self._translation_model, self._ordinary_auto_layout_policy,
+            context_text=context_text, context_hash=context_hash)
+            if semantic_eligible and len(selected_pages) <= 12 else None)
+        semantic_qualification = ({"version": "ordinary_semantic_audit_v1", "audit_not_run": "selected_page_limit",
+            "selected_pages": list(selected_pages), "page_limit": 12}
+            if semantic_eligible and len(selected_pages) > 12 else None)
         state = new_run_state(
             config=config,
             paths=paths,
@@ -4444,9 +4633,38 @@ class TranslationWorkflow:
                 if self._reviewed_source_context is not None else None),
             ordinary_auto_layout_policy=self._ordinary_auto_layout_policy,
             primary_recipe=primary_recipe,
+            semantic_recipe=semantic_recipe,
+            semantic_qualification=semantic_qualification,
         )
+        from .workflow_semantic_audit import capture_context
+        capture_context(state=state, run_dir=paths.run_dir, context_text=context_text, context_hash=context_hash)
         save_run_state_atomic(paths.run_state_path, state)
         return state
+
+    def _semantic_failure_summary(self, config, paths, state, error):
+        """A failed audit never becomes a layout or DOCX-success observation."""
+        cancelled = self._cancel_event.is_set()
+        public_error = "cancelled" if cancelled else error.code
+        state.run_status = "cancelled" if cancelled else "semantic_audit_failed"
+        state.halt_reason = "cancelled_by_user" if cancelled else error.code
+        state.finished_at = self._utc_now()
+        state.final_docx_path_abs = None
+        state.failure_context = {"scope": "semantic_audit", "error": public_error,
+                                 "audit_error": error.code,
+                                 "message": "Whole-document semantic review is required."}
+        save_run_state_atomic(paths.run_state_path, state)
+        partial = None
+        if state.done_count:
+            try:
+                partial = self._export_partial_docx_locked()
+            except Exception:
+                self._log("Unapproved primary partial unavailable; preserved page evidence requires review.")
+        summary = self._write_run_summary(config=config, paths=paths, run_state=state)
+        self._log(public_error)
+        self._record_event(event_type="run_cancelled" if cancelled else "run_failed", stage="semantic_audit", error=public_error)
+        return RunSummary(success=False, exit_code=2, output_docx=None, partial_docx=partial,
+            run_dir=paths.run_dir, completed_pages=state.done_count, failed_page=None,
+            error=public_error, run_summary_path=summary)
 
     def _normalize_config(self, config: RunConfig) -> RunConfig:
         # Normalization is read-only: a structured checkpoint may still reject

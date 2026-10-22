@@ -92,7 +92,11 @@ def get_source_page_count(path: Path) -> int:
     raise ValueError(f"Unsupported source file type: {path}")
 
 
-def extract_ordered_source_text(path: Path, page_index: int, *, preserve_structure: bool = False) -> "OrderedPageText":
+def extract_ordered_source_text(path: Path, page_index: int, *, preserve_structure: bool = False,
+                                source_field_policy: str | None = None,
+                                source_question_row_policy: str | None = None) -> "OrderedPageText":
+    if source_question_row_policy not in (None, "baseline_boolean_question_v1"):
+        raise ValueError("Unknown source question row policy.")
     if is_pdf_source(path):
         if source_has_browser_pdf_bundle(path):
             evidence = browser_pdf_bundle_page_text(path, page_index + 1)
@@ -102,7 +106,9 @@ def extract_ordered_source_text(path: Path, page_index: int, *, preserve_structu
             return ordered_browser_page_text(evidence, preserve_structure=preserve_structure)
         from .pdf_text_order import extract_ordered_page_text
 
-        return extract_ordered_page_text(path, page_index, **({"preserve_structure": True} if preserve_structure else {}))
+        return extract_ordered_page_text(path, page_index, **({"preserve_structure": True} if preserve_structure else {}),
+            **({"source_field_policy": source_field_policy} if source_field_policy is not None else {}),
+            **({"source_question_row_policy": source_question_row_policy} if source_question_row_policy is not None else {}))
     if not is_image_source(path):
         raise ValueError(f"Unsupported source file type: {path}")
     if page_index != 0:

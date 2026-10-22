@@ -92,6 +92,109 @@ class PrimaryAssemblyRecipeError(ValueError):
     """An explicit persisted recipe cannot be treated as a missing checkpoint."""
 
 
+class SemanticAuditRecipeError(ValueError):
+    """An invalid explicit audit recipe must never become a historical run."""
+
+
+def ordinary_semantic_audit_recipe(settings: dict) -> dict | None:
+    if "ordinary_semantic_audit_recipe" not in settings:
+        return None
+    recipe = settings["ordinary_semantic_audit_recipe"]
+    keys = {"version", "model", "reasoning_effort", "effort_policy", "target_language",
+            "max_output_tokens", "timeout_seconds", "ordinary_auto_layout_policy", "source_image_policy",
+            "configured_image_mode"}
+    if type(recipe) is dict and recipe.get("version") in ("ordinary_semantic_audit_v2", "ordinary_semantic_audit_v3"):
+        keys |= {"context_sha256", "context_binding_version", "terminology_policy", "source_field_policy"}
+        if recipe["version"] == "ordinary_semantic_audit_v3":
+            keys.add("review_protocol")
+            for optional in ("primary_literal_packaging_version", "semantic_unit_reference_policy", "source_question_row_policy",
+                             "source_inventory_max_output_tokens", "semantic_source_review_policy",
+                             "semantic_page_coverage_policy", "semantic_review_model_policy", "semantic_repair_policy",
+                             "semantic_literal_authority_policy", "semantic_enclosure_authority_policy", "ocr_text_transport_policy"):
+                if optional in recipe:
+                    keys.add(optional)
+    if (type(recipe) is not dict or set(recipe) != keys
+            or recipe.get("version") not in ("ordinary_semantic_audit_v1", "ordinary_semantic_audit_v2", "ordinary_semantic_audit_v3")
+            or recipe.get("model") not in ("gpt-5.2", "gpt-5.6-terra", "gpt-5.6-sol")
+            or recipe.get("reasoning_effort") not in ("medium", "high", "xhigh")
+            or recipe.get("effort_policy") not in ("fixed_high", "fixed_xhigh", "adaptive")
+            or recipe.get("target_language") != "AR"
+            or recipe.get("source_image_policy") != "configured_image_mode_v1"
+            or recipe.get("configured_image_mode") not in ("off", "auto", "always")
+            or recipe.get("configured_image_mode") != settings.get("image_mode")
+            or type(recipe.get("max_output_tokens")) is not int or recipe["max_output_tokens"] != 32000
+            or type(recipe.get("timeout_seconds")) not in {int, float} or recipe["timeout_seconds"] != 480
+            or recipe.get("ordinary_auto_layout_policy") != settings.get("ordinary_auto_layout_policy")):
+        raise SemanticAuditRecipeError("semantic_audit_invalid_recipe")
+    if recipe["version"] in ("ordinary_semantic_audit_v2", "ordinary_semantic_audit_v3"):
+        context_hash = recipe["context_sha256"]
+        if (not isinstance(context_hash, str)
+                or (context_hash != CONTEXT_EMPTY_HASH_MARKER and
+                    (len(context_hash) != 64 or any(c not in "0123456789abcdef" for c in context_hash)))
+                or recipe["context_binding_version"] != "resolved_context_v1"
+                or recipe["terminology_policy"] != "source_matched_primary_terms_v1"
+                or recipe["source_field_policy"] != "baseline_label_value_v1"):
+            raise SemanticAuditRecipeError("semantic_audit_invalid_context_recipe")
+    if (recipe["version"] == "ordinary_semantic_audit_v3"
+            and recipe["review_protocol"] != "source_inventory_correct_verify_v1"):
+        raise SemanticAuditRecipeError("semantic_audit_invalid_review_protocol")
+    if ("primary_literal_packaging_version" in recipe
+            and recipe["primary_literal_packaging_version"] not in ("lossless_source_components_v1", "lossless_source_components_v2")):
+        raise SemanticAuditRecipeError("semantic_audit_invalid_primary_literal_packaging")
+    for key, value in (("semantic_unit_reference_policy", "caller_unit_refs_v1"),
+                       ("source_question_row_policy", "baseline_boolean_question_v1")):
+        if key in recipe and recipe[key] != value:
+            raise SemanticAuditRecipeError("semantic_audit_invalid_" + key)
+    if ("semantic_source_review_policy" in recipe
+            and (type(recipe["semantic_source_review_policy"]) is not str
+                 or recipe["semantic_source_review_policy"] not in ("source_commitment_visual_v1", "source_commitment_visual_v2", "source_commitment_visual_v3", "source_commitment_visual_v4", "source_commitment_visual_v5")
+                 or recipe.get("semantic_unit_reference_policy") != "caller_unit_refs_v1")):
+        raise SemanticAuditRecipeError("semantic_audit_invalid_semantic_source_review_policy")
+    if "semantic_review_model_policy" in recipe:
+        from .semantic_review_model_policy import validate_policy
+        try:
+            validate_policy(recipe["semantic_review_model_policy"])
+        except ValueError:
+            raise SemanticAuditRecipeError("semantic_audit_invalid_semantic_review_model_policy") from None
+    if "semantic_repair_policy" in recipe:
+        if (type(recipe["semantic_repair_policy"]) is not str
+                or recipe["semantic_repair_policy"] not in ("source_grounded_repair_once_v1", "source_grounded_repair_once_v2", "source_grounded_repair_once_v3", "source_grounded_repair_once_v4")
+                or recipe.get("semantic_source_review_policy") != "source_commitment_visual_v5"
+                or recipe.get("semantic_unit_reference_policy") != "caller_unit_refs_v1"
+                or recipe.get("semantic_page_coverage_policy") != "complete_selected_pages_v1"
+                or recipe.get("source_inventory_max_output_tokens") != 64000
+                or "semantic_review_model_policy" not in recipe):
+            raise SemanticAuditRecipeError("semantic_audit_invalid_semantic_repair_policy")
+    if ((recipe.get("semantic_repair_policy") in {"source_grounded_repair_once_v3", "source_grounded_repair_once_v4"})
+            != (recipe.get("semantic_literal_authority_policy") == "source_literal_authority_v1")
+            or ("semantic_literal_authority_policy" in recipe
+                and recipe.get("semantic_literal_authority_policy") != "source_literal_authority_v1")):
+        raise SemanticAuditRecipeError("semantic_audit_invalid_literal_authority_policy")
+    if ((recipe.get("semantic_repair_policy") == "source_grounded_repair_once_v4")
+            != (recipe.get("semantic_enclosure_authority_policy") == "source_enclosure_authority_v1")
+            or ("semantic_enclosure_authority_policy" in recipe
+                and recipe.get("semantic_enclosure_authority_policy") != "source_enclosure_authority_v1")):
+        raise SemanticAuditRecipeError("semantic_audit_invalid_enclosure_authority_policy")
+    if "ocr_text_transport_policy" in recipe:
+        if (recipe["ocr_text_transport_policy"] != "openai_ocr_text_envelope_v1"
+                or settings.get("ocr_engine") not in {"api", "local_then_api"}):
+            raise SemanticAuditRecipeError("semantic_audit_invalid_ocr_text_transport_policy")
+    if ("semantic_page_coverage_policy" in recipe
+            and (type(recipe["semantic_page_coverage_policy"]) is not str
+                 or recipe["semantic_page_coverage_policy"] != "complete_selected_pages_v1"
+                 or recipe.get("semantic_unit_reference_policy") != "caller_unit_refs_v1")):
+        raise SemanticAuditRecipeError("semantic_audit_invalid_semantic_page_coverage_policy")
+    if ("source_inventory_max_output_tokens" in recipe
+            and (type(recipe["source_inventory_max_output_tokens"]) is not int
+                 or recipe["source_inventory_max_output_tokens"] != 64000
+                 or recipe.get("semantic_unit_reference_policy") != "caller_unit_refs_v1")):
+        raise SemanticAuditRecipeError("semantic_audit_invalid_source_inventory_max_output_tokens")
+    from .ordinary_auto_layout import valid_automatic_layout_policy
+    if not valid_automatic_layout_policy(recipe["ordinary_auto_layout_policy"]):
+        raise SemanticAuditRecipeError("semantic_audit_invalid_recipe_policy")
+    return deepcopy(recipe)
+
+
 def primary_assembly_recipe(settings: dict) -> dict | None:
     """Validate the saved assembly capability independently of current pricing."""
     if "primary_assembly_recipe" not in settings:
@@ -99,7 +202,7 @@ def primary_assembly_recipe(settings: dict) -> dict | None:
     recipe = settings["primary_assembly_recipe"]
     if (type(recipe) is not dict or set(recipe) != {"version", "ordinary_auto_layout_policy"}
             or type(recipe["version"]) is not str
-            or recipe["version"] not in {"terminal_labeled_folio_v1", "terminal_labeled_folio_v2"}
+            or recipe["version"] not in {"terminal_labeled_folio_v1", "terminal_labeled_folio_v2", "terminal_source_bound_folio_v3", "terminal_source_bound_folio_v4"}
             or type(recipe["ordinary_auto_layout_policy"]) is not str
             or recipe["ordinary_auto_layout_policy"] != settings.get("ordinary_auto_layout_policy")):
         raise PrimaryAssemblyRecipeError("Invalid saved primary assembly recipe.")
@@ -109,8 +212,25 @@ def primary_assembly_recipe(settings: dict) -> dict | None:
     return deepcopy(recipe)
 
 
+def ordinary_semantic_audit_qualification(settings: dict) -> dict | None:
+    if "ordinary_semantic_audit_qualification" not in settings:
+        return None
+    value = settings["ordinary_semantic_audit_qualification"]
+    if (type(value) is not dict or set(value) != {"version", "audit_not_run", "selected_pages", "page_limit"}
+            or value.get("version") != "ordinary_semantic_audit_v1"
+            or value.get("audit_not_run") != "selected_page_limit"
+            or type(value.get("page_limit")) is not int or value["page_limit"] != 12
+            or type(value.get("selected_pages")) is not list or len(value["selected_pages"]) <= 12
+            or any(type(n) is not int or n < 1 for n in value["selected_pages"])
+            or value["selected_pages"] != sorted(set(value["selected_pages"]))
+            or "ordinary_semantic_audit_recipe" in settings):
+        raise SemanticAuditRecipeError("semantic_audit_invalid_qualification")
+    return deepcopy(value)
+
+
 def settings_fingerprint(config: RunConfig, *, ordinary_source_review: dict | None = None,
-                         ordinary_auto_layout_policy: str | None = None, primary_recipe: dict | None = None) -> dict[str, Any]:
+                         ordinary_auto_layout_policy: str | None = None, primary_recipe: dict | None = None,
+                         semantic_recipe: dict | None = None, semantic_qualification: dict | None = None) -> dict[str, Any]:
     result = {
         "effort": config.effort.value,
         "effort_policy": config.effort_policy.value,
@@ -136,6 +256,12 @@ def settings_fingerprint(config: RunConfig, *, ordinary_source_review: dict | No
     if primary_recipe is not None:
         result["primary_assembly_recipe"] = deepcopy(primary_recipe)
         primary_assembly_recipe(result)
+    if semantic_recipe is not None:
+        result["ordinary_semantic_audit_recipe"] = deepcopy(semantic_recipe)
+        ordinary_semantic_audit_recipe(result)
+    if semantic_qualification is not None:
+        result["ordinary_semantic_audit_qualification"] = deepcopy(semantic_qualification)
+        ordinary_semantic_audit_qualification(result)
     return result
 
 
@@ -219,6 +345,8 @@ def new_run_state(
     ordinary_source_review: dict | None = None,
     ordinary_auto_layout_policy: str | None = None,
     primary_recipe: dict | None = None,
+    semantic_recipe: dict | None = None,
+    semantic_qualification: dict | None = None,
 ) -> RunState:
     from .structured_artifacts import normalize_protocol_identity
 
@@ -247,7 +375,8 @@ def new_run_state(
         selection_end_page=selection_end_page,
         selection_page_count=selection_page_count,
         settings=settings_fingerprint(config, ordinary_source_review=ordinary_source_review,
-            ordinary_auto_layout_policy=ordinary_auto_layout_policy, primary_recipe=primary_recipe),
+            ordinary_auto_layout_policy=ordinary_auto_layout_policy, primary_recipe=primary_recipe,
+            semantic_recipe=semantic_recipe, semantic_qualification=semantic_qualification),
         context_hash=context_hash,
         created_at=now,
         updated_at=now,
@@ -357,6 +486,11 @@ def load_run_state(path: Path) -> RunState | None:
         if not isinstance(settings_obj, dict):
             return None
         primary_assembly_recipe(settings_obj)
+        ordinary_semantic_audit_recipe(settings_obj)
+        ordinary_semantic_audit_qualification(settings_obj)
+        if "ordinary_semantic_audit_recipe" not in settings_obj and any(
+                (path.parent / name).exists() for name in ("semantic_source", "semantic_audit")):
+            raise SemanticAuditRecipeError("semantic_audit_recipe_missing")
         failure_context_obj = data.get("failure_context", {})
         failure_context = dict(failure_context_obj) if isinstance(failure_context_obj, dict) else {}
         from .structured_artifacts import normalize_protocol_identity
@@ -396,7 +530,7 @@ def load_run_state(path: Path) -> RunState | None:
             protocol_identity=protocol_identity,
             dispatch_accounting=data.get("dispatch_accounting", {}),
         )
-    except PrimaryAssemblyRecipeError:
+    except (PrimaryAssemblyRecipeError, SemanticAuditRecipeError):
         raise
     except (TypeError, ValueError, KeyError):
         return None
@@ -428,6 +562,8 @@ def resume_incompatibility_reason(
     ordinary_source_review: dict | None = None,
     ordinary_auto_layout_policy: str | None = None,
     primary_recipe: dict | None = None,
+    semantic_recipe: dict | None = None,
+    semantic_qualification: dict | None = None,
 ) -> str | None:
     from .structured_artifacts import StructuredArtifactError, normalize_protocol_identity
 
@@ -449,7 +585,10 @@ def resume_incompatibility_reason(
     if state.context_hash != context_hash:
         return "context mismatch."
     expected_settings = settings_fingerprint(config, ordinary_source_review=ordinary_source_review,
-        ordinary_auto_layout_policy=ordinary_auto_layout_policy, primary_recipe=primary_recipe)
+        ordinary_auto_layout_policy=ordinary_auto_layout_policy, primary_recipe=primary_recipe,
+        semantic_recipe=semantic_recipe, semantic_qualification=semantic_qualification)
+    ordinary_semantic_audit_recipe(state.settings)
+    ordinary_semantic_audit_qualification(state.settings)
     checkpoint_settings = dict(state.settings)
     if checkpoint_settings.get("ordinary_auto_layout_policy") != ordinary_auto_layout_policy:
         return "ordinary automatic layout policy identity mismatch."

@@ -841,12 +841,35 @@ class SavedDocxLayoutService:
             if mapped.saved_snapshot != snapshot:
                 _fail("ordinary_snapshot_mismatch", 409)
             from .ordinary_source_folio_proof import KEY, RECIPE_KEY, VERSION, derive_proof
+            from .ordinary_auto_layout import (frozen_automatic_layout_policy, _terminal_source_layout_policy, _complete_lrm_emphasis_policy, _inline_folio_direction_policy, _reference_footer_v5_policy, _heading_columns_v4_policy, _clock_direction_policy, _body_columns_v3_policy,
+                _source_bound_v4_policy, _source_folio_policies, _clock_direction_version, _source_folio_inline_direction_version)
+            direction_key = "source_folio_direction_version"
+            expected_direction = ("numeric_run_ltr_v3"
+                if policy_fingerprint in {p.split(":", 1)[1] for p in
+                    (frozen_automatic_layout_policy(), _terminal_source_layout_policy(), _complete_lrm_emphasis_policy(), _inline_folio_direction_policy(), _reference_footer_v5_policy(), _heading_columns_v4_policy(), _clock_direction_policy(), _body_columns_v3_policy(), _source_bound_v4_policy())}
+                    and "source_evidence" in proposal_evidence else None)
+            if ((direction_key in proposal_evidence and expected_direction is None)
+                    or proposal_evidence.get(direction_key) != expected_direction):
+                _fail("ordinary_source_folio_direction_changed", 409)
+            clock_key = "clock_direction_version"
+            expected_clock = _clock_direction_version(policy_fingerprint) if "source_evidence" in proposal_evidence else None
+            if (clock_key in proposal_evidence and (expected_clock is None or proposal_evidence[clock_key] != expected_clock)
+                    or expected_clock is not None and proposal_evidence.get(clock_key) != expected_clock):
+                _fail("ordinary_source_clock_direction_changed", 409)
+            inline_key = "source_folio_inline_direction_version"
+            expected_inline = (_source_folio_inline_direction_version(policy_fingerprint)
+                if "source_evidence" in proposal_evidence else None)
+            if (inline_key in proposal_evidence and (expected_inline is None or proposal_evidence[inline_key] != expected_inline)
+                    or expected_inline is not None and (proposal_evidence.get(inline_key) != expected_inline
+                        or proposal_evidence.get(RECIPE_KEY) != VERSION)):
+                _fail("ordinary_source_inline_folio_direction_changed", 409)
+            from .ordinary_auto_layout_artifacts import _terminal_source_layout_context
+            _terminal_source_layout_context({**proposal_evidence,'policy_fingerprint':policy_fingerprint})
             if KEY in proposal_evidence:
                 _fail("ordinary_source_folio_proof_untrusted", 409)
             if RECIPE_KEY in proposal_evidence:
-                from .ordinary_auto_layout import frozen_automatic_layout_policy
                 if (proposal_evidence[RECIPE_KEY] != VERSION
-                        or policy_fingerprint != frozen_automatic_layout_policy().split(":", 1)[1]):
+                        or policy_fingerprint not in {p.split(":", 1)[1] for p in _source_folio_policies()}):
                     _fail("ordinary_source_folio_recipe_changed", 409)
                 proposal_evidence = {**proposal_evidence, KEY: derive_proof(
                     _read(folder / "source.pdf", PDF_MAX_BYTES), pages, pages_selected,

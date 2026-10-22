@@ -193,6 +193,44 @@ $baselineCommands = @(
 $fullExtraCommands = @(
     @{
         Executable = $venvPython
+        Arguments = @("-m", "pytest", "-q", "--durations=10",
+            "tests/test_openai_multi_image.py",
+            "tests/test_ocr_text_transport.py", "tests/test_ocr_text_transport_workflow.py",
+            "tests/test_ordinary_semantic_audit.py", "tests/test_ordinary_semantic_review.py",
+            "tests/test_ordinary_semantic_unit_refs.py", "tests/test_ordinary_semantic_inventory_budget.py",
+            "tests/test_ordinary_semantic_source_review_policy.py",
+            "tests/test_ordinary_semantic_page_coverage.py", "tests/test_semantic_page_coverage_integration.py",
+            "tests/test_source_ambiguity_policy_v2.py", "tests/test_source_commitment_visual_v3.py", "tests/test_visible_literal_serialization_v4.py",
+            "tests/test_source_precision_policy_v5.py", "tests/test_ordinary_semantic_repair.py", "tests/test_semantic_repair_diagnostics.py", "tests/test_semantic_validation_repair_v2.py",
+            "tests/test_source_literal_authority.py", "tests/test_source_literal_authority_workflow.py",
+            "tests/test_source_enclosure_authority.py", "tests/test_source_enclosure_authority_workflow.py",
+            "tests/test_reference_footer_hint_v5.py", "tests/test_source_folio_inline_direction.py", "tests/test_completed_unreviewed_rebuild.py",
+            "tests/test_semantic_review_model_policy.py",
+            "tests/test_semantic_review_native_billing.py", "tests/test_semantic_cache_usage_compatibility.py", "tests/test_semantic_review_model_integration.py",
+            "tests/test_semantic_source_visual_literals.py", "tests/test_semantic_source_review_integration.py",
+            "tests/test_semantic_unit_reference_integration.py", "tests/test_source_inventory_capacity_integration.py",
+            "tests/test_source_boolean_question_order.py",
+            "tests/test_workflow_semantic_audit_integration.py",
+            "tests/test_workflow_semantic_review_integration.py",
+            "tests/test_semantic_audit_context_preservation.py",
+            "tests/test_ar_lossless_source_components.py",
+            "tests/test_ar_inline_component_proof.py",
+            "tests/test_ar_prefixed_postal_packaging_v2.py",
+            "tests/test_primary_prefixed_postal_packaging_v2.py",
+            "tests/test_ar_adjacent_literal_preservation.py",
+            "tests/test_checkpoint_resume.py",
+            "tests/test_primary_literal_packaging_integration.py",
+            "tests/test_source_field_row_order.py", "tests/test_ar_field_label_boundaries.py",
+            "tests/test_primary_assembly_checkpoint_recipe.py",
+            "tests/test_primary_source_bound_folio.py", "tests/test_primary_source_bound_folio_separator.py",
+            "tests/test_ordinary_flow_order_normalization.py",
+            "tests/test_ordinary_body_columns_v3.py", "tests/test_ordinary_body_columns_workflow.py",
+            "tests/test_ordinary_clock_direction.py", "tests/test_ordinary_clock_policy.py", "tests/test_ordinary_clock_workflow.py",
+            "tests/test_ordinary_heading_columns_v4.py", "tests/test_ordinary_heading_columns_workflow.py",
+            "tests/test_ordinary_controlled_folio_direction.py", "tests/test_source_folio_span_proof.py")
+    },
+    @{
+        Executable = $venvPython
         Arguments = @("-m", "pytest", "-q", "--durations=10", "tests/test_shadow_runtime_metadata_atomic.py")
     },
     @{
@@ -246,6 +284,8 @@ $fullExtraCommands = @(
             "tests/test_optional_layout_hint_recovery.py",
             "tests/test_optional_footer_hint_recovery.py",
             "tests/test_ordinary_source_layout.py",
+            "tests/test_terminal_source_layout.py",
+            "tests/test_terminal_closing_group.py",
             "tests/test_ordinary_section_ownership.py",
             "tests/test_word_story_projection.py",
             "tests/test_ordinary_text_correction.py", "tests/test_ordinary_text_correction_api.py",

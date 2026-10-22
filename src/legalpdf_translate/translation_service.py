@@ -1308,6 +1308,7 @@ class TranslationJobManager:
         self._automatic_layout_runner = automatic_layout_runner
         self._automatic_layout_cancel = None
         self._automatic_layout_recovery_runner = None
+        self._automatic_layout_rebuild_runner = None
 
     def set_automatic_layout_runner(self, runner: Callable[[str, str], Mapping[str, Any]]) -> None:
         """Attach the browser-owned runner before jobs start; tests may inject a bounded fake."""
@@ -1332,6 +1333,12 @@ class TranslationJobManager:
         with self._lock:
             job = self._jobs.get(job_id)
             return bool(job and job._automatic_layout_recovery_active)
+
+    def set_automatic_layout_rebuild_runner(self, runner) -> None:
+        """Server-only completed renderer migration; HTTP contracts are unchanged."""
+        if not callable(runner) or self._automatic_layout_rebuild_runner is not None:
+            raise ValueError("ordinary_auto_layout_rebuild_runner_unavailable")
+        self._automatic_layout_rebuild_runner = runner
 
     def automatic_layout_cancel_requested(self, job_id: str) -> bool:
         with self._lock:
@@ -2022,8 +2029,10 @@ class TranslationJobManager:
                     prior = deepcopy(parent.result_payload) if parent is not None else {}
                 prior_auto = prior.get("automatic_layout") if isinstance(prior, dict) else None
                 prior_policy = parent._ordinary_auto_layout_policy if parent is not None else None
-                if (self._automatic_layout_runner is not None and isinstance(prior_auto, dict)
-                        and prior_auto.get("status") == "automatic_unreviewed" and prior_policy):
+                prior_automatic = isinstance(prior_auto, dict) and prior_auto.get("status") == "automatic_unreviewed"
+                if (prior_policy and isinstance(prior.get("save_seed"), dict)
+                        and (self._automatic_layout_rebuild_runner is not None
+                             or self._automatic_layout_runner is not None and prior_automatic)):
                     seed = prior.get("save_seed")
                     if not isinstance(seed, dict) or str(prior.get("run_dir")) != str(run_dir):
                         raise ValueError("ordinary_auto_layout_rebuild_identity_changed")
@@ -2039,9 +2048,20 @@ class TranslationJobManager:
                     self._mark_finished(job_id=job_id, status="formatting",
                         status_text="Reusing source layout...", diagnostics={"kind": "rebuild"},
                         result=prior, artifacts=rebuilt_artifacts)
+                    with self._lock:
+                        self._jobs[job_id]._completed_accountant = parent._completed_accountant
                     try:
-                        self._finish_automatic_layout(job_id,
-                            self._automatic_layout_runner(job_id, prior_policy))
+                        rebuilt = (self._automatic_layout_rebuild_runner(job_id)
+                            if self._automatic_layout_rebuild_runner is not None else None)
+                        if rebuilt is None and prior_automatic:
+                            rebuilt = self._automatic_layout_runner(job_id, prior_policy)
+                        if rebuilt is None:
+                            self._mark_finished(job_id=job_id, status="completed", status_text="Rebuild complete",
+                                diagnostics={"kind": "rebuild"},
+                                result={"rebuild": {"docx_path": str(output_docx.expanduser().resolve()),
+                                    "run_dir": str(run_dir.expanduser().resolve())}}, artifacts=rebuilt_artifacts)
+                        else:
+                            self._finish_automatic_layout(job_id, rebuilt)
                     except Exception as exc:
                         code = getattr(exc, "code", "automatic_layout_unavailable")
                         if type(code) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,120}", code) is None:

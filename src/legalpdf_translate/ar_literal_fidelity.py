@@ -2,6 +2,7 @@
 from collections import Counter
 import re
 import unicodedata
+from itertools import product
 
 from .output_normalize import LRI, PDI
 
@@ -11,6 +12,170 @@ SEPARATORS = re.compile(r"[\s=/€$£¥]*")
 _MAX_GROUP_WORK = 200_000
 _MAX_GROUP_STATES = 10_000
 _MAX_SOURCE_LINE_WORK = 200_000
+LITERAL_WRAPPER_POLICY = "lossless_source_components_v1"
+LITERAL_WRAPPER_POLICY_V2 = "lossless_source_components_v2"
+_MAX_COMPONENT_CHARS = 120_000
+_MAX_COMPONENT_WORK = 200_000
+_MAX_COMPONENT_TOKENS = 512
+_MAX_COMPONENT_BLOCKS = 32
+
+
+def decompose_source_literal_components_with_stats(text, source_text, expected_tokens, *, literal_wrapper_policy=None):
+    """Split only exact source-owned components in a complete postal witness.
+
+    This changes internal wrappers, never a visible character or the expected
+    inventory. Ambiguous, malformed or oversized proofs are a no-op. In
+    particular, matching a short number somewhere inside an address is not
+    ownership: split offsets come from exact source-row coordinate mappings.
+    """
+    from .ar_source_fields import _view, _occurrences, source_address_line_blocks
+
+    if literal_wrapper_policy not in (None, LITERAL_WRAPPER_POLICY, LITERAL_WRAPPER_POLICY_V2):
+        raise ValueError("Unknown literal wrapper policy.")
+    if (not isinstance(text, str) or not isinstance(source_text, str)
+            or len(text) + len(source_text) > _MAX_COMPONENT_CHARS
+            or not isinstance(expected_tokens, (tuple, list))
+            or not 1 <= len(expected_tokens) <= _MAX_COMPONENT_TOKENS
+            or any(not isinstance(v, str) or not v or len(v) > 256 for v in expected_tokens)):
+        return text, 0
+
+    def safe_view(value, *, canonical):
+        # Normalization owns balanced LRI/PDI token wrappers and may place LRM
+        # outside them. No other invisible format/control is proof material.
+        if any((unicodedata.category(c) == "Cc" and c not in "\r\n")
+               or (unicodedata.category(c) == "Cf" and c not in {LRI, PDI, "\u200e"})
+               for c in value):
+            return None
+        view = _view(value)
+        if view is None or len(view[2]) > _MAX_COMPONENT_TOKENS:
+            return None
+        cursor = 0
+        outside = []
+        for _, _, literal, start, end in view[2]:
+            outside.append(value[cursor:start])
+            if canonical and (LRI in outside[-1] or PDI in outside[-1]):
+                return None
+            if canonical and value[start:end] != LRI + "[[" + literal + "]]" + PDI:
+                return None
+            cursor = end
+        outside.append(value[cursor:])
+        if canonical:
+            return None if LRI in outside[-1] or PDI in outside[-1] else view
+        # Extraction may already isolate unrelated source runs. Require balanced,
+        # unnested runs; proof rows below may contain only actual token controls.
+        depth = 0
+        for char in "".join(outside):
+            if char == LRI:
+                if depth:
+                    return None
+                depth = 1
+            elif char == PDI:
+                if not depth:
+                    return None
+                depth = 0
+        return None if depth else view
+
+    source, target = safe_view(source_text, canonical=False), safe_view(text, canonical=True)
+    if source is None or target is None:
+        return text, 0
+    source_visible, target_visible = source[0], target[0]
+    required = Counter(expected_tokens)
+    source_counts = Counter(token[2] for token in source[2])
+    before_counts = Counter(token[2] for token in target[2])
+    blocks = source_address_line_blocks(source_visible)
+    if literal_wrapper_policy == LITERAL_WRAPPER_POLICY_V2:
+        from .ar_source_fields import source_required_prefixed_address_line_blocks
+        blocks = sorted(set(blocks + source_required_prefixed_address_line_blocks(source_text, expected_tokens)), key=lambda field: field.start)
+    if not blocks or len(blocks) > _MAX_COMPONENT_BLOCKS:
+        return text, 0
+    work = len(source_text) + len(text)
+    variants = {}
+    for index, block in enumerate(blocks):
+        work += len(source_visible) + len(source[2])
+        if work > _MAX_COMPONENT_WORK:
+            return text, 0
+        if len(_occurrences(source_visible, block.value)) != 1:
+            continue
+        owned = [token for token in source[2] if token[0] < block.end and token[1] > block.start]
+        raw_start, raw_end = source[1][block.start], source[1][block.end - 1] + 1
+        raw_proof = source_text[raw_start:raw_end]
+        for _, _, _, start, end in reversed(owned):
+            left, right = max(start, raw_start) - raw_start, min(end, raw_end) - raw_start
+            raw_proof = raw_proof[:left] + raw_proof[right:]
+        if LRI in raw_proof or PDI in raw_proof:
+            continue
+        if (not 2 <= len(owned) <= 8 or any(a < block.start or b > block.end for a, b, *_ in owned)):
+            continue
+        rows = [(block.start + m.start(1), block.start + m.end(1), m[1])
+                for m in re.finditer(r"([^\r\n]+)(?:\r\n|\r|\n|$)", block.value)]
+        if not 2 <= len(rows) <= 3:
+            continue
+        parts = []
+        for a, b, value, *_ in owned:
+            work += len(source_visible) + len(target_visible)
+            if work > _MAX_COMPONENT_WORK:
+                return text, 0
+            row_indexes = [n for n, (start, end, _) in enumerate(rows) if start <= a < b <= end]
+            if (len(row_indexes) != 1 or required[value] != 1 or source_counts[value] != 1
+                    or before_counts[value] != 0 or _occurrences(source_visible, value) != [(a, b)]
+                    or len(_occurrences(target_visible, value)) != 1):
+                parts = []
+                break
+            parts.append((row_indexes[0], a - rows[row_indexes[0]][0], b - rows[row_indexes[0]][0], value))
+        if len(parts) != len(owned):
+            continue
+        # Only explicit horizontal address-row joins are recognized. Their
+        # actual target bytes are retained, including all commas and spaces.
+        for joins in product((" ", ", ", "، "), repeat=len(rows) - 1):
+            offsets, literal = [], ""
+            for n, (_, _, value) in enumerate(rows):
+                offsets.append(len(literal))
+                literal += value + (joins[n] if n < len(joins) else "")
+            mapped = tuple((offsets[n] + start, offsets[n] + end, value) for n, start, end, value in parts)
+            if any(literal[a:b] != value for a, b, value in mapped):
+                continue
+            variants.setdefault(literal, set()).add((index, mapped))
+
+    allocations = []
+    for token in target[2]:
+        options = variants.get(token[2], set())
+        if not options:
+            continue
+        if len(options) != 1:
+            return text, 0
+        index, parts = next(iter(options))
+        if any(a[1] > b[0] for a, b in zip(parts, parts[1:])):
+            return text, 0
+        allocations.append((index, token, parts))
+    if not allocations or [a[0] for a in allocations] != sorted({a[0] for a in allocations}):
+        return text, 0
+
+    def wrap(value):
+        # Residual punctuation AND spaces remain protected together so Word's
+        # literal-run rendering retains the contiguous LTR sequence.
+        return LRI + "[[" + value + "]]" + PDI if value else ""
+
+    result, cursor = [], 0
+    for _, token, parts in allocations:
+        _, _, literal, start, end = token
+        result.append(text[cursor:start])
+        prior = 0
+        for a, b, value in parts:
+            result.extend((wrap(literal[prior:a]), LRI + "[[" + value + "]]" + PDI))
+            prior = b
+        result.append(wrap(literal[prior:]))
+        cursor = end
+    result.append(text[cursor:])
+    rebuilt = "".join(result)
+    after = safe_view(rebuilt, canonical=True)
+    if after is None or after[0] != target_visible:
+        return text, 0
+    after_counts = Counter(token[2] for token in after[2])
+    if any(count > max(0, required[value] - before_counts[value])
+           for value, count in (after_counts - before_counts).items() if value in required):
+        return text, 0
+    assert visible_text(rebuilt) == visible_text(text)
+    return rebuilt, len(allocations)
 
 
 def visible_text(text):
@@ -96,7 +261,7 @@ def _address_correction_exemptions(primary, corrected, required, source):
     return exemptions
 
 
-def _source_line_restoration_groups(primary_view, corrected_view, source):
+def _source_line_restoration_groups(primary_view, corrected_view, source, *, required=None, literal_wrapper_policy=None):
     """Allocate unique exact source CR/LF blocks flattened only to ASCII spaces."""
     from .ar_source_fields import _view, _occurrences, source_address_line_blocks
     source_view = _view(source) if source else None
@@ -104,6 +269,9 @@ def _source_line_restoration_groups(primary_view, corrected_view, source):
         return []
     source_visible = source_view[0]
     blocks = source_address_line_blocks(source_visible)
+    if literal_wrapper_policy == LITERAL_WRAPPER_POLICY_V2:
+        from .ar_source_fields import source_required_prefixed_address_line_blocks
+        blocks = sorted(set(blocks + source_required_prefixed_address_line_blocks(source, required)), key=lambda field: field.start)
     flattened = [re.sub(r"\r\n|\r|\n", " ", field.value) for field in blocks]
     counts = Counter(flattened)
     result, associations = [], []
@@ -152,7 +320,7 @@ def _source_line_restoration_groups(primary_view, corrected_view, source):
     return result
 
 
-def _adjacent_groups_preserve(primary_view, corrected_view, protected_values, source=None):
+def _adjacent_groups_preserve(primary_view, corrected_view, protected_values, source=None, *, required=None, literal_wrapper_policy=None):
     """Allocate exact whole-token groups once on each side of a correction.
 
     Group boundaries are always token boundaries, never substring boundaries.
@@ -205,7 +373,7 @@ def _adjacent_groups_preserve(primary_view, corrected_view, protected_values, so
                 else:
                     break
 
-    for owned, used in _source_line_restoration_groups(primary_view, corrected_view, source):
+    for owned, used in _source_line_restoration_groups(primary_view, corrected_view, source, required=required, literal_wrapper_policy=literal_wrapper_policy):
         covered = owned & needed
         comparisons += covered.bit_count()
         if comparisons > _MAX_GROUP_WORK:
@@ -248,12 +416,15 @@ def _adjacent_groups_preserve(primary_view, corrected_view, protected_values, so
     return False
 
 
-def correction_preserves_additional_literals(primary, corrected, required, source=None):
+def correction_preserves_additional_literals(primary, corrected, required, source=None, *, source_field_policy=None, literal_wrapper_policy=None):
     from .ar_source_fields import canonicalize_source_address_literals, _view
+    if literal_wrapper_policy not in (None, LITERAL_WRAPPER_POLICY, LITERAL_WRAPPER_POLICY_V2):
+        raise ValueError("Unknown literal wrapper policy.")
     if _view(primary) is None or _view(corrected) is None:
         return False
-    primary_canonical, canonical_required, _, primary_error = canonicalize_source_address_literals(primary, source, required)
-    corrected_canonical, corrected_required, _, corrected_error = canonicalize_source_address_literals(corrected, source, required)
+    field_options = {"source_field_policy": source_field_policy} if source_field_policy is not None else {}
+    primary_canonical, canonical_required, _, primary_error = canonicalize_source_address_literals(primary, source, required, **field_options)
+    corrected_canonical, corrected_required, _, corrected_error = canonicalize_source_address_literals(corrected, source, required, **field_options)
     if corrected_error:
         return False
     if not primary_error and Counter(canonical_required or []) == Counter(corrected_required or []):
@@ -271,4 +442,4 @@ def correction_preserves_additional_literals(primary, corrected, required, sourc
         return True
     # Required occurrences also reserve their own span during regrouping. A
     # number inside a preserved street must not replace a second required number.
-    return _adjacent_groups_preserve(_view(primary), _view(corrected), set(prior) - exemptions, source)
+    return _adjacent_groups_preserve(_view(primary), _view(corrected), set(prior) - exemptions, source, required=required, literal_wrapper_policy=literal_wrapper_policy)

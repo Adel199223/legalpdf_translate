@@ -1,0 +1,32 @@
+{
+  "generator_prompt_builder_sha256": "93f0130305aff370339b5067932ec4bb852a7e955f22a98b6a508b5ad8f53e25",
+  "retry_inputs": {
+    "prior_output": "```text\nالعنوان [[1234-567 R EXAMPLE]].\n```",
+    "expected_tokens": [
+      "1234-567",
+      "EXAMPLE"
+    ],
+    "source_text": "[[1234-567]] [[EXAMPLE]]",
+    "violation_kind": "missing_required_tokens",
+    "defect_reason": "Fictional wrapper mismatch.",
+    "token_details": {
+      "missing_count": 2,
+      "unexpected_count": 1,
+      "missing_token_samples": [
+        "1234-567",
+        "EXAMPLE"
+      ],
+      "unexpected_token_samples": [
+        "1234-567 R EXAMPLE"
+      ]
+    }
+  },
+  "retry_output": "ARABIC TOKEN CORRECTION ONLY: Re-emit the SAME content as ONE plain-text code block and NOTHING ELSE. The listed tokens are a required minimum, not an exhaustive source inventory. Keep every listed [[...]] token exactly character-for-character. Do not translate, edit, remove or rewrite required token contents. Preserve additional literal spans and visible source-image annotation text already present in the prior output; do not delete them merely because extraction omitted them from the list. Regroup wrappers only for numeric components whose exact boundaries are established by the supplied source; preserve the complete visible numeric expression. Do not split or regroup names, addresses or other literal spans. Do not invent new literal content. Every listed token must appear only inside [[...]]. If a listed token appears outside [[...]], wrap it instead of rewriting it. No Latin letters or digits may appear outside protected tokens. All non-token text must be Arabic.\n<<<BEGIN LOCKED TOKENS>>>\n1. [[1234-567]]\n2. [[EXAMPLE]]\n<<<END LOCKED TOKENS>>>\n<<<BEGIN TOKEN MISMATCH SUMMARY>>>\nValidator reason: Fictional wrapper mismatch.\nViolation kind: missing_required_tokens\nMissing protected tokens: 2\nUnpaired missing/additional count (not proof of alteration): 0\nAdditional protected tokens (not necessarily altered): 1\nMissing token samples:\n- [[1234-567]]\n- [[EXAMPLE]]\nAdditional primary token samples (source coverage may be incomplete):\n- [[1234-567 R EXAMPLE]]\n<<<END TOKEN MISMATCH SUMMARY>>>\n<<<BEGIN SOURCE PAGE>>>\n[[1234-567]] [[EXAMPLE]]\n<<<END SOURCE PAGE>>>\n<<<BEGIN PRIOR OUTPUT>>>\n```text\nالعنوان [[1234-567 R EXAMPLE]].\n```\n<<<END PRIOR OUTPUT>>>",
+  "page_inputs": {
+    "page_number": 1,
+    "total_pages": 1,
+    "source_text": "Fictional source page.",
+    "context_text": "Fictional terminology preference."
+  },
+  "page_output": "<<<PAGE 1 OF 1>>>\n<<<BEGIN CONTEXT>>>\nFictional terminology preference.\n<<<END CONTEXT>>>\n<<<BEGIN SOURCE>>>\nFictional source page.\n<<<END SOURCE>>>"
+}

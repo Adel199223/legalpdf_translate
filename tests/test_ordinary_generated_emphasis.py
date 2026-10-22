@@ -1,9 +1,10 @@
 from copy import deepcopy
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from docx import Document
-from legalpdf_translate.ordinary_layout_contracts import _generated_emphasis, OrdinaryLayoutError
+from legalpdf_translate.ordinary_layout_contracts import _generated_emphasis, OrdinaryLayoutError, EMPHASIS_NORMALIZATION_V2
 from legalpdf_translate.saved_docx_layout import inspect_docx, _emphasis, SavedDocxLayoutError
 
 def row(text="Alpha beta gamma."):
@@ -12,6 +13,141 @@ def row(text="Alpha beta gamma."):
 
 def span(start,end,**changes):
     return {"start":start,"end":end,"bold":True,"italic":False,"underline":False}|changes
+
+
+def lrm_row(prefix="نص ",inside="ABC123",suffix=". بقي",marks="\u200e"):
+    document=Document();paragraph=document.add_paragraph(prefix)
+    paragraph.add_run(marks+inside+marks);paragraph.add_run(suffix)
+    stream=BytesIO();document.save(stream)
+    value=inspect_docx(stream.getvalue(),"AR")["paragraphs"][0]
+    return value,len(prefix),len(prefix)+len(marks+inside+marks)
+
+
+@pytest.mark.parametrize("prefix,suffix",[("نص ",". بقي"),("", ". بقي"),("نص ","")])
+@pytest.mark.parametrize("style",["bold","italic","underline"])
+def test_v2_omits_only_complete_single_lrm_owner_with_exact_warning(prefix,suffix,style):
+    value,start,end=lrm_row(prefix=prefix,suffix=suffix);before=deepcopy(value)
+    original=[span(start,end,bold=style=="bold",italic=style=="italic",underline=style=="underline")]
+    rejected=[]
+    assert _generated_emphasis(value,original,normalization_version=EMPHASIS_NORMALIZATION_V2,rejected=rejected)==[]
+    assert rejected==[{"span":original[0],"reason":"complete_lrm_owner_emphasis_omitted"}]
+    assert value==before
+    for version in (None,"ordinary_optional_emphasis_normalization_v1"):
+        with pytest.raises(OrdinaryLayoutError):_generated_emphasis(value,original,normalization_version=version)
+    with pytest.raises(SavedDocxLayoutError):_emphasis(value,original)
+
+
+def test_v2_keeps_valid_whole_paragraph_lrm_emphasis_and_unrelated_span():
+    value,start,end=lrm_row(prefix="",suffix="")
+    original=[span(start,end)]
+    assert _generated_emphasis(value,original,normalization_version=EMPHASIS_NORMALIZATION_V2)==original
+    value,start,end=lrm_row(suffix=". Other body")
+    last=span(end+2,len(value["text"]))
+    assert _generated_emphasis(value,[span(start,end),last],normalization_version=EMPHASIS_NORMALIZATION_V2)==[last]
+
+
+@pytest.mark.parametrize("damage",["partial","no_left","no_right","interior_mark","outside_control","other_control","unmatched_scope","two_runs","duplicate_owner","missing_owner","nontext","later_unsafe","later_overlap","later_bad_shape"])
+def test_v2_complete_owner_drop_never_hides_unsafe_or_malformed_span(damage):
+    value,start,end=lrm_row();styles=[span(start,end)]
+    if damage=="partial":styles=[span(start+2,end-1)]
+    elif damage=="no_left":styles=[span(start+1,end)]
+    elif damage=="no_right":styles=[span(start,end-1)]
+    elif damage=="interior_mark":value,start,end=lrm_row(inside="AB\u200eCD");styles=[span(start,end)]
+    elif damage=="outside_control":value,start,end=lrm_row(prefix="نص \u200f");styles=[span(start,end)]
+    elif damage=="other_control":value,start,end=lrm_row(marks="\u200f");styles=[span(start,end)]
+    elif damage=="unmatched_scope":value,start,end=lrm_row(prefix="نص \u2066");styles=[span(start,end)]
+    elif damage=="two_runs":
+        owner=next(r for r in value["runs"] if (r["start"],r["end"])==(start,end));value["runs"].remove(owner)
+        value["runs"].extend([{**owner,"end":start+3},{**owner,"start":start+3}])
+    elif damage=="duplicate_owner":value["runs"].append(deepcopy(next(r for r in value["runs"] if (r["start"],r["end"])==(start,end))))
+    elif damage=="missing_owner":value["runs"]=[r for r in value["runs"] if (r["start"],r["end"])!=(start,end)]
+    elif damage=="nontext":value["tokens"].append({"kind":"tab","start":start,"end":start+1})
+    elif damage=="later_unsafe":value,start,end=lrm_row(suffix=" A\u200dB");styles=[span(start,end),span(end+2,end+4)]
+    elif damage=="later_overlap":styles.append(span(end-1,end+1))
+    else:styles.append(span(end+1,end+2,bold="true"))
+    with pytest.raises(OrdinaryLayoutError):_generated_emphasis(value,styles,normalization_version=EMPHASIS_NORMALIZATION_V2)
+
+
+def test_v2_evidence_retains_original_hash_exact_span_and_review_gate():
+    from legalpdf_translate.ordinary_layout_contracts import proposal_source_evidence,source_evidence_review_fields,digest,encode
+    from tests.test_ordinary_source_evidence import fixture
+    snapshot,view,proposal=fixture();actual,start,end=lrm_row();actual["id"]="p000001";snapshot["paragraphs"]=[actual]
+    original_span=span(start,end);proposal["paragraphs"][0]["emphasis"]=[original_span];before=deepcopy(proposal)
+    evidence=proposal_source_evidence(snapshot,view,proposal,emphasis_normalization_version=EMPHASIS_NORMALIZATION_V2)
+    item=evidence["optional_emphasis_normalization"]
+    assert item=={"version":EMPHASIS_NORMALIZATION_V2,"canonical_proposal_sha256":digest(encode(proposal)),
+        "rejected_spans":[{"paragraph_id":"p000001","span":original_span,"reason":"complete_lrm_owner_emphasis_omitted"}],"review_required":True}
+    assert evidence["source_coverage_verified"] is False and source_evidence_review_fields([evidence])["source_layout_review_required"]
+    assert proposal==before
+
+
+@pytest.mark.parametrize("version",["ordinary_layout_proposal_v1","ordinary_layout_proposal_v2"])
+@pytest.mark.parametrize("reader",["evidence","crash_recovery"])
+@pytest.mark.parametrize("damage",["missing","wrong"])
+def test_v2_initial_marker_bound_for_all_supported_response_schemas(tmp_path,monkeypatch,version,reader,damage):
+    import json
+    from fastapi.testclient import TestClient
+    from tests import test_ordinary_auto_layout_workflow as flow
+    from legalpdf_translate import ordinary_auto_layout as auto
+    from legalpdf_translate.ordinary_layout_service import _read, _write
+    original=flow._proposal
+    def proposal(*args,**kwargs):
+        value=original(*args,**kwargs);value['version']=version
+        if version.endswith('v2'):value['paragraph_partitions']=[]
+        return value
+    monkeypatch.setattr(flow,'_proposal',proposal)
+    source=tmp_path/'source.pdf';flow._source(source,('digital',));output=tmp_path/'output';output.mkdir()
+    app,jobs,sdk,requests=flow._app(tmp_path,monkeypatch,('Fictional page text.',),(1,))
+    with TestClient(app) as client:
+        job_id=flow._start(client,source,output,'EN',start=1,end=1,image_mode='off')
+        job=flow._wait(jobs,job_id);assert job['result']['automatic_layout']['status']=='automatic_unreviewed'
+        pointer=json.loads((Path(job['result']['run_dir'])/'ordinary_auto_layout/operation.json').read_bytes())
+        manager=app.state.ordinary_layouts.manager_for_context(app.state.shadow_context,'shadow','fictional')
+        operation=manager.service.root/pointer['origin_job_id']/'baselines'/pointer['baseline_id']/'suggestions'/pointer['operation_nonce']
+        initial_path=operation/'proposal_initial_view.json';record=_read(initial_path)
+        assert record['emphasis_normalization_version']==EMPHASIS_NORMALIZATION_V2
+        if damage=='missing':record.pop('emphasis_normalization_version')
+        else:record['emphasis_normalization_version']='ordinary_optional_emphasis_normalization_v1'
+        initial_path.unlink();_write(initial_path,record)
+        if reader=='evidence':
+            with pytest.raises(OrdinaryLayoutError,match='source_evidence_response_changed'):
+                auto._proposal_evidence(manager,pointer['origin_job_id'],pointer['baseline_id'],pointer['review_id'],pointer['operation_nonce'],(1,),auto.frozen_automatic_layout_policy())
+        else:
+            (operation/'result.json').unlink()
+            with pytest.raises(OrdinaryLayoutError,match='source_evidence_response_changed'):
+                auto._recover_settled_result(manager,pointer,[1],policy_fingerprint=auto.frozen_automatic_layout_policy().split(':',1)[1])
+        assert len(sdk.requests)==len(requests)==1
+
+
+def test_exact_old_and_new_emphasis_policies_preserve_direction_capabilities():
+    from legalpdf_translate import ordinary_auto_layout as auto
+    old=auto._inline_folio_direction_policy()
+    complete=auto._complete_lrm_emphasis_policy()
+    terminal=auto._terminal_source_layout_policy()
+    fresh=auto.frozen_automatic_layout_policy()
+    assert old=='source_image_unreviewed_v1:7c54ccb193b2fb707fc8164f591f5cb9769e6ab800300be8bda227307dcbf2dd'
+    assert complete=='source_image_unreviewed_v1:f60c0c62ac3964ad6231764b98132529fa0afe6b9cb3149bff9145c56d370b58'
+    assert terminal=='source_image_unreviewed_v1:98a25bdde6fa1f5b950c3b073653a5fc634fdf6248f4015fa9d13ddfae039099'
+    assert fresh=='source_image_unreviewed_v1:e1d8a9d167debf3bd910de5ae014c092c2b59768cce34e24d3309fb8d3d40095'
+    for policy in (old,complete,terminal,fresh):
+        fingerprint=policy.split(':',1)[1]
+        assert auto._band_normalization_version(fingerprint)=='ordinary_metadata_band_normalization_v5'
+        assert auto._clock_direction_version(fingerprint)=='clock_h_colon_ltr_v1'
+        assert auto._source_folio_inline_direction_version(fingerprint)=='source_bound_folio_separator_ltr_v1'
+        assert policy in auto._metadata_normalization_policies() and policy in auto._source_folio_policies()
+    assert auto._emphasis_normalization_version(old.split(':',1)[1])=='ordinary_optional_emphasis_normalization_v1'
+    for policy in (complete,terminal,fresh):
+        assert auto._emphasis_normalization_version(policy.split(':',1)[1])==EMPHASIS_NORMALIZATION_V2
+    assert auto._terminal_source_layout_versions(complete.split(':',1)[1])=={}
+    assert auto._terminal_source_layout_versions(terminal.split(':',1)[1])=={
+        'source_footer_placement_version':'terminal_body_flow_v1',
+        'source_spacing_version':'baseline_metadata_heading_spacing_v1'}
+    assert auto._terminal_source_layout_versions(fresh.split(':',1)[1])=={
+        'source_footer_placement_version':'terminal_body_flow_v1',
+        'source_spacing_version':'baseline_metadata_heading_spacing_v1',
+        'source_closing_group_version':'bounded_terminal_signature_context_v1'}
+    assert auto._emphasis_normalization_version('0'*64) is None
+
 
 def test_drops_only_word_interior_span_and_preserves_valid_styles():
     original=[span(1,5),span(6,10,italic=True)]
@@ -118,7 +254,7 @@ def test_settled_optional_edge_recovery_has_no_dispatch_and_binds_warning(tmp_pa
     with TestClient(app) as client:
         with monkeypatch.context() as historical:
             historical.setattr(manager_module, 'normalize_proposals',
-                lambda *args: normalize_proposals(*args, emphasis_normalization_version=None))
+                lambda *args, **kwargs: normalize_proposals(*args, **{**kwargs, 'emphasis_normalization_version': None}))
             job_id = flow._start(client, source, output, 'EN', start=1, end=1, image_mode='off')
             initial = flow._wait(jobs, job_id)
         assert initial['result']['automatic_layout']['status'] == 'raw_fallback'

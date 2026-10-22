@@ -54,9 +54,9 @@ def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path
                 max_transport_retries=0,pre_call_jitter_seconds=0)
         manager.provider_factory=provider
         normalize=manager_module.normalize_proposals
-        def previous_break_guard(snapshot,view,proposals):
+        def previous_break_guard(snapshot,view,proposals,**kwargs):
             if proposals[0]['page_number']==4: fail(old_error)
-            return normalize(snapshot,view,proposals)
+            return normalize(snapshot,view,proposals,**kwargs)
         with monkeypatch.context() as old:
             old.setattr(manager_module,'normalize_proposals',previous_break_guard)
             original=_start(client,source,output,'EN',start=3,end=7,image_mode='off',page_breaks=True)
@@ -103,9 +103,9 @@ def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path
             return
         assert len(translation_sdk.requests)==5
         if second:
-            def previous_order_guard(snapshot,view,proposals):
+            def previous_order_guard(snapshot,view,proposals,**kwargs):
                 if proposals[0]['page_number']==5: fail('proposal_coverage')
-                return normalize(snapshot,view,proposals)
+                return normalize(snapshot,view,proposals,**kwargs)
             with monkeypatch.context() as old:
                 old.setattr(manager_module,'normalize_proposals',previous_order_guard)
                 assert client.post(f'/api/translation/jobs/{job_id}/layout/recover'+scope).status_code==200
@@ -136,7 +136,8 @@ def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path
             assert sent==[3,4,5]
             assert all(p.read_bytes()==data for p,data in protected.items())
             return
-        result=_wait(jobs,job_id)
+        # Retained validation plus the verified writer exceeded 30s in Full02.
+        result=_wait(jobs,job_id,timeout_seconds=90)
         assert result['result']['automatic_layout']['status']=='automatic_unreviewed',result['result']['automatic_layout']
         assert sent==[3,4,5,6,7] and len(translation_sdk.requests)==5
         folder=root/'recoveries'/('layout_revalidation_v1' if second else 'layout_direct_revalidation_v1')
@@ -210,7 +211,7 @@ def test_completed_historical_capacity_lineage_precedes_new_direct_eligibility(t
     with TestClient(app) as client:
         with monkeypatch.context() as old:
             normalize=manager_module.normalize_proposals
-            old.setattr(manager_module,'normalize_proposals',lambda *args: fail('page_break_requires_flow'))
+            old.setattr(manager_module,'normalize_proposals',lambda *args,**kwargs: fail('page_break_requires_flow'))
             if original_tokens==8000:
                 args=accounting.layout_accounting_policy().accounting_arguments(today=date(2026,10,9))
                 args['dispatch_limits']['openai:layout_suggestion:gpt-5.2']['max_output_tokens']=8000
@@ -224,7 +225,8 @@ def test_completed_historical_capacity_lineage_precedes_new_direct_eligibility(t
                 existing.suggestion_policy=lambda job: LayoutSuggestionPolicy(
                     'gpt-5.2','.812','1.624',max_output_tokens=8000,timeout_seconds=240.0)
             original=_start(client,source,output,'EN',start=1,end=2,image_mode='off',page_breaks=True)
-            first=_wait(jobs,original)
+            # Historical-policy setup exceeded 30s before its expected fallback.
+            first=_wait(jobs,original,timeout_seconds=90)
         assert first['result']['automatic_layout']['status']=='raw_fallback'
         assert len(requests)==1 and requests[0]['max_output_tokens']==original_tokens,first['result']['automatic_layout']
         run=Path(first['result']['run_dir']); root=run/'ordinary_auto_layout'

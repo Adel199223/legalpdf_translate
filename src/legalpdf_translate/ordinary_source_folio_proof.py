@@ -105,6 +105,15 @@ def verify_proof(proof, source_pdf, pages, selected, source_sha256):
 
 def target_spans(snapshot, pages, decisions, context):
     """Recognize complete selected-page coverage using source-bound terminal spans."""
+    return _target_spans(snapshot, pages, decisions, context, require_all_pages=True)
+
+
+def direction_target_spans(snapshot, pages, decisions, context):
+    """Qualify pages independently for direction; never authorize PAGE suppression."""
+    return _target_spans(snapshot, pages, decisions, context, require_all_pages=False)
+
+
+def _target_spans(snapshot, pages, decisions, context, *, require_all_pages):
     proof = context.get(KEY)
     if proof is None:
         return []
@@ -173,4 +182,4 @@ def target_spans(snapshot, pages, decisions, context):
                 "literal_sha256": hashlib.sha256(row["text"][start:end].encode()).hexdigest()})
         if len(matches) == 1:
             result.extend(matches)
-    return result if len(result) == len(selected) else []
+    return result if not require_all_pages or len(result) == len(selected) else []

@@ -66,10 +66,10 @@ def test_retained_page_continuation_single_missing_request_download_save_and_ree
                 max_transport_retries=0, pre_call_jitter_seconds=0)
         manager.provider_factory = provider
         normalize = manager_module.normalize_proposals
-        def old_spacing_guard(snapshot, view, proposals):
+        def old_spacing_guard(snapshot, view, proposals, **kwargs):
             if proposals[0]['page_number'] == 1:
                 fail('page_break_requires_flow')
-            return normalize(snapshot, view, proposals)
+            return normalize(snapshot, view, proposals, **kwargs)
         with monkeypatch.context() as old:
             old.setattr(manager_module, 'normalize_proposals', old_spacing_guard)
             assert client.post(f'/api/translation/jobs/{original}/layout/recover'+scope).status_code == 200
@@ -139,7 +139,8 @@ def test_retained_page_continuation_single_missing_request_download_save_and_ree
         from legalpdf_translate.ordinary_auto_layout import _recover_settled_result
         settled_result = _read(new_op/'result.json')
         (new_op/'result.json').unlink()
-        _recover_settled_result(manager,new_pointer,[1,2])
+        _recover_settled_result(manager,new_pointer,[1,2],
+            policy_fingerprint=json.loads((new_root/'intent.json').read_bytes())['policy_fingerprint'])
         assert _read(new_op/'result.json') == settled_result
         assert paid == [1,2]
         new_cost = Decimal(str(_read(new_op/'accounting_summary.json')['cost_usd']))

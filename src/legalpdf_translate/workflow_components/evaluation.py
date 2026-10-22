@@ -50,7 +50,11 @@ def evaluate_output(
     expected_ar_tokens: list[str] | None = None,
     ar_source_text: str | None = None,
     primary_normalized_text: str | None = None,
+    source_field_policy: str | None = None,
+    literal_wrapper_policy: str | None = None,
 ) -> OutputEvaluation:
+    if literal_wrapper_policy not in {None, "lossless_source_components_v1", "lossless_source_components_v2"}:
+        raise ValueError("Unknown literal wrapper policy.")
     parsed = parse_code_block_output(raw_output)
     if parsed.block_count == 0:
         return OutputEvaluation(
@@ -101,7 +105,8 @@ def evaluate_output(
     if lang == TargetLang.AR:
         from ..ar_source_fields import canonicalize_source_address_literals
         prepared, prepared_tokens, source_wrapper_count, preparation_error = canonicalize_source_address_literals(
-            normalization_input, ar_source_text, expected_ar_tokens)
+            normalization_input, ar_source_text, expected_ar_tokens,
+            **({"source_field_policy": source_field_policy} if source_field_policy is not None else {}))
         if preparation_error is None:
             # Claim complete source fields before generic token wrapping can
             # create overlapping wrappers for a field and its contained value.
@@ -115,9 +120,20 @@ def evaluate_output(
     )
     ar_autofix_applied_count += source_wrapper_count
     if lang == TargetLang.AR:
+        if literal_wrapper_policy == "lossless_source_components_v2" and primary_normalized_text is None:
+            # Complete required postal rows must be separated before generic
+            # field canonicalization can reject a wrapper crossing those rows.
+            # This is still after safe wrapper normalization and changes no
+            # visible character; all ordinary validators run below.
+            from ..ar_literal_fidelity import decompose_source_literal_components_with_stats
+            normalized, component_count = decompose_source_literal_components_with_stats(
+                normalized, ar_source_text, expected_ar_tokens,
+                literal_wrapper_policy=literal_wrapper_policy)
+            ar_autofix_applied_count += component_count
         from ..ar_source_fields import canonicalize_source_address_literals
         normalized, canonical_ar_tokens, address_count, address_error = canonicalize_source_address_literals(
-            normalized, ar_source_text, expected_ar_tokens)
+            normalized, ar_source_text, expected_ar_tokens,
+            **({"source_field_policy": source_field_policy} if source_field_policy is not None else {}))
         ar_autofix_applied_count += address_count
         if address_error:
             details = dict(validate_ar(normalized, expected_tokens=expected_ar_tokens).details or {})
@@ -128,6 +144,11 @@ def evaluate_output(
         from ..output_normalize import regroup_source_bound_ar_numeric_tokens
         normalized, regroup_count = regroup_source_bound_ar_numeric_tokens(normalized, source_text=ar_source_text, expected_tokens=expected_ar_tokens)
         ar_autofix_applied_count += regroup_count
+        if literal_wrapper_policy == "lossless_source_components_v1" and primary_normalized_text is None:
+            from ..ar_literal_fidelity import decompose_source_literal_components_with_stats
+            normalized, component_count = decompose_source_literal_components_with_stats(
+                normalized, ar_source_text, canonical_ar_tokens)
+            ar_autofix_applied_count += component_count
     if lang in (TargetLang.EN, TargetLang.FR):
         validation = validate_enfr(normalized, lang=lang)
     else:
@@ -135,7 +156,9 @@ def evaluate_output(
     token_details = validation.details
     if lang == TargetLang.AR and primary_normalized_text is not None:
         from ..ar_literal_fidelity import correction_preserves_additional_literals
-        if not correction_preserves_additional_literals(primary_normalized_text, normalized, expected_ar_tokens, ar_source_text):
+        if not correction_preserves_additional_literals(primary_normalized_text, normalized, expected_ar_tokens, ar_source_text,
+                **({"source_field_policy": source_field_policy} if source_field_policy is not None else {}),
+                **({"literal_wrapper_policy": literal_wrapper_policy} if literal_wrapper_policy == "lossless_source_components_v2" else {})):
             return OutputEvaluation(ok=False, normalized_text=normalized, defect_reason="Correction lost an additional primary literal.", parser_failed=False, validator_failed=True, outside_text=False, block_count=1, ar_autofix_applied_count=int(ar_autofix_applied_count), ar_token_details=None, ar_violation_kind="correction_literal_fidelity_loss", ar_violation_samples=None)
         from ..ar_literal_fidelity import _address_correction_exemptions
         exemptions = _address_correction_exemptions(primary_normalized_text, normalized, expected_ar_tokens, ar_source_text)

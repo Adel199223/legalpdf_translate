@@ -1,0 +1,30 @@
+{
+  "generator_glue_sha256": "afd139e18c7661e75f9afd8331dd1d794aa18f1a30973f56f58a53187c8105a0",
+  "generator_engine_sha256": "b4b13398b5bd5660ba3c327aec65c29a49537c0882566bf0d6365ff328a57efe",
+  "generator_adapter_sha256": "b2140dfe41801fe836b61e0f3293636e8985a14bbd6d898251751a9083770285",
+  "binding_sha256": "94c54ef7ae2d9a0b56ab6926f70e04a124eccb78d33cb398a2a7c10137df2761",
+  "fake_calls": 3,
+  "real_provider_calls": 0,
+  "fixture_files": {
+    "inputs.json": "ff2c2f58592bcf754b8451435787f28e0ab5b6f1cc12d13b1029a058269d4821",
+    "run/pages/page_0001.txt": "a0e4c73713d22879a41024aabcb44d4b293ccffa936de4f6506462a227c913c8",
+    "run/semantic_audit/correction/derived_response.json": "6ab892ab3f963f2480570dfc368ef02b08f01246fd8509d6498bb48d0b0959ad",
+    "run/semantic_audit/correction/intent.json": "9c4cf620f6aeb0c13cb704a031f84213fafb35421866a90f3f33365e2a657c3c",
+    "run/semantic_audit/correction/raw_receipt.json": "28bf976837ce281ea2a4da721d023635ca5d65124d78c0965d2a7dd142ec5693",
+    "run/semantic_audit/correction/raw_response.json": "4776d422a1d0d4d7c3cc6d1bf4eec586a5a662d804ce240757f0ba5e03bd58d2",
+    "run/semantic_audit/intent.json": "94c54ef7ae2d9a0b56ab6926f70e04a124eccb78d33cb398a2a7c10137df2761",
+    "run/semantic_audit/manifest.json": "06c9afde3dd8467a86ab7155ff160f150c3657fc7b5977addc33d98ecd8f43f4",
+    "run/semantic_audit/page_0001.txt": "a0e4c73713d22879a41024aabcb44d4b293ccffa936de4f6506462a227c913c8",
+    "run/semantic_audit/source_inventory/derived_response.json": "5b4f9a91bcbb53caa727bdbce7d4df0a7e5c6234895a9237e8dc1f0757a6dd4b",
+    "run/semantic_audit/source_inventory/intent.json": "85dca8576e932c2e03bbcefa282f88bbf5cbbd8e0f389ed3e2e3c6c55f1a0298",
+    "run/semantic_audit/source_inventory/raw_receipt.json": "d7af9b7cfe89b76e2c731b4b311794336a7a00802bef206704ece186df2b8cb3",
+    "run/semantic_audit/source_inventory/raw_response.json": "4feaf505236575626202f62f044c9a05af57d3ed21f0b667107de1377a7c8362",
+    "run/semantic_audit/verification/derived_response.json": "528faf7ad202cc3d3eb31ed5a12ca9d774e90baabaae06f8bc9fd078fae9987b",
+    "run/semantic_audit/verification/intent.json": "77f46f7337f1716a3ddfa8c5971ecd8d5602004da2bce31aef8612568f239db5",
+    "run/semantic_audit/verification/raw_receipt.json": "44f8564ae55470c9ffe26f61987c644b1cb428d09d332dceccd25c3ebf21bd08",
+    "run/semantic_audit/verification/raw_response.json": "12e3cf06a67ea04d4155b836d2a5ec24c2df622ecbb98afa960f12048b5aa1e1",
+    "run/semantic_context.json": "8914e7c5d4fe582bcd33c0a0d200c57a8a3c0779eda5dc3a757fad1198a6d293",
+    "run/semantic_source/page_0001.json": "bc015939c0e64f0f9487692591fc7915ffca248d7e538212f97ceae76b4a0935",
+    "source_stub.txt": "f27a66a02d126c873cef89b1ab524f5b0fb571becc90e8abffb083b71de33d80"
+  }
+}

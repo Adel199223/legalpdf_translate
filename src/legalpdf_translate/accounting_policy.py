@@ -89,3 +89,32 @@ def ordinary_accounting_policy() -> OrdinaryAccountingPolicy:
     # Only the bundled public reference has this local freshness window. No
     # remote refresh or silent new approval; saved runs retain their own catalog.
     return OrdinaryAccountingPolicy(policy._pricing_json, policy._limits_json, date(2026, 10, 15))
+
+
+def with_semantic_review_policy(policy: OrdinaryAccountingPolicy, saved_policy) -> OrdinaryAccountingPolicy:
+    """Extend only a new explicit semantic role; old catalogs remain byte exact."""
+    from .semantic_review_model_policy import validate_policy, MODEL
+    from .semantic_review_billing import FRESH_POLICY
+    validate_policy(saved_policy)
+    pricing = json.loads(policy._pricing_json)
+    limits = json.loads(policy._limits_json)
+    pricing["snapshot_id"] += "_semantic_astra_2026_10_20"
+    pricing["verified_at"] = "2026-10-20"
+    source = "https://developers.openai.com/api/docs/models/gpt-6-astra"
+    pricing["models"][f"openai:{MODEL}|default|openai_public_api|USD"] = {
+        "input_per_1m": 10, "cached_input_per_1m": 1, "cache_write_per_1m": 12.5, "output_per_1m": 50,
+        "provider": "openai", "pricing_model": MODEL, "service_tier": "default",
+        "billing_scope": "openai_public_api", "currency": "USD", "source_url": source,
+    }
+    limits[f"openai:semantic_audit:{MODEL}"] = {
+        "requested_model": MODEL, "allowed_actual_models": [], "allowed_actual_service_tiers": ["default"],
+        "billing_scope": "openai_public_api", "currency": "USD",
+        "allowed_base_urls": ["https://api.openai.com/v1"],
+        "max_input_tokens": 272000, "max_output_tokens": 64000,
+        "apply_output_bound_only_when_hard": True,
+        "semantic_review_billing_policy": FRESH_POLICY,
+        "bound_source_url": source, "bound_verified_at": "2026-10-20",
+    }
+    extended = OrdinaryAccountingPolicy.from_mapping(pricing=pricing, limits=limits)
+    # Keep the earlier bundled primary/OCR freshness window; no implied reverification.
+    return OrdinaryAccountingPolicy(extended._pricing_json, extended._limits_json, policy.reference_verified_on)

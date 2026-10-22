@@ -1,0 +1,27 @@
+{
+  "generator_glue_sha256": "ac4ae1957f9bf1d63c2e587c6dbdfe4cfc1107c44bea71f3d5f6cc7d81707a16",
+  "generator_engine_sha256": "89a8e76903d9ea3a4a5f5902028f509a3b5cad148e16ca95ce8930bc71ecbe09",
+  "binding_sha256": "7eaffc70d5c7a2f429c0a5dba6f75cf22a23e5bf5fdbfc6f9f8a2f124f7c6275",
+  "fictional_only": true,
+  "real_provider_calls": 0,
+  "fake_stage_calls": 3,
+  "fixture_files": {
+    "inputs.json": "33af789bc67af6806b58e7574f9ef683438089520ef0580e576af119529625a4",
+    "run/pages/page_0001.txt": "a0e4c73713d22879a41024aabcb44d4b293ccffa936de4f6506462a227c913c8",
+    "run/semantic_audit/correction/intent.json": "81c34e4715383b1dccebdc7ee7ce3b8a42ca33b13ccababdcb41e7b5e2da92f1",
+    "run/semantic_audit/correction/raw_receipt.json": "3504d1c51f19c24af1e63afc4e36def21aabb01e12addaaf6eb6d5068166cf5f",
+    "run/semantic_audit/correction/raw_response.json": "0031aec40521c6f3077961150f938e3a5c20d3f683ecf74492c5f3bb6f0e3cfd",
+    "run/semantic_audit/intent.json": "7eaffc70d5c7a2f429c0a5dba6f75cf22a23e5bf5fdbfc6f9f8a2f124f7c6275",
+    "run/semantic_audit/manifest.json": "1d60837a4a638f3876b4b195ef69461348c3ce8180d67b1b2090f4c026eefa4f",
+    "run/semantic_audit/page_0001.txt": "a0e4c73713d22879a41024aabcb44d4b293ccffa936de4f6506462a227c913c8",
+    "run/semantic_audit/source_inventory/intent.json": "b9afe9aed77b697046e76820196c9eb5347513b43b057b38db41bc54067be98f",
+    "run/semantic_audit/source_inventory/raw_receipt.json": "0ed8e37db008f1176bb2e1d181447df6ed2147cf8c7a556deaddc2c1f739d637",
+    "run/semantic_audit/source_inventory/raw_response.json": "11f66c8f4272a9bd376f170dcbc7ab39ac36ef7d440152bb68d00680363d9c68",
+    "run/semantic_audit/verification/intent.json": "3b06b13437c6b86de2350b55d9f42556a8b9a2443d322964745caeeb1992a36c",
+    "run/semantic_audit/verification/raw_receipt.json": "c507b3ac918575d00ddd7a6bd7deec33064d3558f957869799295924b38fe997",
+    "run/semantic_audit/verification/raw_response.json": "0b9895fc0c617dd858c2c4352dc1e685b843385059cce29bbb38c03a81fa407f",
+    "run/semantic_context.json": "b559116db3e43b75aa6ee590f66db5c0c1d389894ac900592e0821fdaf905469",
+    "run/semantic_source/page_0001.json": "20c5e53f034a6f75282e39998d3733362b71bdc584a802cf49b5da9e9d42f4b6",
+    "source_stub.txt": "f27a66a02d126c873cef89b1ab524f5b0fb571becc90e8abffb083b71de33d80"
+  }
+}

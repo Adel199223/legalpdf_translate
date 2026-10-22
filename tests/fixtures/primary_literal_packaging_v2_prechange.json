@@ -1,0 +1,119 @@
+{
+  "source": "[[Casa da Aurora - Rua das Flores 18]]\n[[4567-123 Vila Serena]]",
+  "expected": [
+    "Casa da Aurora - Rua das Flores 18",
+    "4567-123 Vila Serena"
+  ],
+  "primary": "العنوان: [[Casa da Aurora - Rua das Flores 18 4567-123 Vila Serena]]\n[[R]]",
+  "corrected": "العنوان: [[Casa da Aurora - Rua das Flores 18]]\n[[4567-123 Vila Serena]]\n[[R]]",
+  "cases": [
+    {
+      "policy": null,
+      "initial": {
+        "ok": false,
+        "normalized_text": "العنوان: ⁦[[Casa da Aurora - Rua das Flores 18 4567-123 Vila Serena]]⁩\n⁦[[R]]⁩",
+        "defect_reason": "Expected locked token mismatch.",
+        "parser_failed": false,
+        "validator_failed": true,
+        "outside_text": false,
+        "block_count": 1,
+        "ar_autofix_applied_count": 0,
+        "ar_token_details": {
+          "expected_total": 2,
+          "actual_total": 2,
+          "missing_count": 2,
+          "altered_count": 2,
+          "unexpected_count": 2,
+          "missing_token_samples": [
+            "Casa da Aurora - Rua das Flores 18",
+            "4567-123 Vila Serena"
+          ],
+          "unexpected_token_samples": [
+            "Casa da Aurora - Rua das Flores 18 4567-123 Vila Serena",
+            "R"
+          ],
+          "source_address_violation": "source_address_wrapper_crosses_field"
+        },
+        "ar_violation_kind": "expected_token_mismatch",
+        "ar_violation_samples": [
+          "Casa da Aurora - Rua das Flores 18",
+          "4567-123 Vila Serena",
+          "Casa da Aurora - Rua das Flores 18 4567-123 Vila Serena"
+        ]
+      },
+      "retry": {
+        "ok": false,
+        "normalized_text": "العنوان: ⁦[[Casa da Aurora - Rua das Flores 18]]⁩\n⁦[[4567-123 Vila Serena]]⁩\n⁦[[R]]⁩",
+        "defect_reason": "Correction lost an additional primary literal.",
+        "parser_failed": false,
+        "validator_failed": true,
+        "outside_text": false,
+        "block_count": 1,
+        "ar_autofix_applied_count": 1,
+        "ar_token_details": null,
+        "ar_violation_kind": "correction_literal_fidelity_loss",
+        "ar_violation_samples": null
+      },
+      "prompt": "ARABIC TOKEN CORRECTION ONLY: Re-emit the SAME content as ONE plain-text code block and NOTHING ELSE. The listed tokens are a required minimum, not an exhaustive source inventory. Keep every listed [[...]] token exactly character-for-character. Do not translate, edit, remove or rewrite required token contents. Preserve additional literal spans and visible source-image annotation text already present in the prior output; do not delete them merely because extraction omitted them from the list. Regroup wrappers only for numeric components whose exact boundaries are established by the supplied source; preserve the complete visible numeric expression. Do not split or regroup names, addresses or other literal spans. Do not invent new literal content. Every listed token must appear only inside [[...]]. If a listed token appears outside [[...]], wrap it instead of rewriting it. No Latin letters or digits may appear outside protected tokens. All non-token text must be Arabic.\n<<<BEGIN LOCKED TOKENS>>>\n1. [[Casa da Aurora - Rua das Flores 18]]\n2. [[4567-123 Vila Serena]]\n<<<END LOCKED TOKENS>>>\n<<<BEGIN SOURCE PAGE>>>\n[[Casa da Aurora - Rua das Flores 18]]\n[[4567-123 Vila Serena]]\n<<<END SOURCE PAGE>>>\n<<<BEGIN PRIOR OUTPUT>>>\nالعنوان: [[Casa da Aurora - Rua das Flores 18 4567-123 Vila Serena]]\n[[R]]\n<<<END PRIOR OUTPUT>>>"
+    },
+    {
+      "policy": "lossless_source_components_v1",
+      "initial": {
+        "ok": false,
+        "normalized_text": "العنوان: ⁦[[Casa da Aurora - Rua das Flores 18 4567-123 Vila Serena]]⁩\n⁦[[R]]⁩",
+        "defect_reason": "Expected locked token mismatch.",
+        "parser_failed": false,
+        "validator_failed": true,
+        "outside_text": false,
+        "block_count": 1,
+        "ar_autofix_applied_count": 0,
+        "ar_token_details": {
+          "expected_total": 2,
+          "actual_total": 2,
+          "missing_count": 2,
+          "altered_count": 2,
+          "unexpected_count": 2,
+          "missing_token_samples": [
+            "Casa da Aurora - Rua das Flores 18",
+            "4567-123 Vila Serena"
+          ],
+          "unexpected_token_samples": [
+            "Casa da Aurora - Rua das Flores 18 4567-123 Vila Serena",
+            "R"
+          ],
+          "source_address_violation": "source_address_wrapper_crosses_field"
+        },
+        "ar_violation_kind": "expected_token_mismatch",
+        "ar_violation_samples": [
+          "Casa da Aurora - Rua das Flores 18",
+          "4567-123 Vila Serena",
+          "Casa da Aurora - Rua das Flores 18 4567-123 Vila Serena"
+        ]
+      },
+      "retry": {
+        "ok": false,
+        "normalized_text": "العنوان: ⁦[[Casa da Aurora - Rua das Flores 18]]⁩\n⁦[[4567-123 Vila Serena]]⁩\n⁦[[R]]⁩",
+        "defect_reason": "Correction lost an additional primary literal.",
+        "parser_failed": false,
+        "validator_failed": true,
+        "outside_text": false,
+        "block_count": 1,
+        "ar_autofix_applied_count": 1,
+        "ar_token_details": null,
+        "ar_violation_kind": "correction_literal_fidelity_loss",
+        "ar_violation_samples": null
+      },
+      "prompt": "ARABIC TOKEN CORRECTION ONLY: Re-emit the SAME content as ONE plain-text code block and NOTHING ELSE. The listed tokens are a required minimum, not an exhaustive source inventory. Keep every listed [[...]] token exactly character-for-character. Do not translate, edit, remove or rewrite required token contents. Preserve additional literal spans and visible source-image annotation text already present in the prior output; do not delete them merely because extraction omitted them from the list. Regroup wrappers only when exact component boundaries are established by the supplied source. For source-proven postal or address blocks, wrap the required components separately while preserving the complete prior visible sequence character-for-character, including every separator, street prefix and residual character. Keep residual Latin letters or digits protected. Do not duplicate the original fused token merely to repeat its components. Never remove, reorder, edit or translate visible literal content. Keep ambiguous or unwitnessed literal spans unchanged. Do not invent new literal content. Every listed token must appear only inside [[...]]. If a listed token appears outside [[...]], wrap it instead of rewriting it. No Latin letters or digits may appear outside protected tokens. All non-token text must be Arabic.\n<<<BEGIN LOCKED TOKENS>>>\n1. [[Casa da Aurora - Rua das Flores 18]]\n2. [[4567-123 Vila Serena]]\n<<<END LOCKED TOKENS>>>\n<<<BEGIN SOURCE PAGE>>>\n[[Casa da Aurora - Rua das Flores 18]]\n[[4567-123 Vila Serena]]\n<<<END SOURCE PAGE>>>\n<<<BEGIN PRIOR OUTPUT>>>\nالعنوان: [[Casa da Aurora - Rua das Flores 18 4567-123 Vila Serena]]\n[[R]]\n<<<END PRIOR OUTPUT>>>"
+    }
+  ],
+  "before_hashes": {
+    "src/legalpdf_translate/ar_literal_fidelity.py": "d66866ea058e57097a3bc3f7c23524ed5bc1ed2f8989ba558453d01709710d51",
+    "src/legalpdf_translate/ar_source_fields.py": "729bbd8fcd0432e78bee566e4d2631fc6ec1da091b8f4ae306118004209fcceb",
+    "src/legalpdf_translate/checkpoint.py": "81103aa79906cda1ddbf7fa4cb0670ec22ac0c4d62e21bb2a5ce3ca5ebf7f771",
+    "src/legalpdf_translate/prompt_builder.py": "cb0746cd79b7749e8a0d1681123aa84ef4f6eeea3844ad9b1bf1dbbdff050c69",
+    "src/legalpdf_translate/workflow.py": "9bd10b15d09f51c8b6a377582d0904a9696f64380ec0474153445c6012ca8bf9",
+    "src/legalpdf_translate/workflow_semantic_audit.py": "568afa4c0666bb9a71951274cc69a5b469a31ff3db50b8f777c3ebb13db8f332",
+    "src/legalpdf_translate/workflow_components/evaluation.py": "1d3a24e0a5bbc90a1c69a296a4d468d3dca2b644839a64b2eafcf04c8266d3a8",
+    "tests/test_primary_literal_packaging_integration.py": "350c448d0c9ccc27e328177d27f2274cf407abffc8f9e8d39735ab43b96b1d7f"
+  }
+}

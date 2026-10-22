@@ -310,6 +310,10 @@ def build_unreviewed_candidate(raw_docx_bytes: bytes, raw_snapshot: RawOrdinaryS
                                      page_frames, checked, ordinary_context={"selected_pages":list(raw_snapshot.selected_pages),
                                          "page_groups":[[page,list(ids)] for page,ids in raw_snapshot.page_groups],
                                          **proof_context,
+                                         **_folio_direction_context(proposal_evidence),
+                                         **_clock_direction_context(proposal_evidence),
+                                         **_inline_folio_direction_context(proposal_evidence),
+                                         **_terminal_source_layout_context(proposal_evidence),
                                          **({"source_evidence":proposal_evidence["source_evidence"]} if "source_evidence" in proposal_evidence else {})})
     source_map = _extended_source_map(rendered.source_map, raw_snapshot, proposal_evidence)
     map_bytes = _json(source_map)
@@ -350,6 +354,10 @@ def verify_unreviewed_candidate(raw_docx_bytes: bytes, raw_snapshot: RawOrdinary
                         ordinary_context={"selected_pages":list(raw_snapshot.selected_pages),
                             "page_groups":[[page,list(ids)] for page,ids in raw_snapshot.page_groups],
                             **proof_context,
+                            **_folio_direction_context(proposal_evidence),
+                            **_clock_direction_context(proposal_evidence),
+                            **_inline_folio_direction_context(proposal_evidence),
+                                         **_terminal_source_layout_context(proposal_evidence),
                             **({"source_evidence":proposal_evidence["source_evidence"]} if base_map.get("writer_version") == "saved_docx_layout_writer_source_layout_v7" and "source_evidence" in proposal_evidence else {})}
                         if base_map.get("writer_version") in {"saved_docx_layout_writer_ordinary_presentation_v6","saved_docx_layout_writer_source_layout_v7"} else None)
     expected_map = _extended_source_map(base_map, raw_snapshot, proposal_evidence)
@@ -361,6 +369,26 @@ def verify_unreviewed_candidate(raw_docx_bytes: bytes, raw_snapshot: RawOrdinary
         _fail("candidate_provenance_changed")
 
 
+def _folio_direction_context(evidence):
+    key = "source_folio_direction_version"
+    if key not in evidence:
+        return {}
+    if evidence[key] != "numeric_run_ltr_v3" or "source_evidence" not in evidence:
+        _fail("source_folio_direction_version")
+    return {key: evidence[key]}
+
+
+def _clock_direction_context(evidence):
+    from .ordinary_auto_layout import _clock_direction_version
+    key = "clock_direction_version"
+    expected = (_clock_direction_version(evidence.get("policy_fingerprint"))
+                if "source_evidence" in evidence else None)
+    if (key in evidence and (expected is None or evidence[key] != expected)
+            or expected is not None and evidence.get(key) != expected):
+        _fail("source_clock_direction_version")
+    return {key: expected} if expected is not None else {}
+
+
 def _local_folio_context(evidence, source_pdf, frames, snapshot):
     from .ordinary_source_folio_proof import KEY, RECIPE_KEY, VERSION, verify_proof
     if KEY not in evidence and RECIPE_KEY not in evidence:
@@ -369,3 +397,26 @@ def _local_folio_context(evidence, source_pdf, frames, snapshot):
         _fail("source_folio_proof_changed")
     return {KEY: verify_proof(evidence[KEY], source_pdf, frames, snapshot.selected_pages,
                              snapshot.source_pdf_sha256)}
+
+
+def _inline_folio_direction_context(evidence):
+    from .ordinary_auto_layout import _source_folio_inline_direction_version
+    from .ordinary_source_folio_proof import KEY, RECIPE_KEY, VERSION
+    key = "source_folio_inline_direction_version"
+    expected = (_source_folio_inline_direction_version(evidence.get("policy_fingerprint"))
+                if "source_evidence" in evidence else None)
+    if (key in evidence and (expected is None or evidence[key] != expected)
+            or expected is not None and (evidence.get(key) != expected
+                or evidence.get(RECIPE_KEY) != VERSION or KEY not in evidence)):
+        _fail("source_inline_folio_direction_version")
+    return {key: expected} if expected is not None else {}
+
+
+def _terminal_source_layout_context(evidence):
+    from .ordinary_auto_layout import _terminal_source_layout_versions
+    expected = (_terminal_source_layout_versions(evidence.get("policy_fingerprint"))
+                if "source_evidence" in evidence else {})
+    for key in ("source_footer_placement_version", "source_spacing_version", "source_closing_group_version"):
+        if (key in evidence) != (key in expected) or evidence.get(key) != expected.get(key):
+            _fail("source_terminal_policy_version")
+    return expected

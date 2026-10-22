@@ -121,7 +121,8 @@ def test_v3_automatic_finish_uses_initial_ownership_for_uncertain_boxes(tmp_path
             before=_read(operation/'result.json')
             (operation/'result.json').unlink()
             (operation/'source_evidence.json').unlink()
-        _recover_settled_result(layout,pointer,[1])
+        _recover_settled_result(layout,pointer,[1],
+            policy_fingerprint=_read_record(pointer_path.parent/'intent.json')['policy_fingerprint'])
         with layout.service.scope(pointer['origin_job_id']) as folder:
             assert _read(operation/'result.json')==before
         assert len(sdk.requests)==len(requests)==1

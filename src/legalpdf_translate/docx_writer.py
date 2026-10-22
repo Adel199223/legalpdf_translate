@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import hashlib
 import json
+import math
 import re
 import unicodedata
 import xml.etree.ElementTree as ET
@@ -1967,6 +1968,94 @@ def _terminal_labeled_folios_cover_v2(pages) -> bool:
     return True
 
 
+def _source_bound_terminal_folios(pages, source_pdf: bytes | None, source_sha256: str | None,
+                                 *, fullwidth_target_solidus: bool = False) -> list[dict]:
+    """Prove terminal labels from source geometry without assuming global folios.
+
+    A concatenated PDF can legitimately restart local numbering. Only one
+    independently extracted, standalone, bottom-page label per selected source
+    page can justify omitting the generated Word counter. Scans, unlabeled
+    integers, ambiguous matches and changed bytes retain the counter.
+    """
+    if (not pages or any(page.structure is not None for page in pages) or
+            type(source_pdf) is not bytes or not 0 < len(source_pdf) <= 64 * 1024 * 1024 or
+            not isinstance(source_sha256, str) or hashlib.sha256(source_pdf).hexdigest() != source_sha256):
+        return []
+    digits = r"[0-9٠-٩۰-۹]{1,4}"
+    label = re.compile(r"(?:page|p[aá]g(?:ina)?\.?|الصفحة|صفحة|ص\.)\s*:?\s*(" + digits +
+                       r")(?:\s*(?:/|of|de|sur|من)\s*(" + digits + r"))?", re.I)
+    # The v4 target grammar recognizes this one width variant only inside a
+    # complete labelled folio. Source extraction stays strict; neither source
+    # nor target text is normalized or rewritten.
+    target_label = (re.compile(r"(?:page|p[aá]g(?:ina)?\.?|الصفحة|صفحة|ص\.)\s*:?\s*(" + digits +
+                   r")(?:\s*(?:[/／]|of|de|sur|من)\s*(" + digits + r"))?", re.I)
+                    if fullwidth_target_solidus else label)
+
+    def values(text, *, target=False):
+        match = (target_label if target else label).fullmatch(text.strip())
+        if not match:
+            return None
+        number = int(match[1])
+        total = int(match[2]) if match[2] is not None else None
+        if number < 1 or (total is not None and not number <= total <= 9999):
+            return None
+        return number, total
+
+    evidence = []
+    import fitz
+    try:
+        with fitz.open(stream=source_pdf, filetype="pdf") as document:
+            if document.needs_pass or len(document) > 10000:
+                return []
+            for target in pages:
+                if not 1 <= target.number <= len(document):
+                    return []
+                lines = [line.strip() for line in target.text.splitlines() if line.strip()]
+                if not lines:
+                    return []
+                terminal = sanitize_bidi_controls(unwrap_internal_placeholders(lines[-1])).strip()
+                wanted = values(terminal, target=True)
+                source = document[target.number - 1]
+                if wanted is None or source.rotation != 0:
+                    return []
+                source_lines = [line for block in source.get_text("dict", flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES)["blocks"]
+                                for line in block.get("lines", [])]
+                if len(source_lines) > 20000:
+                    return []
+                candidates = []
+                for line in source_lines:
+                    text = "".join(span["text"] for span in line.get("spans", []))
+                    value = values(text) if len(text) <= 80 else None
+                    if value is not None:
+                        candidates.append((line, text, value))
+                if len(candidates) != 1:
+                    return []
+                line, text, value = candidates[0]
+                box = list(line["bbox"])
+                width, height = float(source.rect.width), float(source.rect.height)
+                if (value != wanted or len(box) != 4 or
+                        not all(math.isfinite(v) for v in [width, height, *box]) or
+                        not (0 <= box[0] < box[2] <= width and .85 * height <= box[1] < box[3] <= height) or
+                        box[2] - box[0] > .4 * width or box[3] - box[1] > min(24, .05 * height) or
+                        tuple(line.get("dir", ())) != (1.0, 0.0)):
+                    return []
+                evidence.append({"page_number": target.number, "source_pdf_sha256": source_sha256,
+                    "number": value[0], "total": value[1], "source_bbox": [box[0]/width, box[1]/height, box[2]/width, box[3]/height],
+                    "source_line_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    "target_line_sha256": hashlib.sha256(terminal.encode("utf-8")).hexdigest()})
+    except (RuntimeError, ValueError, KeyError, TypeError, OverflowError):
+        return []
+    return evidence
+
+
+def _source_bound_terminal_folios_v3(pages, source_pdf: bytes | None, source_sha256: str | None) -> list[dict]:
+    return _source_bound_terminal_folios(pages, source_pdf, source_sha256)
+
+
+def _source_bound_terminal_folios_v4(pages, source_pdf: bytes | None, source_sha256: str | None) -> list[dict]:
+    return _source_bound_terminal_folios(pages, source_pdf, source_sha256, fullwidth_target_solidus=True)
+
+
 def assemble_docx(
     pages_dir: Path,
     output_path: Path,
@@ -1981,6 +2070,8 @@ def assemble_docx(
     partial_output: bool = False,
     derive_source_continuations: bool = False,
     terminal_folio_policy: str | None = None,
+    terminal_folio_source_pdf: bytes | None = None,
+    terminal_folio_source_sha256: str | None = None,
 ) -> Path:
     if derive_source_continuations and page_numbers is None:
         raise ValueError("Source continuation derivation requires a completed-page selection.")
@@ -2000,11 +2091,16 @@ def assemble_docx(
         raise RuntimeError(f"No page text files available for DOCX assembly: {pages_dir}")
 
     pages = [_load_assembly_page(path) for path in page_files]
-    if terminal_folio_policy not in {None, "terminal_labeled_folio_v1", "terminal_labeled_folio_v2"}:
+    source_bound_policy = terminal_folio_policy in {"terminal_source_bound_folio_v3", "terminal_source_bound_folio_v4"}
+    if terminal_folio_policy not in {None, "terminal_labeled_folio_v1", "terminal_labeled_folio_v2", "terminal_source_bound_folio_v3", "terminal_source_bound_folio_v4"}:
         raise ValueError("Unknown primary folio policy.")
+    folio_proof = ((_source_bound_terminal_folios_v4 if terminal_folio_policy == "terminal_source_bound_folio_v4"
+                    else _source_bound_terminal_folios_v3)(pages, terminal_folio_source_pdf, terminal_folio_source_sha256)
+                   if source_bound_policy else [])
     suppress_generated_page = (terminal_folio_policy is not None and page_numbers is not None
         and not partial_output and up_to_page is None
-        and (_terminal_labeled_folios_cover_v2(pages) if terminal_folio_policy == "terminal_labeled_folio_v2" else _terminal_labeled_folios_cover(pages)))
+        and (bool(folio_proof) if source_bound_policy else
+             _terminal_labeled_folios_cover_v2(pages) if terminal_folio_policy == "terminal_labeled_folio_v2" else _terminal_labeled_folios_cover(pages)))
     # Validate section furniture against unchanged source/target payloads before
     # adding local-only paragraph links; the bound-pair contract stays strict.
     furniture_plan = _section_furniture_plan(pages, pages_dir, page_breaks=page_breaks,
@@ -2063,7 +2159,10 @@ def assemble_docx(
         layout, layout_status, layout_review, layout_warnings = _validated_layout(structure)
         page_map = {
             "source_page_number": page.number,
-            **({"primary_folio_policy": terminal_folio_policy, "generated_page_suppressed": suppress_generated_page, "folio_evidence_basis": "closed_terminal_translation_label_not_pdf_geometry"} if terminal_folio_policy else {}),
+            **({"primary_folio_policy": terminal_folio_policy, "generated_page_suppressed": suppress_generated_page,
+                "folio_evidence_basis": "unique_lower_source_label_exact_terminal_tuple" if source_bound_policy else "closed_terminal_translation_label_not_pdf_geometry",
+                **({"source_folio_proof": next((row for row in folio_proof if row["page_number"] == page.number), None)}
+                   if source_bound_policy else {})} if terminal_folio_policy else {}),
             "structure_status": page.structure_status,
             "source_sha256": structure.get("source_sha256"),
             "source_file_sha256": structure.get("source_file_sha256"),

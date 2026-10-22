@@ -264,6 +264,7 @@ def proposal_schema(page_number, ids, *, version=PROPOSAL_VERSION_V3):
 
 
 EMPHASIS_NORMALIZATION_V1 = "ordinary_optional_emphasis_normalization_v1"
+EMPHASIS_NORMALIZATION_V2 = "ordinary_optional_emphasis_normalization_v2"
 
 OPTIONAL_HINT_NORMALIZATION_V1 = "ordinary_optional_layout_hint_normalization_v1"
 OPTIONAL_HINT_NORMALIZATION_V2 = "ordinary_optional_layout_hint_normalization_v2"
@@ -271,6 +272,10 @@ OPTIONAL_HINT_NORMALIZATION_V3 = "ordinary_optional_layout_hint_normalization_v3
 
 
 BAND_NORMALIZATION_V1 = "ordinary_metadata_band_normalization_v1"
+BAND_NORMALIZATION_V2 = "ordinary_metadata_band_normalization_v2"
+BAND_NORMALIZATION_V3 = "ordinary_metadata_band_normalization_v3"
+BAND_NORMALIZATION_V4 = "ordinary_metadata_band_normalization_v4"
+BAND_NORMALIZATION_V5 = "ordinary_metadata_band_normalization_v5"
 
 
 def proposal_source_evidence(snapshot, view, proposal, *, band_normalization_version=BAND_NORMALIZATION_V1, normalization_version=OPTIONAL_HINT_NORMALIZATION_V3, emphasis_normalization_version=EMPHASIS_NORMALIZATION_V1):
@@ -355,6 +360,18 @@ def proposal_source_evidence(snapshot, view, proposal, *, band_normalization_ver
         used.update(owned)
         indices = [ids.index(pid) for pid in owned]
         if indices != list(range(indices[0], indices[0] + len(indices))):
+            ordered = sorted(indices)
+            if (band_normalization_version in {BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5} and row["kind"] == "source_footer"
+                    and ordered == list(range(ordered[0], len(ids))) and row["bbox"][1] >= .85
+                    and not any(pid in partitions or pid in panel_ids or pid in column_ids for pid in owned)
+                    and all(choices[pid]["role"] in {"body", "source_folio"}
+                            and not baseline[pid].get("has_page_break") and not baseline[pid].get("has_field")
+                            and not baseline[pid].get("has_numbering") and "numPr" not in baseline[pid].get("ppr_xml", "")
+                            and baseline[pid]["text"].strip()
+                            and all(t["kind"] == "t" for t in baseline[pid]["tokens"]) for pid in owned)):
+                rejected.append({"index": evidence_index, "kind": row["kind"],
+                    "paragraph_ids": deepcopy(owned), "reason": "reordered_source_footer_hint_kept_in_flow"})
+                continue
             fail("invalid_source_layout_evidence")
         for pid in owned:
             raw = baseline[pid]
@@ -375,6 +392,22 @@ def proposal_source_evidence(snapshot, view, proposal, *, band_normalization_ver
                     "paragraph_ids": deepcopy(owned), "reason": "decorative_rule_requires_plain_flow"})
                 continue
         elif row["kind"] == "source_footer":
+            if (band_normalization_version == BAND_NORMALIZATION_V5
+                    and normalization_version == OPTIONAL_HINT_NORMALIZATION_V3
+                    and indices[-1] == len(ids)-1 and row["bbox"][1] >= .85
+                    and any(choices[pid]["role"] == "reference" for pid in owned)
+                    and all(choices[pid]["role"] in {"body", "source_folio", "institution", "reference"}
+                        and "".join(token["text"] for token in baseline[pid]["tokens"] if token["kind"] == "t").strip()
+                        and pid not in column_ids
+                        and not baseline[pid].get("has_page_break")
+                        and not baseline[pid].get("has_field") and not baseline[pid].get("has_numbering")
+                        and "numPr" not in baseline[pid].get("ppr_xml", "")
+                        and all(token["kind"] == "t" for token in baseline[pid]["tokens"]) for pid in owned)):
+                # This source association cannot relocate reference paragraphs.
+                # Retain the choices and complete body flow for explicit review.
+                rejected.append({"index": evidence_index, "kind": row["kind"],
+                    "paragraph_ids": deepcopy(owned), "reason": "source_footer_reference_kept_in_flow"})
+                continue
             if (indices[-1] != len(ids)-1 or row["bbox"][1] < .85 or
                     any(not "".join(t["text"] for t in baseline[pid]["tokens"] if t["kind"] == "t").strip() for pid in owned) or
                     any(choices[pid]["role"] not in {"body", "source_folio", "institution"} for pid in owned)):
@@ -397,24 +430,27 @@ def proposal_source_evidence(snapshot, view, proposal, *, band_normalization_ver
             fail("invalid_source_layout_evidence")
         accepted.append(deepcopy(row))
     rejected_emphasis = []
-    if emphasis_normalization_version not in {None, EMPHASIS_NORMALIZATION_V1}:
+    if emphasis_normalization_version not in {None, EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2}:
         fail("invalid_emphasis_normalization_version")
     if emphasis_normalization_version is not None:
         by_id = {row["id"]: row for row in snapshot["paragraphs"]}
         for choice in proposal["paragraphs"]:
             dropped = []
-            _generated_emphasis(by_id[choice["paragraph_id"]], choice.get("emphasis", []), rejected=dropped)
+            _generated_emphasis(by_id[choice["paragraph_id"]], choice.get("emphasis", []), rejected=dropped,
+                normalization_version=emphasis_normalization_version)
             rejected_emphasis.extend({"paragraph_id": choice["paragraph_id"], **item} for item in dropped)
     _, downgraded = _canonical_metadata_bands(snapshot, proposal, ids, band_normalization_version)
     return {"version": "ordinary_source_evidence_v1", "page_number": page,
-            **({"metadata_band_normalization": {"version": BAND_NORMALIZATION_V1, "canonical_proposal_sha256": digest(encode(proposal)), "rejected_bands": downgraded, "review_required": True}} if downgraded else {}),
+            **({"metadata_band_normalization": {"version": band_normalization_version, "canonical_proposal_sha256": digest(encode(proposal)), "rejected_bands": downgraded, "review_required": True}} if downgraded else {}),
             "findings": normalized, "layout": accepted, "source_coverage_verified": False,
-            **({"optional_emphasis_normalization": {"version": EMPHASIS_NORMALIZATION_V1,
+            **({"optional_emphasis_normalization": {"version": emphasis_normalization_version,
                 "canonical_proposal_sha256": digest(encode(proposal)),
                 "rejected_spans": rejected_emphasis, "review_required": True}} if rejected_emphasis else {}),
             **({"normalization": {"version": OPTIONAL_HINT_NORMALIZATION_V3
-                 if any(row["reason"] == "source_footer_institution_kept_in_flow" for row in rejected)
+                 if any(row["reason"] in {"source_footer_institution_kept_in_flow", "source_footer_reference_kept_in_flow"} for row in rejected)
                  else OPTIONAL_HINT_NORMALIZATION_V2 if any(row["kind"] == "source_footer" for row in rejected) else OPTIONAL_HINT_NORMALIZATION_V1,
+                 **({"band_normalization_version": BAND_NORMALIZATION_V5}
+                    if any(row["reason"] == "source_footer_reference_kept_in_flow" for row in rejected) else {}),
                  "canonical_proposal_sha256": digest(encode(proposal)), "rejected_hints": rejected,
                  "review_required": True}} if rejected else {})}
 
@@ -429,7 +465,7 @@ def source_evidence_review_fields(records):
     rejected.extend({"page_number": page["page_number"], "kind": "optional_emphasis",
                      "paragraph_ids": [item["paragraph_id"]], **item}
                     for page in records
-                    if page.get("optional_emphasis_normalization", {}).get("version") == EMPHASIS_NORMALIZATION_V1
+                    if page.get("optional_emphasis_normalization", {}).get("version") in {EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2}
                     for item in page["optional_emphasis_normalization"]["rejected_spans"])
     rejected.extend({"page_number": page["page_number"], "kind": "metadata_columns", **item}
                     for page in records for item in page.get("metadata_band_normalization", {}).get("rejected_bands", []))
@@ -567,9 +603,23 @@ def _canonical_columns_rows(bands, ids, choices):
     return result if [pid for band in result for pid in _ids(band)] == ids else bands
 
 
-def _generated_emphasis(row, spans, *, drop_unsupported_edges=True, rejected=None):
+def _complete_lrm_emphasis_owner(row, start, end, ranges):
+    text = row["text"]
+    raw = text[start:end]
+    return (sum(run["start"] == start and run["end"] == end for run in row["runs"]) == 1
+        and (start,end) in ranges and len(raw) > 2 and raw[0] == raw[-1] == "\u200e"
+        and bool(raw[1:-1].strip()) and not any(unicodedata.category(c).startswith("C") for c in raw[1:-1])
+        and all(index in {start,end-1} and text[index] == "\u200e"
+            for cut in (start,end) for index in range(max(0,cut-1),min(len(text),cut+1))
+            if unicodedata.category(text[index]).startswith("C")))
+
+
+def _generated_emphasis(row, spans, *, drop_unsupported_edges=True, rejected=None,
+                        normalization_version=EMPHASIS_NORMALIZATION_V1):
     """Drop unsupported optional presentation edges; never repair unsafe literals."""
     from .saved_docx_layout import _phrase_edge, _emphasis_end_edge, _protected_ranges
+    if normalization_version not in {None, EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2}:
+        fail("invalid_emphasis_normalization_version")
     if type(spans) is not list or len(spans) > 1000:
         fail("invalid_proposal_decisions")
     if not spans:
@@ -603,6 +653,11 @@ def _generated_emphasis(row, spans, *, drop_unsupported_edges=True, rejected=Non
         control_cut = any(0 < cut < len(row["text"]) and any(
             unicodedata.category(char)[0] == "C" for char in row["text"][cut - 1:cut + 1])
             for cut in (start, end))
+        if (control_cut and normalization_version == EMPHASIS_NORMALIZATION_V2
+                and _complete_lrm_emphasis_owner(row,start,end,ranges)):
+            if rejected is not None:
+                rejected.append({"span":deepcopy(span),"reason":"complete_lrm_owner_emphasis_omitted"})
+            continue
         if control_cut or (unsupported and not drop_unsupported_edges):
             fail("invalid_proposal_decisions")
         if valid_start and valid_end:
@@ -618,7 +673,7 @@ def _canonical_metadata_bands(snapshot, proposal, ids, version):
     bands = deepcopy(proposal["bands"])
     if version is None or proposal.get("version") != PROPOSAL_VERSION_V3:
         return bands, []
-    if version != BAND_NORMALIZATION_V1:
+    if version not in {BAND_NORMALIZATION_V1, BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5}:
         fail("invalid_metadata_band_normalization_version")
     try:
         flat = [pid for band in bands for pid in _ids(band)]
@@ -635,6 +690,19 @@ def _canonical_metadata_bands(snapshot, proposal, ids, version):
     for index, band in enumerate(bands):
         owned = _ids(band)
         ordered = sorted(owned, key=ordinal.get)
+        if (version in {BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5} and band.get("kind") == "flow" and owned != ordered
+                and set(band) == {"kind", "groups"} and ordered == ids[ordinal[ordered[0]]:ordinal[ordered[-1]] + 1]
+                and type(band["groups"]) is list and band["groups"]
+                and all(type(g) is dict and set(g) == {"paragraph_ids", "panel"} and g["panel"] is False
+                        and type(g["paragraph_ids"]) is list and g["paragraph_ids"] for g in band["groups"])
+                and all(pid not in partitioned and not rows[pid].get("has_page_break")
+                        and not rows[pid].get("has_field") and not rows[pid].get("has_numbering")
+                        and "numPr" not in rows[pid].get("ppr_xml", "")
+                        and all(t["kind"] == "t" and all(unicodedata.category(c) not in {"Cc", "Cf"} or c in "\u200e\u200f"
+                                                       for c in t["text"]) for t in rows[pid]["tokens"]) for pid in owned)):
+            bands[index] = {"kind": "flow", "groups": [{"paragraph_ids": ordered, "panel": False}]}
+            rejected.append({"index": index, "paragraph_ids": ordered, "reason": "generated_plain_flow_restored_to_text_order"})
+            continue
         if band.get("kind") != "columns" or owned == ordered:
             continue
         if ordered != ids[ordinal[ordered[0]]:ordinal[ordered[-1]] + 1]:
@@ -651,12 +719,22 @@ def _canonical_metadata_bands(snapshot, proposal, ids, version):
             continue
         if any(set(cell) != {"groups"} for cell in band["cells"]) or any(set(g) != {"paragraph_ids","panel"} or g["panel"] is not False for g in groups):
             continue
-        if any(pid in partitioned or choices[pid]["role"] not in {"institution","reference","recipient"}
+        allowed_roles = {"institution", "reference", "recipient"}
+        if version in {BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5}:
+            allowed_roles.add("body")
+        if version in {BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5}:
+            allowed_roles.add("heading")
+        if any(pid in partitioned or choices[pid]["role"] not in allowed_roles
                or "numPr" in rows[pid].get("ppr_xml", "") or rows[pid].get("has_page_break")
+               or (version in {BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5} and (rows[pid].get("has_field") or rows[pid].get("has_numbering")))
                or any(token["kind"] != "t" or any((unicodedata.category(c) in {"Cc", "Cf"} and c not in "\u200e\u200f") for c in token.get("text", "")) for token in rows[pid]["tokens"]) for pid in owned):
             continue
         bands[index] = {"kind":"flow", "groups":[{"paragraph_ids":ordered,"panel":False}]}
-        rejected.append({"index":index,"paragraph_ids":ordered,"reason":"metadata_columns_reordered_as_flow"})
+        reason = ("generated_plain_columns_restored_to_text_order"
+                  if version in {BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5}
+                  and any(choices[pid]["role"] in {"body", "heading"} for pid in owned)
+                  else "metadata_columns_reordered_as_flow")
+        rejected.append({"index":index,"paragraph_ids":ordered,"reason":reason})
     return bands, rejected
 
 
@@ -706,7 +784,8 @@ def normalize_proposals(snapshot, view, proposals, *, normalization_version=OPTI
             baseline = snapshot["paragraphs"][by_id[row["paragraph_id"]]]
             row["emphasis"] = _generated_emphasis(baseline, row["emphasis"],
                 drop_unsupported_edges=(emphasis_normalization_version is not None
-                    and proposal["version"] == PROPOSAL_VERSION_V3))
+                    and proposal["version"] == PROPOSAL_VERSION_V3),
+                normalization_version=emphasis_normalization_version if proposal["version"] == PROPOSAL_VERSION_V3 else None)
             has_visible_text = any(token["kind"] == "t" and any(
                 not char.isspace() and unicodedata.category(char)[0] in {"L", "N", "P", "S"}
                 for char in token["text"]) for token in baseline["tokens"])

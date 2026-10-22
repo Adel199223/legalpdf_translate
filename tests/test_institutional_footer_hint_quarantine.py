@@ -79,7 +79,8 @@ def test_current_policy_is_v3_and_both_old_metadata_folio_recipes_stay_pinned():
     from legalpdf_translate.ordinary_auto_layout import (
         frozen_automatic_layout_policy, _optional_hint_policy,
         _metadata_normalization_policies, _source_normalization_version)
-    current = frozen_automatic_layout_policy()
+    # The former current V3/band-V1 identity remains a historical recipe.
+    current = "source_image_unreviewed_v1:7a2f8d7d4c43368ad58cc57f8b515f3386cbfbd4a0dd45054e68108d4e19a17a"
     assert current == _optional_hint_policy(OPTIONAL_HINT_NORMALIZATION_V3,
         emphasis_normalization=True, metadata_normalization=True,
         primary_folio_version="terminal_labeled_folio_v2")
@@ -91,3 +92,6 @@ def test_current_policy_is_v3_and_both_old_metadata_folio_recipes_stay_pinned():
         assert _source_normalization_version(old.split(":", 1)[1]) == OPTIONAL_HINT_NORMALIZATION_V2
     old = _optional_hint_policy(OPTIONAL_HINT_NORMALIZATION_V1)
     assert _source_normalization_version(old.split(":", 1)[1]) == OPTIONAL_HINT_NORMALIZATION_V1
+    fresh = frozen_automatic_layout_policy()
+    assert fresh != current
+    assert _source_normalization_version(fresh.split(":", 1)[1]) == OPTIONAL_HINT_NORMALIZATION_V3
