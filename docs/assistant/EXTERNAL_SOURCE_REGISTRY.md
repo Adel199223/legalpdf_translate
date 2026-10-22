@@ -1,5 +1,44 @@
 # External Source Registry
 
+## Prepaid funding boundary — 2026-10-22
+
+The official [prepaid billing guidance](https://help.openai.com/en/articles/8264644-setting-up-and-managing-prepaid-api-billing), verified 2026-10-22, explains that request cutoff may lag exhausted prepaid credit and a resulting negative balance can be deducted from a later purchase. This does not reconcile the current dashboard with the retained per-call ledger. Continued request acceptance is not proof of remaining allowance; no paid exhaustion probe, further top-up request or purchase is authorized. Current funding and stopping status belong to [HANDOFF](HANDOFF.md).
+
+## Strict OCR text transport — 2026-10-21
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/guides/structured-outputs#structured-outputs-vs-json-mode | Fresh OpenAI OCR transport envelope | Responses `text.format` supports strict JSON Schema, including the existing GPT-4o Mini family. The application requests one string field and independently validates the answered envelope before source capture; literal source fences remain inside that exact string. | 2026-10-21 |
+
+ROOT and the implementation author verified this official section through OpenAI Developer Docs. The pinned SDK serialization and fictional native accounting tests validate the local request path. This changes neither the OCR model nor source fidelity obligations. Saved policy absence preserves historical plain-text requests; old failed inventories remain failed. Retained acquisition evidence contains exact provider output strings and flags, not a claim of HTTP response byte retention. Current integration/application status remains in [HANDOFF](HANDOFF.md).
+
+## Prompt-cache compatibility and Codex assessment — 2026-10-21
+
+Official references were verified on 2026-10-21 by the retained read-only assessment `cache_architecture_review_01/assessment.md` and numeric-only `cache_usage.sanitized.json`. This is a narrow prospective billing-shape compatibility update, not an application or harness rewrite. Current application status belongs to [HANDOFF](HANDOFF.md).
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/changelog | Prompt-cache release date | The Responses 12-hour cache option is dated 2026-10-20. | 2026-10-21 |
+| https://developers.openai.com/api/docs/guides/prompt-caching | Default cache accounting | Omission retains the 30-minute default; 12 hours is explicit. Lifetime write details are nested under input token details. The prospective repair admits a validated optional breakdown only with zero 12-hour writes; it changes no TTL, price, prompt or model. | 2026-10-21 |
+| https://developers.openai.com/api/docs/pricing | Cache cost attribution | Reads and writes are input subsets; lifetime-specific write prices replace ordinary input for those tokens. Selected-sample calculations are not invoice reconciliation or demonstrated savings. | 2026-10-21 |
+| https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics | Possible later experiment | Comparison diagnostics do not reload response content; underlying baseline/new requests are still billed. No diagnostic request was made in the assessment. | 2026-10-21 |
+| https://developers.openai.com/api/docs/guides/your-data#storage-requirements-and-retention-controls-per-endpoint | Storage distinction | Response storage and cache KV state are distinct. Preserve store=False; cache TTL is not a deletion deadline or proof of organization retention entitlement. | 2026-10-21 |
+
+The retained assessment also records official Codex engineering and AGENTS-discovery guidance. It establishes no logged-in Codex indefinite TTL or repository-level 12-hour setting; preserve stable routing and scoped current-section reads. Exact source links remain in that assessment rather than expanding this registry validator's permitted URL families.
+
+Retained evidence covered 20 actual calls with zero new calls: seven semantic responses used the old usage shape, wrote 314,016 input tokens and had no cached reads. This supports compatibility first and a later measured write-avoidance experiment, not a 12-hour switch. Preserve old policy replay, unknown-charge stops, independent verification and zero-call Resume/Rebuild.
+
+## Ordinary semantic audit request — 2026-10-20
+
+Official OpenAI references verified 2026-10-20 for the isolated autonomous-draft-parity implementation:
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/guides/images-vision | Ordered source-page images | Responses input supports multiple image content parts, including base64 data URLs. The application's 12-page/image ceiling is a local bound, not a provider limit. | 2026-10-20 |
+| https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses | Semantic audit response shape | Responses supports strict JSON Schema output. Refusal and incomplete responses still require explicit handling; local source, page, literal and evidence validation remains necessary. | 2026-10-20 |
+
+These sources support request mechanics, not translation-quality claims. The new stage uses the saved translation model/effort, preserves Images Off as a text-only audit, and does not mark human review complete. Actual quality, cost and recovery behavior require the private fresh-run evidence and local tests recorded in the [active parity plan](exec_plans/active/2026-10-20_autonomous_draft_parity.md). No dependency upgrade or saved production-default change follows.
+
 ## Default OCR accounting policy — 2026-10-15
 
 Official OpenAI references verified 2026-10-15 for future scanned jobs:
@@ -246,3 +285,50 @@ visual/translation acceptance or authority to replay any earlier operation.
 | https://developers.openai.com/api/docs/guides/images-vision | Layout image inputs | Current5.2 detail modes use2048-pixel maximum dimension and6144 patches; multiplier1.2. Image tokens are billed and count toward input limits. The implementation uses full context capacity as its reservation bound, not a hand-counted text/image approximation. | 2026-09-27 |
 | https://developers.openai.com/api/docs/guides/structured-outputs | Bounded style-only proposal schema | Reverified base-model support for numeric minimum/maximum and array minItems/maxItems; the guide excludes these additional bounds for fine-tuned models. Root must be an object, not anyOf; supported nested anyOf branches require all fields and additionalProperties:false. Local branches align heading role with level1-3/nullable size1-24 and nonheading roles with level0/null size; local bounds cover spacing0-72pt, columns2-3, widths10-90percent, gutter0-36pt and four normalized bbox values. Application checks still enforce width sums, exact paragraph coverage/order, protected spans and wording. No provider or rendered acceptance follows from schema validity. | 2026-09-27 |
 | https://developers.openai.com/api/reference/python/resources/responses/methods/create | Per-purpose request and accounting | Explicit default requests standard processing; returned service tier may differ and remains validated. Omitted tier uses auto. store=false is explicit for this separate operation; it does not modify saved translation defaults. | 2026-09-27 |
+
+### Compact semantic evidence schema — 2026-10-20
+
+Official Structured Outputs documentation was checked after local protocol review.
+No private document content or credential was sent in this public documentation lookup.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/guides/structured-outputs | Fresh caller-unit reference protocol | Schema limits include 1000 enum values across properties, 120000 total characters for names/enum/const strings, and 15000 enum characters for a single string enum exceeding 250 values. Object limits are 5000 properties and 10 nesting levels. The application must bound dynamic reference schemas and still validate source ownership and meaning; constrained references alone do not establish semantic correctness. | 2026-10-20 |
+
+### Reasoning-inclusive semantic inventory capacity - 2026-10-20
+
+Official model and reasoning documentation was verified through the OpenAI developer docs connector after the retained incomplete response was diagnosed. No private source text or credential was sent in this documentation lookup.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-5.2 | Bounded fresh source-inventory capacity | GPT-5.2 documents a 400000-token context and 128000-token maximum output. A separately saved 64000-token inventory allowance is within that model limit; this does not guarantee completion, account access or translation accuracy. Existing stages and older saved requests retain their own bounds. | 2026-10-20 |
+| https://developers.openai.com/api/docs/guides/reasoning | Output cap and incomplete responses | The maximum output allowance includes both reasoning and visible output. A response stopped at that cap is incomplete and must not be treated as valid completed evidence. The application retains the failed response and measured usage before a separate fresh experiment. | 2026-10-20 |
+
+### Prospective fixed-protocol model comparison - 2026-10-20
+
+The official model page was reopened after the larger-capacity source audit completed but failed source-meaning checks. These published facts support a bounded comparison, not an account-access, quality or production-default claim.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-5.6-sol | Prospective ordinary primary and semantic model comparison | The documented `gpt-5.6-sol` alias supports Responses, image input, structured outputs and high reasoning effort, with a 1050000-token context and 128000-token maximum output. No additional dated snapshot is assumed. | 2026-10-20 |
+| https://developers.openai.com/api/docs/models/gpt-5.6-sol | Separate comparison accounting | Published USD per million tokens is 4 input, 0.40 cached input and 20 output; cache writes cost 1.25 times uncached input. Requests above 272000 input tokens use twice the input and 1.5 times the output rate for the full request. Promotional pricing is stated to last at least through 2026-11-21. Actual model, tier, usage dimensions and supported band must match the private comparison's explicit catalog; unknown attribution stops further requests. Layout/OCR retain their separate model accounting. | 2026-10-20 |
+| https://developers.openai.com/api/docs/guides/prompt-caching | Cache-write usage attribution after first model comparison | The Responses usage input total includes cached reads and cache writes. Ordinary input is the total minus both subsets; each subset uses its own rate. Cache-write pricing replaces the ordinary-input rate for those tokens and is not an extra fee added to an already charged input token. Combined with the verified GPT-5.6 Sol rate, writes use USD5 per million within the comparison's admitted lower input band. The earlier unpriced response/journal stays intact; a separate offline attribution can cite the exact raw counts and verified formula. | 2026-10-20 |
+
+### Source-interpretation capability diagnostic and complete-page schema - 2026-10-20
+
+After inspecting the local request/client, official pages were opened to verify the new model and schema options. This establishes published capability and pricing, not account access or quality.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-6-astra | Private source-only capability diagnostic | The documented alias supports Responses, image input and structured outputs; context1050000, maximum output128000, effort low/medium/high/xhigh/max. Diagnostic preserves high effort and64000 cap and changes only model. Standard USD/million10 input,1 cached,12.50 write,50 output; above272000 input doubles input/cache and multiplies output1.5. Admit exact returned model/default tier and lower input band for attribution; unsupported identity/tier/dimensions stay unknown. Assistant Ultra is not an API effort claim. | 2026-10-20 |
+| https://developers.openai.com/api/docs/guides/prompt-caching | Diagnostic usage attribution | Inclusive input contains cache-read and cache-write subsets; ordinary input subtracts both. Writes use their own rate rather than an additive fee. Retain raw responses and original ledgers. | 2026-10-20 |
+| https://developers.openai.com/api/docs/guides/structured-outputs | Prospective complete-page response contract | Base model array minItems/maxItems are supported; these bounds are excluded for fine-tuned models. Exact array length and selected-page enum still need independent uniqueness/order/identity validation. Fresh version only; old requests replay unchanged. | 2026-10-20 |
+
+### Verification service-error diagnosis - 2026-10-20
+
+The actual execution11 verification returned HTTP520 without a model response. The pages below were reopened for error classification and retry boundaries. They do not establish this response's cause, whether it was processed, or its charge. Preserve the unknown accounting and original failed run; no retry-policy or model change follows from this lookup alone.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/guides/error-codes | Actual11 verification failure diagnosis | The official guide distinguishes billing/quota codes from server failures and recommends a brief wait before retrying documented500 errors. It does not specifically explain520. This provides general guidance only; an HTTP520 must not be relabelled as exhausted credits or a free request without concrete response evidence. | 2026-10-20 |
+| https://developers.openai.com/api/reference/python | Semantic transport retry and error evidence | The current Python documentation classifies statuses at least500 as InternalServerError and describes default bounded SDK retries, configurable with max_retries. Failed request IDs may be available through APIStatusError. The installed application explicitly disables semantic SDK retries and retains failed evidence; this lookup neither changes that choice nor proves a missing response identity/cost. | 2026-10-20 |

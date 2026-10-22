@@ -1,5 +1,11 @@
 # PDF to DOCX Translation User Guide
 
+Builds containing the terminal-footer update keep identified source footer text after the complete text from that source page and reduce excess spacing in verified headings and form fields. Builds containing the later closing-group update also keep an eligible short closing/signature block together with its source footer. Wording and font sizes stay intact; the document can still span extra pages. Older saved layouts retain their saved behavior; inspect every page of the unreviewed Word copy. See [current build status](../HANDOFF.md).
+
+## When extracted text conflicts with the page image
+
+In builds containing the fresh source-authority repair, the app can independently reread a precisely identified source occurrence when extracted text and the page image disagree about a protected name, number or other literal. It can also check whether that exact reference has a printed pair of brackets or parentheses, even if extraction missed the pair. Repeated references are checked separately against their own source positions, so a pair cannot move to another identical reference. The app keeps the original evidence and uses the existing one repair allowance before asking for at most one replacement translation and a separate meaning check. An unclear, unavailable or ambiguous reading stops approval. Older saved jobs keep their own behavior. This can resolve a supported discrepancy, but it does not guarantee first-pass success or replace checking the wording and every Word page before delivery. The output still requires human review before Save or Gmail approval. Check [the current handoff](../HANDOFF.md) for the tested build and acceptance limits.
+
 ## Explicit source and formatting review
 
 The [reviewed-source and DOCX guide](REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md) covers **Review source before translating** and **Review DOCX formatting** in builds containing that implementation. Use it for explicit source decisions, independent source/translation ranges, tables, page-matched derivatives and exact revision recovery. Saved settings and the original output remain authoritative; no model/protocol promotion is implied. Check [the current handoff](../HANDOFF.md) for the verified build and acceptance limits. Earlier integration results below remain historical evidence.
@@ -48,11 +54,23 @@ If automatic layout fails after a fully settled recorded attempt, **Recover Sour
 
 Keep the app running until an unfinished Gmail batch is finalized. Its active email session is held in memory; restarting the app does not restore that unfinished batch for normal Save/draft completion. Re-preparing the email starts a separate batch.
 
+## Source check in the isolated October 20 update
+
+This update is available in the isolated parity build and is not installed on canonical main. [HANDOFF](../HANDOFF.md) identifies the build and its receipt-bound benchmark results. Passing one document does not approve another document or mark it as reviewed.
+
+Eligible ordinary Arabic jobs with 1–12 selected pages receive a separate source inventory, correction and independent meaning check. The primary translation keeps its saved model; the separate review uses its saved review model. Only correction receives the bounded job context and relevant preferred terms. Source meaning takes priority: explicit details and relationships must survive without inventing an interpretation. Every selected page must be covered. Image Off remains text only; page-image coverage depends on the saved image setting.
+
+The isolated build under validation gives a fresh job one automatic repair cycle when a complete review finds a repairable defect, or when a completed correction introduces an eligible consistency error such as repeated numbers. The replacement must pass all translation checks and a fresh independent review. The allowance does not reset on Resume. An unchanged repair, exhausted allowance, unresolved source or uncertain charge stops further work. Older saved jobs keep their original behavior and evidence.
+
+The formatted Word file remains **unreviewed** until you inspect its wording and every page. The isolated repair can restore safe paragraph order and eligible mixed-direction clock/folio display while preserving text. Layout warnings still need review. **Recover Source Layout** can reuse complete, settled page responses; when all required responses are valid, local recovery needs no new provider request. Missing pages may require the paid recovery already shown by the app. Check the saved quote and result rather than assuming every recovery is free.
+
+Use the normal review and delivery controls before Save or Gmail. Failed or partial files remain diagnostic evidence; a later successful candidate does not erase their history.
+
 ## Readable Word output and local rebuilds
 
 Translations remain editable Word files. The compact writer uses readable Arial 11 pt for Arabic and Times New Roman 10.5 pt for English/French, deliberate margins, intact accented Latin names and Word page numbers. Turn source-page breaks off for compact reflow; leave them on when you need a separate Word start for every source page. Fonts are not reduced and legal text is not shortened to force a page count.
 
-For new complete translations, an explicit matching source page label, including Arabic `ص. 1`, is kept without an additional generated counter. This conservative rule applies only when every selected page has a clear terminal label. Partial or ambiguous output keeps its normal numbering; older saved jobs retain their original assembly recipe.
+In the isolated October 20 update, a new complete ordinary translation can keep a clear terminal page label, including Arabic `ص. 1`, without an additional generated counter only when the original PDF independently proves matching lower-page labels for every selected page. Local numbering may restart between joined documents. Partial, ambiguous or unproven output keeps normal numbering; older saved jobs retain their original assembly recipe. Before this update, matching translated labels used the earlier saved numbering rules. Inspect actual Word pages and check [installed-build status](../HANDOFF.md).
 
 In builds containing the October 16 source-folio update, automatic layout can also keep printed source fractions without adding a duplicate Word counter, including a fraction at the end of a contact paragraph. This needs complete matching evidence for every selected page. Printed source numbering stays intact; uncertain pages and older saved candidates keep their original behavior. Inspect all actual output pages, because source numbering can differ from Word's final page count. Check [installed-build status](../HANDOFF.md).
 
@@ -482,7 +500,6 @@ suggestion uses local text; explicit autofill is a separate user action.
 - Runtime behavior: `APP_KNOWLEDGE.md`
 - Workflow specifics: `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
 - Data/persistence behavior: `docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md`
-
 
 ## Opening an incomplete run
 

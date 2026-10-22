@@ -1,5 +1,9 @@
 # SESSION_RESUME
 
+## Current provisional installation — October 22
+
+Read [HANDOFF](HANDOFF.md), then the [provisional installation plan](exec_plans/active/2026-10-22_provisional_main_update.md). The user explicitly authorized applying offline-tested fixes to main without API spending. This bounded local installation is separate from the paused0/3 fresh-autonomy goal. Existing older completion and shutdown instructions below are historical; do not replay their operations. The roadmap remains dormant.
+
 ## Completed scoped work — October 15–17 order rerun
 
 Read [HANDOFF.md](HANDOFF.md) and the [completed order plan](exec_plans/completed/2026-10-15_order_end_to_end_rerun.md). Actual generation-2 native/content/review/download/Save/fee/unsent-draft and final preservation checks passed, retaining manual corrections and failure qualifications. All nine bounded plans are completed; the roadmap remains dormant. Installed product/frontend commit is D (`29d07bc15d2034a55d0fcfaba78d584fb38a3179`); later documentation commits may advance Git HEAD while the preserved same backend process retains cached C identity; the installation/UI receipt explains that distinction. No app/provider/Save/draft work remains to replay. Private `order_rerun_20261015_01/final_closeout_01/receipt.json` owns the final local documentation commit and shutdown state. Functional work is complete and its app actions are consumed. Shutdown is requested only if that receipt records an actual operating-system request; physical power-off is not observed. Sending, remote publication and hosted CI are not claimed.
