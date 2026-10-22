@@ -2,7 +2,7 @@
 
 ## Later authority — provisional installation
 
-On October22 the user explicitly authorized applying the offline-tested fixes to main as a provisional update, with no further API spending, and checking startup/data preservation. The [separate provisional plan](2026-10-22_provisional_main_update.md) owns that bounded operation. Its authority supersedes every earlier instruction in this plan that withholds local installation until all three fresh cases pass. Fresh-run acceptance remains0/3 and this broader goal remains paused/incomplete; no paid resumption or completion is implied. Earlier shutdown/stop and process details below are historical disposition, not authority to interrupt the new installation.
+On October22 the user explicitly authorized applying the offline-tested fixes to main as a provisional update, with no further API spending, and checking startup/data preservation. The [separate provisional plan](../completed/2026-10-22_provisional_main_update.md) owns that bounded operation. Its authority supersedes every earlier instruction in this plan that withholds local installation until all three fresh cases pass. Fresh-run acceptance remains0/3 and this broader goal remains paused/incomplete; no paid resumption or completion is implied. Earlier shutdown/stop and process details below are historical disposition, not authority to interrupt the new installation.
 
 
 ## Goal and non-goals

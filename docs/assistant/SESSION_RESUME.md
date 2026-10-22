@@ -2,7 +2,7 @@
 
 ## Current provisional installation — October 22
 
-Read [HANDOFF](HANDOFF.md), then the [provisional installation plan](exec_plans/active/2026-10-22_provisional_main_update.md). The user explicitly authorized applying offline-tested fixes to main without API spending. This bounded local installation is separate from the paused0/3 fresh-autonomy goal. Existing older completion and shutdown instructions below are historical; do not replay their operations. The roadmap remains dormant.
+Read [HANDOFF](HANDOFF.md), then the [provisional installation plan](exec_plans/completed/2026-10-22_provisional_main_update.md). The user explicitly authorized applying offline-tested fixes to main without API spending. The bounded provisional installation passed normal startup and preservation checks. It is separate from the paused0/3 fresh-autonomy goal; current HANDOFF and the private terminal receipt own final installed/runtime identities. Existing older completion and shutdown instructions below are historical; do not replay their operations. The roadmap remains dormant.
 
 ## Completed scoped work — October 15–17 order rerun
 
