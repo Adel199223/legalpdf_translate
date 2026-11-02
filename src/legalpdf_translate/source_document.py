@@ -94,7 +94,11 @@ def get_source_page_count(path: Path) -> int:
 
 def extract_ordered_source_text(path: Path, page_index: int, *, preserve_structure: bool = False,
                                 source_field_policy: str | None = None,
-                                source_question_row_policy: str | None = None) -> "OrderedPageText":
+                                source_question_row_policy: str | None = None,
+                                primary_page_evidence_policy: str | None = None) -> "OrderedPageText":
+    from .pdf_text_order import check_primary_page_evidence_policy
+
+    check_primary_page_evidence_policy(primary_page_evidence_policy)
     if source_question_row_policy not in (None, "baseline_boolean_question_v1"):
         raise ValueError("Unknown source question row policy.")
     if is_pdf_source(path):
@@ -103,12 +107,15 @@ def extract_ordered_source_text(path: Path, page_index: int, *, preserve_structu
             if evidence is None:
                 return _blank_ordered_page_text()
             from .browser_pdf_text import ordered_browser_page_text
+            # Bundle v1 stores bounding rectangles but omits native baseline
+            # vectors and rotation. It cannot establish a horizontal form row.
             return ordered_browser_page_text(evidence, preserve_structure=preserve_structure)
         from .pdf_text_order import extract_ordered_page_text
 
         return extract_ordered_page_text(path, page_index, **({"preserve_structure": True} if preserve_structure else {}),
             **({"source_field_policy": source_field_policy} if source_field_policy is not None else {}),
-            **({"source_question_row_policy": source_question_row_policy} if source_question_row_policy is not None else {}))
+            **({"source_question_row_policy": source_question_row_policy} if source_question_row_policy is not None else {}),
+            **({"primary_page_evidence_policy": primary_page_evidence_policy} if primary_page_evidence_policy is not None else {}))
     if not is_image_source(path):
         raise ValueError(f"Unsupported source file type: {path}")
     if page_index != 0:

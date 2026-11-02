@@ -72,9 +72,11 @@ def seed(tmp_path, monkeypatch, *, source_hard=False):
         assert failed['result']['automatic_layout']['status']=='raw_fallback', failed
     with monkeypatch.context() as old:
         old.setattr(automatic, 'frozen_automatic_layout_policy', automatic._reference_footer_v5_policy)
+        old.setattr(automatic, 'manual_automatic_layout_policy', automatic._reference_footer_v5_policy)
         assert client.post(f'/api/translation/jobs/{job_id}/layout/recover'+SCOPE).status_code==200
         completed = wait(jobs, job_id)
         assert completed['result']['automatic_layout']['status']=='automatic_unreviewed', completed
+        assert completed['result']['automatic_layout']['policy_fingerprint']==automatic._reference_footer_v5_policy().split(':',1)[1]
     assert len(sdk.requests)==len(requests)==3
     return app, jobs, client, job_id, loaded, session, form, sdk, requests
 
@@ -276,6 +278,7 @@ def test_historical_eight_thousand_cost_only_ancestor_is_not_a_reused_response_o
     with monkeypatch.context() as historical:
         historical.setattr(recovery_cases,'_app',capture)
         historical.setattr(automatic,'frozen_automatic_layout_policy',automatic._reference_footer_v5_policy)
+        historical.setattr(automatic,'manual_automatic_layout_policy',automatic._reference_footer_v5_policy)
         recovery_cases.test_old_eight_thousand_token_checkpoint_resumes_then_recovers_at_current_bound(tmp_path,historical)
     app,jobs,sdk,requests=captured['values']
     parent=next(key for key in jobs._jobs if jobs.get_job(key)['result'].get('automatic_layout',{}).get('status')=='automatic_unreviewed')

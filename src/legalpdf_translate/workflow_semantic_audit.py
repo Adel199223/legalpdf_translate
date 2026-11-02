@@ -41,6 +41,8 @@ def _owned_directory(run_dir: Path, name: str):
 
 
 def fresh_recipe(config, model, policy, *, context_text, context_hash):
+    from .pdf_text_order import PRIMARY_PAGE_EVIDENCE_POLICY
+
     if sha256_of_text(context_text) != context_hash:
         _fail("context_changed")
     recipe = {"version": "ordinary_semantic_audit_v3", "model": model,
@@ -52,11 +54,13 @@ def fresh_recipe(config, model, policy, *, context_text, context_hash):
             "terminology_policy": "source_matched_primary_terms_v1",
             "source_field_policy": "baseline_label_value_v1",
             "review_protocol": "source_inventory_correct_verify_v1",
-            "primary_literal_packaging_version": "lossless_source_components_v2",
+            "primary_literal_packaging_version": "lossless_source_components_v3",
+            "source_inline_address_join_policy": "source_locative_house_join_v3",
             "semantic_unit_reference_policy": "caller_unit_refs_v1",
             "source_question_row_policy": "baseline_boolean_question_v1",
+            "primary_page_evidence_policy": PRIMARY_PAGE_EVIDENCE_POLICY,
             "source_inventory_max_output_tokens": 64000,
-            "semantic_source_review_policy": "source_commitment_visual_v5",
+            "semantic_source_review_policy": "source_commitment_visual_v9",
             "semantic_page_coverage_policy": "complete_selected_pages_v1"}
     from .semantic_review_model_policy import fresh_semantic_review_model_policy, validate_policy
     model_policy = fresh_semantic_review_model_policy()
@@ -65,6 +69,13 @@ def fresh_recipe(config, model, policy, *, context_text, context_hash):
         recipe["semantic_repair_policy"] = "source_grounded_repair_once_v4"
         recipe["semantic_literal_authority_policy"] = "source_literal_authority_v1"
         recipe["semantic_enclosure_authority_policy"] = "source_enclosure_authority_v1"
+        recipe["source_enclosure_identity_policy"] = "bounded_distinct_additions_v1"
+        recipe["semantic_enclosure_sequence_repair_policy"] = "initial_enclosure_permutation_replacement_v1"
+        recipe["semantic_target_ambiguity_policy"] = "initial_target_ambiguity_repair_v1"
+        from .ordinary_auto_layout import frozen_automatic_layout_policy
+        if config.strip_bidi_controls is True and policy == frozen_automatic_layout_policy():
+            from . import primary_literal_markup as markup
+            recipe[markup.KEY] = markup.POLICY
     if (config.ocr_engine.value in {"api", "local_then_api"}
             and config.ocr_api_provider.value == "openai"):
         recipe["ocr_text_transport_policy"] = "openai_ocr_text_envelope_v1"
@@ -147,8 +158,9 @@ def _validate_terminology(entries, source_text):
 
 
 def capture_source(*, state, run_dir, page_number, source_text, original_source_text,
-                   expected_ar_tokens, image_data_url, applicable_terminology=(),
-                   text_transport_evidence=None, api_ocr_used=False, merged_ocr_source=False):
+                   expected_ar_tokens, image_data_url, applicable_terminology=(), acronym_rows=(),
+                   text_transport_evidence=None, api_ocr_used=False, merged_ocr_source=False, source_witness=None,
+                   postal_rows=(), postal_direct=False):
     if state is None:
         return {}
     recipe = ordinary_semantic_audit_recipe(state.settings)
@@ -157,8 +169,12 @@ def capture_source(*, state, run_dir, page_number, source_text, original_source_
     if "ocr_text_transport_policy" in recipe:
         from . import ocr_text_transport as transport
         if api_ocr_used:
-            transport.validate_ref(run_dir=run_dir, pdf_sha256=state.pdf_fingerprint, page=page_number,
-                reference=text_transport_evidence, original_source_text=None if merged_ocr_source else original_source_text)
+            raw_ocr = transport.validate_ref(run_dir=run_dir, pdf_sha256=state.pdf_fingerprint, page=page_number,
+                reference=text_transport_evidence, original_source_text=None if (merged_ocr_source or source_witness) else original_source_text)
+            if "ocr_visual_source_policy" in recipe and not merged_ocr_source and source_witness is None:
+                from .ordinary_ocr_visual_source import eligible_page
+                if eligible_page(state.pdf_path, page_number, raw_ocr):
+                    _fail("ocr_visual_source_binding")
         elif text_transport_evidence is not None:
             raise transport.OcrTextTransportError("source_binding")
     payload = {"version": "ordinary_semantic_source_v1", "pdf_sha256": state.pdf_fingerprint,
@@ -171,15 +187,33 @@ def capture_source(*, state, run_dir, page_number, source_text, original_source_
                "configured_image_mode": recipe["configured_image_mode"],
                "visual_coverage": "text_only_configured_image_off" if recipe["configured_image_mode"] == "off"
                    else "source_image_available"}
+    from .ordinary_source_acronyms import POLICY as acronym_policy
+    if recipe.get("primary_page_evidence_policy") == acronym_policy:
+        payload["source_acronyms"] = list(acronym_rows)
     if "ocr_text_transport_policy" in recipe and api_ocr_used:
         payload["ocr_text_acquisition"] = {"reference": text_transport_evidence,
             "selected_source_sha256": _sha(original_source_text.encode("utf-8")),
             "composition": "merged_pdf_ocr" if merged_ocr_source else "api_ocr"}
+    if source_witness is not None:
+        if "ocr_visual_source_policy" not in recipe or not api_ocr_used or merged_ocr_source:
+            _fail("ocr_visual_source_binding")
+        payload["ocr_text_acquisition"]["composition"] = "verified_source_slots_v1"
+        payload["ocr_visual_source"] = source_witness
+        _validate_visual_source(state=state, run_dir=run_dir, page_number=page_number, raw=raw_ocr,
+                                data=payload, recipe=recipe)
     if recipe["version"] in ("ordinary_semantic_audit_v2", "ordinary_semantic_audit_v3"):
         validate_context(state=state, run_dir=run_dir)
         payload.update(version="ordinary_semantic_source_v2", context_sha256=recipe["context_sha256"],
             source_field_policy=recipe["source_field_policy"],
             applicable_terminology=_validate_terminology(list(applicable_terminology), original_source_text))
+    from . import ordinary_source_postal_band as postal_band
+    if postal_band.KEY in recipe or postal_rows:
+        payload[postal_band.FIELD] = list(postal_rows)
+        payload[postal_band.ROUTE] = "direct_text" if postal_direct else "unqualified"
+        try:
+            postal_band.validate_capture(state, recipe, page_number, payload)
+        except ValueError:
+            _fail("postal_source_binding")
     directory = _owned_directory(run_dir, "semantic_source")
     directory.mkdir(exist_ok=True)
     path = directory / f"page_{page_number:04d}.json"
@@ -195,8 +229,17 @@ def capture_source(*, state, run_dir, page_number, source_text, original_source_
     return {"semantic_source_sha256": _sha(encoded)}
 
 
-def _pages(*, state, config, run_dir, pages_dir):
+def _pages(*, state, config, run_dir, pages_dir, primary_context=None):
     from .ordinary_semantic_audit import SemanticAuditPage
+    if primary_context is not None:
+        from . import primary_literal_markup as markup
+        checked = markup.load_context(state=state, run_dir=run_dir)
+        if (type(primary_context) is not markup.Context or checked is None
+                or primary_context.evidence_sha256 != checked.evidence_sha256
+                or markup.encode(primary_context.primary) != markup.encode(checked.primary)
+                or markup.encode(primary_context.groups) != markup.encode(checked.groups)):
+            markup.fail("context_changed")
+        primary_context = checked
     recipe = ordinary_semantic_audit_recipe(state.settings)
     if recipe is None:
         _fail("recipe_missing")
@@ -214,6 +257,11 @@ def _pages(*, state, config, run_dir, pages_dir):
         _fail("source_or_recipe_changed")
     directory = _owned_directory(run_dir, "semantic_source")
     pages = []
+    from . import ordinary_source_acronyms as acronyms
+    acronym_policy = recipe.get("primary_page_evidence_policy") == acronyms.POLICY
+    acronym_sources = acronyms.read_selection(config.pdf_path, numbers) if acronym_policy else ()
+    if acronym_policy and not acronym_sources:
+        _fail("acronym_source_changed")
     resolved_context = validate_context(state=state, run_dir=run_dir)
     context_bound = recipe["version"] in ("ordinary_semantic_audit_v2", "ordinary_semantic_audit_v3")
     terminology = []
@@ -248,7 +296,16 @@ def _pages(*, state, config, run_dir, pages_dir):
                 _fail("context_evidence_changed")
             terminology.append({"page_number": number, "entries": _validate_terminology(
                 data.get("applicable_terminology"), data["original_source_text"])})
+        if acronym_policy:
+            if not acronyms.capture_matches(data, acronym_sources, state.pages[str(number)]):
+                _fail("acronym_source_changed")
         _validate_ocr_acquisition(state=state, run_dir=run_dir, page_number=number, recipe=recipe, data=data)
+        from . import ordinary_source_postal_band as postal_band
+        if postal_band.KEY in recipe or postal_band.FIELD in data or postal_band.ROUTE in data:
+            try:
+                postal_band.validate_capture(state, recipe, number, data)
+            except ValueError:
+                _fail("postal_source_binding")
         if data.get("configured_image_mode") != recipe["configured_image_mode"]:
             _fail("source_evidence_changed")
         if recipe["configured_image_mode"] == "off":
@@ -258,12 +315,14 @@ def _pages(*, state, config, run_dir, pages_dir):
                 or data.get("visual_coverage") != "source_image_available"):
             _fail("review_required_source_image")
         primary = pages_dir / f"page_{number:04d}.txt"
-        if primary.is_symlink() or not primary.is_file():
+        if primary_context is None and (primary.is_symlink() or not primary.is_file()):
             _fail("primary_evidence_missing")
         pages.append(SemanticAuditPage(page_number=number, source_text=data["source_text"],
             original_source_text=data["original_source_text"], source_text_kind="pretokenized",
+            source_acronyms=tuple(data["source_acronyms"]) if acronym_policy else (),
             expected_ar_tokens=tuple(data["expected_ar_tokens"]), image_data_url=data["image_data_url"],
-            primary_text=primary.read_bytes().decode("utf-8"), visual_coverage=data["visual_coverage"]))
+            primary_text=(primary_context.primary[number] if primary_context is not None
+                else primary.read_bytes().decode("utf-8")), visual_coverage=data["visual_coverage"]))
     context = (_encode({"version": "ordinary_semantic_guidance_v1",
         "resolved_user_context": resolved_context,
         "source_fidelity_priority": "originals_over_context_and_terminology",
@@ -303,13 +362,16 @@ def select_pages(*, state, config, run_dir, pages_dir, client=None, accountant=N
         if qualification is not None and qualification["selected_pages"] != sorted(int(n) for n in state.pages):
             _fail("qualification_selection_changed")
         if any(_owned_directory(run_dir, name).exists() for name in
-               ("semantic_source", "semantic_audit", "semantic_context.json")):
+               ("semantic_source", "semantic_audit", "semantic_context.json", "primary_markup")):
             _fail("recipe_missing")
         return pages_dir, None
     from .ordinary_semantic_audit import (SemanticAuditError, SemanticAuditRecipe,
         run_semantic_audit, load_semantic_audit)
     from .usage_accounting import accounting_context
-    pages, saved, context = _pages(state=state, config=config, run_dir=run_dir, pages_dir=pages_dir)
+    from . import primary_literal_markup as markup
+    primary_context = markup.load_context(state=state, run_dir=run_dir)
+    pages, saved, context = _pages(state=state, config=config, run_dir=run_dir, pages_dir=pages_dir,
+        **({"primary_context": primary_context} if primary_context is not None else {}))
     review = saved["version"] == "ordinary_semantic_audit_v3"
     if review:
         from .ordinary_semantic_review import run_semantic_review, load_semantic_review
@@ -342,6 +404,15 @@ def select_pages(*, state, config, run_dir, pages_dir, client=None, accountant=N
             arguments["source_origins"] = source_origins_from_checkpoint(state, pages)
         if review and "semantic_enclosure_authority_policy" in saved:
             arguments["semantic_enclosure_authority_policy"] = saved["semantic_enclosure_authority_policy"]
+        if review and "source_enclosure_identity_policy" in saved:
+            arguments["source_enclosure_identity_policy"] = saved["source_enclosure_identity_policy"]
+        if review and "semantic_enclosure_sequence_repair_policy" in saved:
+            arguments["semantic_enclosure_sequence_repair_policy"] = saved["semantic_enclosure_sequence_repair_policy"]
+        if review and "semantic_target_ambiguity_policy" in saved:
+            arguments["semantic_target_ambiguity_policy"] = saved["semantic_target_ambiguity_policy"]
+        if primary_context is not None:
+            arguments.update(primary_literal_markup_policy=saved[markup.KEY],
+                primary_markup_context=primary_context)
         if review:
             before = dispatch_rollup(state=state, run_dir=run_dir, accountant=accountant)
             if (before["in_flight_count"] or before["missing_usage_count"]
@@ -380,7 +451,7 @@ def select_pages(*, state, config, run_dir, pages_dir, client=None, accountant=N
                         stage_dispatch_proof=None, cancel_check=cancel_check)
                 else:
                     result = run_operation(**arguments, client=client)
-    except SemanticAuditError as exc:
+    except (SemanticAuditError, markup.PrimaryMarkupError) as exc:
         code = exc.code if re.fullmatch(r"[a-z][a-z0-9_]{0,100}", exc.code) else "provider_or_evidence_failure"
         _fail(code)
     if (result.manifest_path.parent.resolve() != directory.resolve()
@@ -397,6 +468,8 @@ def select_pages(*, state, config, run_dir, pages_dir, client=None, accountant=N
 
 def validate_retained_source_pins(*, state, run_dir):
     """Reject damaged completed-source evidence before any resumed page dispatch."""
+    from . import primary_literal_markup as markup
+    markup.load_context(state=state, run_dir=run_dir, completed_only=True)
     if ordinary_semantic_audit_recipe(state.settings) is None:
         qualification = ordinary_semantic_audit_qualification(state.settings)
         if qualification is not None and qualification["selected_pages"] != sorted(int(n) for n in state.pages):
@@ -418,23 +491,56 @@ def validate_retained_source_pins(*, state, run_dir):
 
 
 def _validate_ocr_acquisition(*, state, run_dir, page_number, recipe, data):
+    from . import ocr_text_transport as transport
+    if "ocr_visual_source" in data and "ocr_visual_source_policy" not in recipe:
+        raise transport.OcrTextTransportError("source_binding")
     if "ocr_text_transport_policy" not in recipe:
         return
-    from . import ocr_text_transport as transport
     metadata = state.pages[str(page_number)]
     selected_api = bool(metadata.get("ocr_used") and metadata.get("ocr_engine_used") == "api")
     acquisition = data.get("ocr_text_acquisition")
     if not selected_api:
-        if acquisition is not None:
+        if acquisition is not None or "ocr_visual_source" in data:
             raise transport.OcrTextTransportError("source_binding")
         return
     composition = "merged_pdf_ocr" if metadata.get("source_route_reason") == "visual_recovery_crop_merged" else "api_ocr"
-    if (type(acquisition) is not dict or set(acquisition) != {"reference", "selected_source_sha256", "composition"}
-            or acquisition["composition"] != composition
+    if "ocr_visual_source_policy" not in recipe:
+        if (type(acquisition) is not dict or set(acquisition) != {"reference", "selected_source_sha256", "composition"}
+                or acquisition["composition"] != composition
+                or acquisition["selected_source_sha256"] != _sha(data["original_source_text"].encode("utf-8"))):
+            raise transport.OcrTextTransportError("source_binding")
+        transport.validate_ref(run_dir=run_dir, pdf_sha256=state.pdf_fingerprint, page=page_number,
+            reference=acquisition["reference"], original_source_text=data["original_source_text"] if composition == "api_ocr" else None)
+        return
+    if type(acquisition) is not dict or set(acquisition) != {"reference", "selected_source_sha256", "composition"}:
+        raise transport.OcrTextTransportError("source_binding")
+    raw = transport.validate_ref(run_dir=run_dir, pdf_sha256=state.pdf_fingerprint, page=page_number,
+        reference=acquisition["reference"])
+    if composition == "api_ocr":
+        from . import ordinary_ocr_visual_source as local
+        if local.eligible_page(state.pdf_path, page_number, raw):
+            composition = "verified_source_slots_v1"
+    if ("ocr_visual_source" in data) != (composition == "verified_source_slots_v1"):
+        raise transport.OcrTextTransportError("source_binding")
+    if (acquisition["composition"] != composition or (composition == "api_ocr" and raw != data["original_source_text"])
             or acquisition["selected_source_sha256"] != _sha(data["original_source_text"].encode("utf-8"))):
         raise transport.OcrTextTransportError("source_binding")
-    transport.validate_ref(run_dir=run_dir, pdf_sha256=state.pdf_fingerprint, page=page_number,
-        reference=acquisition["reference"], original_source_text=data["original_source_text"] if composition == "api_ocr" else None)
+    if composition == "verified_source_slots_v1":
+        _validate_visual_source(state=state, run_dir=run_dir, page_number=page_number, raw=raw, data=data, recipe=recipe)
+
+
+def _validate_visual_source(*, state, run_dir, page_number, raw, data, recipe):
+    from . import ordinary_ocr_visual_source as local, ocr_text_transport as transport
+    from .arabic_pre_tokenize import pretokenize_arabic_source, extract_locked_tokens, is_portuguese_month_date_token
+    effective, proof = local.replay(state.pdf_path, page_number, raw, state.pdf_fingerprint, run_dir,
+                                  policy=recipe[local.KEY])
+    prepared = pretokenize_arabic_source(local.prepared_source(effective, proof),
+                                         source_field_policy=recipe["source_field_policy"])
+    required = [t for t in extract_locked_tokens(prepared) if not is_portuguese_month_date_token(t)]
+    if (proof != data.get("ocr_visual_source") or data["original_source_text"] != effective
+            or data["source_text"] != prepared or data["expected_ar_tokens"] != required or not local.image_matches(
+                state.pdf_path, state.pdf_fingerprint, page_number, data.get("primary_image_data_url"), data.get("image_data_url"))):
+        raise transport.OcrTextTransportError("source_binding")
 
 
 def dispatch_rollup(*, state, run_dir, accountant=None):

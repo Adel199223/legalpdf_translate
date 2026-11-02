@@ -90,6 +90,8 @@ def test_v2_initial_marker_bound_for_all_supported_response_schemas(tmp_path,mon
     from tests import test_ordinary_auto_layout_workflow as flow
     from legalpdf_translate import ordinary_auto_layout as auto
     from legalpdf_translate.ordinary_layout_service import _read, _write
+    # Saved V8 explicitly owns the historical V2 marker in these oracles.
+    monkeypatch.setattr(auto, "frozen_automatic_layout_policy", auto._in_body_terminal_closing_v8_policy)
     original=flow._proposal
     def proposal(*args,**kwargs):
         value=original(*args,**kwargs);value['version']=version
@@ -124,19 +126,21 @@ def test_exact_old_and_new_emphasis_policies_preserve_direction_capabilities():
     old=auto._inline_folio_direction_policy()
     complete=auto._complete_lrm_emphasis_policy()
     terminal=auto._terminal_source_layout_policy()
-    fresh=auto.frozen_automatic_layout_policy()
+    closing=auto._terminal_closing_group_policy()
+    fresh=auto._in_body_terminal_closing_v8_policy()
     assert old=='source_image_unreviewed_v1:7c54ccb193b2fb707fc8164f591f5cb9769e6ab800300be8bda227307dcbf2dd'
     assert complete=='source_image_unreviewed_v1:f60c0c62ac3964ad6231764b98132529fa0afe6b9cb3149bff9145c56d370b58'
     assert terminal=='source_image_unreviewed_v1:98a25bdde6fa1f5b950c3b073653a5fc634fdf6248f4015fa9d13ddfae039099'
-    assert fresh=='source_image_unreviewed_v1:e1d8a9d167debf3bd910de5ae014c092c2b59768cce34e24d3309fb8d3d40095'
-    for policy in (old,complete,terminal,fresh):
+    assert closing=='source_image_unreviewed_v1:e1d8a9d167debf3bd910de5ae014c092c2b59768cce34e24d3309fb8d3d40095'
+    assert fresh==auto._in_body_terminal_closing_v8_policy() and fresh!=closing
+    for policy in (old,complete,terminal,closing,fresh):
         fingerprint=policy.split(':',1)[1]
-        assert auto._band_normalization_version(fingerprint)=='ordinary_metadata_band_normalization_v5'
+        assert auto._band_normalization_version(fingerprint)==('ordinary_metadata_band_normalization_v8' if policy==fresh else 'ordinary_metadata_band_normalization_v5')
         assert auto._clock_direction_version(fingerprint)=='clock_h_colon_ltr_v1'
         assert auto._source_folio_inline_direction_version(fingerprint)=='source_bound_folio_separator_ltr_v1'
         assert policy in auto._metadata_normalization_policies() and policy in auto._source_folio_policies()
     assert auto._emphasis_normalization_version(old.split(':',1)[1])=='ordinary_optional_emphasis_normalization_v1'
-    for policy in (complete,terminal,fresh):
+    for policy in (complete,terminal,closing,fresh):
         assert auto._emphasis_normalization_version(policy.split(':',1)[1])==EMPHASIS_NORMALIZATION_V2
     assert auto._terminal_source_layout_versions(complete.split(':',1)[1])=={}
     assert auto._terminal_source_layout_versions(terminal.split(':',1)[1])=={
@@ -145,7 +149,7 @@ def test_exact_old_and_new_emphasis_policies_preserve_direction_capabilities():
     assert auto._terminal_source_layout_versions(fresh.split(':',1)[1])=={
         'source_footer_placement_version':'terminal_body_flow_v1',
         'source_spacing_version':'baseline_metadata_heading_spacing_v1',
-        'source_closing_group_version':'bounded_terminal_signature_context_v1'}
+        'source_closing_group_version':'bounded_terminal_signature_context_v3'}
     assert auto._emphasis_normalization_version('0'*64) is None
 
 
@@ -238,6 +242,9 @@ def test_settled_optional_edge_recovery_has_no_dispatch_and_binds_warning(tmp_pa
     from fastapi.testclient import TestClient
     from tests import test_ordinary_auto_layout_workflow as flow
     from legalpdf_translate import ordinary_layout_manager as manager_module, ordinary_auto_layout as automatic
+    # Revalidate an old settled optional-edge failure without a new proposal send.
+    monkeypatch.setattr(automatic, "frozen_automatic_layout_policy",
+        automatic._protected_folio_bridges_v10_policy)
     from legalpdf_translate.ordinary_layout_contracts import PROPOSAL_VERSION_V3, normalize_proposals, OrdinaryLayoutError
     from legalpdf_translate.ordinary_layout_service import _read, _write
     original = flow._proposal

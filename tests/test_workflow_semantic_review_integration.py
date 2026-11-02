@@ -36,7 +36,14 @@ def without_repair_policy(monkeypatch):
         saved.pop("semantic_repair_policy", None)
         saved.pop("semantic_literal_authority_policy", None)
         saved.pop("semantic_enclosure_authority_policy", None)
+        saved.pop("source_enclosure_identity_policy", None)
+        saved.pop("semantic_target_ambiguity_policy", None)
+        saved.pop("semantic_enclosure_sequence_repair_policy", None)
+        saved.pop("primary_page_evidence_policy", None)
+        saved.pop("primary_literal_markup_policy", None)
         saved.pop("ocr_text_transport_policy", None)
+        # This retained three-stage contract predates local inline join proof.
+        saved.pop("source_inline_address_join_policy", None)
         return saved
     monkeypatch.setattr(integration, "fresh_recipe", historical)
 
@@ -120,7 +127,10 @@ def saved_recipe(tmp_path):
     recipe = integration.fresh_recipe(config, "gpt-5.2", policy,
         context_text="Fictional context.", context_hash=sha256_of_text("Fictional context."))
     settings = {"ordinary_semantic_audit_recipe": recipe,
-        "ordinary_auto_layout_policy": policy, "image_mode": "off"}
+        "ordinary_auto_layout_policy": policy, "image_mode": "off",
+        "strip_bidi_controls": config.strip_bidi_controls,
+        "primary_assembly_recipe": {"version": "terminal_source_bound_folio_v4",
+            "ordinary_auto_layout_policy": policy}}
     return config, recipe, settings
 
 

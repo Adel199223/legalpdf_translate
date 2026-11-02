@@ -33,7 +33,7 @@ def immutable(run_dir):
             for p in (run_dir / folder).rglob("*") if p.is_file() and p.suffix != ".lock"}
 
 
-def test_fresh_three_page_real_workflow_roles_source_v5_native_usage_and_offline_replay(tmp_path, monkeypatch):
+def test_fresh_three_page_real_workflow_roles_source_v6_native_usage_and_offline_replay(tmp_path, monkeypatch):
     from legalpdf_translate import ordinary_semantic_review as engine
     from legalpdf_translate import ordinary_semantic_repair as repair
     captured = []
@@ -52,14 +52,14 @@ def test_fresh_three_page_real_workflow_roles_source_v5_native_usage_and_offline
     assert [r["max_output_tokens"] for r in http.requests[-3:]] == [64000, 32000, 32000]
     saved = flow._last_state.settings["ordinary_semantic_audit_recipe"]
     assert saved["model"] == "gpt-5.2" and saved[policy.KEY]["model"] == "gpt-6-astra"
-    assert saved["semantic_source_review_policy"] == "source_commitment_visual_v5"
+    assert saved["semantic_source_review_policy"] == "source_commitment_visual_v9"
     manifest = json.loads((result.run_dir / "semantic_audit/manifest.json").read_bytes())
     assert captured[0].model == "gpt-6-astra"
     assert manifest["binding"]["recipe_sha256"] == engine.audit._sha(engine.audit._json(asdict(captured[0])))
-    assert manifest["binding"]["semantic_source_review_policy"]["policy"] == "source_commitment_visual_v5"
+    assert manifest["binding"]["semantic_source_review_policy"]["policy"] == "source_commitment_visual_v9"
     for request in http.requests[-3:]:
         payload = json.loads(request["input"][0]["content"][0]["text"])
-        assert payload["semantic_source_review_policy"]["policy"] == "source_commitment_visual_v5"
+        assert payload["semantic_source_review_policy"]["policy"] == "source_commitment_visual_v9"
         assert request["reasoning"]["effort"] == saved["reasoning_effort"]
         assert payload.get("context_text") is not None if payload["stage"] == "correction" else "context_text" not in payload
     correction = http.requests[-2]["text"]["format"]["schema"]["properties"]["pages"]

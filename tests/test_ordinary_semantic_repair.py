@@ -27,8 +27,14 @@ def saved_v1_repair_policy(monkeypatch):
     def v1(*args, **kwargs):
         saved = fresh(*args, **kwargs)
         saved["semantic_repair_policy"] = repair.POLICY
+        saved["semantic_source_review_policy"] = "source_commitment_visual_v5"
         saved.pop("semantic_literal_authority_policy", None)
         saved.pop("semantic_enclosure_authority_policy", None)
+        saved.pop("source_enclosure_identity_policy", None)
+        saved.pop("semantic_target_ambiguity_policy", None)
+        saved.pop("semantic_enclosure_sequence_repair_policy", None)
+        saved.pop("primary_page_evidence_policy", None)
+        saved.pop("primary_literal_markup_policy", None)
         return saved
     monkeypatch.setattr(glue, "fresh_recipe", v1)
 

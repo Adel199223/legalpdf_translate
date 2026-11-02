@@ -1,8 +1,9 @@
 """Bounded source-image layout stage for fresh ordinary browser translations.
 
 Translation remains the existing ordinary protocol. This stage keeps its raw
-DOCX and writer map, makes at most one proposal request per selected source
-page, and publishes only a separately verified unreviewed candidate.
+DOCX and writer map, makes one initial proposal per selected source page,
+and permits only the explicitly saved fresh recipe's one global replacement.
+It publishes only a separately verified unreviewed candidate.
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ from pathlib import Path
 import re
 from decimal import Decimal
 
-from .ordinary_layout_contracts import encode, fail
+from .ordinary_layout_contracts import encode, decode, fail
 from .run_workspace_lock import run_workspace_slot
 from . import saved_docx_layout_service as storage
 from .translation_policy import ORDINARY_AUTO_LAYOUT_POLICY
@@ -22,7 +23,7 @@ _POLICY_RE = re.compile(r"source_image_unreviewed_v1:([a-f0-9]{64})\Z")
 
 def frozen_automatic_layout_policy() -> str:
     """Freeze local price, request and validation versions before translation."""
-    return _terminal_closing_group_policy()
+    return _contact_folio_overlap_v19_policy()
 
 
 def _body_columns_v3_policy() -> str:
@@ -30,7 +31,7 @@ def _body_columns_v3_policy() -> str:
     return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3", emphasis_normalization=True, metadata_normalization=True, primary_folio_version="terminal_source_bound_folio_v4", source_folio_proof=True, metadata_normalization_version="ordinary_metadata_band_normalization_v3", source_folio_direction_version="numeric_run_ltr_v3")
 
 
-def _optional_hint_policy(normalization_version: str, *, emphasis_normalization=False, metadata_normalization=False, primary_folio_version="terminal_labeled_folio_v1", source_folio_proof=False, metadata_normalization_version="ordinary_metadata_band_normalization_v1", source_folio_direction_version="numeric_run_ltr_v2", clock_direction_version=None, source_folio_inline_direction_version=None, emphasis_normalization_version="ordinary_optional_emphasis_normalization_v1", terminal_source_layout=False, closing_group=False) -> str:
+def _optional_hint_policy(normalization_version: str, *, emphasis_normalization=False, metadata_normalization=False, primary_folio_version="terminal_labeled_folio_v1", source_folio_proof=False, metadata_normalization_version="ordinary_metadata_band_normalization_v1", source_folio_direction_version="numeric_run_ltr_v2", clock_direction_version=None, source_folio_inline_direction_version=None, emphasis_normalization_version="ordinary_optional_emphasis_normalization_v1", terminal_source_layout=False, closing_group=False, closing_group_version="bounded_terminal_signature_context_v1", proposal_repair_policy=None, source_in_flow_folio_direction_version=None, source_labeled_folio_direction_version=None) -> str:
     """Exact versioned capability identities; no arbitrary historical-policy admission."""
     from .ordinary_layout_accounting import layout_accounting_policy
     from .ordinary_layout_contracts import PROPOSAL_VERSION_V3
@@ -46,7 +47,7 @@ def _optional_hint_policy(normalization_version: str, *, emphasis_normalization=
         "pricing_catalog": json.loads(accounting._pricing_json),
         "dispatch_limits": json.loads(accounting._limits_json)}
     if emphasis_normalization:
-        if emphasis_normalization_version not in {"ordinary_optional_emphasis_normalization_v1", "ordinary_optional_emphasis_normalization_v2"}:
+        if emphasis_normalization_version not in {"ordinary_optional_emphasis_normalization_v1", "ordinary_optional_emphasis_normalization_v2", "ordinary_optional_emphasis_normalization_v3"}:
             fail("invalid_emphasis_normalization_version")
         identity["optional_emphasis_normalization_version"] = emphasis_normalization_version
     if metadata_normalization:
@@ -60,14 +61,31 @@ def _optional_hint_policy(normalization_version: str, *, emphasis_normalization=
             fail("source_clock_direction_version")
         identity["clock_direction_version"] = clock_direction_version
     if source_folio_inline_direction_version is not None:
-        if source_folio_inline_direction_version != "source_bound_folio_separator_ltr_v1":
+        from .ordinary_source_layout import INLINE_FOLIO_DIRECTION_V1, INLINE_FOLIO_DIRECTION_V2, INLINE_FOLIO_DIRECTION_V3
+        if source_folio_inline_direction_version not in (INLINE_FOLIO_DIRECTION_V1, INLINE_FOLIO_DIRECTION_V2, INLINE_FOLIO_DIRECTION_V3):
             fail("source_inline_folio_direction_version")
         identity["source_folio_inline_direction_version"] = source_folio_inline_direction_version
     if terminal_source_layout:
         identity["source_footer_placement_version"] = "terminal_body_flow_v1"
         identity["source_spacing_version"] = "baseline_metadata_heading_spacing_v1"
     if closing_group:
-        identity["source_closing_group_version"] = "bounded_terminal_signature_context_v1"
+        if closing_group_version not in {"bounded_terminal_signature_context_v1", "bounded_terminal_signature_context_v2", "bounded_terminal_signature_context_v3", "bounded_terminal_signature_context_v4", "bounded_terminal_signature_context_v5"}:
+            fail("source_closing_group_version")
+        identity["source_closing_group_version"] = closing_group_version
+    if proposal_repair_policy is not None:
+        from .ordinary_layout_reproposal import descriptor
+        identity["proposal_repair_policy"] = descriptor(proposal_repair_policy)
+    if source_in_flow_folio_direction_version is not None:
+        from .ordinary_in_flow_folio_bridges import KEY, VERSION
+        if source_in_flow_folio_direction_version != VERSION:
+            fail("source_in_flow_folio_direction_version", 409)
+        identity[KEY] = VERSION
+    if source_labeled_folio_direction_version is not None:
+        from .ordinary_labeled_folio_direction import KEY, VERSION
+        from .ordinary_labeled_folio_direction_v2 import VERSION as VERSION_V2
+        if source_labeled_folio_direction_version not in {VERSION, VERSION_V2}:
+            fail("source_labeled_folio_direction_version", 409)
+        identity[KEY] = source_labeled_folio_direction_version
     return ORDINARY_AUTO_LAYOUT_POLICY + ":" + hashlib.sha256(encode(identity)).hexdigest()
 
 
@@ -105,8 +123,14 @@ def _inline_folio_direction_policy():
 
 
 def _source_folio_inline_direction_version(policy_fingerprint):
+    if policy_fingerprint == _contact_folio_overlap_v19_policy().split(":",1)[1]:
+        from .ordinary_source_layout import INLINE_FOLIO_DIRECTION_V3
+        return INLINE_FOLIO_DIRECTION_V3
+    if policy_fingerprint == _contact_folio_v18_policy().split(":",1)[1]:
+        from .ordinary_source_layout import INLINE_FOLIO_DIRECTION_V2
+        return INLINE_FOLIO_DIRECTION_V2
     return ("source_bound_folio_separator_ltr_v1"
-        if policy_fingerprint in {p.split(":",1)[1] for p in (_inline_folio_direction_policy(),_complete_lrm_emphasis_policy(),_terminal_source_layout_policy(),_terminal_closing_group_policy())} else None)
+        if policy_fingerprint in {p.split(":",1)[1] for p in (_inline_folio_direction_policy(),_complete_lrm_emphasis_policy(),_terminal_source_layout_policy(),_terminal_closing_group_policy(),_plain_list_columns_v6_policy(),_terminal_footer_membership_v7_policy(),_in_body_terminal_closing_v8_policy(),_adjacent_lrm_emphasis_v9_policy(),_protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy())} else None)
 
 
 def _complete_lrm_emphasis_policy():
@@ -141,8 +165,269 @@ def _terminal_closing_group_policy():
         terminal_source_layout=True, closing_group=True)
 
 
+def _plain_list_columns_v6_policy():
+    """Fresh plain-list band proof; prior terminal-closing recipe stays exact."""
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3",
+        emphasis_normalization=True, metadata_normalization=True,
+        primary_folio_version="terminal_source_bound_folio_v4", source_folio_proof=True,
+        metadata_normalization_version="ordinary_metadata_band_normalization_v6",
+        source_folio_direction_version="numeric_run_ltr_v3", clock_direction_version="clock_h_colon_ltr_v1",
+        source_folio_inline_direction_version="source_bound_folio_separator_ltr_v1",
+        emphasis_normalization_version="ordinary_optional_emphasis_normalization_v2",
+        terminal_source_layout=True, closing_group=True)
+
+
+def _terminal_footer_membership_v7_policy():
+    """Fresh target-footer association and certified predecessor-table boundary."""
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3",
+        emphasis_normalization=True, metadata_normalization=True,
+        primary_folio_version="terminal_source_bound_folio_v4", source_folio_proof=True,
+        metadata_normalization_version="ordinary_metadata_band_normalization_v7",
+        source_folio_direction_version="numeric_run_ltr_v3", clock_direction_version="clock_h_colon_ltr_v1",
+        source_folio_inline_direction_version="source_bound_folio_separator_ltr_v1",
+        emphasis_normalization_version="ordinary_optional_emphasis_normalization_v2",
+        terminal_source_layout=True, closing_group=True,
+        closing_group_version="bounded_terminal_signature_context_v2")
+
+
+def _in_body_terminal_closing_v8_policy():
+    """Fresh positive in-body terminal association and exact carrier proof."""
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3",
+        emphasis_normalization=True, metadata_normalization=True,
+        primary_folio_version="terminal_source_bound_folio_v4", source_folio_proof=True,
+        metadata_normalization_version="ordinary_metadata_band_normalization_v8",
+        source_folio_direction_version="numeric_run_ltr_v3", clock_direction_version="clock_h_colon_ltr_v1",
+        source_folio_inline_direction_version="source_bound_folio_separator_ltr_v1",
+        emphasis_normalization_version="ordinary_optional_emphasis_normalization_v2",
+        terminal_source_layout=True, closing_group=True,
+        closing_group_version="bounded_terminal_signature_context_v3")
+
+def _adjacent_lrm_emphasis_v9_policy():
+    """Fresh adjacent canonical LRM owner hint omission; concrete V8 stays exact."""
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3",
+        emphasis_normalization=True, metadata_normalization=True,
+        primary_folio_version="terminal_source_bound_folio_v4", source_folio_proof=True,
+        metadata_normalization_version="ordinary_metadata_band_normalization_v8",
+        source_folio_direction_version="numeric_run_ltr_v3", clock_direction_version="clock_h_colon_ltr_v1",
+        source_folio_inline_direction_version="source_bound_folio_separator_ltr_v1",
+        emphasis_normalization_version="ordinary_optional_emphasis_normalization_v3",
+        terminal_source_layout=True, closing_group=True,
+        closing_group_version="bounded_terminal_signature_context_v3")
+
+
+def _protected_folio_bridges_v10_policy():
+    """Fresh protected folio bridge direction; concrete V9 stays exact."""
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3",
+        emphasis_normalization=True, metadata_normalization=True,
+        primary_folio_version="terminal_source_bound_folio_v4", source_folio_proof=True,
+        metadata_normalization_version="ordinary_metadata_band_normalization_v8",
+        source_folio_direction_version="numeric_run_ltr_v4", clock_direction_version="clock_h_colon_ltr_v1",
+        source_folio_inline_direction_version="source_bound_folio_separator_ltr_v1",
+        emphasis_normalization_version="ordinary_optional_emphasis_normalization_v3",
+        terminal_source_layout=True, closing_group=True,
+        closing_group_version="bounded_terminal_signature_context_v3")
+
+
+def _bounded_page_reproposal_v11_policy():
+    """Fresh one-slot page re-proposal; all concrete V10 capabilities stay exact."""
+    from .ordinary_layout_reproposal import POLICY
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3",
+        emphasis_normalization=True, metadata_normalization=True,
+        primary_folio_version="terminal_source_bound_folio_v4", source_folio_proof=True,
+        metadata_normalization_version="ordinary_metadata_band_normalization_v8",
+        source_folio_direction_version="numeric_run_ltr_v4", clock_direction_version="clock_h_colon_ltr_v1",
+        source_folio_inline_direction_version="source_bound_folio_separator_ltr_v1",
+        emphasis_normalization_version="ordinary_optional_emphasis_normalization_v3",
+        terminal_source_layout=True, closing_group=True,
+        closing_group_version="bounded_terminal_signature_context_v3", proposal_repair_policy=POLICY)
+
+
+def _proposal_repair_version(policy_fingerprint):
+    from .ordinary_layout_reproposal import POLICY, POLICY_V2
+    for policy, recipe in ((POLICY, _bounded_page_reproposal_v11_policy()),
+                           (POLICY_V2, _per_page_reproposal_v12_policy()),
+                           (POLICY_V2, _in_flow_folio_bridges_v13_policy()),
+                           (POLICY_V2, _labeled_folio_direction_v14_policy()),
+                           (POLICY_V2, _terminal_punctuation_folio_v15_policy()),
+                           (POLICY_V2, _bounded_signature_label_v16_policy()),
+                           (POLICY_V2, _local_footer_closing_v17_policy()),
+                           (POLICY_V2, _contact_folio_v18_policy()), (POLICY_V2, _contact_folio_overlap_v19_policy())):
+        if policy_fingerprint == recipe.split(":", 1)[1]:
+            return policy
+    return None
+
+
+def _per_page_reproposal_v12_policy():
+    """Fresh one replacement per selected page; concrete V11 stays immutable."""
+    from .ordinary_layout_reproposal import POLICY_V2
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3",
+        emphasis_normalization=True, metadata_normalization=True,
+        primary_folio_version="terminal_source_bound_folio_v4", source_folio_proof=True,
+        metadata_normalization_version="ordinary_metadata_band_normalization_v8",
+        source_folio_direction_version="numeric_run_ltr_v4", clock_direction_version="clock_h_colon_ltr_v1",
+        source_folio_inline_direction_version="source_bound_folio_separator_ltr_v1",
+        emphasis_normalization_version="ordinary_optional_emphasis_normalization_v3",
+        terminal_source_layout=True, closing_group=True,
+        closing_group_version="bounded_terminal_signature_context_v3", proposal_repair_policy=POLICY_V2)
+
+
+def _in_flow_folio_bridges_v13_policy():
+    """Fresh local accepted-footer bridges, without changing V4 promotion."""
+    from .ordinary_layout_reproposal import POLICY_V2
+    from .ordinary_in_flow_folio_bridges import VERSION
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3",
+        emphasis_normalization=True, metadata_normalization=True,
+        primary_folio_version="terminal_source_bound_folio_v4", source_folio_proof=True,
+        metadata_normalization_version="ordinary_metadata_band_normalization_v8",
+        source_folio_direction_version="numeric_run_ltr_v4", clock_direction_version="clock_h_colon_ltr_v1",
+        source_folio_inline_direction_version="source_bound_folio_separator_ltr_v1",
+        emphasis_normalization_version="ordinary_optional_emphasis_normalization_v3",
+        terminal_source_layout=True, closing_group=True,
+        closing_group_version="bounded_terminal_signature_context_v3", proposal_repair_policy=POLICY_V2,
+        source_in_flow_folio_direction_version=VERSION)
+
+
+def _labeled_folio_direction_v14_policy():
+    """Fresh whole labelled fraction direction, preserving V4 and in-flow V1."""
+    from .ordinary_layout_reproposal import POLICY_V2
+    from .ordinary_in_flow_folio_bridges import VERSION
+    from .ordinary_labeled_folio_direction import VERSION as LABELED
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3",
+        emphasis_normalization=True, metadata_normalization=True,
+        primary_folio_version="terminal_source_bound_folio_v4", source_folio_proof=True,
+        metadata_normalization_version="ordinary_metadata_band_normalization_v8",
+        source_folio_direction_version="numeric_run_ltr_v4", clock_direction_version="clock_h_colon_ltr_v1",
+        source_folio_inline_direction_version="source_bound_folio_separator_ltr_v1",
+        emphasis_normalization_version="ordinary_optional_emphasis_normalization_v3",
+        terminal_source_layout=True, closing_group=True,
+        closing_group_version="bounded_terminal_signature_context_v3", proposal_repair_policy=POLICY_V2,
+        source_in_flow_folio_direction_version=VERSION, source_labeled_folio_direction_version=LABELED)
+
+
+def _terminal_punctuation_folio_v15_policy():
+    """Fresh separately owned terminal-period proof; all concrete V14 contracts remain exact."""
+    from .ordinary_layout_reproposal import POLICY_V2
+    from .ordinary_in_flow_folio_bridges import VERSION
+    from .ordinary_labeled_folio_direction_v2 import VERSION as LABELED
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3",
+        emphasis_normalization=True, metadata_normalization=True,
+        primary_folio_version="terminal_source_bound_folio_v4", source_folio_proof=True,
+        metadata_normalization_version="ordinary_metadata_band_normalization_v8",
+        source_folio_direction_version="numeric_run_ltr_v4", clock_direction_version="clock_h_colon_ltr_v1",
+        source_folio_inline_direction_version="source_bound_folio_separator_ltr_v1",
+        emphasis_normalization_version="ordinary_optional_emphasis_normalization_v3",
+        terminal_source_layout=True, closing_group=True,
+        closing_group_version="bounded_terminal_signature_context_v3", proposal_repair_policy=POLICY_V2,
+        source_in_flow_folio_direction_version=VERSION, source_labeled_folio_direction_version=LABELED)
+
+
+def _bounded_signature_label_v16_policy():
+    """Fresh bounded signature-label pagination; all concrete V15 contracts remain exact."""
+    from .ordinary_layout_reproposal import POLICY_V2
+    from .ordinary_in_flow_folio_bridges import VERSION
+    from .ordinary_labeled_folio_direction_v2 import VERSION as LABELED
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3",
+        emphasis_normalization=True, metadata_normalization=True,
+        primary_folio_version="terminal_source_bound_folio_v4", source_folio_proof=True,
+        metadata_normalization_version="ordinary_metadata_band_normalization_v8",
+        source_folio_direction_version="numeric_run_ltr_v4", clock_direction_version="clock_h_colon_ltr_v1",
+        source_folio_inline_direction_version="source_bound_folio_separator_ltr_v1",
+        emphasis_normalization_version="ordinary_optional_emphasis_normalization_v3",
+        terminal_source_layout=True, closing_group=True,
+        closing_group_version="bounded_terminal_signature_context_v4", proposal_repair_policy=POLICY_V2,
+        source_in_flow_folio_direction_version=VERSION, source_labeled_folio_direction_version=LABELED)
+
+def _local_footer_closing_v17_policy():
+    from .ordinary_source_layout import INLINE_FOLIO_DIRECTION_V1
+    return _local_footer_policy(INLINE_FOLIO_DIRECTION_V1)
+
+
+def _contact_folio_v18_policy():
+    from .ordinary_source_layout import INLINE_FOLIO_DIRECTION_V2
+    return _local_footer_policy(INLINE_FOLIO_DIRECTION_V2)
+
+
+def _contact_folio_overlap_v19_policy():
+    from .ordinary_source_layout import INLINE_FOLIO_DIRECTION_V3
+    return _local_footer_policy(INLINE_FOLIO_DIRECTION_V3)
+
+
+def _local_footer_policy(inline_mode):
+    """The contact-folio version changes local direction only, after proposal selection."""
+    from .ordinary_layout_reproposal import POLICY_V2
+    from .ordinary_in_flow_folio_bridges import VERSION
+    from .ordinary_labeled_folio_direction_v2 import VERSION as LABELED
+    return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3",
+        emphasis_normalization=True, metadata_normalization=True,
+        primary_folio_version="terminal_source_bound_folio_v4", source_folio_proof=True,
+        metadata_normalization_version="ordinary_metadata_band_normalization_v8",
+        source_folio_direction_version="numeric_run_ltr_v4", clock_direction_version="clock_h_colon_ltr_v1",
+        source_folio_inline_direction_version=inline_mode,
+        emphasis_normalization_version="ordinary_optional_emphasis_normalization_v3",
+        terminal_source_layout=True, closing_group=True,
+        closing_group_version="bounded_terminal_signature_context_v5", proposal_repair_policy=POLICY_V2,
+        source_in_flow_folio_direction_version=VERSION, source_labeled_folio_direction_version=LABELED)
+
+
+
+def _proposal_render_profile(policy_fingerprint):
+    """Only V13 supplies a new private renderer; absent still means saved V12."""
+    return policy_fingerprint if policy_fingerprint in {p.split(":", 1)[1] for p in (_in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy())} else None
+
+
+def manual_automatic_layout_policy():
+    """Explicit recovery remains the concrete historical target, with no repair grant."""
+    return _protected_folio_bridges_v10_policy()
+
+
+def supports_manual_layout_recovery(policy):
+    return not (type(policy) is str and _proposal_repair_version(policy.split(":", 1)[-1]) is not None)
+
+
+
+
+def _source_folio_direction_version(policy_fingerprint):
+    """Exact saved numeric identities shared by evidence and actual attachment."""
+    if policy_fingerprint in {p.split(":",1)[1] for p in (_protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy())}:
+        return "numeric_run_ltr_v4"
+    if policy_fingerprint in {p.split(":",1)[1] for p in (
+            _adjacent_lrm_emphasis_v9_policy(), _in_body_terminal_closing_v8_policy(),
+            _terminal_footer_membership_v7_policy(), _plain_list_columns_v6_policy(),
+            _terminal_closing_group_policy(), _terminal_source_layout_policy(),
+            _complete_lrm_emphasis_policy(), _inline_folio_direction_policy(),
+            _reference_footer_v5_policy(), _heading_columns_v4_policy(), _clock_direction_policy(),
+            _body_columns_v3_policy(), _source_bound_v4_policy())}:
+        return "numeric_run_ltr_v3"
+    return None
+
+
 def _terminal_source_layout_versions(policy_fingerprint):
-    if policy_fingerprint == _terminal_closing_group_policy().split(":",1)[1]:
+    if policy_fingerprint in {_contact_folio_v18_policy().split(":",1)[1], _contact_folio_overlap_v19_policy().split(":",1)[1]}:
+        return _terminal_source_layout_versions(_local_footer_closing_v17_policy().split(":",1)[1])
+    if policy_fingerprint == _local_footer_closing_v17_policy().split(":", 1)[1]:
+        return {**_terminal_source_layout_versions(_bounded_signature_label_v16_policy().split(":", 1)[1]),
+            "source_closing_group_version":"bounded_terminal_signature_context_v5"}
+    if policy_fingerprint == _bounded_signature_label_v16_policy().split(":", 1)[1]:
+        return {**_terminal_source_layout_versions(_terminal_punctuation_folio_v15_policy().split(":", 1)[1]),
+            "source_closing_group_version":"bounded_terminal_signature_context_v4"}
+    if policy_fingerprint == _terminal_punctuation_folio_v15_policy().split(":", 1)[1]:
+        from .ordinary_labeled_folio_direction_v2 import KEY, VERSION
+        return {**_terminal_source_layout_versions(_labeled_folio_direction_v14_policy().split(":", 1)[1]), KEY: VERSION}
+    if policy_fingerprint == _labeled_folio_direction_v14_policy().split(":", 1)[1]:
+        from .ordinary_labeled_folio_direction import KEY, VERSION
+        return {**_terminal_source_layout_versions(_in_flow_folio_bridges_v13_policy().split(":", 1)[1]), KEY: VERSION}
+    if policy_fingerprint == _in_flow_folio_bridges_v13_policy().split(":", 1)[1]:
+        from .ordinary_in_flow_folio_bridges import KEY, VERSION
+        return {**_terminal_source_layout_versions(_per_page_reproposal_v12_policy().split(":", 1)[1]), KEY: VERSION}
+    if policy_fingerprint in {p.split(":",1)[1] for p in (_in_body_terminal_closing_v8_policy(), _adjacent_lrm_emphasis_v9_policy(), _protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy())}:
+        return {"source_footer_placement_version":"terminal_body_flow_v1",
+                "source_spacing_version":"baseline_metadata_heading_spacing_v1",
+                "source_closing_group_version":"bounded_terminal_signature_context_v3"}
+    if policy_fingerprint == _terminal_footer_membership_v7_policy().split(":",1)[1]:
+        return {"source_footer_placement_version":"terminal_body_flow_v1",
+                "source_spacing_version":"baseline_metadata_heading_spacing_v1",
+                "source_closing_group_version":"bounded_terminal_signature_context_v2"}
+    if policy_fingerprint in {p.split(":",1)[1] for p in (_terminal_closing_group_policy(),_plain_list_columns_v6_policy())}:
         return {"source_footer_placement_version":"terminal_body_flow_v1",
                 "source_spacing_version":"baseline_metadata_heading_spacing_v1",
                 "source_closing_group_version":"bounded_terminal_signature_context_v1"}
@@ -152,7 +437,9 @@ def _terminal_source_layout_versions(policy_fingerprint):
 
 
 def _emphasis_normalization_version(policy_fingerprint):
-    if policy_fingerprint in {p.split(":",1)[1] for p in (_complete_lrm_emphasis_policy(),_terminal_source_layout_policy(),_terminal_closing_group_policy())}:
+    if policy_fingerprint in {p.split(":",1)[1] for p in (_adjacent_lrm_emphasis_v9_policy(), _protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy())}:
+        return "ordinary_optional_emphasis_normalization_v3"
+    if policy_fingerprint in {p.split(":",1)[1] for p in (_complete_lrm_emphasis_policy(),_terminal_source_layout_policy(),_terminal_closing_group_policy(),_plain_list_columns_v6_policy(),_terminal_footer_membership_v7_policy(),_in_body_terminal_closing_v8_policy())}:
         return "ordinary_optional_emphasis_normalization_v2"
     if policy_fingerprint in ({p.split(":",1)[1] for p in _metadata_normalization_policies()}
             | {_optional_hint_policy("ordinary_optional_layout_hint_normalization_v2",emphasis_normalization=True).split(":",1)[1]}):
@@ -162,7 +449,7 @@ def _emphasis_normalization_version(policy_fingerprint):
 
 def _verify_emphasis_version(record, version):
     key = "emphasis_normalization_version"
-    expected = version == "ordinary_optional_emphasis_normalization_v2"
+    expected = version in {"ordinary_optional_emphasis_normalization_v2", "ordinary_optional_emphasis_normalization_v3"}
     if (key in record) != expected or (expected and record[key] != version):
         fail("source_evidence_response_changed",409)
 
@@ -170,7 +457,7 @@ def _verify_emphasis_version(record, version):
 def _clock_direction_version(policy_fingerprint):
     """Only the exact old clock and fresh heading policies authorize clocks."""
     return "clock_h_colon_ltr_v1" if policy_fingerprint in {
-        p.split(":", 1)[1] for p in (_clock_direction_policy(), _heading_columns_v4_policy(), _reference_footer_v5_policy(), _inline_folio_direction_policy(), _complete_lrm_emphasis_policy(), _terminal_source_layout_policy(),_terminal_closing_group_policy())} else None
+        p.split(":", 1)[1] for p in (_clock_direction_policy(), _heading_columns_v4_policy(), _reference_footer_v5_policy(), _inline_folio_direction_policy(), _complete_lrm_emphasis_policy(), _terminal_source_layout_policy(),_terminal_closing_group_policy(),_plain_list_columns_v6_policy(),_terminal_footer_membership_v7_policy(),_in_body_terminal_closing_v8_policy(),_adjacent_lrm_emphasis_v9_policy(),_protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy())} else None
 
 
 def _source_bound_v4_policy() -> str:
@@ -192,7 +479,7 @@ def _source_bound_v3_policy() -> str:
 
 def _metadata_normalization_policies() -> set[str]:
     """Exact old/new primary recipes share the same saved layout semantics."""
-    return {frozen_automatic_layout_policy(), _terminal_source_layout_policy(), _complete_lrm_emphasis_policy(), _inline_folio_direction_policy(), _reference_footer_v5_policy(), _heading_columns_v4_policy(), _clock_direction_policy(), _body_columns_v3_policy(), _source_bound_v4_policy(), _source_bound_v3_policy(), _optional_hint_policy(
+    return {frozen_automatic_layout_policy(), _contact_folio_v18_policy(), _local_footer_closing_v17_policy(), _bounded_signature_label_v16_policy(), _terminal_punctuation_folio_v15_policy(), _labeled_folio_direction_v14_policy(), _in_flow_folio_bridges_v13_policy(), _per_page_reproposal_v12_policy(), _bounded_page_reproposal_v11_policy(), _protected_folio_bridges_v10_policy(), _adjacent_lrm_emphasis_v9_policy(), _in_body_terminal_closing_v8_policy(), _terminal_footer_membership_v7_policy(), _plain_list_columns_v6_policy(), _terminal_closing_group_policy(), _terminal_source_layout_policy(), _complete_lrm_emphasis_policy(), _inline_folio_direction_policy(), _reference_footer_v5_policy(), _heading_columns_v4_policy(), _clock_direction_policy(), _body_columns_v3_policy(), _source_bound_v4_policy(), _source_bound_v3_policy(), _optional_hint_policy(
         "ordinary_optional_layout_hint_normalization_v3", emphasis_normalization=True,
         metadata_normalization=True, primary_folio_version="terminal_labeled_folio_v2", source_folio_proof=True), _optional_hint_policy(
         "ordinary_optional_layout_hint_normalization_v3", emphasis_normalization=True,
@@ -218,13 +505,19 @@ def _source_normalization_version(policy_fingerprint):
 
 
 def _source_folio_policies():
-    return {frozen_automatic_layout_policy(), _terminal_source_layout_policy(), _complete_lrm_emphasis_policy(), _inline_folio_direction_policy(), _reference_footer_v5_policy(), _heading_columns_v4_policy(), _clock_direction_policy(), _body_columns_v3_policy(), _source_bound_v4_policy(), _source_bound_v3_policy(), _optional_hint_policy(
+    return {frozen_automatic_layout_policy(), _contact_folio_v18_policy(), _local_footer_closing_v17_policy(), _bounded_signature_label_v16_policy(), _terminal_punctuation_folio_v15_policy(), _labeled_folio_direction_v14_policy(), _in_flow_folio_bridges_v13_policy(), _per_page_reproposal_v12_policy(), _bounded_page_reproposal_v11_policy(), _protected_folio_bridges_v10_policy(), _adjacent_lrm_emphasis_v9_policy(), _in_body_terminal_closing_v8_policy(), _terminal_footer_membership_v7_policy(), _plain_list_columns_v6_policy(), _terminal_closing_group_policy(), _terminal_source_layout_policy(), _complete_lrm_emphasis_policy(), _inline_folio_direction_policy(), _reference_footer_v5_policy(), _heading_columns_v4_policy(), _clock_direction_policy(), _body_columns_v3_policy(), _source_bound_v4_policy(), _source_bound_v3_policy(), _optional_hint_policy(
         "ordinary_optional_layout_hint_normalization_v3", emphasis_normalization=True,
         metadata_normalization=True, primary_folio_version="terminal_labeled_folio_v2", source_folio_proof=True)}
 
 
 def _band_normalization_version(policy_fingerprint):
     """Fresh flow repair is never silently applied to an older paid operation."""
+    if policy_fingerprint in {p.split(":",1)[1] for p in (_in_body_terminal_closing_v8_policy(), _adjacent_lrm_emphasis_v9_policy(), _protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy())}:
+        return "ordinary_metadata_band_normalization_v8"
+    if policy_fingerprint == _terminal_footer_membership_v7_policy().split(":", 1)[1]:
+        return "ordinary_metadata_band_normalization_v7"
+    if policy_fingerprint == _plain_list_columns_v6_policy().split(":", 1)[1]:
+        return "ordinary_metadata_band_normalization_v6"
     if policy_fingerprint in {p.split(":", 1)[1] for p in (_reference_footer_v5_policy(), _inline_folio_direction_policy(), _complete_lrm_emphasis_policy(), _terminal_source_layout_policy(),_terminal_closing_group_policy())}:
         return "ordinary_metadata_band_normalization_v5"
     if policy_fingerprint == _heading_columns_v4_policy().split(":", 1)[1]:
@@ -399,6 +692,8 @@ def _retained_continuation(manager, root: Path, identity: dict, predecessor: dic
     operation = manager.service.root / prior["origin_job_id"] / "baselines" / prior["baseline_id"] / "suggestions" / prior["operation_nonce"]
     result = verified_record(operation / "result.json")
     policy = verified_record(operation / "intent.json")["request"]["policy"]
+    if "proposal_repair_policy" in policy:
+        fail("automatic_recovery_unsupported_policy", 409)
     allowed_errors = {"ordinary_layout_proposal_coverage", "ordinary_layout_invalid_proposal_decisions"} if parent_direct else {"ordinary_layout_page_break_requires_flow"}
     if direct:
         allowed_errors.add("ordinary_layout_proposal_coverage")
@@ -445,7 +740,7 @@ def _retained_continuation(manager, root: Path, identity: dict, predecessor: dic
         normalize_proposals(snapshot, view, [proposal],
                             band_normalization_version=_band_normalization_version(identity["policy_fingerprint"]),
                             **({"emphasis_normalization_version":_emphasis_normalization_version(identity["policy_fingerprint"])}
-                                if _emphasis_normalization_version(identity["policy_fingerprint"]) == "ordinary_optional_emphasis_normalization_v2" else {}))
+                                if _emphasis_normalization_version(identity["policy_fingerprint"]) in {"ordinary_optional_emphasis_normalization_v2", "ordinary_optional_emphasis_normalization_v3"} else {}))
         retained[page] = {"raw": raw, "origin": {"version": "ordinary_retained_proposal_v1",
             "source_page_number": page, "response_sha256": hashlib.sha256(raw).hexdigest(),
             "predecessor": prior, "original_policy_fingerprint": prior_identity["policy_fingerprint"],
@@ -543,20 +838,66 @@ def _reused_candidate(manager, folder: Path, identity: dict, record: dict, job) 
 
 
 def _verified_retained_pages(operation: Path, expected: dict) -> None:
+    from .ordinary_layout_service import _read
+    policy = _read(operation / "intent.json").get("request", {}).get("policy", {})
+    if "proposal_repair_policy" in policy:
+        if expected:
+            fail("automatic_recovery_unsupported_policy", 409)
+        manifest = decode(storage._read(operation / "attempts/manifest.json", 8 * 1024 * 1024))
+        _verified_reproposal_operation(operation, manifest.get("identity", {}).get("policy_fingerprint"))
     """Copied responses remain bound to their immutable prior operation."""
     from .ordinary_layout_service import _read as verified_record
     names = {f"page-{int(p):04d}.retained.json" for p in expected}
     if {p.name for p in operation.glob("*.retained.json")} != names:
         fail("automatic_retained_response_changed", 409)
     for page, origin in expected.items():
+        if _proposal_repair_version(origin.get("original_policy_fingerprint")) is not None:
+            fail("automatic_recovery_unsupported_policy", 409)
         if (verified_record(operation / f"page-{int(page):04d}.retained.json") != origin
                 or hashlib.sha256(storage._read(operation / f"page-{int(page):04d}.response.json", 2 * 1024 * 1024)).hexdigest() != origin["response_sha256"]):
             fail("automatic_retained_response_changed", 409)
 
 
+def _verified_reproposal_operation(operation, policy_fingerprint, *, restore=False):
+    """Shared acceptance seam for new native attempts; historical bytes stay exact."""
+    from .ordinary_layout_service import _read
+    from .ordinary_layout_reproposal import KEY, operation_witness
+    intent = _read(operation / "intent.json")
+    policy = intent.get("request", {}).get("policy", {})
+    required = _proposal_repair_version(policy_fingerprint)
+    if required is None:
+        if KEY in policy:
+            fail("proposal_repair_policy_changed", 409)
+        return None
+    if policy.get(KEY) != required:
+        fail("proposal_repair_ledger_missing", 409)
+    initial = _read(operation / "proposal_initial_view.json")
+    manifest = decode(storage._read(operation / "attempts/manifest.json", 8 * 1024 * 1024))
+    if manifest.get("policy") != policy or manifest.get("initial_view") != initial.get("view"):
+        fail("proposal_repair_context_changed", 409)
+    identity = {**intent["identity"], "operation_nonce": intent["operation_nonce"],
+        "baseline_id": intent["baseline_id"], "initial_generation": intent["request"]["expected_generation"],
+        "policy_fingerprint": policy_fingerprint, "page_groups": manifest.get("identity", {}).get("page_groups")}
+    from .saved_docx_layout import inspect_docx
+    raw = storage._read(operation.parent.parent / "reviewed.docx", storage.DOCX_MAX_BYTES)
+    source = storage._read(operation.parent.parent / "source.pdf", storage.PDF_MAX_BYTES)
+    if (hashlib.sha256(raw).hexdigest() != identity.get("reviewed_sha256")
+            or hashlib.sha256(source).hexdigest() != identity.get("source_sha256")):
+        fail("proposal_repair_context_changed", 409)
+    witness, proposals, summary = operation_witness(operation, snapshot=inspect_docx(raw, identity["target_lang"]),
+        frames=initial["view"]["pages"], source_pdf=source, page_groups=dict(identity["page_groups"]),
+        selected_pages=intent["request"]["page_numbers"], expected_identity=identity,
+        restore_aliases=restore, seal=restore)
+    if _read(operation / "accounting_summary.json") != summary:
+        fail("proposal_repair_accounting_changed", 409)
+    if (operation / "result.json").exists() and _read(operation / "result.json").get("proposal_repair_ledger_sha256") != hashlib.sha256(encode(witness)).hexdigest():
+        fail("proposal_repair_ledger_changed", 409)
+    return witness, proposals, summary
+
+
 def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, operation_nonce: str,
                        selected_pages: tuple[int, ...], policy: str, *, retained_pages=None) -> dict:
-    """Record hashes and settled usage, never private source/target text."""
+    """Bind private selected proofs; V11 includes bounded untrusted attempt data."""
     from .saved_docx_layout_service import _read as bounded_read
     from .ordinary_layout_contracts import decode
     image_hashes = {page: hashlib.sha256(manager.service.saved.image(review_id, page)).hexdigest()
@@ -570,16 +911,17 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
         from .ordinary_layout_service import _read as verified_record
         request_intent = verified_record(operation / "intent.json")
         request_policy = request_intent["request"]["policy"]
+        repair_proof = _verified_reproposal_operation(operation, policy.split(":", 1)[1])
         emphasis_version = _emphasis_normalization_version(policy.split(":",1)[1])
         _verify_emphasis_version(request_policy,emphasis_version)
         band_version = _band_normalization_version(policy.split(":", 1)[1])
-        if (band_version in {"ordinary_metadata_band_normalization_v2", "ordinary_metadata_band_normalization_v3", "ordinary_metadata_band_normalization_v4", "ordinary_metadata_band_normalization_v5"}
+        if (band_version in {"ordinary_metadata_band_normalization_v2", "ordinary_metadata_band_normalization_v3", "ordinary_metadata_band_normalization_v4", "ordinary_metadata_band_normalization_v5", "ordinary_metadata_band_normalization_v6", "ordinary_metadata_band_normalization_v7", "ordinary_metadata_band_normalization_v8"}
                 and request_policy.get("band_normalization_version") != band_version):
             fail("source_evidence_response_changed", 409)
-        if (band_version in {"ordinary_metadata_band_normalization_v3", "ordinary_metadata_band_normalization_v4", "ordinary_metadata_band_normalization_v5"}
+        if (band_version in {"ordinary_metadata_band_normalization_v3", "ordinary_metadata_band_normalization_v4", "ordinary_metadata_band_normalization_v5", "ordinary_metadata_band_normalization_v6", "ordinary_metadata_band_normalization_v7", "ordinary_metadata_band_normalization_v8"}
                 and not (operation / "proposal_initial_view.json").exists()):
             fail("source_evidence_initial_view_missing", 409)
-        if band_version in {"ordinary_metadata_band_normalization_v3", "ordinary_metadata_band_normalization_v4", "ordinary_metadata_band_normalization_v5"}:
+        if band_version in {"ordinary_metadata_band_normalization_v3", "ordinary_metadata_band_normalization_v4", "ordinary_metadata_band_normalization_v5", "ordinary_metadata_band_normalization_v6", "ordinary_metadata_band_normalization_v7", "ordinary_metadata_band_normalization_v8"}:
             initial_record = verified_record(operation / "proposal_initial_view.json")
             _verify_emphasis_version(initial_record,emphasis_version)
             if (initial_record.get("band_normalization_version") != band_version
@@ -611,7 +953,7 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
                     from .saved_docx_layout import inspect_docx
                     initial_view = verified_record(operation / "proposal_initial_view.json")["view"]
                     _verify_emphasis_version(verified_record(operation / "proposal_initial_view.json"),emphasis_version)
-                    if (band_version in {"ordinary_metadata_band_normalization_v2", "ordinary_metadata_band_normalization_v3", "ordinary_metadata_band_normalization_v4", "ordinary_metadata_band_normalization_v5"}
+                    if (band_version in {"ordinary_metadata_band_normalization_v2", "ordinary_metadata_band_normalization_v3", "ordinary_metadata_band_normalization_v4", "ordinary_metadata_band_normalization_v5", "ordinary_metadata_band_normalization_v6", "ordinary_metadata_band_normalization_v7", "ordinary_metadata_band_normalization_v8"}
                             and verified_record(operation / "proposal_initial_view.json").get("band_normalization_version") != band_version):
                         fail("source_evidence_response_changed", 409)
                     baseline_bytes = bounded_read(operation.parent.parent / "reviewed.docx", storage.DOCX_MAX_BYTES)
@@ -638,14 +980,15 @@ def _proposal_evidence(manager, job_id: str, baseline_id: str, review_id: str, o
         "accounting_summary_sha256": hashlib.sha256(summary).hexdigest(),
         "requested_model": request_policy["model"], "effort": request_policy["effort"],
         "proposal_schema_version": schema_version, "pages": pages,
+        **({"proposal_repair_evidence": repair_proof[0]} if repair_proof is not None else {}),
         **({"local_source_folio_proof_version": "ordinary_source_folio_span_proof_v1"}
             if policy in _source_folio_policies() else {}),
-        **({"source_folio_direction_version": "numeric_run_ltr_v3"}
-            if source_evidence and policy in {frozen_automatic_layout_policy(), _terminal_source_layout_policy(), _complete_lrm_emphasis_policy(), _inline_folio_direction_policy(), _reference_footer_v5_policy(), _heading_columns_v4_policy(), _clock_direction_policy(), _body_columns_v3_policy(), _source_bound_v4_policy()} else {}),
+        **({"source_folio_direction_version": _source_folio_direction_version(policy.split(":",1)[1])}
+            if source_evidence and _source_folio_direction_version(policy.split(":",1)[1]) is not None else {}),
         **({"clock_direction_version": "clock_h_colon_ltr_v1"}
             if source_evidence and _clock_direction_version(policy.split(":", 1)[1]) is not None else {}),
-        **({"source_folio_inline_direction_version": "source_bound_folio_separator_ltr_v1"}
-            if source_evidence and _source_folio_inline_direction_version(policy.split(":", 1)[1]) is not None else {}),
+        **({"source_folio_inline_direction_version": inline_mode}
+            if source_evidence and (inline_mode := _source_folio_inline_direction_version(policy.split(":", 1)[1])) is not None else {}),
         **(_terminal_source_layout_versions(policy.split(":",1)[1]) if source_evidence else {}),
         **({"source_evidence": {"version": "ordinary_source_evidence_v1", "pages": source_evidence}} if source_evidence else {})}
 
@@ -667,10 +1010,10 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int], *
         emphasis_version = _emphasis_normalization_version(policy_fingerprint)
         _verify_emphasis_version(intent.get("request",{}).get("policy",{}),emphasis_version)
         band_version = _band_normalization_version(policy_fingerprint)
-        if (band_version in {"ordinary_metadata_band_normalization_v2", "ordinary_metadata_band_normalization_v3", "ordinary_metadata_band_normalization_v4", "ordinary_metadata_band_normalization_v5"}
+        if (band_version in {"ordinary_metadata_band_normalization_v2", "ordinary_metadata_band_normalization_v3", "ordinary_metadata_band_normalization_v4", "ordinary_metadata_band_normalization_v5", "ordinary_metadata_band_normalization_v6", "ordinary_metadata_band_normalization_v7", "ordinary_metadata_band_normalization_v8"}
                 and intent.get("request", {}).get("policy", {}).get("band_normalization_version") != band_version):
             fail("source_evidence_response_changed", 409)
-        if band_version in {"ordinary_metadata_band_normalization_v3", "ordinary_metadata_band_normalization_v4", "ordinary_metadata_band_normalization_v5"}:
+        if band_version in {"ordinary_metadata_band_normalization_v3", "ordinary_metadata_band_normalization_v4", "ordinary_metadata_band_normalization_v5", "ordinary_metadata_band_normalization_v6", "ordinary_metadata_band_normalization_v7", "ordinary_metadata_band_normalization_v8"}:
             initial_path = operation / "proposal_initial_view.json"
             if not initial_path.exists():
                 fail("source_evidence_initial_view_missing", 409)
@@ -681,6 +1024,7 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int], *
                     or initial_record.get("generation") != initial):
                 fail("source_evidence_initial_view_changed", 409)
         summary = verified_record(operation / "accounting_summary.json")
+        repair_proof = _verified_reproposal_operation(operation, policy_fingerprint, restore=True)
         _verified_retained_pages(operation, pointer.get("retained_pages", {}))
         if (intent.get("baseline_id") != baseline_id or intent.get("review_id") != pointer["review_id"]
                 or intent.get("operation_nonce") != operation_nonce
@@ -690,7 +1034,8 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int], *
                 or summary.get("cost_usd") is None
                 or summary.get("unknown_cost_count") != 0
                 or summary.get("in_flight_count") != 0
-                or summary.get("provider_dispatch_count") != len(selected_pages) - len(pointer.get("retained_pages", {}))
+                or summary.get("provider_dispatch_count") != (len(repair_proof[0]["journal"]["events"]) // 2
+                    if repair_proof is not None else len(selected_pages) - len(pointer.get("retained_pages", {})))
                 or summary.get("attempt_count") != summary.get("provider_dispatch_count")):
             return
         proposals = []
@@ -732,7 +1077,7 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int], *
             _verify_emphasis_version(initial_record,emphasis_version)
             if initial_record.get("review_id") != pointer["review_id"] or initial_record.get("generation") != initial:
                 fail("source_evidence_initial_view_changed", 409)
-            if (band_version in {"ordinary_metadata_band_normalization_v2", "ordinary_metadata_band_normalization_v3", "ordinary_metadata_band_normalization_v4", "ordinary_metadata_band_normalization_v5"}
+            if (band_version in {"ordinary_metadata_band_normalization_v2", "ordinary_metadata_band_normalization_v3", "ordinary_metadata_band_normalization_v4", "ordinary_metadata_band_normalization_v5", "ordinary_metadata_band_normalization_v6", "ordinary_metadata_band_normalization_v7", "ordinary_metadata_band_normalization_v8"}
                     and initial_record.get("band_normalization_version") != band_version):
                 fail("source_evidence_initial_view_changed", 409)
             evidence_view = initial_record["view"]
@@ -782,6 +1127,8 @@ def _recover_settled_result(manager, pointer: dict, selected_pages: list[int], *
             "known_cost_usd": summary.get("known_cost_usd"),
             "unknown_cost_count": summary.get("unknown_cost_count"), "complete": True}}
     result.update(source_result_fields)
+    if repair_proof is not None:
+        result["proposal_repair_ledger_sha256"] = hashlib.sha256(encode(repair_proof[0])).hexdigest()
     if source_result_fields:
         from .ordinary_layout_contracts import source_evidence_review_fields
         result.update(source_evidence_review_fields(source_records if any(p.get("version") == "ordinary_layout_proposal_v3" for p in proposals) else records))
@@ -899,7 +1246,9 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
     retained = {}
     direct = False
     if recovery_old_policy is not None:
-        if frozen_policy != frozen_automatic_layout_policy():
+        if not supports_manual_layout_recovery(recovery_old_policy):
+            fail("automatic_recovery_unsupported_policy", 409)
+        if frozen_policy != manual_automatic_layout_policy():
             fail("automatic_policy_changed", 409)
         predecessor = _failed_predecessor(manager, root, identity, recovery_old_policy)
         from .ordinary_layout_service import _read as verified_record
@@ -971,10 +1320,22 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
             cancel_requested, begin_publication)
     if cancel_requested(job_id):
         fail("automatic_layout_cancelled", 409)
-    if frozen_policy != frozen_automatic_layout_policy():
+    expected_dispatch_policy = manual_automatic_layout_policy() if recovery_old_policy is not None else frozen_automatic_layout_policy()
+    if (recovery_old_policy is None and frozen_policy in {_local_footer_closing_v17_policy(), _contact_folio_v18_policy()}
+            and expected_dispatch_policy == _contact_folio_overlap_v19_policy()):
+        # An unfinished saved V17/V18 Start still owns its original automatic stage.
+        # Its selected source and checkpoint must authorize this exact policy.
+        from .checkpoint import load_run_state
+        state = load_run_state(Path(baseline["run_dir"]) / "run_state.json")
+        if (state is not None and state.settings.get("ordinary_auto_layout_policy") == frozen_policy
+                and state.pdf_fingerprint == identity["source_pdf_sha256"]
+                and sorted(map(int, state.pages)) == list(job.selected_pages)):
+            expected_dispatch_policy = frozen_policy
+    if frozen_policy != expected_dispatch_policy:
         fail("automatic_policy_changed", 409)
     if recovery_old_policy is None:
-        accounting.authorize_automatic(job, policy_hash)
+        accounting.authorize_automatic(job, policy_hash,
+            **({"proposal_repair_policy": _proposal_repair_version(policy_hash)} if _proposal_repair_version(policy_hash) is not None else {}))
     else:
         prior_cost = Decimal(identity["recovery_predecessor"]["known_cost_usd"])
         if "revalidation_predecessor" in identity:
@@ -1022,7 +1383,11 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
         expected_baseline_id=baseline_id, external_cancel_requested=cancel_requested,
         retained_proposals=retained, band_normalization_version=_band_normalization_version(policy_hash),
         **({"emphasis_normalization_version":_emphasis_normalization_version(policy_hash)}
-            if _emphasis_normalization_version(policy_hash) == "ordinary_optional_emphasis_normalization_v2" else {}))
+            if _emphasis_normalization_version(policy_hash) in {"ordinary_optional_emphasis_normalization_v2", "ordinary_optional_emphasis_normalization_v3"} else {}),
+        **({"proposal_repair_policy": _proposal_repair_version(policy_hash)}
+            if recovery_old_policy is None and _proposal_repair_version(policy_hash) is not None else {}),
+        **({"proposal_render_policy_fingerprint": _proposal_render_profile(policy_hash)}
+            if recovery_old_policy is None and _proposal_render_profile(policy_hash) is not None else {}))
     if (outcome.get("status") != "applied_unreviewed"
             or outcome.get("completed_pages") != list(job.selected_pages)
             or not outcome.get("accounting", {}).get("complete")):
@@ -1099,10 +1464,16 @@ def _settled_rebuild_operation(manager, root, base, pointer, *, expected=None, c
         fail("automatic_rebuild_accounting_unsettled", 409)
     begins = [e for e in journal["events"] if e.get("event") == "begin"]
     finishes = [e for e in journal["events"] if e.get("event") == "finish"]
+    repair_proof = None
+    if "proposal_repair_policy" in request.get("policy", {}):
+        if cost_only:
+            fail("automatic_recovery_unsupported_policy", 409)
+        manifest = decode(storage._read(operation / "attempts/manifest.json", 8 * 1024 * 1024))
+        repair_proof = _verified_reproposal_operation(operation, manifest.get("identity", {}).get("policy_fingerprint"))
     if (len(journal["events"]) != len(begins) + len(finishes) or len(begins) != len(finishes)
             or len(begins) != summary.get("provider_dispatch_count")
             or summary.get("attempt_count") != len(begins)
-            or len({e.get("page_number") for e in begins}) != len(begins)):
+            or repair_proof is None and len({e.get("page_number") for e in begins}) != len(begins)):
         fail("automatic_rebuild_accounting_unsettled", 409)
     for begin in begins:
         finish = [e for e in finishes if e.get("call_id") == begin.get("call_id")]
@@ -1157,7 +1528,9 @@ def _completed_rebuild_proof(manager, accounting, job_id, *, check_invoking_stat
             marker = _read_record(folder / "candidate.json")
             if marker.get("identity") != _read_record(folder / "intent.json"):
                 fail("automatic_rebuild_parent_changed", 409)
-            if marker.get("identity", {}).get("policy_fingerprint") == _reference_footer_v5_policy().split(":", 1)[1]:
+            if marker.get("identity", {}).get("policy_fingerprint") in {
+                    _reference_footer_v5_policy().split(":", 1)[1], _bounded_page_reproposal_v11_policy().split(":", 1)[1],
+                    _per_page_reproposal_v12_policy().split(":", 1)[1], _in_flow_folio_bridges_v13_policy().split(":", 1)[1], _labeled_folio_direction_v14_policy().split(":", 1)[1], _terminal_punctuation_folio_v15_policy().split(":", 1)[1], _bounded_signature_label_v16_policy().split(":", 1)[1], _local_footer_closing_v17_policy().split(":", 1)[1], _contact_folio_v18_policy().split(":", 1)[1], _contact_folio_overlap_v19_policy().split(":", 1)[1]}:
                 choices.append((folder, marker))
     if not choices:
         return None
@@ -1165,6 +1538,12 @@ def _completed_rebuild_proof(manager, accounting, job_id, *, check_invoking_stat
         fail("automatic_rebuild_parent_ambiguous", 409)
     folder, marker = choices[0]
     identity = _read_record(folder / "intent.json")
+    repair_version = _proposal_repair_version(identity.get("policy_fingerprint"))
+    if repair_version is not None:
+        from .ordinary_layout_reproposal import automatic_policy
+        render_policy = automatic_policy(repair_version, _proposal_render_profile(identity.get("policy_fingerprint")))
+    else:
+        render_policy = _reference_footer_v5_policy()
     if marker.get("identity") != identity or any(identity.get(k) != v for k, v in base.items()):
         fail("automatic_rebuild_parent_changed", 409)
     pointer = _read_record(folder / "operation.json")
@@ -1223,6 +1602,10 @@ def _completed_rebuild_proof(manager, accounting, job_id, *, check_invoking_stat
                 fail("automatic_rebuild_origin_changed", 409)
         else:
             calls = [b for b in begins if b.get("page_number") == page]
+            if _proposal_repair_version(identity.get("policy_fingerprint")):
+                witness, _, _ = _verified_reproposal_operation(operation, identity["policy_fingerprint"])
+                selection = decode(witness["records"][f"page-{page:04d}/selection.json"])
+                calls = [b for b in calls if b.get("call_id") == selection["call_id"]]
             if len(calls) != 1:
                 fail("automatic_rebuild_origin_changed", 409)
             desc = native
@@ -1241,7 +1624,7 @@ def _completed_rebuild_proof(manager, accounting, job_id, *, check_invoking_stat
     if (Decimal(costs["known_cost_usd"]) != known or costs != marker.get("layout_costs")):
         fail("automatic_rebuild_accounting_unsettled", 409)
     evidence = _proposal_evidence(manager, native["origin_job_id"], native["baseline_id"], marker["review_id"],
-        native["operation_nonce"], job.selected_pages, _reference_footer_v5_policy(), retained_pages=expected_retained)
+        native["operation_nonce"], job.selected_pages, render_policy, retained_pages=expected_retained)
     from .ordinary_source_folio_proof import KEY
     saved_folder = manager.service.saved._folder(marker["review_id"])
     saved_evidence = _read_record(saved_folder / "ordinary_proposals" / f"{candidate.generation:06d}.json")["proposal_evidence"]
@@ -1286,7 +1669,7 @@ def _completed_rebuild_proof(manager, accounting, job_id, *, check_invoking_stat
         "receipt_sha256": marker["receipt_sha256"], "candidate_marker_sha256": hashlib.sha256(encode(marker)).hexdigest(),
         "operation": native, "evidence_sha256": hashlib.sha256(encode(evidence)).hexdigest(),
         "selected_text_sha256": selected_hashes, "original_policy": original_policy,
-        "render_policy": _reference_footer_v5_policy(), "layout_costs": costs,
+        "render_policy": render_policy, "layout_costs": costs,
         "source_cost_usd": str(source_cost), "source_accounting_identity": source_accountant.run_identity,
         "source_budget_context": source_accountant.budget_identity,
         "source_accounting_sha256": hashlib.sha256(storage._read(source_accountant.journal_path, 8 * 1024 * 1024)).hexdigest()}
@@ -1307,6 +1690,14 @@ def run_completed_unreviewed_rebuild(manager, accounting, job_id, *, cancel_requ
     predecessor, retained, job, raw_map, baseline, base = proof
     cancel_requested = cancel_requested or (lambda _: False)
     begin_publication = begin_publication or (lambda _: True)
+    if predecessor["render_policy"] in {_bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy()}:
+        parent = Path(predecessor["parent_folder"])
+        # Same-policy rebuild reuses the fully reverified selected artifact.
+        # No retained successor, new application attempt or allowance is created.
+        if cancel_requested(job_id) or not begin_publication(job_id):
+            fail("automatic_layout_cancelled", 409)
+        return _reused_candidate(manager, parent, _read_record(parent / "intent.json"),
+            _read_record(parent / "candidate.json"), job)
     policy = _inline_folio_direction_policy()
     identity = dict(base, policy_fingerprint=policy.split(":", 1)[1],
         rebuild_predecessor=predecessor, retained_pages={str(p): r["origin"] for p, r in retained.items()},
@@ -1384,6 +1775,8 @@ def run_completed_unreviewed_rebuild(manager, accounting, job_id, *, cancel_requ
 
 
 def _verify_rebuild_zero(manager, pointer, identity):
+    if identity.get("rebuild_predecessor", {}).get("render_policy") in {_bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy()}:
+        fail("automatic_rebuild_unsupported_lineage", 409)
     from .ordinary_layout_service import _read
     from .usage_accounting import _state_fingerprint, _summarize
     operation = manager.service.root / pointer["origin_job_id"] / "baselines" / pointer["baseline_id"] / "suggestions" / pointer["operation_nonce"]

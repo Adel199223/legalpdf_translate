@@ -61,7 +61,25 @@ def _fail(code):
     review._fail("repair_" + code)
 
 
-def descriptor(policy=POLICY):
+def descriptor(policy=POLICY, *, source_enclosure_identity_policy=None, semantic_target_ambiguity_policy=None,
+               primary_literal_markup_policy=None, semantic_enclosure_sequence_repair_policy=None):
+    from . import ordinary_semantic_enclosure_identity as identity
+    from . import ordinary_semantic_target_ambiguity as ambiguity
+    from . import ordinary_semantic_enclosure_sequence_repair as sequence_repair
+    sequence_repair.check_policy(semantic_enclosure_sequence_repair_policy)
+    identity.check_policy(source_enclosure_identity_policy)
+    ambiguity.check_policy(semantic_target_ambiguity_policy)
+    from . import primary_literal_markup as markup
+    markup.check_policy(primary_literal_markup_policy)
+    if primary_literal_markup_policy is not None and policy != POLICY_V4:
+        _fail("policy_or_accounting")
+    if semantic_target_ambiguity_policy is not None and policy != POLICY_V4:
+        _fail("policy_or_accounting")
+    if source_enclosure_identity_policy is not None and policy != POLICY_V4:
+        _fail("policy_or_accounting")
+    if semantic_enclosure_sequence_repair_policy is not None and (policy != POLICY_V4
+            or source_enclosure_identity_policy != identity.POLICY):
+        _fail("policy_or_accounting")
     result = {"policy": POLICY, "max_cycles": 1,
         "inventory_instruction_sha256": review.audit._sha(_INVENTORY_REPAIR),
         "candidate_instruction_sha256": review.audit._sha(_CANDIDATE_REPAIR),
@@ -79,6 +97,16 @@ def descriptor(policy=POLICY):
                 result["source_enclosure_authority"] = enclosure.descriptor()
     elif policy != POLICY:
         _fail("policy_or_accounting")
+    if source_enclosure_identity_policy is not None:
+        result["source_enclosure_identity"] = identity.descriptor()
+        result["source_enclosure_replacement_instructions_sha256"] = review.audit._sha(
+            enclosure.replacement_instructions(source_enclosure_identity_policy))
+    if semantic_target_ambiguity_policy is not None:
+        result[ambiguity.KEY] = ambiguity.descriptor()
+    if primary_literal_markup_policy is not None:
+        result[markup.KEY] = markup.descriptor()
+    if semantic_enclosure_sequence_repair_policy is not None:
+        result[sequence_repair.KEY] = sequence_repair.descriptor()
     return result
 
 
@@ -93,7 +121,8 @@ def _persist(path, value, *, required=False):
         review.audit._write_new(path, raw)
 
 
-def diagnose(raw, request, pages, units, inventory, candidate):
+def diagnose(raw, request, pages, units, inventory, candidate, *, semantic_target_ambiguity_policy=None,
+             semantic_source_review_policy="source_commitment_visual_v7"):
     """Validate the ENTIRE compact diagnostic before considering eligibility.
 
     Only missing may lack target evidence. This fresh classifier never feeds an
@@ -104,6 +133,13 @@ def diagnose(raw, request, pages, units, inventory, candidate):
     if data["version"] != refs.VERSIONS[2]:
         _fail("diagnostic_version")
     payload = review._parse(request["prompt_text"])
+    from . import ordinary_semantic_target_ambiguity as ambiguity
+    ambiguity.check_policy(semantic_target_ambiguity_policy)
+    if semantic_target_ambiguity_policy is not None:
+        ambiguity.check_request(request, pages, units, inventory, candidate,
+            semantic_source_review_policy=semantic_source_review_policy)
+    elif ambiguity.KEY in payload:
+        _fail("target_ambiguity_profile")
     source = refs.unit_map(units, "S")
     targets = review.source_units(pages, candidate=candidate)
     target = refs.unit_map(targets, "T")
@@ -122,7 +158,8 @@ def diagnose(raw, request, pages, units, inventory, candidate):
         identifier, status = row["claim_id"], row["status"]
         if type(identifier) is not str or identifier not in claims or identifier in seen:
             _fail("diagnostic_claims")
-        if type(status) is not str or status not in {"equivalent", "missing", "contradiction", "unresolved"}:
+        if (type(status) is not str or status not in ({"equivalent", "missing", "contradiction", "unresolved"}
+                | ({ambiguity.STATUS} if semantic_target_ambiguity_policy is not None else set()))):
             _fail("diagnostic_status")
         selected = review._ids(row["target_unit_ids"], target, empty=status == "missing")
         if selected and {target[key]["page"] for key in selected} != review._claim_owner_pages(claims[identifier], original_units):
@@ -159,6 +196,8 @@ def diagnose(raw, request, pages, units, inventory, candidate):
                 or type(row["status"]) is not str or row["status"] not in {"equivalent", "contradiction", "unresolved"}):
             _fail("diagnostic_boundaries")
         hard_stop |= row["status"] != "equivalent"
+    if any(row["status"] == ambiguity.STATUS for row in data["claim_results"]):
+        hard_stop |= not ambiguity.eligible(data, pages, units, inventory, candidate)
     failed = bool(hard_stop or findings or data["inventory_errors"] or data["unsupported_additions"])
     return {"eligible": failed and not hard_stop, "hard_stop": hard_stop, "failed": failed,
         "inventory_repair": bool(data["inventory_errors"]), "source_focus": sorted(focus),
@@ -220,7 +259,7 @@ def correction_validation_diagnostic(raw, pages, inventory, recipe):
     else:
         return None
     canonical = review._parse(raw)
-    options = {"source_field_policy": recipe.source_field_policy} if recipe.source_field_policy else {}
+    options = review.audit._validation_options(recipe)
     diagnostics, proposed, regressed = [], [], False
     count_fields = ("numeric_mismatches_count", "citation_actionable_missing_count",
         "bidi_actionable_count", "visible_replacement_char_count")
@@ -309,29 +348,57 @@ def _request(stage, pages, recipe, pdf_sha256, units, options, *, inventory=None
 def run_semantic_repair(*, pages, recipe, pdf_sha256, evidence_dir, client=None,
                         cancel_check=None, stage_dispatch_proof=None, stage_guard=None,
                         semantic_repair_policy=POLICY, semantic_literal_authority_policy=None,
-                        source_origins=None, semantic_enclosure_authority_policy=None, **options):
+                        source_origins=None, semantic_enclosure_authority_policy=None, source_enclosure_identity_policy=None,
+                        semantic_target_ambiguity_policy=None, semantic_enclosure_sequence_repair_policy=None,
+                        primary_literal_markup_policy=None, primary_markup_context=None, **options):
     """At most one conditional inventory/candidate/verification repair chain."""
     from . import ordinary_semantic_literal_authority as authority
+    from . import ordinary_semantic_enclosure_identity as identity
+    from . import ordinary_semantic_target_ambiguity as ambiguity
+    from . import ordinary_semantic_enclosure_sequence_repair as sequence_repair
+    sequence_repair.check_policy(semantic_enclosure_sequence_repair_policy)
+    identity.check_policy(source_enclosure_identity_policy)
+    ambiguity.check_policy(semantic_target_ambiguity_policy)
     is_v4 = semantic_repair_policy == POLICY_V4
     is_v3 = semantic_repair_policy in {POLICY_V3, POLICY_V4}
-    if ((is_v3 and semantic_literal_authority_policy != authority.POLICY)
+    if ((semantic_enclosure_sequence_repair_policy is not None
+                and (not is_v4 or source_enclosure_identity_policy != identity.POLICY
+                    or semantic_enclosure_authority_policy != "source_enclosure_authority_v1"))
+            or (source_enclosure_identity_policy is not None and not is_v4)
+            or (semantic_target_ambiguity_policy is not None
+                and (not is_v4 or options.get("semantic_source_review_policy") not in (source_policy.POLICY_V7, source_policy.POLICY_V8, source_policy.POLICY_V9)))
+            or (is_v3 and semantic_literal_authority_policy != authority.POLICY)
             or (not is_v3 and (semantic_literal_authority_policy is not None or source_origins is not None))
             or (is_v4 != (semantic_enclosure_authority_policy == "source_enclosure_authority_v1"))
             or (semantic_enclosure_authority_policy is not None and not is_v4)
             or semantic_repair_policy not in {POLICY, POLICY_V2, POLICY_V3, POLICY_V4} or recipe.model != "gpt-6-astra"
+            or options.get("semantic_source_review_policy") not in (source_policy.POLICY_V5, source_policy.POLICY_V6, source_policy.POLICY_V7, source_policy.POLICY_V8, source_policy.POLICY_V9)
+            or (options.get("semantic_source_review_policy") in {source_policy.POLICY_V6, source_policy.POLICY_V7, source_policy.POLICY_V8, source_policy.POLICY_V9} and not is_v4)
             or options != {"semantic_unit_reference_policy": refs.POLICY,
                 "source_inventory_max_output_tokens": 64000,
-                "semantic_source_review_policy": source_policy.POLICY_V5,
+                "semantic_source_review_policy": options.get("semantic_source_review_policy"),
                 "semantic_page_coverage_policy": page_policy.POLICY}
             or stage_dispatch_proof is not None or not callable(stage_guard)):
         _fail("policy_or_accounting")
     if is_v4:
         from . import ordinary_semantic_enclosure_authority as authority
+    identity_options = ({"identity_policy":source_enclosure_identity_policy}
+        if source_enclosure_identity_policy is not None else {})
     pages, units, binding = review._prepare(pages, recipe, pdf_sha256, **options)
+    from . import primary_literal_markup as markup
+    primary_markup_context = markup.validate_context(primary_literal_markup_policy, primary_markup_context,
+        pages, recipe, pdf_sha256, repair_policy=semantic_repair_policy,
+        identity_policy=source_enclosure_identity_policy, source_policy=options.get("semantic_source_review_policy"),
+        literal_policy=semantic_literal_authority_policy, enclosure_policy=semantic_enclosure_authority_policy)
     if client is not None and getattr(client, "model", None) != recipe.model:
         _fail("client_model_mismatch")
-    policy_descriptor = descriptor(semantic_repair_policy)
+    policy_descriptor = descriptor(semantic_repair_policy, source_enclosure_identity_policy=source_enclosure_identity_policy,
+        semantic_target_ambiguity_policy=semantic_target_ambiguity_policy,
+        semantic_enclosure_sequence_repair_policy=semantic_enclosure_sequence_repair_policy,
+        **({markup.KEY: primary_literal_markup_policy} if primary_literal_markup_policy is not None else {}))
     binding["semantic_repair_policy"] = policy_descriptor
+    if primary_markup_context is not None:
+        binding["primary_markup_evidence_sha256"] = primary_markup_context.evidence_sha256
     registry = authority.freeze(pages, pdf_sha256, source_origins) if is_v3 else None
     if is_v3:
         binding["source_literal_registry_sha256"] = review.audit._sha(review.audit._json(registry))
@@ -375,21 +442,25 @@ def run_semantic_repair(*, pages, recipe, pdf_sha256, evidence_dir, client=None,
             _fail("evidence_corrupt")
         stage_dir.parent.mkdir(exist_ok=True)
         stage_dir.mkdir(exist_ok=True)
+        if name == "verification" and primary_markup_context is not None:
+            markup.guard_candidates(primary_markup_context, candidate,
+                effective_pages=authority_context.projected_pages if authority_context else None)
         if name == "source_literal_authority":
             request = authority.request(pages, recipe, registry, authority_eligibility)
         else:
             request = _request(name, working_pages, recipe, pdf_sha256, units, options,
                 inventory=inventory, candidate=candidate, previous_inventory=previous_inventory,
                 diagnostic=diagnostic, validation_failure=validation_failure)
+            if index == 0 and name == "verification" and semantic_target_ambiguity_policy is not None:
+                request = ambiguity.adapt_request(request,
+                    semantic_source_review_policy=options["semantic_source_review_policy"])
             if authority_context is not None:
                 payload = review._parse(request["prompt_text"])
                 payload["source_literal_assertions"] = list(authority_context.source_facts)
                 if is_v4:
                     payload["source_enclosure_observations"] = list(authority_context.enclosure_facts)
                 payload["literal_protocol_origin"] = authority.CONTEXT
-                payload["literal_protocol"] = [{"page": p.page_number, "source_text": p.source_text,
-                    "source_text_kind": p.source_text_kind, "expected_ar_tokens": list(p.expected_ar_tokens)}
-                    for p in authority_context.projected_pages]
+                payload["literal_protocol"] = review.literal_protocol(authority_context.projected_pages)
                 if name == "correction":
                     payload["source_literal_certificate"] = authority_certificate
                     payload["rejected_proposal"] = authority_eligibility["rejected_proposal"]
@@ -397,7 +468,8 @@ def run_semantic_repair(*, pages, recipe, pdf_sha256, evidence_dir, client=None,
                 request["prompt_text"] = review._prompt_json(payload)
                 request["instructions"] += authority.FACT_INSTRUCTIONS
                 if name == "correction":
-                    request["instructions"] += authority.REPLACEMENT_INSTRUCTIONS
+                    request["instructions"] += (authority.replacement_instructions(source_enclosure_identity_policy)
+                        if source_enclosure_identity_policy is not None else authority.REPLACEMENT_INSTRUCTIONS)
         stage_id = f"attempt_{index:02d}/{name}"
         baseline = None
         if index == 1 and name == "correction":
@@ -454,7 +526,10 @@ def run_semantic_repair(*, pages, recipe, pdf_sha256, evidence_dir, client=None,
                 "native_settlement_sha256": record["native_settlement_sha256"]}
             record["certificate_sha256"] = review.audit._sha(review.audit._json(result))
         elif name == "verification":
-            parsed = diagnose(envelope["raw_output"], request, pages, units, inventory, candidate)
+            parsed = diagnose(envelope["raw_output"], request, pages, units, inventory, candidate,
+                **({ambiguity.KEY: semantic_target_ambiguity_policy,
+                    "semantic_source_review_policy": options["semantic_source_review_policy"]}
+                   if index == 0 and semantic_target_ambiguity_policy is not None else {}))
             _persist(stage_dir / "diagnostic.json", parsed, required=complete)
             record["diagnostic_sha256"] = review.audit._sha(review.audit._json(parsed))
             canonical = None
@@ -475,6 +550,10 @@ def run_semantic_repair(*, pages, recipe, pdf_sha256, evidence_dir, client=None,
             else:
                 literal_failure = (authority.classify(review.audit._json(canonical), pages, inventory, recipe, registry)
                     if is_v3 and index == 0 else None)
+                markup_work = markup.Work() if primary_markup_context is not None else None
+                if literal_failure is None:
+                    markup.guard_correction(primary_markup_context, canonical, working_pages,
+                        effective_pages=authority_context.projected_pages if authority_context else None, work=markup_work)
                 rejected = (correction_validation_diagnostic(review.audit._json(canonical), pages, inventory, recipe)
                     if semantic_repair_policy in {POLICY_V2, POLICY_V3, POLICY_V4} and index == 0 and literal_failure is None else None)
                 if literal_failure is not None:
@@ -491,15 +570,17 @@ def run_semantic_repair(*, pages, recipe, pdf_sha256, evidence_dir, client=None,
                     result = rejected
                 else:
                     validator = authority.validate if is_v3 else review.validate_source_correction
-                    extra = {"context": authority_context} if is_v3 else {}
+                    extra = {"context": authority_context, **identity_options} if is_v3 else {}
                     selected, decisions, _ = validator(review.audit._json(canonical), working_pages, inventory, recipe, **extra)
+                    markup.guard_candidates(primary_markup_context, selected,
+                        effective_pages=authority_context.projected_pages if authority_context else None, work=markup_work)
                 # Validate the selected full candidate against original anchors
                 # too, without interpreting false predecessor prose as an anchor.
                     original_rows = [{"page_number": page.page_number, "status": "corrected",
                         "corrected_text": selected[page.page_number], "reason_codes": ["material_meaning"]} for page in pages]
                     review.audit.validate_semantic_audit_response(review.audit._json({"version": review.audit.AUDIT_VERSION,
                         "pages": original_rows}), authority_context.projected_pages if authority_context else pages,
-                        **({"source_field_policy": recipe.source_field_policy} if recipe.source_field_policy else {}))
+                        **review.audit._validation_options(recipe))
                     result = (selected, decisions)
         record["predecessor_stage_record_sha256"] = review.audit._sha(review.audit._json(records[-1])) if records else None
         _persist(stage_dir / "stage_record.json", record, required=complete)
@@ -522,17 +603,25 @@ def run_semantic_repair(*, pages, recipe, pdf_sha256, evidence_dir, client=None,
             "predecessor_receipt_sha256": predecessor}, required=complete)
         authority_certificate = stage(1, "source_literal_authority", pages)
         _persist(directory / "source_literal_certificate.json", authority_certificate, required=complete)
-        authority_context = authority.project(pages, registry, authority_certificate)
+        authority_context = authority.project(pages, registry, authority_certificate, **identity_options)
         _persist(directory / "source_literal_validation_context.json", authority_context.evidence, required=complete)
+        markup.guard_correction(primary_markup_context, authority_eligibility["canonical"], pages,
+            effective_pages=authority_context.projected_pages)
         try:
             candidate, decisions, _ = authority.validate(review.audit._json(authority_eligibility["canonical"]),
-                pages, inventory, recipe, authority_context)
+                pages, inventory, recipe, authority_context, **identity_options)
             origin = "initial_correction_revalidated"
         except review.SemanticAuditError as exc:
             if is_v4 and exc.code == "enclosure_authority_final_sequence_mismatch":
-                authority.check_initial_sequence_replacement_eligibility(
-                    review.audit._json(authority_eligibility["canonical"]),pages,inventory,registry,
-                    authority_certificate,authority_context)
+                if (semantic_enclosure_sequence_repair_policy is not None
+                        and authority_certificate["literal_certificate"] is None):
+                    sequence_repair.check_eligibility(
+                        review.audit._json(authority_eligibility["canonical"]), pages, inventory, recipe, registry,
+                        authority_certificate, authority_context, **identity_options)
+                else:
+                    authority.check_initial_sequence_replacement_eligibility(
+                        review.audit._json(authority_eligibility["canonical"]),pages,inventory,registry,
+                        authority_certificate,authority_context, **identity_options)
             elif exc.code not in {"new_actionable_quality_failure","correction_literal_or_language_failure",
                     "literal_authority_final_occurrence_mismatch", "enclosure_authority_final_enclosure_mismatch"}:
                 raise
@@ -547,6 +636,7 @@ def run_semantic_repair(*, pages, recipe, pdf_sha256, evidence_dir, client=None,
                     "candidate_sha256":review.audit._sha(review.audit._json(candidate))})
                 _fail("no_op")
             origin = "single_full_replacement"
+        markup.guard_candidates(primary_markup_context, candidate, effective_pages=authority_context.projected_pages)
         _persist(directory / "candidate_origin.json", {"version": "source_literal_candidate_origin_v1",
             "origin": origin, "candidate_sha256": review.audit._sha(review.audit._json(candidate)),
             "certificate_sha256": review.audit._sha(review.audit._json(authority_certificate)),
@@ -618,6 +708,8 @@ def run_semantic_repair(*, pages, recipe, pdf_sha256, evidence_dir, client=None,
             if final["failed"]:
                 _fail("exhausted")
             selected_attempt = 1
+    markup.guard_candidates(primary_markup_context, candidate,
+        effective_pages=authority_context.projected_pages if authority_context else None)
     review._cancel(cancel_check)
     stage_guard(action="final", stage_id=None, request=None, directory=directory, envelope=None, records=records)
     usage = {"stages": {row["stage_id"]: row["usage"] for row in records}}

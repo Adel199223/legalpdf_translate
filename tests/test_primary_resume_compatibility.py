@@ -84,6 +84,9 @@ def test_other_changes_cannot_use_compatibility_bridge(tmp_path,change):
 
 
 def test_fresh_manager_normal_resume_keeps_old_raw_and_cost_once(tmp_path,monkeypatch):
+    from legalpdf_translate import ordinary_auto_layout as automatic
+    # Historical V10 remains eligible for manual Recover after a new manager resumes it.
+    monkeypatch.setattr(automatic, 'frozen_automatic_layout_policy', automatic._protected_folio_bridges_v10_policy)
     monkeypatch.delenv('LEGALPDF_TRANSLATION_PROTOCOL',raising=False)
     monkeypatch.setattr(workflow,'load_environment',lambda:None)
     monkeypatch.setattr(workflow,'run_translation_auth_test',lambda *a,**k:pytest.fail('unexpected auth'))

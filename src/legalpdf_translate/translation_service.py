@@ -1355,6 +1355,7 @@ class TranslationJobManager:
             return True
 
     def _job_actions(self, job: _ManagedTranslationJob) -> dict[str, bool]:
+        from .ordinary_auto_layout import supports_manual_layout_recovery
         status = job.status
         return {
             "cancel": (job.job_kind == "translate" and status in {"queued", "running", "cancel_requested"}
@@ -1363,6 +1364,7 @@ class TranslationJobManager:
             "resume": job.job_kind == "translate" and status in {"failed", "cancelled"},
             "recover_layout": (job.job_kind == "translate" and status == "completed"
                 and bool(job._config and job._ordinary_auto_layout_policy and job._ordinary_baseline)
+                and supports_manual_layout_recovery(job._ordinary_auto_layout_policy)
                 and isinstance(job.result_payload.get("automatic_layout"), dict)
                 and job.result_payload["automatic_layout"].get("status") == "raw_fallback"
                 and self._automatic_layout_recovery_runner is not None),
@@ -1691,6 +1693,9 @@ class TranslationJobManager:
         from .saved_docx_layout_service import _read as bounded_read
         if job._ordinary_baseline or job._config is None:
             return
+        from .primary_literal_markup import expected_admission
+        markup_expected = expected_admission(state=getattr(job._workflow, "_last_state", None),
+            run_dir=Path(job.result_payload["run_dir"]), config=job._config)
         # Formatting is a post-translation state: the public completed-job
         # accessor deliberately rejects it, while the raw seed is already
         # durable and must be captured before automatic layout can replace it.
@@ -1702,6 +1707,8 @@ class TranslationJobManager:
         if not is_pdf_source(source):
             return
         if job._ordinary_auto_layout_policy and self._reuse_proven_ordinary_baseline(job, output, source):
+            if markup_expected is not None:
+                job._ordinary_baseline["primary_markup_admission"] = markup_expected
             return
         raw = bounded_read(output, 32 * 1024 * 1024)
         source_raw = bounded_read(source, 64 * 1024 * 1024)
@@ -1739,6 +1746,8 @@ class TranslationJobManager:
             "output_path": str(output), "selected_pages": pages, "mapping": mapping,
             "mapping_sha256": hashlib.sha256(mapping_raw).hexdigest() if mapping_raw else "",
             "mapping_path": str(map_copy)}
+        if markup_expected is not None:
+            job._ordinary_baseline["primary_markup_admission"] = markup_expected
 
     def trusted_ordinary_layout_job(self, job_id: str, *, runtime_mode: str, workspace_id: str):
         """Resolve bytes and source associations exclusively from the owned completed job."""
@@ -1755,6 +1764,26 @@ class TranslationJobManager:
             seed = deepcopy(job.result_payload.get("save_seed", {}))
             run_id = str(seed.get("run_id") or Path(job.result_payload["run_dir"]).name)
             language = str(seed.get("target_lang") or job.config_payload["target_lang"])
+            owned_run_dir = str(job.result_payload["run_dir"])
+            owned_config = deepcopy(job.config_payload)
+            owned_execution_config = deepcopy(job._config)
+        from .primary_literal_markup import admit_owned_job
+        markup_admitted = admit_owned_job(run_dir=Path(owned_run_dir), source_pdf=Path(baseline["source_path"]),
+            selected_pages=tuple(baseline["selected_pages"]), target_lang=language,
+            writer_map=baseline["mapping"], expected=baseline.get("primary_markup_admission"),
+            config=owned_execution_config)
+        if markup_admitted:
+            # Admission validates a snapshot outside the lock. It cannot authorize a
+            # different job/baseline that replaced that snapshot while it replayed.
+            with self._lock:
+                current_job = self._jobs.get(job_id)
+                if (current_job is not job or job.runtime_mode != runtime_mode or job.workspace_id != workspace_id
+                        or job.status not in {"completed", "formatting"}
+                        or job._ordinary_baseline != baseline or job.config_payload != owned_config
+                    or job._config != owned_execution_config
+                        or str(job.result_payload.get("run_dir")) != owned_run_dir
+                        or job.result_payload.get("save_seed", {}) != seed):
+                    fail("job_unavailable", 409)
         source = bounded_read(Path(baseline["source_path"]), 64 * 1024 * 1024)
         original = bounded_read(Path(baseline["original_path"]), 32 * 1024 * 1024)
         reviewed = bounded_read(Path(baseline["output_path"]), 32 * 1024 * 1024)

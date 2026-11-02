@@ -245,8 +245,18 @@ def validate_source_correction(raw, pages, inventory, recipe):
     # Reuse the unchanged historical correction, literal and quality guards.
     selected, records = audit.validate_semantic_audit_response(
         audit._json({"version": audit.AUDIT_VERSION, "pages": data["pages"]}), pages,
-        **({"source_field_policy": recipe.source_field_policy} if recipe.source_field_policy is not None else {}))
+        **audit._validation_options(recipe))
     return selected, records, data
+
+
+def literal_protocol(pages):
+    result = [{"page": p.page_number, "source_text": p.source_text, "source_text_kind": p.source_text_kind,
+               "expected_ar_tokens": list(p.expected_ar_tokens)} for p in pages]
+    for p, entry in zip(pages, result):
+        if p.source_acronyms:
+            from .ordinary_source_acronyms import guidance
+            entry["source_acronyms"] = guidance(p.source_acronyms).strip()
+    return result
 
 
 def validate_candidate_verification(raw, pages, inventory, candidate, units):
@@ -296,6 +306,11 @@ def validate_candidate_verification(raw, pages, inventory, candidate, units):
         seen_units.add(key)
     if seen_units != set(unit_map):
         _fail("review_coverage")
+    from .ordinary_source_acronyms import verified_owners
+    for page in pages:
+        if page.source_acronyms and not verified_owners(page, candidate[page.page_number], original_units.values(),
+                inventory, units, inverse):
+            _fail("review_acronym_source_owner")
     boundaries = inventory["boundaries"]
     _list(data["boundary_results"], audit.MAX_PAGES - 1)
     if len(data["boundary_results"]) != len(boundaries):
@@ -437,8 +452,7 @@ def _request(stage, pages, recipe, pdf_sha256, units, *, inventory=None, candida
         "source_units": units}
     if stage != STAGES[0]:
         payload["source_inventory"] = inventory
-        payload["literal_protocol"] = [{"page": p.page_number, "source_text": p.source_text,
-            "source_text_kind": p.source_text_kind, "expected_ar_tokens": list(p.expected_ar_tokens)} for p in pages]
+        payload["literal_protocol"] = literal_protocol(pages)
         if stage == STAGES[1]:
             payload["context_text"] = recipe.context_text
             payload["primary_pages"] = [{"page": p.page_number, "text": p.primary_text} for p in pages]

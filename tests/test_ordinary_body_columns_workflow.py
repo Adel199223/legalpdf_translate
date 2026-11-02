@@ -74,8 +74,8 @@ def test_fresh_automatic_body_fallback_downloads_exact_content_with_honest_warni
         assert page['metadata_band_normalization']['rejected_bands'][0]['reason']=='generated_plain_columns_restored_to_text_order'
         op=operation(layout,pointer)
         assert _read(op/'result.json')['source_layout_review_required'] is True
-        assert _read(op/'intent.json')['request']['policy']['band_normalization_version']==c.BAND_NORMALIZATION_V5
-        assert _read(op/'proposal_initial_view.json')['band_normalization_version']==c.BAND_NORMALIZATION_V5
+        assert _read(op/'intent.json')['request']['policy']['band_normalization_version']==c.BAND_NORMALIZATION_V8
+        assert _read(op/'proposal_initial_view.json')['band_normalization_version']==c.BAND_NORMALIZATION_V8
         view=layout.service.state(job_id)['review']
         assert view['decisions']['review']['document_reviewed'] is False
         # A generated warning must not turn into operator review or permit a false reviewed receipt.
@@ -114,7 +114,13 @@ def test_direct_successor_reuses_two_settled_pages_only_sends_third_and_reuses_s
                 def historical_recipe(*args,**kwargs):
                     recipe=fresh(*args,**kwargs)
                     recipe['semantic_repair_policy']='source_grounded_repair_once_v3'
+                    recipe['semantic_source_review_policy']='source_commitment_visual_v5'
                     recipe.pop('semantic_enclosure_authority_policy',None)
+                    recipe.pop("source_enclosure_identity_policy", None)
+                    recipe.pop("semantic_target_ambiguity_policy", None)
+                    recipe.pop("semantic_enclosure_sequence_repair_policy", None)
+                    recipe.pop("primary_page_evidence_policy", None)
+                    recipe.pop("primary_literal_markup_policy", None)
                     return recipe
                 previous.setattr(semantic_glue,'fresh_recipe',historical_recipe)
             job_id=flow._start(client,source,output,'AR' if strict else 'EN',start=1,end=3,image_mode='off',page_breaks=True)
@@ -163,7 +169,7 @@ def test_direct_successor_reuses_two_settled_pages_only_sends_third_and_reuses_s
         assert protected(Path(initial['result']['run_dir'])/'semantic_audit')==semantic_before
 
 
-@pytest.mark.parametrize('policy_kind', ['former','fresh'])
+@pytest.mark.parametrize('policy_kind', ['former','saved_v7','saved_v8','saved_v9','saved_v10'])
 def test_old_and_fresh_numeric_run_evidence_stays_exact_and_replays_without_dispatch(tmp_path,monkeypatch,policy_kind):
     case=make_case(tmp_path,monkeypatch)
     original=manager_fixture.proposal
@@ -172,13 +178,17 @@ def test_old_and_fresh_numeric_run_evidence_stays_exact_and_replays_without_disp
         return value
     monkeypatch.setattr(manager_fixture,'proposal',proposal)
     paid=manager_fixture.enable_paid(case)
-    policy=auto._source_bound_v4_policy() if policy_kind=='former' else auto.frozen_automatic_layout_policy()
+    policy=(auto._source_bound_v4_policy() if policy_kind=='former' else
+        auto._terminal_footer_membership_v7_policy() if policy_kind=='saved_v7' else
+        auto._in_body_terminal_closing_v8_policy() if policy_kind=='saved_v8' else
+        auto._adjacent_lrm_emphasis_v9_policy() if policy_kind=='saved_v9' else auto._protected_folio_bridges_v10_policy())
+    expected_direction='numeric_run_ltr_v4' if policy==auto._protected_folio_bridges_v10_policy() else 'numeric_run_ltr_v3'
     operation_nonce=nonce()
     result=case.manager.suggest(case.job.job_id,case.view['generation'],operation_nonce,[1],expected_baseline_id=case.view['baseline_id'],band_normalization_version=auto._band_normalization_version(policy.split(':',1)[1]),emphasis_normalization_version=auto._emphasis_normalization_version(policy.split(':',1)[1]))
     assert result['status']=='applied_unreviewed'
     kwargs=(case.manager,case.job.job_id,case.view['baseline_id'],case.view['review']['review_id'],operation_nonce,(1,),policy)
     first=auto._proposal_evidence(*kwargs)
-    assert first['source_folio_direction_version']=='numeric_run_ltr_v3'
+    assert first['source_folio_direction_version']==expected_direction
     assert auto._proposal_evidence(*kwargs)==first and len(paid.calls)==1
 
 
@@ -214,9 +224,20 @@ def test_saved_v3_requires_its_exact_request_and_initial_view_version_before_any
     assert len(paid.calls)==1
 
 
-@pytest.mark.parametrize('policy_kind', ['former','fresh'])
+@pytest.mark.parametrize('policy_kind', ['former','saved_v7','saved_v8','saved_v9','saved_v10'])
 def test_actual_binding_preserves_old_and_new_numeric_run_identity_and_rejects_other_claims(tmp_path,monkeypatch,policy_kind):
     from legalpdf_translate.saved_docx_layout_service import SavedDocxLayoutServiceError
+    policy_factories={
+        'former':auto._source_bound_v4_policy,
+        'saved_v7':auto._terminal_footer_membership_v7_policy,
+        'saved_v8':auto._in_body_terminal_closing_v8_policy,
+        'saved_v9':auto._adjacent_lrm_emphasis_v9_policy,
+        'saved_v10':auto._protected_folio_bridges_v10_policy,
+        'fresh':auto.frozen_automatic_layout_policy,
+    }
+    if policy_kind not in policy_factories:
+        raise ValueError('unsupported binding policy kind')
+    policy=policy_factories[policy_kind]()
     original=flow._proposal
     def proposal(review,page,columns=0):
         value=original(review,page,columns)
@@ -225,15 +246,22 @@ def test_actual_binding_preserves_old_and_new_numeric_run_identity_and_rejects_o
     monkeypatch.setattr(flow,'_proposal',proposal)
     source,output=tmp_path/'source.pdf',tmp_path/'output';output.mkdir();flow._source(source,('digital',))
     app,jobs,sdk,requests=flow._app(tmp_path,monkeypatch,('Fictional body paragraph',),(1,))
-    policy=auto._source_bound_v4_policy() if policy_kind=='former' else auto.frozen_automatic_layout_policy()
+    expected_direction='numeric_run_ltr_v4' if policy==auto._protected_folio_bridges_v10_policy() else 'numeric_run_ltr_v3'
+    if policy_kind=='saved_v7':
+        assert policy==auto._terminal_footer_membership_v7_policy()
+    elif policy_kind=='saved_v8':
+        assert policy==auto._in_body_terminal_closing_v8_policy()
+    elif policy_kind=='saved_v9':
+        assert policy==auto._adjacent_lrm_emphasis_v9_policy()
     mapper=auto._band_normalization_version
     with TestClient(app) as client:
         with monkeypatch.context() as previous:
-            if policy_kind=='former':
+            if policy_kind!='fresh':
                 previous.setattr(auto,'frozen_automatic_layout_policy',lambda:policy)
+            if policy_kind=='former':
                 previous.setattr(auto,'_band_normalization_version',lambda fp:c.BAND_NORMALIZATION_V2 if fp==policy.split(':',1)[1] else mapper(fp))
             job_id=flow._start(client,source,output,'EN',start=1,end=1,image_mode='off')
-            job=flow._wait(jobs,job_id)
+            job=flow._wait(jobs,job_id,timeout_seconds=90)
         assert job['result']['automatic_layout']['status']=='automatic_unreviewed'
         run=Path(job['result']['run_dir']); root=run/'ordinary_auto_layout'
         pointer=json.loads((root/'operation.json').read_bytes())
@@ -245,14 +273,26 @@ def test_actual_binding_preserves_old_and_new_numeric_run_identity_and_rejects_o
             return layout.service.saved.attach_ordinary_binding(view['review_id'],raw_map,(1,),fp,value,expected_generation=view['generation'])
         # This call runs with today's fresh helper even for the retained former policy.
         before=protected(operation(layout,pointer))
+        assert evidence["source_folio_direction_version"]==expected_direction
         attach(policy.split(':',1)[1],evidence)
         missing={k:v for k,v in evidence.items() if k!='source_folio_direction_version'}
         no_source={k:v for k,v in evidence.items() if k!='source_evidence'}
         for fp,value in [(policy.split(':',1)[1],missing),
             (policy.split(':',1)[1],{**evidence,'source_folio_direction_version':'numeric_run_ltr_v2'}),
             (policy.split(':',1)[1],no_source),
-            (auto._source_bound_v3_policy().split(':',1)[1],evidence),('f'*64,evidence)]:
+            (policy.split(':',1)[1],{**evidence,'source_folio_direction_version':'numeric_run_ltr_v3' if expected_direction=='numeric_run_ltr_v4' else 'numeric_run_ltr_v4'})]:
             with pytest.raises(SavedDocxLayoutServiceError,match='ordinary_source_folio_direction_changed'):
                 attach(fp,value)
+        for fp in [auto._source_bound_v3_policy().split(':',1)[1],'f'*64]:
+            with pytest.raises(SavedDocxLayoutServiceError,match='ordinary_layout_proposal_repair_policy_changed$'):
+                attach(fp,evidence)
         assert protected(operation(layout,pointer))==before
         assert len(sdk.requests)==len(requests)==1
+
+
+def test_actual_binding_fixture_rejects_unknown_policy_kind_before_setup(tmp_path,monkeypatch):
+    before=set(tmp_path.iterdir())
+    monkeypatch.setattr(flow,'_app',lambda *a,**k:pytest.fail('Unknown policy constructed an app'))
+    with pytest.raises(ValueError,match='^unsupported binding policy kind$'):
+        test_actual_binding_preserves_old_and_new_numeric_run_identity_and_rejects_other_claims(tmp_path,monkeypatch,'unknown')
+    assert set(tmp_path.iterdir())==before

@@ -72,6 +72,7 @@ def test_settled_invalid_hint_recovers_without_dispatch_and_reuses_warning(tmp_p
     from legalpdf_translate.ordinary_layout_contracts import PROPOSAL_VERSION_V3, fail
     # These deliberate old-policy reconstruction checks need genuine V1 intent.
     monkeypatch.setattr(automatic, 'frozen_automatic_layout_policy', automatic._inline_folio_direction_policy)
+    monkeypatch.setattr(automatic, 'manual_automatic_layout_policy', automatic._inline_folio_direction_policy)
     original = flow._proposal
     def proposal(view, page, columns=0):
         p = original(view, page, columns)
@@ -198,6 +199,9 @@ def test_fresh_v2_optional_hint_recovery_binds_saved_capability_without_dispatch
     from tests import test_ordinary_auto_layout_workflow as flow
     from legalpdf_translate import ordinary_layout_manager as module, ordinary_auto_layout as automatic
     from legalpdf_translate.ordinary_layout_contracts import PROPOSAL_VERSION_V3, EMPHASIS_NORMALIZATION_V2, fail
+    # Preserve the concrete V8 initial and recovery recipe asserted below.
+    monkeypatch.setattr(automatic, 'frozen_automatic_layout_policy', automatic._in_body_terminal_closing_v8_policy)
+    monkeypatch.setattr(automatic, 'manual_automatic_layout_policy', automatic._in_body_terminal_closing_v8_policy)
     from legalpdf_translate.ordinary_layout_service import _read
     original = flow._proposal
     def proposal(view, page, columns=0):
@@ -218,7 +222,7 @@ def test_fresh_v2_optional_hint_recovery_binds_saved_capability_without_dispatch
     app, jobs, sdk, requests = flow._app(tmp_path, monkeypatch, ('____\nA fictional body paragraph.',), (1,))
     scope = '?mode=shadow&workspace=fictional'
     expected_policy = automatic.frozen_automatic_layout_policy()
-    assert expected_policy == automatic._terminal_closing_group_policy()
+    assert expected_policy == automatic._in_body_terminal_closing_v8_policy()
     assert expected_policy != automatic._complete_lrm_emphasis_policy()
     fingerprint = expected_policy.split(':', 1)[1]
     with TestClient(app) as client:

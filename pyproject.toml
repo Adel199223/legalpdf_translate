@@ -45,6 +45,7 @@ packages = [
 ]
 
 [tool.setuptools.package-data]
+"legalpdf_translate" = ["ordinary_windows_ocr_worker.ps1"]
 "legalpdf_translate.shadow_web" = ["templates/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]

@@ -108,11 +108,18 @@ class AcquisitionScope:
     run_dir: Path
     page: int
     pdf_sha256: str
+    visual_source_pdf: Path | None = None
+    visual_source_policy: str | None = None
 
 
 @contextmanager
-def scope(run_dir, page, pdf_sha256):
-    token = _SCOPE.set(AcquisitionScope(Path(run_dir), page, pdf_sha256))
+def scope(run_dir, page, pdf_sha256, *, visual_source_policy=None, pdf_path=None):
+    if visual_source_policy is not None or pdf_path is not None:
+        from .ordinary_ocr_visual_source import SUPPORTED_POLICIES
+        if visual_source_policy not in SUPPORTED_POLICIES or pdf_path is None:
+            _fail("source_binding")
+    token = _SCOPE.set(AcquisitionScope(Path(run_dir), page, pdf_sha256,
+                                        Path(pdf_path) if pdf_path is not None else None, visual_source_policy))
     try:
         yield
     finally:
@@ -286,7 +293,18 @@ def acquire(*, client, fallback_accountant, image_bytes, request):
     directory = _owned(context.run_dir, relative)
     directory.mkdir(parents=True, exist_ok=True)
     intent_path, answered_path = directory/"intent.json", directory/"answered.json"
-    if any(p.name not in {"intent.json", "answered.json"} for p in directory.iterdir()):
+    allowed = {"intent.json", "answered.json"}
+    witness_path = directory/"visual_source.json"
+    if context.visual_source_pdf is not None:
+        capture = _owned(context.run_dir, f"semantic_source/page_{context.page:04d}.json")
+        if capture.exists() and (not intent_path.is_file() or not answered_path.is_file()):
+            _fail("evidence_changed")
+        if witness_path.exists() or witness_path.is_symlink():
+            if (witness_path.is_symlink() or not witness_path.is_file() or not intent_path.is_file()
+                    or not answered_path.is_file()):
+                _fail("evidence_changed")
+            allowed.add("visual_source.json")
+    if any(p.name not in allowed for p in directory.iterdir()):
         _fail("evidence_changed")
     if intent_path.exists():
         if _read(intent_path) != identity:
@@ -311,8 +329,13 @@ def acquire(*, client, fallback_accountant, image_bytes, request):
             "intent_sha256": _sha(intent_path.read_bytes()), "native": proof, "response": retained})
     answer = _read(answered_path)
     text = _validate_answer(context.run_dir, intent_path, answered_path, identity, answer)
-    return text, {"version": "ocr_text_acquisition_ref_v1", "path": (answered_path.relative_to(context.run_dir)).as_posix(),
-        "sha256": _sha(answered_path.read_bytes()), "decoded_text_sha256": _sha(text)}
+    reference = {"version": "ocr_text_acquisition_ref_v1", "path": (answered_path.relative_to(context.run_dir)).as_posix(),
+                 "sha256": _sha(answered_path.read_bytes()), "decoded_text_sha256": _sha(text)}
+    if context.visual_source_pdf is not None:
+        from .ordinary_ocr_visual_source import validate_ocr_reentry
+        validate_ocr_reentry(context.visual_source_pdf, context.page, text, context.pdf_sha256,
+                             context.run_dir, reference, policy=context.visual_source_policy)
+    return text, reference
 
 
 def _validate_answer(run_dir, intent_path, answered_path, identity, answer):

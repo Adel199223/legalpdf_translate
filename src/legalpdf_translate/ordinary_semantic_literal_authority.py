@@ -278,7 +278,7 @@ def _wrapper_equivalent_candidate(text,page,recipe):
     from .output_normalize import regroup_source_bound_ar_numeric_tokens
     source = review.audit._source_for_validation(page,recipe.source_field_policy)
     prepared,tokens,_,error = canonicalize_source_address_literals(text,source,list(page.expected_ar_tokens),
-        **({"source_field_policy":recipe.source_field_policy} if recipe.source_field_policy else {}))
+        **review.audit._validation_options(recipe))
     view = _view(text)
     if error is None and _view(prepared) and view and _view(prepared)[0] == view[0]:
         text = prepared
@@ -308,7 +308,7 @@ def classify(raw, pages, inventory, recipe, registry):
             expected_ar_tokens=list(page.expected_ar_tokens),
             ar_source_text=review.audit._source_for_validation(page, recipe.source_field_policy),
             primary_normalized_text=page.primary_text,
-            **({"source_field_policy": recipe.source_field_policy} if recipe.source_field_policy else {}))
+            **review.audit._validation_options(recipe))
         if not strict.ok and (strict.ar_violation_kind not in {"expected_token_mismatch", "correction_literal_fidelity_loss"}
                 or (strict.ar_token_details or {}).get("source_address_violation")):
             _fail("ineligible_strict_failure")
@@ -554,7 +554,7 @@ def validate(raw, pages, inventory, recipe, context=None):
             "reason_codes": ["material_meaning"]})
     selected, _ = review.audit.validate_semantic_audit_response(review.audit._json({
         "version": review.audit.AUDIT_VERSION, "pages": rows}), effective,
-        **({"source_field_policy": recipe.source_field_policy} if recipe.source_field_policy else {}))
+        **review.audit._validation_options(recipe))
     if context:
         for page in context.evidence["pages"]:
             counts = Counter(m[1] for m in _TOKEN.finditer(selected[page["page"]]))
@@ -575,7 +575,7 @@ def check_replacement_eligibility(raw, pages, inventory, recipe, context):
             expected_ar_tokens=list(effective.expected_ar_tokens),
             ar_source_text=review.audit._source_for_validation(effective,recipe.source_field_policy),
             primary_normalized_text=effective.primary_text,
-            **({"source_field_policy":recipe.source_field_policy} if recipe.source_field_policy else {}))
+            **review.audit._validation_options(recipe))
         if not strict.ok and (strict.ar_violation_kind not in {"expected_token_mismatch","correction_literal_fidelity_loss"}
                 or (strict.ar_token_details or {}).get("source_address_violation")):
             _fail("replacement_ineligible")

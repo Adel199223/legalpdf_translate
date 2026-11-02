@@ -19,6 +19,10 @@ from tests.test_ordinary_auto_layout_workflow import _app, _source, _start, _wai
 
 @pytest.mark.parametrize('resume,cancel,select_raw,second,old_error', [(False,False,False,False,'page_break_requires_flow'),(True,False,False,False,'page_break_requires_flow'),(False,True,False,False,'page_break_requires_flow'),(True,False,True,False,'page_break_requires_flow'),(False,False,False,True,'page_break_requires_flow'),(True,False,False,True,'page_break_requires_flow'),pytest.param(False,False,False,False,'invalid_proposal_decisions',id='retained-invalid-decisions')])
 def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path, monkeypatch, resume, cancel,select_raw,second,old_error):
+    from legalpdf_translate import ordinary_auto_layout as automatic
+    # This branch exercises the saved pre-reproposal manual recovery contract.
+    monkeypatch.setattr(automatic, "frozen_automatic_layout_policy",
+        automatic._protected_folio_bridges_v10_policy)
     source,output=tmp_path/'source.pdf',tmp_path/'output'
     output.mkdir(); _source(source,('digital',)*7)
     pages=(3,4,5,6,7)
@@ -199,6 +203,9 @@ def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path
 def test_completed_historical_capacity_lineage_precedes_new_direct_eligibility(tmp_path,monkeypatch,original_tokens):
     from datetime import date
     from legalpdf_translate import ordinary_auto_layout as automatic
+    # Keep both 8k and 32k initial histories outside the newer repair lineage.
+    monkeypatch.setattr(automatic, "frozen_automatic_layout_policy",
+        automatic._protected_folio_bridges_v10_policy)
     from legalpdf_translate import ordinary_layout_accounting as accounting
     from legalpdf_translate.accounting_policy import OrdinaryAccountingPolicy
     from legalpdf_translate.ordinary_layout_contracts import LayoutSuggestionPolicy

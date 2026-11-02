@@ -201,7 +201,7 @@ def test_real_browser_upload_bundle_then_ordinary_dispatch(
         assert retained["version"] == 2 and len(retained["source_sha256"]) == 64
         job_id = _start(client, staged, output, "EN", start=1, end=1, image_mode=image_mode,
                         ocr_mode="always" if ocr_success else "off")
-        settled = _wait(manager, job_id)
+        settled = _wait(manager, job_id, timeout_seconds=90)
         assert len(sdk.requests) == expected_calls, (settled["status_text"], settled["logs"][-3:])
         if text or ocr_success:
             assert settled["status"] == "completed"

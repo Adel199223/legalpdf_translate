@@ -120,8 +120,14 @@ def test_v5_inherits_v4_heading_and_flow_decisions_without_new_hint(tmp_path):
     assert c.normalize_proposals(snapshot,view,[proposal],band_normalization_version=c.BAND_NORMALIZATION_V5)==c.normalize_proposals(snapshot,view,[proposal],band_normalization_version=c.BAND_NORMALIZATION_V4)
 
 
-@pytest.mark.parametrize('restart',[False,True],ids=['same_process','capsule_restart'])
-def test_normal_retained_recover_reuses_every_paid_response_and_preserves_old_evidence(tmp_path,monkeypatch,restart):
+@pytest.mark.parametrize('restart,target_version',[(False,7),(True,7),(False,8)],
+    ids=['same_process_saved_v7','capsule_restart_saved_v7','fresh_v8'])
+def test_normal_retained_recover_reuses_every_paid_response_and_preserves_old_evidence(tmp_path,monkeypatch,restart,target_version):
+    # Historical V7 retains its recipe; V8 exercises a separate fresh successor.
+    target_policy=(automatic._terminal_footer_membership_v7_policy if target_version==7
+        else automatic._in_body_terminal_closing_v8_policy)
+    monkeypatch.setattr(automatic,'frozen_automatic_layout_policy',target_policy)
+    monkeypatch.setattr(automatic,'manual_automatic_layout_policy',target_policy)
     source,output=tmp_path/'fictional.pdf',tmp_path/'outputs'
     output.mkdir()
     flow._source(source,('digital',)*3)
@@ -196,7 +202,13 @@ def test_normal_retained_recover_reuses_every_paid_response_and_preserves_old_ev
         assert Decimal(str(summary['cost_usd']))==0
         assert Decimal(result['layout_costs']['known_cost_usd'])==cost
         evidence=_read(current/'source_evidence.json')['pages'][-1]
-        assert evidence['normalization']['band_normalization_version']==c.BAND_NORMALIZATION_V5
+        assert evidence['normalization']['band_normalization_version']==(c.BAND_NORMALIZATION_V7 if target_version==7 else c.BAND_NORMALIZATION_V8)
+        # Saved V7 must retain numeric identity after the fresh default advances.
+        with monkeypatch.context() as fresh_default:
+            fresh_default.setattr(automatic,'frozen_automatic_layout_policy',automatic._in_body_terminal_closing_v8_policy)
+            saved=automatic._proposal_evidence(manager,job_id,pointer['baseline_id'],pointer['review_id'],
+                pointer['operation_nonce'],(1,2,3),target_policy(),retained_pages=pointer['retained_pages'])
+        assert saved['source_folio_direction_version']=='numeric_run_ltr_v3'
         assert evidence['layout']==[] and evidence['source_coverage_verified'] is False
         for page in (1,2,3):assert (current/f'page-{page:04d}.response.json').read_bytes()==before[operation/f'page-{page:04d}.response.json']
         downloaded=client.get(f'/api/translation/jobs/{job_id}/artifact/output_docx'+scope)

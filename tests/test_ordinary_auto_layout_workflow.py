@@ -239,8 +239,18 @@ def _app(tmp_path: Path, monkeypatch, outputs: tuple[str, ...], pages: tuple[int
             else:
                 layout = slot["app"].state.ordinary_layouts.manager_for_context(
                     slot["app"].state.shadow_context, job.mode, job.workspace_id)
-                content = json.dumps(_proposal(layout.service.state(job.job_id)["review"], page,
-                                               (columns_by_page or {}).get(page, 0)))
+                proposal = _proposal(layout.service.state(job.job_id)["review"], page,
+                                    (columns_by_page or {}).get(page, 0))
+                # New fresh requests require V3. Saved historical fixtures retain
+                # their exact former raw proposal representation.
+                from legalpdf_translate.ordinary_auto_layout import _proposal_repair_version
+                with manager._lock:
+                    saved_policy = manager._jobs[job.job_id]._ordinary_auto_layout_policy
+                if _proposal_repair_version((saved_policy or "").split(":")[-1]) is not None:
+                    proposal.update(version="ordinary_layout_proposal_v3",
+                        source_coverage_findings=[], source_layout_evidence=[])
+                    proposal.setdefault("paragraph_partitions", [])
+                content = json.dumps(proposal)
             response_status = "incomplete" if page == failed_page and failure == "incomplete" else "completed"
             return SimpleNamespace(id=f"fictional-layout-{page}", model=policy.model,
                 status=response_status, service_tier="default", output=[], output_text=content,
@@ -573,7 +583,7 @@ def test_rich_nonfirst_page_breaks_columns_exact_fragments_and_combined_save_cos
         assert download.status_code == 200 and download.content == candidate.docx_bytes
         assert sha256(download.content).hexdigest() == shown["delivery"]["sha256"]
         with ZipFile(BytesIO(raw.original_docx)) as original, ZipFile(BytesIO(download.content)) as rendered:
-            assert original.namelist() == rendered.namelist()
+            assert rendered.namelist() == sorted(original.namelist())
             assert all(original.read(name) == rendered.read(name)
                        for name in original.namelist() if name not in {"word/document.xml", "word/settings.xml"})
             original_settings = etree.fromstring(original.read("word/settings.xml"))

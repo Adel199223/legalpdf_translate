@@ -52,6 +52,7 @@ class SemanticAuditPage:
     source_text_kind: str = "raw"
     original_source_text: str | None = None
     visual_coverage: str = "source_image_available"
+    source_acronyms: tuple[dict, ...] = ()
 
     def __post_init__(self) -> None:
         # Frozen pages must not retain the caller's mutable token inventory.
@@ -71,6 +72,7 @@ class SemanticAuditRecipe:
     source_image_policy: str = "configured_image_mode_v1"
     configured_image_mode: str = "auto"
     source_field_policy: str | None = None
+    source_inline_address_join_policy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -95,6 +97,12 @@ def _fail(code: str) -> None:
     raise SemanticAuditError(code)
 
 
+def _validation_options(recipe: SemanticAuditRecipe) -> dict[str, str]:
+    """Saved local validation capabilities; never part of provider payloads."""
+    return {key: value for key in ("source_field_policy", "source_inline_address_join_policy")
+            if (value := getattr(recipe, key)) is not None}
+
+
 def _source_for_validation(page: SemanticAuditPage, source_field_policy: str | None = None) -> str:
     options = {"source_field_policy": source_field_policy} if source_field_policy is not None else {}
     return pretokenize_arabic_source(page.source_text, **options) if page.source_text_kind == "raw" else page.source_text
@@ -113,6 +121,7 @@ def _validate_inputs(pages: Sequence[SemanticAuditPage], recipe: SemanticAuditRe
             not isinstance(recipe.effort_policy, str) or not recipe.effort_policy or
             not isinstance(recipe.context_text, str) or type(recipe.max_output_tokens) is not int or
             (recipe.source_field_policy is not None and recipe.source_field_policy != "baseline_label_value_v1") or
+            recipe.source_inline_address_join_policy not in (None, "source_locative_house_join_v1", "source_locative_house_join_v2", "source_locative_house_join_v3") or
             recipe.source_image_policy != "configured_image_mode_v1" or
             not isinstance(recipe.configured_image_mode, str) or recipe.configured_image_mode not in {"off", "auto", "always"} or
             not 1 <= recipe.max_output_tokens <= 32_000 or
@@ -283,9 +292,11 @@ def _preserves_quality_anchor_identities(source: str, primary: str, corrected: s
 
 
 def validate_semantic_audit_response(raw_output: str, pages: Sequence[SemanticAuditPage], *,
-                                     source_field_policy: str | None = None) -> tuple[dict[int, str], list[dict[str, Any]]]:
+                                     source_field_policy: str | None = None,
+                                     source_inline_address_join_policy: str | None = None) -> tuple[dict[int, str], list[dict[str, Any]]]:
     """Validate coverage/shape first, then correction literals and new quality defects."""
-    if source_field_policy is not None and source_field_policy != "baseline_label_value_v1":
+    if (source_field_policy is not None and source_field_policy != "baseline_label_value_v1"
+            or source_inline_address_join_policy not in (None, "source_locative_house_join_v1", "source_locative_house_join_v2", "source_locative_house_join_v3")):
         _fail("invalid_recipe")
     if not isinstance(raw_output, str) or len(raw_output) > MAX_RESPONSE_CHARS:
         _fail("response_bound")
@@ -322,6 +333,8 @@ def validate_semantic_audit_response(raw_output: str, pages: Sequence[SemanticAu
             selected[page.page_number] = page.primary_text
             continue
         options = {"source_field_policy": source_field_policy} if source_field_policy is not None else {}
+        if source_inline_address_join_policy is not None:
+            options["source_inline_address_join_policy"] = source_inline_address_join_policy
         evaluation = evaluate_output("```\n" + record["corrected_text"] + "\n```", TargetLang.AR,
             expected_ar_tokens=list(page.expected_ar_tokens),
             ar_source_text=_source_for_validation(page, source_field_policy),
@@ -349,6 +362,8 @@ def _binding(pages: Sequence[SemanticAuditPage], recipe: SemanticAuditRecipe, pd
     # A missing policy is historical behavior: preserve its exact existing hash.
     if recipe.source_field_policy is None:
         recipe_data.pop("source_field_policy")
+    if recipe.source_inline_address_join_policy is None:
+        recipe_data.pop("source_inline_address_join_policy")
     return {"version": AUDIT_VERSION, "pdf_sha256": pdf_sha256,
         "recipe_sha256": _sha(_json(recipe_data)), "request_sha256": _sha(_json(request)),
         "pages": [{"page_number": p.page_number, "source_text_kind": p.source_text_kind,
@@ -499,7 +514,7 @@ def run_semantic_audit(*, pages: Sequence[SemanticAuditPage], recipe: SemanticAu
         _fail("provider_recipe_mismatch")
     if not isinstance(envelope.get("usage"), dict) or not isinstance(envelope.get("response_id"), (str, type(None))):
         _fail("evidence_corrupt")
-    options = {"source_field_policy": recipe.source_field_policy} if recipe.source_field_policy is not None else {}
+    options = _validation_options(recipe)
     selected, records = validate_semantic_audit_response(envelope.get("raw_output"), pages, **options)
     files = [{"page_number": p.page_number, "path": f"page_{p.page_number:04d}.txt",
               "sha256": _sha(selected[p.page_number])} for p in pages]

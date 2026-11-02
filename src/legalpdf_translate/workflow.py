@@ -659,6 +659,7 @@ class TranslationWorkflow:
         if ordinary_auto_layout_policy is not None and (requested != "legacy_text_v1" or reviewed_source_context is not None):
             raise ValueError("Ordinary automatic layout requires an ordinary legacy translation run.")
         self._ordinary_auto_layout_policy = ordinary_auto_layout_policy
+        self._ordinary_acronym_sources = ()
         self._reviewed_source_context = reviewed_source_context
         self._gui_settings = None if gui_settings is None else deepcopy(dict(gui_settings))
         self._effective_gui_settings: dict[str, Any] = {}
@@ -1864,7 +1865,11 @@ class TranslationWorkflow:
 
         page_files = sorted(pages_dir.glob("page_*.txt"))
         if not page_files:
-            raise ValueError(f"No completed page files found for rebuild: {pages_dir}")
+            from . import primary_literal_markup as markup
+            retained_primary = (markup.load_context(state=run_state, run_dir=run_dir)
+                if run_state is not None else None)
+            if retained_primary is None:
+                raise ValueError(f"No completed page files found for rebuild: {pages_dir}")
 
         assembly_options = {}
         if run_state is not None and run_state.protocol_identity:
@@ -1910,7 +1915,7 @@ class TranslationWorkflow:
     @staticmethod
     def _require_rebuild_checkpoint(pages_dir: Path, state: RunState | None) -> None:
         if state is None and any((pages_dir.parent / name).exists()
-                                 for name in ("semantic_source", "semantic_audit")):
+                                 for name in ("semantic_source", "semantic_audit", "primary_markup")):
             raise SemanticIntegrationError("recipe_missing")
         has_commits = any(pages_dir.glob("page_*.commit.json"))
         has_sidecars = (any(pages_dir.glob("page_*.source_structure.json"))
@@ -2255,11 +2260,16 @@ class TranslationWorkflow:
         source_field_options = ({"source_field_policy": saved_audit["source_field_policy"]}
             if saved_audit is not None and saved_audit["version"] in {"ordinary_semantic_audit_v2", "ordinary_semantic_audit_v3"} else {})
         extraction_options = dict(source_field_options)
+        page_evidence_policy = saved_audit.get("primary_page_evidence_policy") if saved_audit else None
+        if page_evidence_policy is not None:
+            extraction_options["primary_page_evidence_policy"] = page_evidence_policy
         if saved_audit is not None and saved_audit["version"] == "ordinary_semantic_audit_v3" and "source_question_row_policy" in saved_audit:
             extraction_options["source_question_row_policy"] = saved_audit["source_question_row_policy"]
         primary_literal_options = ({"literal_wrapper_policy": saved_audit["primary_literal_packaging_version"]}
             if saved_audit is not None and saved_audit["version"] == "ordinary_semantic_audit_v3"
                 and "primary_literal_packaging_version" in saved_audit else {})
+        inline_join_options = ({"source_inline_address_join_policy": saved_audit["source_inline_address_join_policy"]}
+            if saved_audit is not None and "source_inline_address_join_policy" in saved_audit else {})
         ordered = (self._structured_run.ordered_pages[page_number] if self._structured_run is not None
                    else extract_ordered_page_text(config.pdf_path, page_number - 1, **extraction_options))
         extract_seconds = time.perf_counter() - extract_started
@@ -2420,7 +2430,9 @@ class TranslationWorkflow:
             def acquire_ocr(operation, *args, **kwargs):
                 if saved_audit and saved_audit.get("ocr_text_transport_policy"):
                     from .ocr_text_transport import scope
-                    with scope(paths.run_dir, page_number, self._last_state.pdf_fingerprint):
+                    visual_options = ({"visual_source_policy": saved_audit["ocr_visual_source_policy"],
+                                       "pdf_path": config.pdf_path} if "ocr_visual_source_policy" in saved_audit else {})
+                    with scope(paths.run_dir, page_number, self._last_state.pdf_fingerprint, **visual_options):
                         return operation(*args, **kwargs)
                 return operation(*args, **kwargs)
             if crop_recovery_path and integrity_assessment.crop_rect is not None:
@@ -2541,6 +2553,12 @@ class TranslationWorkflow:
             },
         )
 
+        from . import ordinary_ocr_visual_source as visual_source
+        source_witness = None
+        if (saved_audit and visual_source.KEY in saved_audit and ocr_used_for_source
+                and ocr_result.engine == "api" and merged_visual_source_text is None):
+            source_text, source_witness = visual_source.acquire(config.pdf_path, page_number, source_text,
+                self._last_state.pdf_fingerprint, paths.run_dir, policy=saved_audit[visual_source.KEY])
         glossary_source_text = source_text
         _diag_pkg_token_count = 0
         if self._glossary_diagnostics is not None:
@@ -2549,9 +2567,20 @@ class TranslationWorkflow:
                 source_text=glossary_source_text,
                 doc_id=str(config.pdf_path.stem),
             )
+        from . import ordinary_source_acronyms as acronyms
+        acronym_rows = ()
+        applicable_terminology = []
+        glossary_block = None
         expected_ar_tokens: list[str] | None = None
         if config.target_lang == TargetLang.AR and self._structured_run is None:
-            source_text = pretokenize_arabic_source(source_text, **source_field_options)
+            source_text = pretokenize_arabic_source(visual_source.prepared_source(source_text, source_witness), **source_field_options)
+            if page_evidence_policy == acronyms.POLICY:
+                glossary_block = self._append_glossary_prompt("", config.target_lang, source_text=glossary_source_text,
+                    page_index=page_number, audit_terminology=applicable_terminology)
+                if not ocr_used_for_source and not integrity_assessment.suspect:
+                    acronym_rows = acronyms.page_acronyms(glossary_source_text, self._ordinary_acronym_sources,
+                                                         page_number, applicable_terminology)
+                    source_text = acronyms.wrap_acronyms(source_text, acronym_rows)
             all_tokens = extract_locked_tokens(source_text)
             expected_ar_tokens = [token for token in all_tokens if not is_portuguese_month_date_token(token)]
             page_metadata["ar_locked_tokens_expected"] = int(len(expected_ar_tokens))
@@ -2698,19 +2727,31 @@ class TranslationWorkflow:
                 "is an aid and may omit visible text. Include each passage once, preserve verbatim identifiers, "
                 "and do not infer illegible content.\n<<<END VISUAL SOURCE GUIDANCE>>>"
             )
-        applicable_terminology = []
-        prompt_text = self._append_glossary_prompt(
-            prompt_text, config.target_lang, source_text=glossary_source_text, page_index=page_number,
-            audit_terminology=applicable_terminology,
-        )
+            if page_evidence_policy is not None:
+                from .ordinary_primary_page_evidence import primary_visual_guidance
+
+                prompt_text += "\n" + primary_visual_guidance(
+                    config.pdf_path, page_number, sorted(map(int, self._last_state.pages)), glossary_source_text,
+                )
+        if glossary_block is None:
+            prompt_text = self._append_glossary_prompt(prompt_text, config.target_lang,
+                source_text=glossary_source_text, page_index=page_number, audit_terminology=applicable_terminology)
+        else:
+            prompt_text += glossary_block + acronyms.guidance(acronym_rows)
+        prompt_text += visual_source.guidance(source_witness)
+        from . import ordinary_source_postal_band as postal_band
+        postal_rows = []
+        postal_direct = source_route == "direct_text" and not ocr_used_for_source and merged_visual_source_text is None
+        if saved_audit and postal_band.KEY in saved_audit and postal_direct:
+            postal_rows = postal_band.captured_rows(self._last_state, page_number, source_text, expected_ar_tokens or [])
         from .workflow_semantic_audit import capture_source
         page_metadata.update(capture_source(state=self._last_state, run_dir=paths.run_dir,
             page_number=page_number, source_text=source_text, original_source_text=glossary_source_text,
             expected_ar_tokens=expected_ar_tokens, image_data_url=image_data_url,
-            applicable_terminology=applicable_terminology,
+            applicable_terminology=applicable_terminology, acronym_rows=acronym_rows, postal_rows=postal_rows, postal_direct=postal_direct,
             text_transport_evidence=ocr_result.text_transport_evidence,
             api_ocr_used=bool(ocr_used_for_source and ocr_result.engine == "api"),
-            merged_ocr_source=merged_visual_source_text is not None))
+            merged_ocr_source=merged_visual_source_text is not None, source_witness=source_witness))
         prompt_text = self._append_prompt_addendum(prompt_text, config.target_lang)
         page_metadata["prompt_build_ms"] = round((time.perf_counter() - _prompt_build_t0) * 1000.0, 3)
 
@@ -2983,14 +3024,28 @@ class TranslationWorkflow:
                 "effort_used": attempt1_effort.value,
             },
         )
-        initial_eval = self._evaluate_output(
-            initial.raw_output,
-            config.target_lang,
-            expected_ar_tokens=expected_ar_tokens,
-            ar_source_text=source_text,
-            **source_field_options,
-            **primary_literal_options,
-        )
+        from . import primary_literal_markup as markup
+        markup_state, markup_initial, markup_groups = None, None, []
+        if saved_audit is not None and markup.KEY in saved_audit:
+            # The page's capture was persisted before dispatch. Its checkpoint
+            # metadata is committed by the ordinary outcome, not by this worker.
+            markup_state = deepcopy(self._last_state)
+            markup_state.pages[str(page_number)].update(page_metadata)
+            markup_initial, initial_eval, markup_groups = markup.evaluate_initial(
+                initial.raw_output, source_text, expected_ar_tokens or [], page_number, saved_audit, acronym_rows=acronym_rows, source_witness=source_witness, postal_rows=postal_rows)
+            markup.retain_initial(state=markup_state, run_dir=paths.run_dir, page=page_number,
+                recipe=saved_audit, raw=initial.raw_output, response_id=initial.response_id,
+                initial=markup_initial, result=initial_eval, groups=markup_groups)
+        else:
+            initial_eval = self._evaluate_output(
+                initial.raw_output,
+                config.target_lang,
+                expected_ar_tokens=expected_ar_tokens,
+                ar_source_text=source_text,
+                **source_field_options,
+                **inline_join_options,
+                **primary_literal_options,
+            )
         from .failed_output_evidence import retain_failed_output
         retain_failed_output(paths.run_dir, keep_intermediates=config.keep_intermediates,
             page=page_number, attempt=1, raw_output=initial.raw_output,
@@ -3016,6 +3071,10 @@ class TranslationWorkflow:
             if self._diagnostics_admin_mode:
                 emit_validation_summary_event(self._event_collector, page_index=page_number, checks=_qc)
             output_path = paths.pages_dir / f"page_{page_number:04d}.txt"
+            if markup_state is not None:
+                page_metadata[markup.PAGE_HASH] = markup.retain_selection(state=markup_state,
+                    run_dir=paths.run_dir, page=page_number, recipe=saved_audit, origin="initial",
+                    raw=initial.raw_output, response_id=initial.response_id, normalized=initial_eval.normalized_text)
             output_path.write_text(initial_eval.normalized_text, encoding="utf-8")
             _finalize_page_metadata()
             return _PageOutcome(
@@ -3053,6 +3112,8 @@ class TranslationWorkflow:
         else:
             retry_prompt = build_retry_prompt(config.target_lang, initial.raw_output)
             page_metadata["retry_prompt_type"] = "formatting"
+        retry_prompt += acronyms.guidance(acronym_rows) + visual_source.guidance(source_witness)
+        retry_prompt += postal_band.guidance(postal_rows)
         retry_effort = self._resolve_retry_effort(
             config=config,
             retry_reason=retry_reason,
@@ -3216,15 +3277,24 @@ class TranslationWorkflow:
                 "effort_used": retry_effort.value,
             },
         )
-        retry_eval = self._evaluate_output(
-            retry.raw_output,
-            config.target_lang,
-            expected_ar_tokens=expected_ar_tokens,
-            ar_source_text=source_text,
-            primary_normalized_text=initial_eval.normalized_text,
-            **source_field_options,
-            **(primary_literal_options if primary_literal_options.get("literal_wrapper_policy") == "lossless_source_components_v2" else {}),
-        )
+        if markup_state is not None:
+            try:
+                retry_eval = markup.evaluate_compliance(retry.raw_output, initial_eval, markup_initial,
+                    markup_groups, source_text, expected_ar_tokens or [], saved_audit, acronym_rows=acronym_rows, source_witness=source_witness, postal_rows=postal_rows)
+            except markup.PrimaryMarkupError as exc:
+                retry_eval = OutputEvaluation(ok=False, normalized_text=None,
+                    defect_reason=exc.code, validator_failed=True)
+        else:
+            retry_eval = self._evaluate_output(
+                retry.raw_output,
+                config.target_lang,
+                expected_ar_tokens=expected_ar_tokens,
+                ar_source_text=source_text,
+                primary_normalized_text=initial_eval.normalized_text,
+                **source_field_options,
+                **inline_join_options,
+                **(primary_literal_options if primary_literal_options.get("literal_wrapper_policy") in ("lossless_source_components_v2", "lossless_source_components_v3") else {}),
+            )
         retain_failed_output(paths.run_dir, keep_intermediates=config.keep_intermediates,
             page=page_number, attempt=2, raw_output=retry.raw_output,
             evaluation=retry_eval, expected_tokens=expected_ar_tokens,
@@ -3250,6 +3320,10 @@ class TranslationWorkflow:
             if self._diagnostics_admin_mode:
                 emit_validation_summary_event(self._event_collector, page_index=page_number, checks=_qc)
             output_path = paths.pages_dir / f"page_{page_number:04d}.txt"
+            if markup_state is not None:
+                page_metadata[markup.PAGE_HASH] = markup.retain_selection(state=markup_state,
+                    run_dir=paths.run_dir, page=page_number, recipe=saved_audit, origin="compliance",
+                    raw=retry.raw_output, response_id=retry.response_id, normalized=retry_eval.normalized_text)
             output_path.write_text(retry_eval.normalized_text, encoding="utf-8")
             _finalize_page_metadata()
             return _PageOutcome(
@@ -3387,10 +3461,13 @@ class TranslationWorkflow:
         primary_normalized_text: str | None = None,
         source_field_policy: str | None = None,
         literal_wrapper_policy: str | None = None,
+        source_inline_address_join_policy: str | None = None,
     ) -> OutputEvaluation:
         options = {"source_field_policy": source_field_policy} if source_field_policy is not None else {}
         if literal_wrapper_policy is not None:
             options["literal_wrapper_policy"] = literal_wrapper_policy
+        if source_inline_address_join_policy is not None:
+            options["source_inline_address_join_policy"] = source_inline_address_join_policy
         return evaluate_workflow_output(
             raw_output,
             lang,
@@ -4391,6 +4468,12 @@ class TranslationWorkflow:
             page_path = pages_dir / f"page_{page_number:04d}.txt"
             if not page_path.exists():
                 missing_pages.append(page_number)
+        if missing_pages:
+            from . import primary_literal_markup as markup
+            retained_primary = markup.load_context(state=state, run_dir=run_dir, completed_only=True)
+            if retained_primary is not None:
+                markup.local_selection(state=state, run_dir=run_dir)
+                missing_pages = [page for page in missing_pages if page not in retained_primary.primary]
         return sorted(missing_pages)
 
     def _resolve_paths_for_run(self, config: RunConfig) -> tuple[RunPaths, RunState | None]:
@@ -4402,7 +4485,7 @@ class TranslationWorkflow:
         )
         existing = load_run_state(paths.run_state_path)
         semantic_evidence = any((paths.run_dir / name).exists()
-                                for name in ("semantic_source", "semantic_audit"))
+                                for name in ("semantic_source", "semantic_audit", "primary_markup"))
         if semantic_evidence and (existing is None or not config.resume):
             raise SemanticIntegrationError("preserve_existing_evidence")
         accounting_dir = paths.run_dir / "accounting"
@@ -4532,6 +4615,7 @@ class TranslationWorkflow:
         selection_page_count: int,
         max_pages_effective: int,
     ) -> RunState:
+        self._ordinary_acronym_sources = ()
         existing = existing_state
         if existing is None:
             existing = load_run_state(paths.run_state_path)
@@ -4580,6 +4664,11 @@ class TranslationWorkflow:
             )
             if mismatch_reason is None:
                 from .workflow_semantic_audit import validate_context
+                from . import ordinary_source_acronyms as acronyms
+                saved = existing.settings.get("ordinary_semantic_audit_recipe") or {}
+                if saved.get("primary_page_evidence_policy") == acronyms.POLICY:
+                    self._ordinary_acronym_sources = acronyms.read_selection(config.pdf_path, selected_pages,
+                                                                            expected_sha256=pdf_fingerprint)
                 validate_context(state=existing, run_dir=paths.run_dir,
                     context_text=context_text, context_hash=context_hash)
                 existing.frozen_outdir_abs = str(paths.frozen_outdir)
@@ -4618,6 +4707,26 @@ class TranslationWorkflow:
         semantic_recipe = (fresh_recipe(config, self._translation_model, self._ordinary_auto_layout_policy,
             context_text=context_text, context_hash=context_hash)
             if semantic_eligible and len(selected_pages) <= 12 else None)
+        if (semantic_recipe and semantic_recipe.get("primary_page_evidence_policy") == "source_page_occurrences_v1"
+                and "primary_literal_markup_policy" in semantic_recipe):
+            from . import ordinary_source_acronyms as acronyms
+            selection = acronyms.read_selection(config.pdf_path, selected_pages)
+            for number, text in selection:
+                terms = []
+                self._append_glossary_prompt("", config.target_lang, source_text=text, audit_terminology=terms)
+                if acronyms.page_acronyms(text, selection, number, terms):
+                    semantic_recipe["primary_page_evidence_policy"] = acronyms.POLICY
+                    self._ordinary_acronym_sources = selection
+                    break
+        if semantic_recipe and {"primary_literal_markup_policy", "ocr_text_transport_policy"} <= semantic_recipe.keys():
+            from . import ordinary_ocr_visual_source as visual_source
+            if visual_source.selection_qualifies(config, selected_pages):
+                semantic_recipe[visual_source.KEY] = visual_source.FRESH_POLICY
+        if (semantic_recipe and "primary_literal_markup_policy" in semantic_recipe and config.image_mode.value != "off"
+                and config.ocr_mode.value != "always"):
+            from . import ordinary_source_postal_band as postal_band
+            if postal_band.read_selection(config.pdf_path, selected_pages, pdf_fingerprint):
+                semantic_recipe[postal_band.KEY] = postal_band.POLICY
         semantic_qualification = ({"version": "ordinary_semantic_audit_v1", "audit_not_run": "selected_page_limit",
             "selected_pages": list(selected_pages), "page_limit": 12}
             if semantic_eligible and len(selected_pages) > 12 else None)

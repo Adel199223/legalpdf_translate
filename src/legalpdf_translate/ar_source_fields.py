@@ -20,6 +20,11 @@ _STREET = re.compile(r"(?i)^(?:Rua|R\.|Avenida|Av\.|Largo|Lg\.|Travessa|Tv\.|Pra
 _PROSE = {"deve", "pagar", "comparecer", "enviar", "documentos", "obrigação", "obrigacao", "prazo", "tribunal"}
 _LIMIT = 120_000
 SOURCE_FIELD_POLICY = "baseline_label_value_v1"
+SOURCE_INLINE_ADDRESS_JOIN_POLICY = "source_locative_house_join_v1"
+SOURCE_INLINE_ADDRESS_JOIN_POLICY_V2 = "source_locative_house_join_v2"
+SOURCE_INLINE_ADDRESS_JOIN_POLICY_V3 = "source_locative_house_join_v3"
+_MAX_INLINE_COMPONENT_WORK = 200_000
+_MAX_INLINE_COMPONENT_CARRIERS = 32
 _LABELED_POSTAL = re.compile(
     r"(?i)^(?:C[oó]digo[ \t]+Postal|Postal[ \t]+Code|Postcode|Code[ \t]+Postal)[ \t]*:[ \t]*"
     r"(?P<value>[0-9]{4}(?:-|[ \t]+)[0-9]{3}[ \t]+(?P<town>.+))\Z")
@@ -317,7 +322,9 @@ def _separate_inline_parts(field, owned):
     return field.value[:marker.start()], number[0]
 
 
-def _separate_inline_occurrences(visible, target_tokens, source_visible, field, owned):
+def _separate_inline_occurrences(visible, target_tokens, source_visible, field, owned, *,
+                                 source_inline_address_join_policy=None, text=None,
+                                 source=None, source_positions=None):
     """Prove exact street/house wrappers joined only by the Arabic number label.
 
     This does not regroup or rewrite the visible connective. A whole primary
@@ -339,7 +346,26 @@ def _separate_inline_occurrences(visible, target_tokens, source_visible, field, 
             continue
         a, b = following[:2]
         if not re.fullmatch(r"[ \t]*(?:[,،][ \t]*)?(?:رقم|بالرقم)[ \t]+", visible[end:a]):
-            continue
+            # A new permission is source-qualified, local and raw-coordinate
+            # checked. _view deliberately retains its historical behavior;
+            # erased stray isolates must never manufacture this new proof.
+            marker = _INLINE_NUMBER.search(field.value)
+            locative = (marker is not None and re.fullmatch(
+                r"(?:[ \t]*,[ \t]*|[ \t]+)no[ \t]+n\.?[º°o]\.?[ \t]*[0-9]+[A-Za-z]?",
+                marker[0], re.I))
+            street_token = next(t for t in target_tokens if t[:3] == (start, end, street))
+            if (source_inline_address_join_policy not in (SOURCE_INLINE_ADDRESS_JOIN_POLICY, SOURCE_INLINE_ADDRESS_JOIN_POLICY_V2, SOURCE_INLINE_ADDRESS_JOIN_POLICY_V3)
+                    or not locative or text is None or source is None or source_positions is None
+                    or not (re.fullmatch(r"[ \t]*(?:[,،][ \t]*)?عند[ \t]+رقم[ \t]+",
+                                        text[street_token[4]:following[3]])
+                        or source_inline_address_join_policy == SOURCE_INLINE_ADDRESS_JOIN_POLICY_V3
+                        and re.fullmatch(r"[ \t]*(?:[,،][ \t]*)?في[ \t]+رقم[ \t]+",
+                                        text[street_token[4]:following[3]]))):
+                continue
+            number_start = len(field.value) - len(number)
+            raw_marker_start = source_positions[field.start]
+            if source[raw_marker_start:owned[0][3]] != field.value[:number_start]:
+                continue
         if (a, b) not in _occurrences(visible, number):
             continue
         if b + 1 < len(visible) and visible[b] in ".,:" and visible[b + 1].isdecimal():
@@ -348,19 +374,81 @@ def _separate_inline_occurrences(visible, target_tokens, source_visible, field, 
     return result
 
 
+def _source_inline_locative_alternative(field, owned, source, source_view):
+    """Delete only one unprotected grammatical locative from a proven field."""
+    parts = _separate_inline_parts(field, owned)
+    if parts is None:
+        return None
+    street, number = parts
+    marker = _INLINE_NUMBER.search(field.value)
+    locative = re.fullmatch(
+        r"(?P<prefix>[ \t]*,[ \t]*|[ \t]+)(?P<locative>no[ \t]+)n\.?[º°o]\.?[ \t]*[0-9]+[A-Za-z]?",
+        marker[0], re.I) if marker else None
+    if locative is None:
+        return None
+    visible, positions, _ = source_view
+    if (_occurrences(visible, field.value) != [(field.start, field.end)]
+            or len(_occurrences(visible, street)) != 1):
+        return None
+    # The only source-owned token is the exact house. In particular `no` and
+    # the ordinal marker cannot be discarded from a protected source token.
+    number_start = len(field.value) - len(number)
+    if source[positions[field.start]:owned[0][3]] != field.value[:number_start]:
+        return None
+    left = marker.start() + locative.start("locative")
+    right = marker.start() + locative.end("locative")
+    return field.value[:left] + field.value[right:], street
+
+
+def _complete_inline_component_carriers(text, view, start, end, literal):
+    """Only complete existing carriers may prove semantic-character ownership.
+
+    Strip known wrapper spans only. Unowned isolates/controls cannot disappear
+    through _view, and no carrier may claim prose outside the complete field.
+    """
+    visible, positions, tokens = view
+    owned = [token for token in tokens if token[0] < end and token[1] > start]
+    if (not 1 <= len(owned) <= _MAX_INLINE_COMPONENT_CARRIERS
+            or any(a < start or b > end for a, b, *_ in owned)):
+        return False
+    def semantic(char):
+        return char not in " \t" and not unicodedata.category(char).startswith("P")
+    for offset in range(start, end):
+        if semantic(visible[offset]) and not any(a <= offset < b for a, b, *_ in owned):
+            return False
+    if any(not any(semantic(c) for c in token[2]) for token in owned):
+        return False
+    raw_start = owned[0][3] if owned[0][0] == start else positions[start]
+    raw_end = owned[-1][4] if owned[-1][1] == end else positions[end - 1] + 1
+    if (raw_start and unicodedata.category(text[raw_start - 1]) == "Cf"
+            or raw_end < len(text) and unicodedata.category(text[raw_end]) == "Cf"):
+        return False
+    pieces, cursor = [], raw_start
+    for a, b, value, begin, finish in owned:
+        if text[begin:finish] not in ("[[" + value + "]]", _LRI + "[[" + value + "]]" + _PDI):
+            return False
+        pieces.extend((text[cursor:begin], value))
+        cursor = finish
+    pieces.append(text[cursor:raw_end])
+    return "".join(pieces) == literal
+
+
 def canonicalize_source_address_literals(text: str, source: str | None,
-                                        expected: list[str] | None, *, source_field_policy: str | None = None):
+                                        expected: list[str] | None, *, source_field_policy: str | None = None,
+                                        source_inline_address_join_policy: str | None = None):
     """Return text/expectations/count/error; only exact source-proven wrappers change.
 
     Complete field occurrence counts and source order must agree. Wrappers that
     cross field boundaries never confer proof. Unrelated tokens remain intact.
     """
+    if source_inline_address_join_policy not in (None, SOURCE_INLINE_ADDRESS_JOIN_POLICY, SOURCE_INLINE_ADDRESS_JOIN_POLICY_V2, SOURCE_INLINE_ADDRESS_JOIN_POLICY_V3):
+        raise ValueError("Unknown source inline address join policy.")
     if not source or expected is None:
         return text, expected, 0, None
     source_view, target_view = _view(source), _view(text)
     if source_view is None or target_view is None:
         return text, expected, 0, "source_address_malformed_tokens"
-    source_visible, _, source_tokens = source_view
+    source_visible, source_positions, source_tokens = source_view
     visible, positions, target_tokens = target_view
     remaining = Counter(expected)
     owned_required = Counter()
@@ -390,11 +478,58 @@ def canonicalize_source_address_literals(text: str, source: str | None,
     candidates = []
     for value in set(expected_fields):
         candidates.extend((start, end, value) for start, end in _occurrences(visible, value))
+    canonical_alternatives = {}
+    component_work = 0
+    if source_inline_address_join_policy in (SOURCE_INLINE_ADDRESS_JOIN_POLICY_V2, SOURCE_INLINE_ADDRESS_JOIN_POLICY_V3):
+        for field in fields:
+            if field not in inline_fields:
+                continue
+            component_work += 2 * len(source_visible) + 4 * len(visible) + len(source_tokens) + len(target_tokens)
+            if component_work > _MAX_INLINE_COMPONENT_WORK:
+                return text, expected, 0, "source_address_component_bound"
+            alternative = _source_inline_locative_alternative(field, owned_by_field[field], source, source_view)
+            if alternative is None:
+                continue
+            literal, street = alternative
+            # The source house must not become a prefix of a changed compound
+            # number, including when punctuation and the suffix use separate
+            # wrappers. Check original and alternate representations jointly,
+            # before declining an absent alternate or allocating any carrier.
+            for representation in (field.value, literal):
+                for match in re.finditer(re.escape(representation), visible):
+                    start, end = match.span()
+                    if (start and _word(visible[start - 1])
+                            or start > 1 and visible[start - 1] in "-/_" and _word(visible[start - 2])):
+                        continue
+                    if (end < len(visible) and _word(visible[end])
+                            or end + 1 < len(visible) and (
+                                visible[end] in ".,:" and visible[end + 1].isdecimal()
+                                or visible[end] in "-/_" and _word(visible[end + 1]))):
+                        return text, expected, 0, "source_address_association_mismatch"
+            hits = _occurrences(visible, literal)
+            if not hits:
+                continue
+            # These are aliases of one source identity, not unrelated extras.
+            # Do not decline the new proof and fall back to an original-only
+            # success when competing original/short representations coexist.
+            if (_occurrences(visible, field.value) or len(hits) != 1
+                    or len(_occurrences(visible, street)) != 1):
+                return text, expected, 0, "source_address_association_mismatch"
+            start, end = hits[0]
+            if not _complete_inline_component_carriers(text, target_view, start, end, literal):
+                return text, expected, 0, "source_address_component_carrier_mismatch"
+            key = (start, end, field.value)
+            if key in canonical_alternatives:
+                return text, expected, 0, "source_address_association_mismatch"
+            canonical_alternatives[key] = literal
+            candidates.append(key)
     separate = set()
     for field in fields:
         if field in inline_fields:
             separate.update(_separate_inline_occurrences(visible, target_tokens, source_visible,
-                                                        field, owned_by_field[field]))
+                                                        field, owned_by_field[field],
+                source_inline_address_join_policy=source_inline_address_join_policy,
+                text=text, source=source, source_positions=source_positions))
     candidates.extend(separate)
     # A locality inside a complete street address belongs to that larger field,
     # not to a second standalone occurrence elsewhere in the source. Own each
@@ -402,6 +537,8 @@ def canonicalize_source_address_literals(text: str, source: str | None,
     found = []
     for candidate in sorted(candidates, key=lambda item: (item[0], -item[1])):
         if found and candidate[0] < found[-1][1]:
+            if candidate in canonical_alternatives or found[-1] in canonical_alternatives:
+                return text, expected, 0, "source_address_association_mismatch"
             if candidate[1] <= found[-1][1]:
                 continue
             return text, expected, 0, "source_address_association_mismatch"
@@ -428,7 +565,8 @@ def canonicalize_source_address_literals(text: str, source: str | None,
             raw_start = owned[0][3]
         if owned and owned[-1][1] == end:
             raw_end = owned[-1][4]
-        replacements.append((raw_start, raw_end, _LRI + "[[" + value + "]]" + _PDI))
+        canonical_value = canonical_alternatives.get((start, end, value), value)
+        replacements.append((raw_start, raw_end, _LRI + "[[" + canonical_value + "]]" + _PDI))
     result, cursor, changed = [], 0, 0
     for start, end, replacement in replacements:
         result.extend((text[cursor:start], replacement))
@@ -441,12 +579,14 @@ def canonicalize_source_address_literals(text: str, source: str | None,
     remove = owned_required.copy()
     keep_separate = separate_values.copy()
     canonical_fields = []
+    observed_alternatives = {value: canonical_alternatives[(start, end, value)]
+        for start, end, value in found if (start, end, value) in canonical_alternatives}
     for field in fields:
         if keep_separate[field.value]:
             keep_separate[field.value] -= 1
             remove.subtract(Counter(token[2] for token in owned_by_field[field]))
         else:
-            canonical_fields.append(field.value)
+            canonical_fields.append(observed_alternatives.get(field.value, field.value))
     for value in expected:
         if remove[value]:
             remove[value] -= 1

@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import time
 from typing import Any, Iterator, Mapping
 import uuid
 
@@ -51,7 +52,16 @@ def atomic_json(path: Path, value: Mapping[str, Any]) -> None:
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        # A Windows reader can briefly keep an existing journal open across
+        # publication. Retry only this rename of the already-fsynced receipt.
+        for delay in (0.01, 0.02, 0.04, 0.08, 0.16, 0.16, None):
+            try:
+                os.replace(temporary, path)
+                break
+            except OSError as exc:
+                if delay is None or os.name != "nt" or getattr(exc, "winerror", None) not in (5, 32, 33):
+                    raise
+                time.sleep(delay)
         if os.name != "nt":
             descriptor = os.open(path.parent, os.O_RDONLY)
             try:

@@ -244,6 +244,11 @@ def test_saved_v4_ordinary_resume_and_offline_ignore_fresh_v5_selection(tmp_path
         value.pop("semantic_repair_policy", None)
         value.pop("semantic_literal_authority_policy", None)
         value.pop("semantic_enclosure_authority_policy", None)
+        value.pop("source_enclosure_identity_policy", None)
+        value.pop("semantic_target_ambiguity_policy", None)
+        value.pop("semantic_enclosure_sequence_repair_policy", None)
+        value.pop("primary_page_evidence_policy", None)
+        value.pop("primary_literal_markup_policy", None)
         value["semantic_source_review_policy"] = policy.POLICY_V4
         return value
     monkeypatch.setattr(glue, "fresh_recipe", historical)

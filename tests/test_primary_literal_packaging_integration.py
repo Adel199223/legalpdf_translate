@@ -19,7 +19,7 @@ from tests.test_workflow_semantic_review_integration import saved_recipe, setup_
 from tests.test_workflow_semantic_audit_integration import offline
 
 
-POLICY = "lossless_source_components_v2"
+POLICY = "lossless_source_components_v3"
 KEY = "primary_literal_packaging_version"
 GOLDEN = Path(__file__).parent / "fixtures/primary_literal_packaging_legacy_prompt.json"
 
@@ -47,7 +47,7 @@ def test_schema_genuine_pre_change_v3_recipe_context_and_source_pack_bytes_match
     inputs = json.loads((fixture / "inputs.json").read_bytes())
     settings = inputs["settings"]
     recipe = settings["ordinary_semantic_audit_recipe"]
-    config = SimpleNamespace(effort=SimpleNamespace(value=recipe["reasoning_effort"]),
+    config = SimpleNamespace(strip_bidi_controls=True, effort=SimpleNamespace(value=recipe["reasoning_effort"]),
         ocr_engine=OcrEnginePolicy.LOCAL, ocr_api_provider=OcrApiProvider.OPENAI,
         effort_policy=SimpleNamespace(value=recipe["effort_policy"]), target_lang=TargetLang.AR, image_mode=ImageMode.OFF)
     current = integration.fresh_recipe(config, recipe["model"], settings["ordinary_auto_layout_policy"],
@@ -69,7 +69,7 @@ def test_schema_genuine_pre_change_v3_recipe_context_and_source_pack_bytes_match
     assert (tmp_path / "semantic_source/page_0001.json").read_bytes() == (fixture / "source_page_0001.json").read_bytes()
 
 
-@pytest.mark.parametrize("value", [None, "", "unknown", "lossless_source_components_v3", False, [], {}])
+@pytest.mark.parametrize("value", [None, "", "unknown", "lossless_source_components_v4", False, [], {}])
 def test_schema_explicit_invalid_primary_packaging_policy_is_not_absence(tmp_path, value):
     _, recipe, settings = saved_recipe(tmp_path)
     recipe[KEY] = value

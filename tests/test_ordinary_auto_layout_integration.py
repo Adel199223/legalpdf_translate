@@ -16,7 +16,7 @@ from docx.oxml.ns import qn
 
 from legalpdf_translate.budget_reservations import ReservationBudget
 from legalpdf_translate.openai_client import OpenAIResponsesClient
-from legalpdf_translate.ordinary_auto_layout import frozen_automatic_layout_policy, run_automatic_layout
+from legalpdf_translate.ordinary_auto_layout import _protected_folio_bridges_v10_policy, run_automatic_layout
 from legalpdf_translate.ordinary_auto_layout_artifacts import bind_raw_page_map
 from legalpdf_translate.ordinary_layout_accounting import layout_accounting_policy
 from legalpdf_translate.ordinary_layout_contracts import LayoutSuggestionPolicy, OrdinaryLayoutJob, PROPOSAL_VERSION
@@ -44,7 +44,9 @@ def _proposal(view, page):
             "panel": index == 0} for index, row in enumerate(rows)]}]}
 
 
-def test_two_physical_pages_publish_unreviewed_default_and_reuse_without_dispatch(tmp_path):
+def test_two_physical_pages_publish_unreviewed_default_and_reuse_without_dispatch(tmp_path, monkeypatch):
+    from legalpdf_translate import ordinary_auto_layout as automatic
+    monkeypatch.setattr(automatic, "frozen_automatic_layout_policy", automatic._protected_folio_bridges_v10_policy)
     raw, mapping = _raw(tmp_path)
     source = _source_pdf()
     source_hash = hashlib.sha256(source).hexdigest()
@@ -54,7 +56,7 @@ def test_two_physical_pages_publish_unreviewed_default_and_reuse_without_dispatc
     byte_map_hash = hashlib.sha256(json.dumps(mapping).encode("utf-8")).hexdigest()
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    policy = frozen_automatic_layout_policy()
+    policy = _protected_folio_bridges_v10_policy()  # This preserves the historical single-call fixture.
     calls = []
     manager_slot = {}
     budget = ReservationBudget(tmp_path / "budget.json", cap_usd="3",

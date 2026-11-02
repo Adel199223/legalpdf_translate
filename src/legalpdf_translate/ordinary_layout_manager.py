@@ -11,9 +11,9 @@ from typing import Callable
 from . import saved_docx_layout_service as storage
 from .openai_client import OpenAIResponsesClient
 from .ordinary_layout_contracts import (LayoutSuggestionPolicy, OrdinaryLayoutJob, OrdinaryLayoutError,
-    VERSION, MAX_RESPONSE_BYTES, PROPOSAL_VERSION_V3, BAND_NORMALIZATION_V1, BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, decode, digest, encode, fail, generation, identifier,
+    VERSION, MAX_RESPONSE_BYTES, PROPOSAL_VERSION_V3, BAND_NORMALIZATION_V1, BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8, decode, digest, encode, fail, generation, identifier,
     job_identity, nonce, normalize_proposals, page_ids, proposal_schema, proposal_source_evidence,
-    EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2)
+    EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2, EMPHASIS_NORMALIZATION_V3)
 from .ordinary_layout_service import OrdinaryLayoutService, _directories, _read, _write, public
 from .saved_docx_layout import inspect_docx, SavedDocxLayoutError
 from .usage_accounting import DispatchAccounting, accounting_context, _ceiling_for
@@ -156,13 +156,21 @@ class OrdinaryLayoutManager:
                 band_normalization_version=BAND_NORMALIZATION_V1, retained_only=False,
                 emphasis_normalization_version=EMPHASIS_NORMALIZATION_V1,
                 retained_source_job=None, retained_identity_sha256=None, retained_policy=None,
-                retained_accounting_factory=None, retained_preflight=None):
+                retained_accounting_factory=None, retained_preflight=None, proposal_repair_policy=None,
+                proposal_render_policy_fingerprint=None):
         # Server-only recipe. Browser/API callers retain historical V1 defaults.
         if type(retained_only) is not bool:
             fail("retained_proposal_invalid", 409)
-        if emphasis_normalization_version not in {None, EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2}:
+        if proposal_repair_policy is not None:
+            from .ordinary_layout_reproposal import POLICY, POLICY_V2
+            if proposal_repair_policy not in (POLICY, POLICY_V2) or retained_only or retained_proposals:
+                fail("proposal_repair_policy_changed", 409)
+        if proposal_render_policy_fingerprint is not None:
+            from .ordinary_layout_reproposal import automatic_policy
+            automatic_policy(proposal_repair_policy, proposal_render_policy_fingerprint)
+        if emphasis_normalization_version not in {None, EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2, EMPHASIS_NORMALIZATION_V3}:
             fail("invalid_emphasis_normalization_version")
-        if band_normalization_version not in {BAND_NORMALIZATION_V1, BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5}:
+        if band_normalization_version not in {BAND_NORMALIZATION_V1, BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8}:
             fail("invalid_metadata_band_normalization_version")
         nonce(operation_nonce); nonce(expected_baseline_id); generation(expected_generation)
         if (type(page_numbers) is not list or not page_numbers or any(type(n) is not int for n in page_numbers)
@@ -203,13 +211,22 @@ class OrdinaryLayoutManager:
             fail("invalid_page_selection")
         policy = retained_policy if retained_only else self._policy(job)
         private_policy = policy.public()
-        if emphasis_normalization_version == EMPHASIS_NORMALIZATION_V2:
+        if proposal_repair_policy is not None:
+            private_policy["proposal_repair_policy"] = proposal_repair_policy
+        if proposal_render_policy_fingerprint is not None:
+            from .ordinary_layout_reproposal import RENDER_KEY
+            private_policy[RENDER_KEY] = proposal_render_policy_fingerprint
+        if emphasis_normalization_version in {EMPHASIS_NORMALIZATION_V2, EMPHASIS_NORMALIZATION_V3}:
             private_policy["emphasis_normalization_version"] = emphasis_normalization_version
         if retained_only:
             private_policy.update(retained_only=True, missing_pages=[], max_new_calls=0,
                 completed_rebuild_identity_sha256=retained_identity_sha256)
-        if band_normalization_version in {BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5}:
+        if band_normalization_version in {BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8}:
             private_policy["band_normalization_version"] = band_normalization_version
+        if proposal_repair_policy is not None:
+            from .ordinary_layout_reproposal import expected_policy
+            if private_policy != expected_policy(len(page_numbers), proposal_repair_policy, proposal_render_policy_fingerprint):
+                fail("proposal_repair_policy_changed", 409)
         view = state["review"]
         if retained_only and view["generation"] == expected_generation + 1:
             from .ordinary_auto_layout import _recover_settled_result, _inline_folio_direction_policy
@@ -265,6 +282,10 @@ class OrdinaryLayoutManager:
         for page, retained in retained_proposals.items():
             if type(retained) is not dict or set(retained) != {"raw", "origin"} or type(retained["raw"]) is not bytes:
                 fail("retained_proposal_invalid", 409)
+            from .ordinary_auto_layout import _proposal_repair_version
+            if (type(retained["origin"]) is dict
+                    and _proposal_repair_version(retained["origin"].get("original_policy_fingerprint")) is not None):
+                fail("automatic_recovery_unsupported_policy", 409)
             if retained_only and digest(retained["raw"]) != retained["origin"].get("response_sha256"):
                 fail("retained_proposal_invalid", 409)
             proposal = decode(retained["raw"])
@@ -273,15 +294,20 @@ class OrdinaryLayoutManager:
             normalize_proposals(inspect_docx(job.reviewed_docx, job.target_lang), view, [proposal],
                                 band_normalization_version=band_normalization_version,
                                 emphasis_normalization_version=emphasis_normalization_version)
-        if Decimal(policy.max_page_cost_usd) * len(page_numbers) > Decimal(policy.max_operation_cost_usd):
+        if proposal_repair_policy is not None:
+            from .ordinary_layout_reproposal import extra_calls as repair_extra_calls
+            extra_calls = repair_extra_calls(len(page_numbers), proposal_repair_policy)
+        else:
+            extra_calls = 0
+        if Decimal(policy.max_page_cost_usd) * (len(page_numbers) + extra_calls) > Decimal(policy.max_operation_cost_usd):
             fail("operation_cost_limit", 409)
         operation, intent, fresh = self.service.begin_suggestion(job_id, expected_generation, operation_nonce,
             page_numbers, private_policy, expected_baseline_id=expected_baseline_id)
         if not fresh and not retained_only:
             return self.service.suggestion(job_id, operation_nonce)
         initial_record = {"review_id": view["review_id"], "generation": expected_generation, "view": view,
-            **({"emphasis_normalization_version":emphasis_normalization_version} if emphasis_normalization_version == EMPHASIS_NORMALIZATION_V2 else {}),
-            **({"band_normalization_version": band_normalization_version} if band_normalization_version in {BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5} else {})}
+            **({"emphasis_normalization_version":emphasis_normalization_version} if emphasis_normalization_version in {EMPHASIS_NORMALIZATION_V2, EMPHASIS_NORMALIZATION_V3} else {}),
+            **({"band_normalization_version": band_normalization_version} if band_normalization_version in {BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8} else {})}
         if (operation / "proposal_initial_view.json").exists():
             if _read(operation / "proposal_initial_view.json") != initial_record:
                 fail("retained_proposal_invalid", 409)
@@ -333,6 +359,36 @@ class OrdinaryLayoutManager:
                     or client._max_transport_retries != 0):
                 fail("bounded_provider_required", 503)
             started = time.monotonic()
+            attempt_store = None
+            if proposal_repair_policy is not None:
+                from .ordinary_layout_reproposal import AttemptStore, automatic_policy
+                from .saved_docx_layout import validate_decisions
+                snapshot = inspect_docx(job.reviewed_docx, job.target_lang)
+                validate_decisions(snapshot, view["pages"], view["decisions"])
+                attempt_identity = {**job_identity(job, self.mode, self.workspace_id),
+                    "operation_nonce": operation_nonce, "baseline_id": expected_baseline_id,
+                    "initial_generation": expected_generation,
+                    "policy_fingerprint": automatic_policy(proposal_repair_policy, proposal_render_policy_fingerprint).split(":", 1)[1],
+                    "page_groups": [[p, list(job.page_groups[p])] for p in page_numbers]}
+                attempt_store = AttemptStore(operation, view=view, snapshot=snapshot,
+                    identity=attempt_identity, policy=private_policy)
+
+                def recheck():
+                    if external_cancel_requested and external_cancel_requested(job_id):
+                        self.service.cancel_suggestion(job_id, operation_nonce, expected_generation,
+                            expected_baseline_id=expected_baseline_id)
+                    if self.service.cancellation_requested(job_id, operation_nonce):
+                        fail("automatic_layout_cancelled", 409)
+                    current_job = self._job(job_id)
+                    if job_identity(current_job, self.mode, self.workspace_id) != job_identity(job, self.mode, self.workspace_id):
+                        fail("baseline_stale", 409)
+                    current = self.service.assert_current(current_job)
+                    if current["baseline_id"] != expected_baseline_id or current["review"] != view:
+                        fail("baseline_stale", 409)
+                    if current["frozen"]:
+                        fail("delivery_frozen", 409)
+                    if time.monotonic() - started > (len(page_numbers) + extra_calls) * policy.timeout_seconds + 30:
+                        fail("operation_deadline", 409)
             for page in page_numbers:
                 if external_cancel_requested and external_cancel_requested(job_id):
                     self.service.cancel_suggestion(job_id, operation_nonce, expected_generation,
@@ -360,11 +416,16 @@ class OrdinaryLayoutManager:
                     fail("baseline_stale", 409)
                 if current["frozen"]:
                     fail("delivery_frozen", 409)
-                if time.monotonic() - started > len(page_numbers) * policy.timeout_seconds + 30:
+                if time.monotonic() - started > (len(page_numbers) + extra_calls) * policy.timeout_seconds + 30:
                     fail("operation_deadline", 409)
                 ids = ids_by_page[page]
                 rows = [r for r in view["paragraphs"] if r["id"] in ids]
                 image = self.service.saved.image(view["review_id"], page)
+                if attempt_store is not None:
+                    proposal = attempt_store.run_page(page, image, client, accountant, recheck)
+                    proposals.append(proposal)
+                    result["completed_pages"].append(page)
+                    continue
                 prompt = encode({"version": PROPOSAL_VERSION_V3, "page_number": page, "target_lang": job.target_lang,
                                  "paragraphs": rows}).decode("utf-8")
                 if external_cancel_requested and external_cancel_requested(job_id):
@@ -396,6 +457,14 @@ class OrdinaryLayoutManager:
             if current["frozen"]:
                 fail("delivery_frozen", 409)
             if proposals:
+                if attempt_store is not None:
+                    from .ordinary_layout_reproposal import operation_witness
+                    witness, selected, _ = operation_witness(operation, snapshot=snapshot,
+                        frames=view["pages"], source_pdf=job.source_pdf, page_groups=job.page_groups,
+                        selected_pages=page_numbers, expected_identity=attempt_identity, seal=True)
+                    if [row[2] for row in selected] != proposals:
+                        fail("proposal_repair_selection_changed", 409)
+                    result["proposal_repair_ledger_sha256"] = digest(encode(witness))
                 decisions = normalize_proposals(inspect_docx(job.reviewed_docx, job.target_lang), view, proposals,
                                                 band_normalization_version=band_normalization_version,
                                                 emphasis_normalization_version=emphasis_normalization_version)

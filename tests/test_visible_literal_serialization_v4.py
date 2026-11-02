@@ -233,6 +233,11 @@ def test_saved_v3_ordinary_native_resume_and_offline_keep_old_request_bytes(tmp_
         value.pop("semantic_repair_policy", None)
         value.pop("semantic_literal_authority_policy", None)
         value.pop("semantic_enclosure_authority_policy", None)
+        value.pop("source_enclosure_identity_policy", None)
+        value.pop("semantic_target_ambiguity_policy", None)
+        value.pop("semantic_enclosure_sequence_repair_policy", None)
+        value.pop("primary_page_evidence_policy", None)
+        value.pop("primary_literal_markup_policy", None)
         value["semantic_source_review_policy"] = policy.POLICY_V3
         return value
     monkeypatch.setattr(glue, "fresh_recipe", historical)

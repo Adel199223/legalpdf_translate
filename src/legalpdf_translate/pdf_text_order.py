@@ -7,6 +7,7 @@ import math
 import unicodedata
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
+from datetime import date
 from enum import Enum
 from pathlib import Path
 from typing import Iterable
@@ -156,6 +157,13 @@ def _line_text(line: dict) -> str:
 
 SOURCE_FIELD_POLICY = "baseline_label_value_v1"
 SOURCE_QUESTION_ROW_POLICY = "baseline_boolean_question_v1"
+PRIMARY_PAGE_EVIDENCE_POLICY = "source_page_occurrences_v1"
+
+
+def check_primary_page_evidence_policy(policy: str | None) -> None:
+    from .ordinary_source_acronyms import POLICY as acronym_policy
+    if policy is not None and (type(policy) is not str or policy not in {PRIMARY_PAGE_EVIDENCE_POLICY, acronym_policy}):
+        raise ValueError("Unknown primary page evidence policy.")
 
 
 def _field_label(text: str) -> bool:
@@ -177,6 +185,68 @@ def _horizontal_baseline(line: dict) -> float | None:
         return None
     ys = [p[1] for p in origins]
     return sum(ys) / len(ys) if max(ys) - min(ys) <= .1 else None
+
+
+_ISO_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+_FIELD_CLOCK = re.compile(r"(?<![\w:])(?:[01][0-9]|2[0-3]):[0-5][0-9]h?(?![\w:])")
+
+
+def _date_time_field(label: str, value: str) -> bool:
+    """Only weak barcode matches that are entirely explained by source dates."""
+    if not _field_label(label) or len(value) > 220 or not _FIELD_CLOCK.search(value):
+        return False
+    text = label + " " + value
+    if ("%*" in text or any(unicodedata.category(c) in {"Cc", "Cf", "Zl", "Zp"} for c in text)
+            or any(BARCODE_PATTERNS[index].search(text) for index in (0, 1, 3))):
+        return False
+    matches = [match.group() for match in BARCODE_PATTERNS[2].finditer(text)]
+    if not matches or any(not _ISO_DATE.fullmatch(token) for token in matches):
+        return False
+    try:
+        for token in matches:
+            date.fromisoformat(token)
+    except ValueError:
+        return False
+    remaining = _FIELD_CLOCK.sub("", _ISO_DATE.sub("", text))
+    return not any(c.isdecimal() for c in remaining)
+
+
+def _native_date_time_fields(page_dict: dict, page_width: float, page_height: float) -> set[tuple]:
+    """Identify intact, horizontal label/value blocks to keep in geometric body flow."""
+    fields = set()
+    for raw in page_dict.get("blocks", []):
+        lines = raw.get("lines", [])
+        if raw.get("type") != 0 or len(lines) != 2:
+            continue
+        if any(type(line.get("wmode")) is not int or line["wmode"] != 0
+               or not 1 <= len(line.get("spans", [])) <= 32 for line in lines):
+            continue
+        texts = [span.get("text") for line in lines for span in line["spans"]]
+        if any(type(text) is not str for text in texts) or sum(map(len, texts)) > 320:
+            continue
+        label, value = (_line_text(line) for line in lines)
+        if not _date_time_field(label, value):
+            continue
+        baselines = [_horizontal_baseline(line) for line in lines]
+        if None in baselines or abs(baselines[0] - baselines[1]) > .1:
+            continue
+        left, right = (line.get("bbox") for line in lines)
+        block = raw.get("bbox")
+        if any(type(box) not in (list, tuple) or len(box) != 4
+               or any(type(v) not in (int, float) or not math.isfinite(v) for v in box)
+               or not (0 <= box[0] < box[2] <= page_width and 0 <= box[1] < box[3] <= page_height)
+               for box in (left, right, block)):
+            continue
+        gap = right[0] - left[2]
+        overlap = min(left[3], right[3]) - max(left[1], right[1])
+        if (not 2 <= gap <= min(120, .25 * page_width) or abs(left[1] - right[1]) > .5
+                or overlap < .8 * min(left[3] - left[1], right[3] - right[1])):
+            continue
+        union = (left[0], min(left[1], right[1]), right[2], max(left[3], right[3]))
+        if any(abs(edge - bound) > .5 for edge, bound in zip(block, union)):
+            continue
+        fields.add((*block, label + "\n" + value))
+    return fields
 
 
 def _order_field_lines(lines: list[dict], page_width: float) -> list[tuple]:
@@ -325,7 +395,7 @@ def build_text_blocks_from_page_dict(page_dict: dict, *, source_field_policy: st
 
 
 def _classify_blocks(blocks: list[TextBlock], page_width: float, page_height: float,
-                     *, preserve_structure: bool = False) -> None:
+                     *, preserve_structure: bool = False, date_time_fields: set[tuple] | None = None) -> None:
     top_zone = page_height * TOP_ZONE_RATIO
     bottom_zone_start = page_height * (1.0 - BOTTOM_ZONE_RATIO)
     near_top = page_height * 0.30
@@ -346,7 +416,8 @@ def _classify_blocks(blocks: list[TextBlock], page_width: float, page_height: fl
         if footer_anchor and block.y1 >= bottom_zone_start:
             block.group = BlockGroup.FOOTER
             continue
-        if barcode_anchor and block.y0 <= near_top:
+        field_key = (block.x0, block.y0, block.x1, block.y1, block.text)
+        if barcode_anchor and block.y0 <= near_top and not (date_time_fields and field_key in date_time_fields):
             block.group = BlockGroup.BARCODE
             continue
         block.group = BlockGroup.BODY
@@ -378,6 +449,7 @@ def order_text_blocks_with_metadata(
     page_height: float,
     *,
     preserve_structure: bool = False,
+    date_time_fields: set[tuple] | None = None,
 ) -> tuple[str, dict[str, object]]:
     if not blocks:
         return (
@@ -393,7 +465,7 @@ def order_text_blocks_with_metadata(
             },
         )
     _classify_blocks(blocks, page_width=page_width, page_height=page_height,
-                     preserve_structure=preserve_structure)
+                     preserve_structure=preserve_structure, date_time_fields=date_time_fields)
     header = sorted((b for b in blocks if b.group == BlockGroup.HEADER), key=_sort_key)
     barcode = sorted((b for b in blocks if b.group == BlockGroup.BARCODE), key=_sort_key)
     body = [b for b in blocks if b.group == BlockGroup.BODY]
@@ -489,7 +561,9 @@ def _extract_tables(page, page_index: int) -> tuple[list[dict], list[str]]:
 
 def extract_ordered_page_text(pdf_path: Path, page_index: int, *, preserve_structure: bool = False,
                               source_field_policy: str | None = None,
-                              source_question_row_policy: str | None = None) -> OrderedPageText:
+                              source_question_row_policy: str | None = None,
+                              primary_page_evidence_policy: str | None = None) -> OrderedPageText:
+    check_primary_page_evidence_policy(primary_page_evidence_policy)
     if source_field_policy not in {None, SOURCE_FIELD_POLICY}:
         raise ValueError("Unknown source field policy.")
     if source_question_row_policy not in (None, SOURCE_QUESTION_ROW_POLICY):
@@ -538,6 +612,8 @@ def extract_ordered_page_text(pdf_path: Path, page_index: int, *, preserve_struc
                 page_width=page_width,
                 page_height=page_height,
                 preserve_structure=preserve_structure,
+                date_time_fields=(_native_date_time_fields(page_dict, page_width, page_height)
+                                  if primary_page_evidence_policy and not page.rotation else None),
             )
     except Exception:
         return OrderedPageText(

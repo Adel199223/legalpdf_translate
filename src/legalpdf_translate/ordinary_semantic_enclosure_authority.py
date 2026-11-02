@@ -12,6 +12,7 @@ import unicodedata
 
 from . import ordinary_semantic_literal_authority as literal
 from . import ordinary_semantic_review as review
+from . import ordinary_semantic_enclosure_identity as identity
 from .ar_source_fields import _view
 
 POLICY = "source_enclosure_authority_v1"
@@ -451,9 +452,11 @@ class ValidationContext:
     source_facts: tuple
     enclosure_facts: tuple
     obligations: tuple
+    identity_policy: str | None = None
 
 
-def project(pages, registry, cert):
+def project(pages, registry, cert, *, identity_policy=None):
+    identity.check_policy(identity_policy)
     if (cert.get("version") != CERTIFICATE or cert.get("policy") != POLICY
             or cert.get("registry_sha256") != literal._hash(review.audit._json(registry))
             or cert.get("assertion_status") != "fallible_source_reading_and_ownership"):
@@ -549,61 +552,113 @@ def project(pages, registry, cert):
         if page_obligations:
             obligations.append({"page": original.page_number, "complete_protected_sequence": values,
                 "occurrences": page_obligations})
-    return ValidationContext(tuple(projected), {"version": CONTEXT,
+    context_evidence = {"version": CONTEXT,
         "certificate_sha256": literal._hash(review.audit._json(cert)), "pages": evidence,
-        "enclosure_obligations": obligations}, base.source_facts if base else (), tuple(facts), tuple(obligations))
+        "enclosure_obligations": obligations}
+    if identity_policy is not None:
+        context_evidence["source_enclosure_identity"] = identity.descriptor()
+    return ValidationContext(tuple(projected), context_evidence, base.source_facts if base else (),
+        tuple(facts), tuple(obligations), identity_policy)
 
 
-def _check(texts, context):
+def _identity_context(context, policy):
+    identity.check_policy(policy)
+    if (context.identity_policy != policy
+            or ("source_enclosure_identity" in context.evidence) != (policy is not None)
+            or policy is not None and context.evidence["source_enclosure_identity"] != identity.descriptor()):
+        _fail("identity_context")
+
+
+def _check(texts, context, *, identity_policy=None, pages=None, work=None):
+    _identity_context(context,identity_policy)
+    prepared=[]
     for page in context.obligations:
-        visible, tokens = _candidate_tokens(texts[page["page"]])
-        shapes = _shapes(visible,tokens)
-        values = [t[2] for t in tokens]
-        if values != page["complete_protected_sequence"]:
+        visible,tokens=_candidate_tokens(texts[page["page"]])
+        prepared.append((page,visible,tokens,[t[2] for t in tokens]))
+    additive=identity_policy is not None and any(values!=page["complete_protected_sequence"]
+        for page,_,_,values in prepared)
+    originals={p.page_number:p for p in pages or ()}
+    projected={p.page_number:p for p in context.projected_pages}
+    additions=identity.AdditionBudget()
+    if additive:
+        if any(page["page"] not in originals for page,_,_,_ in prepared):
+            _fail("identity_context")
+        (work or identity.WorkBudget()).charge(
+            [originals[page["page"]].primary_text for page,_,_,_ in prepared],
+            [projected[page["page"]].primary_text for page,_,_,_ in prepared],
+            [texts[page["page"]] for page,_,_,_ in prepared])
+    for page,visible,tokens,values in prepared:
+        # Analyze the FULL candidate stack before mapping any OLD occurrence.
+        shapes=_shapes(visible,tokens)
+        expected=page["complete_protected_sequence"]
+        if values==expected:
+            mapping=list(range(len(tokens)))
+        elif additive:
+            _,old_tokens=_tokens(originals[page["page"]].primary_text)
+            try:
+                mapping=additions.mapping(tokens,expected,[t[2] for t in old_tokens])
+            except review.SemanticAuditError as exc:
+                if exc.code=="enclosure_identity_old_sequence":
+                    _fail("final_sequence_mismatch")
+                raise
+        else:
             _fail("final_sequence_mismatch")
-        signatures = _signatures(values)
-        counts = Counter(signatures)
+        # Uniqueness is always established on the immutable OLD sequence.
+        signatures=_signatures(expected);counts=Counter(signatures)
         for old in page["occurrences"]:
-            signature = tuple(tuple(v) for v in old["signature"])
-            if counts[signature] != 1:
+            signature=tuple(tuple(v) for v in old["signature"])
+            if counts[signature]!=1:
                 _fail("final_neighborhood_mismatch")
-            index = signatures.index(signature)
-            if shapes[index] != old["enclosure"]:
+            index=mapping[signatures.index(signature)]
+            if shapes[index]!=old["enclosure"]:
                 _fail("final_enclosure_mismatch")
 
 
-def validate(raw, pages, inventory, recipe, context=None):
+def validate(raw, pages, inventory, recipe, context=None, *, identity_policy=None):
+    identity.check_policy(identity_policy)
+    work=identity.WorkBudget()
     if context is not None:
-        data = literal.parse_correction(raw, pages, inventory)
-        _check({p.page_number: p.primary_text if r["status"] == "no_change" else r["corrected_text"]
-            for p,r in zip(pages,data["pages"])}, context)
-    selected, decisions, data = literal.validate(raw, pages, inventory, recipe, context)
+        data=literal.parse_correction(raw,pages,inventory)
+        _check({p.page_number:p.primary_text if r["status"]=="no_change" else r["corrected_text"]
+            for p,r in zip(pages,data["pages"])},context,identity_policy=identity_policy,pages=pages,work=work)
+    selected,decisions,data=literal.validate(raw,pages,inventory,recipe,context)
     if context is not None:
-        _check(selected, context)
-    return selected, decisions, data
+        _check(selected,context,identity_policy=identity_policy,pages=pages,work=work)
+    return selected,decisions,data
 
 
 check_replacement_eligibility = literal.check_replacement_eligibility
 
 
-def check_initial_sequence_replacement_eligibility(raw, pages, inventory, registry, cert, context):
+def check_initial_sequence_replacement_eligibility(raw, pages, inventory, registry, cert, context, *, identity_policy=None):
     """Reject an initial proposal whose only sequence errors are certified slots.
 
     This proves eligibility for the existing replacement, never source ownership
     or acceptance. Final validation still requires the exact projected sequence.
     """
-    if context != project(pages,registry,cert) or cert["literal_certificate"] is None:
+    identity.check_policy(identity_policy)
+    if context != project(pages,registry,cert,identity_policy=identity_policy) or cert["literal_certificate"] is None:
         _fail("initial_sequence_replacement_ineligible")
     changes = cert["literal_certificate"]["changes"]
     old_rows = [c["old_occurrence"] for c in changes]
     readings = {c["old_occurrence"]["occurrence_id"]:c["exact_reading"] for c in changes}
     data = literal.parse_correction(raw,pages,inventory)
     mismatches = 0
+    work=identity.WorkBudget();additions=identity.AdditionBudget();charged=False
     for original,effective,row in zip(pages,context.projected_pages,data["pages"]):
         text = original.primary_text if row["status"] == "no_change" else row["corrected_text"]
         _,old_tokens = _tokens(original.primary_text)
         _,initial_tokens = _candidate_tokens(text)
         _,projected_tokens = _tokens(effective.primary_text)
+        if identity_policy is not None and len(initial_tokens)!=len(projected_tokens):
+            if not charged:
+                work.charge([p.primary_text for p in pages],[p.primary_text for p in context.projected_pages],
+                    [p.primary_text if r["status"]=="no_change" else r["corrected_text"] for p,r in zip(pages,data["pages"])])
+                charged=True
+            # Only already proven projected values survive. Wrong replacement
+            # values plus additions cannot be guessed into a certified slot.
+            indices=additions.mapping(initial_tokens,[t[2] for t in projected_tokens],[t[2] for t in old_tokens])
+            initial_tokens=[initial_tokens[i] for i in indices]
         if not len(old_tokens) == len(initial_tokens) == len(projected_tokens):
             _fail("initial_sequence_replacement_ineligible")
         initial = _carry_alignment(original,old_tokens,initial_tokens,old_rows)
@@ -634,3 +689,21 @@ def effective_diagnostic(raw, pages, inventory, recipe, context):
             return None
         raise
     return result
+
+
+def replacement_instructions(identity_policy=None):
+    identity.check_policy(identity_policy)
+    if identity_policy is None:
+        return REPLACEMENT_INSTRUCTIONS
+    return literal.REPLACEMENT_INSTRUCTIONS + """
+Apply source_enclosure_observations only to their exact OLD protected occurrences.
+Preserve all projected old values, counts and order and every certified old pair
+or absence at its actual occurrence. A bounded distinct source-supported addition
+receives no certificate authority and must independently agree with originals.
+Never reuse a value from the SAME PAGE's original or projected old sets as an
+added occurrence, including a value retired there by a certified reading. New-only
+values may repeat within or across pages, subject to bounds and source truth.
+Keep unrelated commitments.
+no_change retains the ACTUAL ORIGINAL primary page, never the projected baseline.
+The effective quality diagnostic remains untrusted and cannot license punctuation.
+"""

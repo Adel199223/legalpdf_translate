@@ -96,10 +96,12 @@ def test_fresh_automatic_clock_download_and_binding_keep_warning_and_review_gate
         before=protected(operation(layout,pointer))
         fp=auto.frozen_automatic_layout_policy().split(':',1)[1]
         for bad_fp,bad in [(fp,{k:v for k,v in evidence.items() if k!='clock_direction_version'}),
-            (fp,{**evidence,'clock_direction_version':None}),(fp,{**evidence,'clock_direction_version':'other'}),
-            (auto._body_columns_v3_policy().split(':',1)[1],evidence),('f'*64,evidence)]:
+            (fp,{**evidence,'clock_direction_version':None}),(fp,{**evidence,'clock_direction_version':'other'})]:
             with pytest.raises(SavedDocxLayoutServiceError,match='ordinary_source_(clock|folio)_direction_changed'):
                 layout.service.saved.attach_ordinary_binding(view['review_id'],raw_map,(1,),bad_fp,bad,expected_generation=view['generation'])
+        for bad_fp in [auto._body_columns_v3_policy().split(':',1)[1],'f'*64]:
+            with pytest.raises(SavedDocxLayoutServiceError,match='ordinary_layout_proposal_repair_policy_changed$'):
+                layout.service.saved.attach_ordinary_binding(view['review_id'],raw_map,(1,),bad_fp,evidence,expected_generation=view['generation'])
         assert protected(operation(layout,pointer))==before and len(requests)==1 and len(sdk.semantic_requests)==3
 
 

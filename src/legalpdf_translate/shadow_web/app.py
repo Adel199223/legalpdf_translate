@@ -1578,14 +1578,14 @@ def create_shadow_app(
                 recovery=translation_jobs.automatic_layout_recovery_active(job_id))
 
         def _recover_automatic_ordinary_layout(job_id: str, old_policy: str):
-            from legalpdf_translate.ordinary_auto_layout import frozen_automatic_layout_policy, run_automatic_layout
+            from legalpdf_translate.ordinary_auto_layout import manual_automatic_layout_policy, run_automatic_layout
             job = translation_jobs.get_job(job_id)
             if not job:
                 raise ValueError("ordinary_auto_layout_job_unavailable")
             manager = ordinary_layouts.manager_for_context(
                 shadow_context, job["runtime_mode"], job["workspace_id"])
             return run_automatic_layout(manager, ordinary_layouts._accounting, job_id,
-                frozen_automatic_layout_policy(),
+                manual_automatic_layout_policy(),
                 cancel_requested=translation_jobs.automatic_layout_cancel_requested,
                 begin_publication=translation_jobs.begin_automatic_layout_publication,
                 recovery_old_policy=old_policy)

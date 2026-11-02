@@ -25,6 +25,13 @@ from tests.test_ordinary_auto_layout_workflow import _app, _proposal, _source, _
 
 
 @pytest.fixture(autouse=True)
+def historical_v10_recovery_origin(monkeypatch):
+    """Existing manual recovery contract; V11 failures explicitly cannot Recover."""
+    from legalpdf_translate import ordinary_auto_layout as automatic
+    monkeypatch.setattr(automatic, "frozen_automatic_layout_policy", automatic._protected_folio_bridges_v10_policy)
+
+
+@pytest.fixture(autouse=True)
 def offline(monkeypatch):
     monkeypatch.delenv("LEGALPDF_TRANSLATION_PROTOCOL", raising=False)
     monkeypatch.setattr(workflow_module, "load_environment", lambda: None)

@@ -164,9 +164,10 @@ def test_closed_writer_multiline_context_preserves_old_recipe_and_records_whole_
 def test_new_policy_retains_exact_terminal_v1_capabilities_and_rejects_capability_forgery():
     from legalpdf_translate import ordinary_auto_layout as auto
     from legalpdf_translate.ordinary_auto_layout_artifacts import _terminal_source_layout_context
-    old=auto._terminal_source_layout_policy();new=auto.frozen_automatic_layout_policy()
+    old=auto._terminal_source_layout_policy();new=auto._terminal_closing_group_policy()
     assert old=='source_image_unreviewed_v1:98a25bdde6fa1f5b950c3b073653a5fc634fdf6248f4015fa9d13ddfae039099'
     assert new==auto._terminal_closing_group_policy() and new!=old
+    assert auto._in_body_terminal_closing_v8_policy()=='source_image_unreviewed_v1:e94583acb61d29114e653489cef5be0685dbd640ca8190a8faa70c4b1a6d48fc'
     assert old in auto._source_folio_policies() and old in auto._metadata_normalization_policies()
     assert auto._terminal_source_layout_versions(old.split(':')[1])=={'source_footer_placement_version':'terminal_body_flow_v1','source_spacing_version':'baseline_metadata_heading_spacing_v1'}
     evidence={'source_evidence':{},'policy_fingerprint':new.split(':')[1],**auto._terminal_source_layout_versions(new.split(':')[1])}

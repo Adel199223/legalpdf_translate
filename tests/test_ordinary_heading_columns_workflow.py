@@ -85,6 +85,8 @@ def install_heading_proposals(monkeypatch):
 
 
 def test_all_three_retained_successor_preserves_strict_history_costs_clock_and_review_gates(tmp_path,monkeypatch):
+    monkeypatch.setattr(auto,'frozen_automatic_layout_policy',auto._heading_columns_v4_policy)
+    monkeypatch.setattr(auto,'manual_automatic_layout_policy',auto._heading_columns_v4_policy)
     install_heading_proposals(monkeypatch);install_fictional_split_assembly(monkeypatch)
     source,output=tmp_path/'source.pdf',tmp_path/'output';output.mkdir();flow._source(source,('digital',)*3)
     app,jobs,sdk,requests=flow._app(tmp_path,monkeypatch,(LINES,)*3,(1,2,3));scope='?mode=shadow&workspace=fictional'
@@ -102,6 +104,7 @@ def test_all_three_retained_successor_preserves_strict_history_costs_clock_and_r
         old_cost=Decimal(str(_read(original/'accounting_summary.json')['cost_usd']))
         with monkeypatch.context() as old_clock:
             old_clock.setattr(auto,'frozen_automatic_layout_policy',auto._clock_direction_policy)
+            old_clock.setattr(auto,'manual_automatic_layout_policy',auto._clock_direction_policy)
             assert client.post(f'/api/translation/jobs/{job_id}/layout/recover'+scope).status_code==200
             second=flow._wait(jobs,job_id)
         assert second['result']['automatic_layout']['status']=='raw_fallback'

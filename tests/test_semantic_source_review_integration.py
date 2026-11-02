@@ -11,7 +11,7 @@ from legalpdf_translate.workflow import TranslationWorkflow
 from tests.test_workflow_semantic_audit_integration import offline
 from tests.test_workflow_semantic_review_integration import saved_recipe, setup_review, without_repair_policy
 
-KEY, POLICY = "semantic_source_review_policy", "source_commitment_visual_v5"
+KEY, POLICY = "semantic_source_review_policy", "source_commitment_visual_v9"
 
 
 def test_fresh_saved_v3_policy_and_historical_absence_do_not_mutate_settings(tmp_path):

@@ -296,7 +296,8 @@ def bind_raw_page_map(raw_docx_bytes: bytes, raw_source_map: dict, *, source_pdf
 
 def build_unreviewed_candidate(raw_docx_bytes: bytes, raw_snapshot: RawOrdinarySnapshot,
                                page_frames: list, decisions: dict, *,
-                               proposal_evidence: dict, source_pdf_bytes: bytes | None = None) -> AutoCandidateArtifact:
+                               proposal_evidence: dict, source_pdf_bytes: bytes | None = None,
+                               policy_fingerprint: str | None = None) -> AutoCandidateArtifact:
     """Build detached editable bytes; never turn a model proposal into review."""
     if (type(raw_snapshot) is not RawOrdinarySnapshot or _sha(raw_docx_bytes) != raw_snapshot.raw_docx_sha256
             or raw_snapshot.saved_snapshot is None or type(proposal_evidence) is not dict
@@ -305,6 +306,11 @@ def build_unreviewed_candidate(raw_docx_bytes: bytes, raw_snapshot: RawOrdinaryS
             or proposal_evidence.get("source_character_coverage") not in {None, "not_proven"}):
         _fail("invalid_candidate_binding")
     checked = _checked_automatic_decisions(raw_snapshot, page_frames, decisions)
+    from .ordinary_layout_reproposal import verify_evidence
+    verify_evidence(proposal_evidence, snapshot=raw_snapshot.saved_snapshot, frames=page_frames,
+        source_pdf=source_pdf_bytes, page_groups=raw_snapshot.page_groups,
+        selected_pages=raw_snapshot.selected_pages, decisions=checked,
+        expected_policy_fingerprint=policy_fingerprint)
     proof_context = _local_folio_context(proposal_evidence, source_pdf_bytes, page_frames, raw_snapshot)
     rendered = build_unreviewed_docx(raw_docx_bytes, raw_snapshot.saved_snapshot,
                                      page_frames, checked, ordinary_context={"selected_pages":list(raw_snapshot.selected_pages),
@@ -324,13 +330,15 @@ def build_unreviewed_candidate(raw_docx_bytes: bytes, raw_snapshot: RawOrdinaryS
                                      receipt["docx_sha256"], receipt["source_map_sha256"],
                                      _sha(receipt_bytes))
     verify_unreviewed_candidate(raw_docx_bytes, raw_snapshot, page_frames, checked, artifact,
-                                proposal_evidence=proposal_evidence, source_pdf_bytes=source_pdf_bytes)
+                                proposal_evidence=proposal_evidence, source_pdf_bytes=source_pdf_bytes,
+                                policy_fingerprint=policy_fingerprint)
     return artifact
 
 
 def verify_unreviewed_candidate(raw_docx_bytes: bytes, raw_snapshot: RawOrdinarySnapshot,
                                 page_frames: list, decisions: dict, artifact: AutoCandidateArtifact,
-                                *, proposal_evidence: dict, source_pdf_bytes: bytes | None = None) -> None:
+                                *, proposal_evidence: dict, source_pdf_bytes: bytes | None = None,
+                                policy_fingerprint: str | None = None) -> None:
     if (type(artifact) is not AutoCandidateArtifact
             or _sha(raw_docx_bytes) != raw_snapshot.raw_docx_sha256
             or _sha(artifact.docx_bytes) != artifact.docx_sha256
@@ -338,6 +346,11 @@ def verify_unreviewed_candidate(raw_docx_bytes: bytes, raw_snapshot: RawOrdinary
             or _sha(artifact.receipt_bytes) != artifact.receipt_sha256):
         _fail("candidate_changed")
     checked = _checked_automatic_decisions(raw_snapshot, page_frames, decisions)
+    from .ordinary_layout_reproposal import verify_evidence
+    verify_evidence(proposal_evidence, snapshot=raw_snapshot.saved_snapshot, frames=page_frames,
+        source_pdf=source_pdf_bytes, page_groups=raw_snapshot.page_groups,
+        selected_pages=raw_snapshot.selected_pages, decisions=checked,
+        expected_policy_fingerprint=policy_fingerprint)
     proof_context = _local_folio_context(proposal_evidence, source_pdf_bytes, page_frames, raw_snapshot)
     source_map = artifact.source_map
     base_map = {k: deepcopy(v) for k, v in source_map.items() if k not in _MAP_EXTENSIONS}
@@ -371,6 +384,13 @@ def verify_unreviewed_candidate(raw_docx_bytes: bytes, raw_snapshot: RawOrdinary
 
 def _folio_direction_context(evidence):
     key = "source_folio_direction_version"
+    from .ordinary_auto_layout import _source_folio_direction_version
+    expected = (_source_folio_direction_version(evidence.get("policy_fingerprint"))
+                if "source_evidence" in evidence else None)
+    if expected == "numeric_run_ltr_v4":
+        if evidence.get(key) != expected:
+            _fail("source_folio_direction_version")
+        return {key: expected}
     if key not in evidence:
         return {}
     if evidence[key] != "numeric_run_ltr_v3" or "source_evidence" not in evidence:
@@ -395,8 +415,12 @@ def _local_folio_context(evidence, source_pdf, frames, snapshot):
         return {}
     if evidence.get(RECIPE_KEY) != VERSION or KEY not in evidence:
         _fail("source_folio_proof_changed")
-    return {KEY: verify_proof(evidence[KEY], source_pdf, frames, snapshot.selected_pages,
-                             snapshot.source_pdf_sha256)}
+    proof=verify_proof(evidence[KEY],source_pdf,frames,snapshot.selected_pages,snapshot.source_pdf_sha256)
+    from .ordinary_source_layout import INLINE_FOLIO_DIRECTION_V3
+    if evidence.get("source_folio_inline_direction_version")==INLINE_FOLIO_DIRECTION_V3:
+        from .ordinary_source_folio_proof import CONTACT_KEY, native_contact_scope
+        return {KEY:proof,CONTACT_KEY:native_contact_scope(source_pdf,proof)}
+    return {KEY:proof}
 
 
 def _inline_folio_direction_context(evidence):
@@ -416,7 +440,8 @@ def _terminal_source_layout_context(evidence):
     from .ordinary_auto_layout import _terminal_source_layout_versions
     expected = (_terminal_source_layout_versions(evidence.get("policy_fingerprint"))
                 if "source_evidence" in evidence else {})
-    for key in ("source_footer_placement_version", "source_spacing_version", "source_closing_group_version"):
+    for key in ("source_footer_placement_version", "source_spacing_version", "source_closing_group_version",
+                "source_in_flow_folio_direction_version", "source_labeled_folio_direction_version"):
         if (key in evidence) != (key in expected) or evidence.get(key) != expected.get(key):
             _fail("source_terminal_policy_version")
     return expected

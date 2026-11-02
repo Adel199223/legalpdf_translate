@@ -58,6 +58,8 @@ def test_terminal_folio_recipe_survives_catalog_resume(tmp_path, monkeypatch):
     scope = "?mode=shadow&workspace=fictional"
     with TestClient(app) as client:
         with monkeypatch.context() as old:
+            from legalpdf_translate import ordinary_auto_layout as automatic
+            old.setattr(automatic, "frozen_automatic_layout_policy", automatic._terminal_closing_group_policy)
             old.setattr(layout_accounting_module, "layout_accounting_policy", lambda: old_catalog)
             old.setattr(layout_accounting_module, "PAGE_CEILING", Decimal("0.812"))
             old.setattr(layout_accounting_module.OrdinaryLayoutAccounting, "policy",

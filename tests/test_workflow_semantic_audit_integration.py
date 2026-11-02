@@ -102,7 +102,14 @@ def saved_v2_protocol(monkeypatch):
         recipe.pop("semantic_repair_policy", None)
         recipe.pop("semantic_literal_authority_policy", None)
         recipe.pop("semantic_enclosure_authority_policy", None)
+        recipe.pop("source_enclosure_identity_policy", None)
+        recipe.pop("semantic_target_ambiguity_policy", None)
+        recipe.pop("semantic_enclosure_sequence_repair_policy", None)
+        recipe.pop("primary_page_evidence_policy", None)
+        recipe.pop("primary_literal_markup_policy", None)
         recipe.pop("ocr_text_transport_policy", None)
+        # This explicitly pre-v3 recipe cannot own the later local join key.
+        recipe.pop("source_inline_address_join_policy", None)
         return recipe
     monkeypatch.setattr(integration, "fresh_recipe", v2)
 

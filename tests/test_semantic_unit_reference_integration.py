@@ -145,7 +145,7 @@ def test_genuine_old_v3_recipe_context_source_requests_raw_and_manifest_replay_e
     source=tmp_path/'source_stub.txt';source.write_bytes((FIXTURE/'source_stub.txt').read_bytes())
     settings=inputs['settings'];saved=settings['ordinary_semantic_audit_recipe']
     assert all(key not in ordinary_semantic_audit_recipe(settings) for key in POLICIES)
-    config=SimpleNamespace(pdf_path=source,target_lang=TargetLang.AR,image_mode=ImageMode.OFF,
+    config=SimpleNamespace(pdf_path=source,target_lang=TargetLang.AR,image_mode=ImageMode.OFF,strip_bidi_controls=True,
         ocr_engine=OcrEnginePolicy.LOCAL,ocr_api_provider=OcrApiProvider.OPENAI,
         effort=SimpleNamespace(value=saved['reasoning_effort']),effort_policy=SimpleNamespace(value=saved['effort_policy']))
     fresh=glue.fresh_recipe(config,saved['model'],settings['ordinary_auto_layout_policy'],context_text=inputs['context_text'],context_hash=inputs['context_hash'])
@@ -154,7 +154,7 @@ def test_genuine_old_v3_recipe_context_source_requests_raw_and_manifest_replay_e
     fresh.pop("semantic_source_review_policy")
     fresh.pop("semantic_page_coverage_policy")
     fresh.pop("semantic_review_model_policy")
-    assert fresh["primary_literal_packaging_version"] == "lossless_source_components_v2"
+    assert fresh["primary_literal_packaging_version"] == "lossless_source_components_v3"
     assert saved["primary_literal_packaging_version"] == "lossless_source_components_v1"
     # Compare the historical policy projection; the saved fixture is never upgraded.
     fresh["primary_literal_packaging_version"] = saved["primary_literal_packaging_version"]
@@ -165,9 +165,15 @@ def test_genuine_old_v3_recipe_context_source_requests_raw_and_manifest_replay_e
     glue.capture_context(state=state,run_dir=run_dir,context_text=inputs['context_text'],context_hash=inputs['context_hash'])
     glue.capture_source(state=state,run_dir=run_dir,**inputs['source_args'])
     pages,_,context=glue._pages(state=state,config=config,run_dir=run_dir,pages_dir=run_dir/'pages')
-    assert json.loads(json.dumps([asdict(p) for p in pages]))==inputs['engine_pages']
+    page_descriptors = json.loads(json.dumps([asdict(page) for page in pages]))
+    for descriptor in page_descriptors:
+        assert descriptor.pop("source_acronyms") == []
+    assert page_descriptors == inputs["engine_pages"]
     recipe=SemanticAuditRecipe(**{f.name:saved[f.name] for f in fields(SemanticAuditRecipe) if f.name in saved},context_text=context)
-    assert asdict(recipe)==inputs['engine_recipe']
+    historical_descriptor=asdict(recipe)
+    assert 'source_inline_address_join_policy' not in saved
+    assert historical_descriptor.pop('source_inline_address_join_policy') is None
+    assert historical_descriptor==inputs['engine_recipe']
     loaded=engine.load_semantic_review(pages=pages,recipe=recipe,pdf_sha256=inputs['pdf_sha256'],evidence_dir=run_dir/'semantic_audit')
     assert loaded.reused and loaded.binding_sha256==receipt['binding_sha256']
     assert before=={p.relative_to(run_dir).as_posix():p.read_bytes() for p in run_dir.rglob('*') if p.is_file()}

@@ -28,6 +28,7 @@ gui_a = Analysis(
     binaries=[],
     datas=[
         (str(project_root / "resources"), "resources"),
+        (str(project_root / "src" / "legalpdf_translate" / "ordinary_windows_ocr_worker.ps1"), "legalpdf_translate"),
     ],
     hiddenimports=[
         "legalpdf_translate.qt_app",

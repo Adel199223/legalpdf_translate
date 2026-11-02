@@ -39,7 +39,7 @@ def test_real_ordinary_entry_new_witness_needs_no_retry_and_replays_without_disp
     result = flow.run(config)
     assert result.success, result.error
     assert len(sdk.requests) == 4
-    assert flow._last_state.settings["ordinary_semantic_audit_recipe"][KEY] == V2
+    assert flow._last_state.settings["ordinary_semantic_audit_recipe"][KEY] == "lossless_source_components_v3"
     selected = (result.run_dir / "pages/page_0001.txt").read_text(encoding="utf-8").strip()
     assert visible_text(selected) == visible_text(primary)
     assert token(first) in selected and token(POSTAL) in selected and token("R") in selected
@@ -51,7 +51,7 @@ def test_real_ordinary_entry_new_witness_needs_no_retry_and_replays_without_disp
     assert len(sdk.requests) == 4 and all(p.read_bytes() == b for p, b in protected.items())
 
 
-@pytest.mark.parametrize("policy", [None, V1, V2])
+@pytest.mark.parametrize("policy", [None, V1, V2, "lossless_source_components_v3"])
 def test_saved_policy_controls_retry_kwargs_and_exact_prompt_without_upgrading_history(tmp_path, monkeypatch, policy):
     fresh = glue.fresh_recipe
     def select(*args, **kwargs):
@@ -79,9 +79,9 @@ def test_saved_policy_controls_retry_kwargs_and_exact_prompt_without_upgrading_h
     assert result.success, result.error
     assert seen[0].get("literal_wrapper_policy") == policy
     assert ("literal_wrapper_policy" in seen[0]) is (policy is not None)
-    assert ("literal_wrapper_policy" in seen[1]) is (policy == V2)
-    if policy == V2:
-        assert seen[1]["literal_wrapper_policy"] == V2
+    assert ("literal_wrapper_policy" in seen[1]) is (policy in (V2, "lossless_source_components_v3"))
+    if policy in (V2, "lossless_source_components_v3"):
+        assert seen[1]["literal_wrapper_policy"] == policy
     saved = flow._last_state.settings["ordinary_semantic_audit_recipe"]
     assert saved.get(KEY) == policy and (KEY in saved) is (policy is not None)
     requests = len(sdk.requests)

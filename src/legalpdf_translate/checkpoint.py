@@ -110,7 +110,8 @@ def ordinary_semantic_audit_recipe(settings: dict) -> dict | None:
             for optional in ("primary_literal_packaging_version", "semantic_unit_reference_policy", "source_question_row_policy",
                              "source_inventory_max_output_tokens", "semantic_source_review_policy",
                              "semantic_page_coverage_policy", "semantic_review_model_policy", "semantic_repair_policy",
-                             "semantic_literal_authority_policy", "semantic_enclosure_authority_policy", "ocr_text_transport_policy"):
+                             "semantic_literal_authority_policy", "semantic_enclosure_authority_policy", "source_enclosure_identity_policy", "semantic_target_ambiguity_policy", "semantic_enclosure_sequence_repair_policy", "ocr_text_transport_policy",
+                             "source_inline_address_join_policy", "primary_literal_markup_policy", "primary_page_evidence_policy", "ocr_visual_source_policy", "source_postal_band_policy"):
                 if optional in recipe:
                     keys.add(optional)
     if (type(recipe) is not dict or set(recipe) != keys
@@ -139,15 +140,38 @@ def ordinary_semantic_audit_recipe(settings: dict) -> dict | None:
             and recipe["review_protocol"] != "source_inventory_correct_verify_v1"):
         raise SemanticAuditRecipeError("semantic_audit_invalid_review_protocol")
     if ("primary_literal_packaging_version" in recipe
-            and recipe["primary_literal_packaging_version"] not in ("lossless_source_components_v1", "lossless_source_components_v2")):
+            and recipe["primary_literal_packaging_version"] not in ("lossless_source_components_v1", "lossless_source_components_v2", "lossless_source_components_v3")):
         raise SemanticAuditRecipeError("semantic_audit_invalid_primary_literal_packaging")
+    if ("source_inline_address_join_policy" in recipe
+            and recipe["source_inline_address_join_policy"] not in ("source_locative_house_join_v1", "source_locative_house_join_v2", "source_locative_house_join_v3")):
+        raise SemanticAuditRecipeError("semantic_audit_invalid_source_inline_address_join_policy")
     for key, value in (("semantic_unit_reference_policy", "caller_unit_refs_v1"),
                        ("source_question_row_policy", "baseline_boolean_question_v1")):
         if key in recipe and recipe[key] != value:
             raise SemanticAuditRecipeError("semantic_audit_invalid_" + key)
+    if "ocr_visual_source_policy" in recipe:
+        from .ordinary_ocr_visual_source import SUPPORTED_POLICIES
+        if (recipe["ocr_visual_source_policy"] not in SUPPORTED_POLICIES or "ocr_text_transport_policy" not in recipe
+                or "primary_literal_markup_policy" not in recipe or recipe["configured_image_mode"] == "off"):
+            raise SemanticAuditRecipeError("semantic_audit_invalid_ocr_visual_source_policy")
+    if "source_postal_band_policy" in recipe:
+        from .ordinary_source_postal_band import POLICY
+        if (recipe["source_postal_band_policy"] != POLICY or "primary_literal_markup_policy" not in recipe
+                or recipe["configured_image_mode"] == "off"):
+            raise SemanticAuditRecipeError("semantic_audit_invalid_postal_band_policy")
+    if "primary_page_evidence_policy" in recipe:
+        from .pdf_text_order import PRIMARY_PAGE_EVIDENCE_POLICY
+
+        from .ordinary_source_acronyms import POLICY as acronym_policy
+        if (type(recipe["primary_page_evidence_policy"]) is not str
+                or recipe["primary_page_evidence_policy"] not in {PRIMARY_PAGE_EVIDENCE_POLICY, acronym_policy}
+                or (recipe["primary_page_evidence_policy"] == acronym_policy and "primary_literal_markup_policy" not in recipe)
+                or recipe.get("source_question_row_policy") != "baseline_boolean_question_v1"
+                or recipe.get("primary_literal_packaging_version") != "lossless_source_components_v3"):
+            raise SemanticAuditRecipeError("semantic_audit_invalid_primary_page_evidence_policy")
     if ("semantic_source_review_policy" in recipe
             and (type(recipe["semantic_source_review_policy"]) is not str
-                 or recipe["semantic_source_review_policy"] not in ("source_commitment_visual_v1", "source_commitment_visual_v2", "source_commitment_visual_v3", "source_commitment_visual_v4", "source_commitment_visual_v5")
+                 or recipe["semantic_source_review_policy"] not in ("source_commitment_visual_v1", "source_commitment_visual_v2", "source_commitment_visual_v3", "source_commitment_visual_v4", "source_commitment_visual_v5", "source_commitment_visual_v6", "source_commitment_visual_v7", "source_commitment_visual_v8", "source_commitment_visual_v9")
                  or recipe.get("semantic_unit_reference_policy") != "caller_unit_refs_v1")):
         raise SemanticAuditRecipeError("semantic_audit_invalid_semantic_source_review_policy")
     if "semantic_review_model_policy" in recipe:
@@ -159,7 +183,9 @@ def ordinary_semantic_audit_recipe(settings: dict) -> dict | None:
     if "semantic_repair_policy" in recipe:
         if (type(recipe["semantic_repair_policy"]) is not str
                 or recipe["semantic_repair_policy"] not in ("source_grounded_repair_once_v1", "source_grounded_repair_once_v2", "source_grounded_repair_once_v3", "source_grounded_repair_once_v4")
-                or recipe.get("semantic_source_review_policy") != "source_commitment_visual_v5"
+                or recipe.get("semantic_source_review_policy") not in ("source_commitment_visual_v5", "source_commitment_visual_v6", "source_commitment_visual_v7", "source_commitment_visual_v8", "source_commitment_visual_v9")
+                 or (recipe.get("semantic_source_review_policy") in {"source_commitment_visual_v6", "source_commitment_visual_v7", "source_commitment_visual_v8", "source_commitment_visual_v9"}
+                     and recipe.get("semantic_repair_policy") != "source_grounded_repair_once_v4")
                 or recipe.get("semantic_unit_reference_policy") != "caller_unit_refs_v1"
                 or recipe.get("semantic_page_coverage_policy") != "complete_selected_pages_v1"
                 or recipe.get("source_inventory_max_output_tokens") != 64000
@@ -175,6 +201,41 @@ def ordinary_semantic_audit_recipe(settings: dict) -> dict | None:
             or ("semantic_enclosure_authority_policy" in recipe
                 and recipe.get("semantic_enclosure_authority_policy") != "source_enclosure_authority_v1")):
         raise SemanticAuditRecipeError("semantic_audit_invalid_enclosure_authority_policy")
+    if "source_enclosure_identity_policy" in recipe:
+        if (recipe.get("source_enclosure_identity_policy") != "bounded_distinct_additions_v1"
+                or recipe.get("version") != "ordinary_semantic_audit_v3"
+                or recipe.get("semantic_repair_policy") != "source_grounded_repair_once_v4"
+                or recipe.get("semantic_literal_authority_policy") != "source_literal_authority_v1"
+                or recipe.get("semantic_enclosure_authority_policy") != "source_enclosure_authority_v1"):
+            raise SemanticAuditRecipeError("semantic_audit_invalid_enclosure_identity_policy")
+    if "semantic_enclosure_sequence_repair_policy" in recipe:
+        from . import ordinary_semantic_enclosure_sequence_repair as sequence_repair
+        if (type(recipe[sequence_repair.KEY]) is not str
+                or recipe[sequence_repair.KEY] != sequence_repair.POLICY
+                or recipe.get("version") != "ordinary_semantic_audit_v3"
+                or recipe.get("semantic_repair_policy") != "source_grounded_repair_once_v4"
+                or recipe.get("semantic_enclosure_authority_policy") != "source_enclosure_authority_v1"
+                or recipe.get("source_enclosure_identity_policy") != "bounded_distinct_additions_v1"):
+            raise SemanticAuditRecipeError("semantic_audit_invalid_enclosure_sequence_repair_policy")
+    if "semantic_target_ambiguity_policy" in recipe:
+        if (recipe.get("semantic_target_ambiguity_policy") != "initial_target_ambiguity_repair_v1"
+                or recipe.get("version") != "ordinary_semantic_audit_v3"
+                or recipe.get("semantic_repair_policy") != "source_grounded_repair_once_v4"
+                or recipe.get("semantic_source_review_policy") not in ("source_commitment_visual_v7", "source_commitment_visual_v8", "source_commitment_visual_v9")
+                or recipe.get("semantic_unit_reference_policy") != "caller_unit_refs_v1"
+                or recipe.get("semantic_page_coverage_policy") != "complete_selected_pages_v1"
+                or recipe.get("source_inventory_max_output_tokens") != 64000
+                or "semantic_review_model_policy" not in recipe):
+            raise SemanticAuditRecipeError("semantic_audit_invalid_target_ambiguity_policy")
+    if "primary_literal_markup_policy" in recipe:
+        from . import primary_literal_markup as markup
+        assembly = settings.get("primary_assembly_recipe")
+        if (recipe[markup.KEY] != markup.POLICY or type(recipe[markup.KEY]) is not str
+                or type(assembly) is not dict
+                or not markup.supported(recipe,
+                    strip_bidi_controls=settings.get("strip_bidi_controls"),
+                    assembly_version=assembly.get("version") if type(assembly) is dict else None)):
+            raise SemanticAuditRecipeError("semantic_audit_invalid_primary_literal_markup_policy")
     if "ocr_text_transport_policy" in recipe:
         if (recipe["ocr_text_transport_policy"] != "openai_ocr_text_envelope_v1"
                 or settings.get("ocr_engine") not in {"api", "local_then_api"}):
@@ -489,7 +550,7 @@ def load_run_state(path: Path) -> RunState | None:
         ordinary_semantic_audit_recipe(settings_obj)
         ordinary_semantic_audit_qualification(settings_obj)
         if "ordinary_semantic_audit_recipe" not in settings_obj and any(
-                (path.parent / name).exists() for name in ("semantic_source", "semantic_audit")):
+                (path.parent / name).exists() for name in ("semantic_source", "semantic_audit", "primary_markup")):
             raise SemanticAuditRecipeError("semantic_audit_recipe_missing")
         failure_context_obj = data.get("failure_context", {})
         failure_context = dict(failure_context_obj) if isinstance(failure_context_obj, dict) else {}

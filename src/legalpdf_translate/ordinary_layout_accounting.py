@@ -180,21 +180,45 @@ class OrdinaryLayoutAccounting:
             self._budgets[job.job_id] = budget
         return self.state(job)
 
-    def authorize_automatic(self, job, policy_fingerprint: str):
+    def authorize_automatic(self, job, policy_fingerprint: str, *, proposal_repair_policy=None):
         """Bound the fresh job's included layout stage without claiming user review."""
         ceiling = verified_page_ceiling()
         accountant, folder, cost = self._source(job)
+        extra = 0
+        if proposal_repair_policy is not None:
+            from .ordinary_layout_reproposal import extra_calls
+            from .ordinary_auto_layout import _proposal_repair_version
+            if _proposal_repair_version(policy_fingerprint) != proposal_repair_policy:
+                fail("proposal_repair_policy_changed", 409)
+            extra = extra_calls(len(job.selected_pages), proposal_repair_policy)
         if accountant.hard_budget:
             if accountant.budget_context is None:
                 fail("durable_accounting_required", 503)
+            if extra:
+                record = {"proposal_repair_policy": proposal_repair_policy,
+                    "automatic_policy_fingerprint": policy_fingerprint, "binding": dict(job.binding),
+                    "run_id": job.run_id, "job_id": job.job_id, "shared_cap_unchanged": True}
+                folder.mkdir(parents=True, exist_ok=True)
+                path = folder / "automatic_reproposal_authorization.json"
+                if path.exists():
+                    if decode(path.read_bytes()) != record:
+                        fail("budget_binding_changed", 409)
+                else:
+                    atomic_json(path, record)
             return self.state(job)
-        cap = cost + ceiling * len(job.selected_pages)
+        cap = cost + ceiling * (len(job.selected_pages) + extra)
         identity = {"job_id": job.job_id, "run_id": job.run_id, "binding": dict(job.binding),
             "original_accounting_identity": accountant.run_identity,
             "automatic_policy_fingerprint": policy_fingerprint}
         record = {"authorization_nonce": "automatic_source_layout_v1", "cap_usd": str(cap),
             "translation_cost_usd": str(cost), "binding": dict(job.binding), "identity": identity,
             "authorization_kind": "server_owned_fresh_job_ceiling"}
+        if extra:
+            identity["proposal_repair_policy"] = proposal_repair_policy
+            record.update(proposal_repair_policy=proposal_repair_policy,
+                max_native_calls=len(job.selected_pages) + extra,
+                authorization_nonce=("automatic_source_layout_reproposal_v2"
+                    if proposal_repair_policy == "ordinary_layout_proposal_repair_v2" else "automatic_source_layout_reproposal_v1"))
         with self._lock:
             receipt = folder / "authorization.json"
             if receipt.exists():
@@ -273,7 +297,19 @@ class OrdinaryLayoutAccounting:
         if budget is None or getattr(budget, "blocked", False):
             fail("budget_authorization_required", 409)
         ceiling = verified_page_ceiling()
-        return LayoutSuggestionPolicy(MODEL, str(ceiling), str(ceiling * len(job.selected_pages)))
+        extra = 0
+        receipt = folder / ("automatic_reproposal_authorization.json" if accountant.hard_budget else "authorization.json")
+        if receipt.is_file():
+            record = decode(receipt.read_bytes())
+            if "proposal_repair_policy" in record:
+                from .ordinary_layout_reproposal import extra_calls
+                from .ordinary_auto_layout import _proposal_repair_version
+                fingerprint = record.get("automatic_policy_fingerprint") if accountant.hard_budget else record.get("identity", {}).get("automatic_policy_fingerprint")
+                if (_proposal_repair_version(fingerprint) != record["proposal_repair_policy"]
+                        or record.get("binding") != dict(job.binding)):
+                    fail("budget_binding_changed", 409)
+                extra = extra_calls(len(job.selected_pages), record["proposal_repair_policy"])
+        return LayoutSuggestionPolicy(MODEL, str(ceiling), str(ceiling * (len(job.selected_pages) + extra)))
 
     def accountant(self, job, operation_nonce, operation_dir, policy):
         accountant, folder, _ = self._source(job)

@@ -265,6 +265,7 @@ def proposal_schema(page_number, ids, *, version=PROPOSAL_VERSION_V3):
 
 EMPHASIS_NORMALIZATION_V1 = "ordinary_optional_emphasis_normalization_v1"
 EMPHASIS_NORMALIZATION_V2 = "ordinary_optional_emphasis_normalization_v2"
+EMPHASIS_NORMALIZATION_V3 = "ordinary_optional_emphasis_normalization_v3"
 
 OPTIONAL_HINT_NORMALIZATION_V1 = "ordinary_optional_layout_hint_normalization_v1"
 OPTIONAL_HINT_NORMALIZATION_V2 = "ordinary_optional_layout_hint_normalization_v2"
@@ -276,6 +277,106 @@ BAND_NORMALIZATION_V2 = "ordinary_metadata_band_normalization_v2"
 BAND_NORMALIZATION_V3 = "ordinary_metadata_band_normalization_v3"
 BAND_NORMALIZATION_V4 = "ordinary_metadata_band_normalization_v4"
 BAND_NORMALIZATION_V5 = "ordinary_metadata_band_normalization_v5"
+BAND_NORMALIZATION_V6 = "ordinary_metadata_band_normalization_v6"
+BAND_NORMALIZATION_V7 = "ordinary_metadata_band_normalization_v7"
+BAND_NORMALIZATION_V8 = "ordinary_metadata_band_normalization_v8"
+RETAINED_TERMINAL_ASSOCIATIONS_V1 = "source_retained_terminal_footer_associations_v1"
+
+
+def _terminal_footer_membership(snapshot, proposal, ids, row):
+    """V7 target association only: one reversed two-ID plain terminal suffix."""
+    owned = row['paragraph_ids']
+    if row['kind'] != 'source_footer' or len(owned) != 2 or owned != ids[-2:][::-1] or row['bbox'][1] < .85:
+        return None
+    choices = proposal['paragraphs']
+    if [p.get('paragraph_id') for p in choices if type(p) is dict] != ids:
+        return None
+    by_id = {p['paragraph_id']:p for p in choices}
+    baseline = {p['id']:p for p in snapshot['paragraphs']}
+    if not any(by_id[i]['role'] == 'source_folio' for i in owned):
+        return None
+    try:
+        flat = [i for band in proposal['bands'] for i in _ids(band)]
+    except (KeyError,TypeError):
+        return None
+    if len(flat) != len(ids) or len(set(flat)) != len(ids) or set(flat) != set(ids):
+        return None
+    if any(p['paragraph_id'] in owned for p in proposal.get('paragraph_partitions', [])):
+        return None
+    for band in proposal['bands']:
+        if not set(_ids(band)).intersection(owned):
+            continue
+        if (set(band) != {'kind','groups'} or band['kind'] != 'flow'
+                or not band['groups'] or any(type(g) is not dict or set(g) != {'paragraph_ids','panel'}
+                or g['panel'] is not False or type(g['paragraph_ids']) is not list or not g['paragraph_ids'] for g in band['groups'])):
+            return None
+    for i in owned:
+        raw, choice = baseline[i], by_id[i]
+        box = choice.get('bbox')
+        if (choice['role'] not in {'body','source_folio'} or raw.get('has_page_break')
+                or raw.get('has_field') or raw.get('has_numbering') or 'numPr' in raw.get('ppr_xml','')
+                or not raw['text'].strip() or any(t['kind'] != 't' or any(
+                    unicodedata.category(c) in {'Cc','Cf'} and c not in '\u200e\u200f' for c in t['text']) for t in raw['tokens'])
+                or type(box) is not list or len(box) != 4
+                or any(type(v) not in {int,float} or not math.isfinite(v) or not 0 <= v <= 1 for v in box)
+                or not box[0] < box[2] or not box[1] < box[3]
+                or not (row['bbox'][0] <= box[0] < box[2] <= row['bbox'][2]
+                        and row['bbox'][1] <= box[1] < box[3] <= row['bbox'][3])):
+            return None
+    return ids[-2:]
+
+
+def retained_terminal_association(snapshot, proposal, ids, hint, *, proposal_sha256=None):
+    """Positive V8 pagination-only proof; never authority from rejection text."""
+    if (proposal.get('version') != PROPOSAL_VERSION_V3 or type(hint) is not dict
+            or set(hint) != {'kind','paragraph_ids','bbox'} or hint['kind'] != 'source_footer'):
+        return None
+    owned=hint['paragraph_ids'];box=hint['bbox'];page=proposal.get('page_number')
+    def valid_box(value):
+        return (type(value) is list and len(value)==4
+            and all(type(v) in {int,float} and math.isfinite(v) and 0<=v<=1 for v in value)
+            and value[0]<value[2] and value[1]<value[3])
+    if (type(page) is not int or page<1 or type(owned) is not list or not 1<=len(owned)<=2
+            or len(set(owned))!=len(owned) or len(ids)<=len(owned) or owned!=ids[-len(owned):]
+            or not valid_box(box) or box[1]<.85):
+        return None
+    choices=proposal.get('paragraphs')
+    if type(choices) is not list or [r.get('paragraph_id') for r in choices if type(r) is dict]!=ids:
+        return None
+    by_id={r['paragraph_id']:r for r in choices};rows={r['id']:r for r in snapshot['paragraphs']}
+    if not any(by_id[i].get('role')=='reference' for i in owned):return None
+    try:
+        flat=[i for band in proposal['bands'] for i in _ids(band)]
+    except (KeyError,TypeError):return None
+    if flat!=ids or len(set(flat))!=len(flat):return None
+    if any(r.get('paragraph_id') in owned for r in proposal.get('paragraph_partitions',[])):return None
+    for band in proposal['bands']:
+        if not set(_ids(band)).intersection(owned):continue
+        if (set(band)!={'kind','groups'} or band['kind']!='flow' or not band['groups']
+                or any(type(g) is not dict or set(g)!={'paragraph_ids','panel'} or g['panel'] is not False
+                    or type(g['paragraph_ids']) is not list or not g['paragraph_ids'] for g in band['groups'])):
+            return None
+    for i in owned:
+        raw,choice=rows[i],by_id[i];region=choice.get('bbox')
+        if (choice.get('role') not in {'body','reference','source_folio'} or raw.get('has_page_break')
+                or raw.get('has_field') or raw.get('has_numbering') or 'numPr' in raw.get('ppr_xml','')
+                or not raw['text'].strip() or not valid_box(region)
+                or not (box[0]<=region[0]<region[2]<=box[2] and box[1]<=region[1]<region[3]<=box[3])
+                or any(t['kind']!='t' or any(unicodedata.category(c) in {'Cc','Cf'}
+                    and c not in '\u200e\u200f' for c in t['text']) for t in raw['tokens'])):
+            return None
+    # The complete proposal is still subject to ordinary disjoint hint validation.
+    used=set()
+    for item in proposal.get('source_layout_evidence',[]):
+        values=item.get('paragraph_ids') if type(item) is dict else None
+        if type(values) is not list or len(set(values))!=len(values) or used.intersection(values):return None
+        used.update(values)
+    signature=digest(encode(proposal)) if proposal_sha256 is None else proposal_sha256
+    if type(signature) is not str or re.fullmatch(r'[a-f0-9]{64}',signature) is None:return None
+    return {'source_page_number':page,'canonical_proposal_sha256':signature,
+        'original_hint':deepcopy(hint),'paragraph_ids':list(owned),
+        'order_basis':'immutable_target_paragraph_order','pagination_only':True,'nonrelocatable':True,
+        'source_printed_order_verified':False,'review_required':True}
 
 
 def proposal_source_evidence(snapshot, view, proposal, *, band_normalization_version=BAND_NORMALIZATION_V1, normalization_version=OPTIONAL_HINT_NORMALIZATION_V3, emphasis_normalization_version=EMPHASIS_NORMALIZATION_V1):
@@ -348,7 +449,7 @@ def proposal_source_evidence(snapshot, view, proposal, *, band_normalization_ver
     if normalization_version not in {OPTIONAL_HINT_NORMALIZATION_V1, OPTIONAL_HINT_NORMALIZATION_V2, OPTIONAL_HINT_NORMALIZATION_V3}:
         fail("invalid_source_layout_normalization_version")
     used = set()
-    accepted, rejected = [], []
+    accepted, rejected, footer_associations, retained_associations = [], [], [], []
     for evidence_index, row in enumerate(evidence):
         if type(row) is not dict or set(row) != {"kind", "paragraph_ids", "bbox"}:
             fail("invalid_source_layout_evidence")
@@ -359,9 +460,23 @@ def proposal_source_evidence(snapshot, view, proposal, *, band_normalization_ver
             fail("invalid_source_layout_evidence")
         used.update(owned)
         indices = [ids.index(pid) for pid in owned]
+        if band_normalization_version == BAND_NORMALIZATION_V8:
+            association=retained_terminal_association(snapshot,proposal,ids,row)
+            if association is not None:retained_associations.append(association)
+        if band_normalization_version in {BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8}:
+            canonical = _terminal_footer_membership(snapshot, proposal, ids, row)
+            if canonical is not None:
+                footer_associations.append({'index':evidence_index,'kind':'source_footer',
+                    'original_hint':deepcopy(row),'original_paragraph_ids':deepcopy(owned),
+                    'paragraph_ids':list(canonical),'bbox':deepcopy(row['bbox']),
+                    'reason':'terminal_footer_target_membership_canonicalized',
+                    'order_basis':'immutable_target_paragraph_order',
+                    'source_printed_order_verified':False,'review_required':True})
+                row={**deepcopy(row),'paragraph_ids':list(canonical)}
+                owned=row['paragraph_ids'];indices=[ids.index(pid) for pid in owned]
         if indices != list(range(indices[0], indices[0] + len(indices))):
             ordered = sorted(indices)
-            if (band_normalization_version in {BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5} and row["kind"] == "source_footer"
+            if (band_normalization_version in {BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8} and row["kind"] == "source_footer"
                     and ordered == list(range(ordered[0], len(ids))) and row["bbox"][1] >= .85
                     and not any(pid in partitions or pid in panel_ids or pid in column_ids for pid in owned)
                     and all(choices[pid]["role"] in {"body", "source_folio"}
@@ -392,7 +507,7 @@ def proposal_source_evidence(snapshot, view, proposal, *, band_normalization_ver
                     "paragraph_ids": deepcopy(owned), "reason": "decorative_rule_requires_plain_flow"})
                 continue
         elif row["kind"] == "source_footer":
-            if (band_normalization_version == BAND_NORMALIZATION_V5
+            if (band_normalization_version in {BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8}
                     and normalization_version == OPTIONAL_HINT_NORMALIZATION_V3
                     and indices[-1] == len(ids)-1 and row["bbox"][1] >= .85
                     and any(choices[pid]["role"] == "reference" for pid in owned)
@@ -430,7 +545,7 @@ def proposal_source_evidence(snapshot, view, proposal, *, band_normalization_ver
             fail("invalid_source_layout_evidence")
         accepted.append(deepcopy(row))
     rejected_emphasis = []
-    if emphasis_normalization_version not in {None, EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2}:
+    if emphasis_normalization_version not in {None, EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2, EMPHASIS_NORMALIZATION_V3}:
         fail("invalid_emphasis_normalization_version")
     if emphasis_normalization_version is not None:
         by_id = {row["id"]: row for row in snapshot["paragraphs"]}
@@ -441,6 +556,13 @@ def proposal_source_evidence(snapshot, view, proposal, *, band_normalization_ver
             rejected_emphasis.extend({"paragraph_id": choice["paragraph_id"], **item} for item in dropped)
     _, downgraded = _canonical_metadata_bands(snapshot, proposal, ids, band_normalization_version)
     return {"version": "ordinary_source_evidence_v1", "page_number": page,
+            **({'retained_terminal_associations': {'version':RETAINED_TERMINAL_ASSOCIATIONS_V1,
+                'canonical_proposal_sha256':digest(encode(proposal)),
+                'associations':retained_associations,'review_required':True}}
+                if band_normalization_version==BAND_NORMALIZATION_V8 else {}),
+            **({'terminal_footer_membership_normalization': {'version':band_normalization_version,
+                'canonical_proposal_sha256':digest(encode(proposal)), 'associations':footer_associations,
+                'review_required':True}} if footer_associations else {}),
             **({"metadata_band_normalization": {"version": band_normalization_version, "canonical_proposal_sha256": digest(encode(proposal)), "rejected_bands": downgraded, "review_required": True}} if downgraded else {}),
             "findings": normalized, "layout": accepted, "source_coverage_verified": False,
             **({"optional_emphasis_normalization": {"version": emphasis_normalization_version,
@@ -449,7 +571,7 @@ def proposal_source_evidence(snapshot, view, proposal, *, band_normalization_ver
             **({"normalization": {"version": OPTIONAL_HINT_NORMALIZATION_V3
                  if any(row["reason"] in {"source_footer_institution_kept_in_flow", "source_footer_reference_kept_in_flow"} for row in rejected)
                  else OPTIONAL_HINT_NORMALIZATION_V2 if any(row["kind"] == "source_footer" for row in rejected) else OPTIONAL_HINT_NORMALIZATION_V1,
-                 **({"band_normalization_version": BAND_NORMALIZATION_V5}
+                 **({"band_normalization_version": band_normalization_version}
                     if any(row["reason"] == "source_footer_reference_kept_in_flow" for row in rejected) else {}),
                  "canonical_proposal_sha256": digest(encode(proposal)), "rejected_hints": rejected,
                  "review_required": True}} if rejected else {})}
@@ -465,10 +587,13 @@ def source_evidence_review_fields(records):
     rejected.extend({"page_number": page["page_number"], "kind": "optional_emphasis",
                      "paragraph_ids": [item["paragraph_id"]], **item}
                     for page in records
-                    if page.get("optional_emphasis_normalization", {}).get("version") in {EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2}
+                    if page.get("optional_emphasis_normalization", {}).get("version") in {EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2, EMPHASIS_NORMALIZATION_V3}
                     for item in page["optional_emphasis_normalization"]["rejected_spans"])
     rejected.extend({"page_number": page["page_number"], "kind": "metadata_columns", **item}
                     for page in records for item in page.get("metadata_band_normalization", {}).get("rejected_bands", []))
+    rejected.extend({'page_number':page['page_number'], **item}
+                    for page in records
+                    for item in page.get('terminal_footer_membership_normalization',{}).get('associations',[]))
     return ({"source_layout_review_required": True, "source_layout_rejected_hints": rejected}
             if rejected else {})
 
@@ -614,11 +739,54 @@ def _complete_lrm_emphasis_owner(row, start, end, ranges):
             if unicodedata.category(text[index]).startswith("C")))
 
 
+def _adjacent_lrm_emphasis_owner(row, start, end, ranges):
+    """Prove an optional whole-run hint beside separately owned LRM text."""
+    text = row["text"]
+    runs = row["runs"]
+    if (row.get("has_field") or row.get("has_page_break")
+            or any(token["kind"] != "t" for token in row["tokens"])
+            or not text[start:end].strip()
+            or any(unicodedata.category(char).startswith("C") for char in text[start:end])):
+        return False
+    selected = [run for run in runs if (run["start"], run["end"]) == (start, end)]
+    if len(selected) != 1:
+        return False
+    owners = []
+    for cut in (start, end):
+        if not 0 < cut < len(text):
+            continue
+        controls = [index for index in range(cut - 1, cut + 1)
+                    if unicodedata.category(text[index]).startswith("C")]
+        for index in controls:
+            if text[index] != "\u200e" or start <= index < end:
+                return False
+            adjacent = [run for run in runs
+                        if (index == start - 1 and run["end"] == start)
+                        or (index == end and run["start"] == end)]
+            if len(adjacent) != 1:
+                return False
+            owner = adjacent[0]
+            left, right = owner["start"], owner["end"]
+            interior = text[left + 1:right - 1]
+            if (not interior or interior != interior.strip()
+                    or not _complete_lrm_emphasis_owner(row, left, right, ranges)):
+                return False
+            owners.append(owner)
+    if not owners:
+        return False
+    participating = selected + owners
+    for run in participating:
+        if any(other is not run and other["start"] < run["end"]
+               and other["end"] > run["start"] for other in runs):
+            return False
+    return True
+
+
 def _generated_emphasis(row, spans, *, drop_unsupported_edges=True, rejected=None,
                         normalization_version=EMPHASIS_NORMALIZATION_V1):
     """Drop unsupported optional presentation edges; never repair unsafe literals."""
     from .saved_docx_layout import _phrase_edge, _emphasis_end_edge, _protected_ranges
-    if normalization_version not in {None, EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2}:
+    if normalization_version not in {None, EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2, EMPHASIS_NORMALIZATION_V3}:
         fail("invalid_emphasis_normalization_version")
     if type(spans) is not list or len(spans) > 1000:
         fail("invalid_proposal_decisions")
@@ -653,10 +821,15 @@ def _generated_emphasis(row, spans, *, drop_unsupported_edges=True, rejected=Non
         control_cut = any(0 < cut < len(row["text"]) and any(
             unicodedata.category(char)[0] == "C" for char in row["text"][cut - 1:cut + 1])
             for cut in (start, end))
-        if (control_cut and normalization_version == EMPHASIS_NORMALIZATION_V2
+        if (control_cut and normalization_version in {EMPHASIS_NORMALIZATION_V2, EMPHASIS_NORMALIZATION_V3}
                 and _complete_lrm_emphasis_owner(row,start,end,ranges)):
             if rejected is not None:
                 rejected.append({"span":deepcopy(span),"reason":"complete_lrm_owner_emphasis_omitted"})
+            continue
+        if (control_cut and normalization_version == EMPHASIS_NORMALIZATION_V3
+                and _adjacent_lrm_emphasis_owner(row, start, end, ranges)):
+            if rejected is not None:
+                rejected.append({"span": deepcopy(span), "reason": "adjacent_complete_lrm_owner_emphasis_omitted"})
             continue
         if control_cut or (unsupported and not drop_unsupported_edges):
             fail("invalid_proposal_decisions")
@@ -673,7 +846,7 @@ def _canonical_metadata_bands(snapshot, proposal, ids, version):
     bands = deepcopy(proposal["bands"])
     if version is None or proposal.get("version") != PROPOSAL_VERSION_V3:
         return bands, []
-    if version not in {BAND_NORMALIZATION_V1, BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5}:
+    if version not in {BAND_NORMALIZATION_V1, BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8}:
         fail("invalid_metadata_band_normalization_version")
     try:
         flat = [pid for band in bands for pid in _ids(band)]
@@ -690,7 +863,7 @@ def _canonical_metadata_bands(snapshot, proposal, ids, version):
     for index, band in enumerate(bands):
         owned = _ids(band)
         ordered = sorted(owned, key=ordinal.get)
-        if (version in {BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5} and band.get("kind") == "flow" and owned != ordered
+        if (version in {BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8} and band.get("kind") == "flow" and owned != ordered
                 and set(band) == {"kind", "groups"} and ordered == ids[ordinal[ordered[0]]:ordinal[ordered[-1]] + 1]
                 and type(band["groups"]) is list and band["groups"]
                 and all(type(g) is dict and set(g) == {"paragraph_ids", "panel"} and g["panel"] is False
@@ -720,19 +893,24 @@ def _canonical_metadata_bands(snapshot, proposal, ids, version):
         if any(set(cell) != {"groups"} for cell in band["cells"]) or any(set(g) != {"paragraph_ids","panel"} or g["panel"] is not False for g in groups):
             continue
         allowed_roles = {"institution", "reference", "recipient"}
-        if version in {BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5}:
+        if version in {BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8}:
             allowed_roles.add("body")
-        if version in {BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5}:
+        if version in {BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8}:
             allowed_roles.add("heading")
+        if version in {BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8}:
+            # The proposal role is presentation metadata, not OOXML numbering.
+            # Only this generated band is downgraded; every plain-content,
+            # ownership, structure and final exact-order gate remains intact.
+            allowed_roles.add("list")
         if any(pid in partitioned or choices[pid]["role"] not in allowed_roles
                or "numPr" in rows[pid].get("ppr_xml", "") or rows[pid].get("has_page_break")
-               or (version in {BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5} and (rows[pid].get("has_field") or rows[pid].get("has_numbering")))
+               or (version in {BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8} and (rows[pid].get("has_field") or rows[pid].get("has_numbering")))
                or any(token["kind"] != "t" or any((unicodedata.category(c) in {"Cc", "Cf"} and c not in "\u200e\u200f") for c in token.get("text", "")) for token in rows[pid]["tokens"]) for pid in owned):
             continue
         bands[index] = {"kind":"flow", "groups":[{"paragraph_ids":ordered,"panel":False}]}
         reason = ("generated_plain_columns_restored_to_text_order"
-                  if version in {BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5}
-                  and any(choices[pid]["role"] in {"body", "heading"} for pid in owned)
+                  if version in {BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8}
+                  and any(choices[pid]["role"] in {"body", "heading", "list"} for pid in owned)
                   else "metadata_columns_reordered_as_flow")
         rejected.append({"index":index,"paragraph_ids":ordered,"reason":reason})
     return bands, rejected

@@ -176,6 +176,11 @@ def test_ordinary_saved_policy_resume_and_offline_never_consult_fresh_v3(tmp_pat
         result.pop("semantic_repair_policy", None)
         result.pop("semantic_literal_authority_policy", None)
         result.pop("semantic_enclosure_authority_policy", None)
+        result.pop("source_enclosure_identity_policy", None)
+        result.pop("semantic_target_ambiguity_policy", None)
+        result.pop("semantic_enclosure_sequence_repair_policy", None)
+        result.pop("primary_page_evidence_policy", None)
+        result.pop("primary_literal_markup_policy", None)
         if saved_value is None: result.pop("semantic_source_review_policy")
         else: result["semantic_source_review_policy"] = saved_value
         return result

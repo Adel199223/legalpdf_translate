@@ -18,6 +18,10 @@ from tests.test_ordinary_auto_layout_workflow import _app, _source, _start, _wai
 
 @pytest.mark.parametrize("resume,cancel", [(False,False), (True,False), (False,True)])
 def test_retained_page_continuation_single_missing_request_download_save_and_reentry(tmp_path, monkeypatch, resume, cancel):
+    from legalpdf_translate import ordinary_auto_layout as automatic
+    # This branch exercises the saved pre-reproposal manual recovery contract.
+    monkeypatch.setattr(automatic, "frozen_automatic_layout_policy",
+        automatic._protected_folio_bridges_v10_policy)
     source, output = tmp_path / 'source.pdf', tmp_path / 'output'
     output.mkdir()
     _source(source, ('digital', 'digital'))
