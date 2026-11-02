@@ -2,6 +2,12 @@
 
 This file is canonical for app-level architecture and status. Source code is final truth when docs conflict.
 
+Current product on local main is W10/V19, installed November 2 after three fresh ordinary Arabic translations and independent native Word review. The normal browser uses the tested product at `c0056547`. The ordinary pipeline retains its saved translation and layout recipes. It emits an editable Word candidate labelled unreviewed. Read the [handoff](docs/assistant/HANDOFF.md) for installed identity, release evidence and limitations. The [direction review](docs/assistant/reviews/TRANSLATION_DIRECTION_2026-11-02.md) describes the separate source-geometry experiment that was stopped. Sections below are dated design and installation records.
+
+## Decisions GA assessment — October 30
+
+Decisions remains outside the production pipeline after the [new bounded evaluation](docs/assistant/DECISIONS_GA_ASSESSMENT.md). The GA endpoint correctly recognized a detached signing group but missed known source-footer ordering; the predefined screen failed. Typed classification, question images and prompt caching do not replace deterministic ownership/coverage/cost/repair gates or semantic/native verification. No model, prompt, runtime or saved-state change follows. Nine calls cost an estimated USD0.00450672. All802 protected files remain unchanged; fresh acceptance stays0/3. The prior installation/paused-state text below records the October22 checkpoint; the current handoff records later authority and completed research.
+
 ## Provisional main update — October 22
 
 The user authorized local provisional installation of the exact offline-tested candidate, with zero further API spending. The earlier all-three-before-main gate is superseded for installation only. Runtime9f7d5e7c8533e04ae54bb91c5719b6a5f2d36f062a7954da7eb504d483df97e2 and all802 protected files passed selected Full03; current byte equality permits reuse of that validation. Provisional installation, actual normal browser startup and fresh preservation have passed:85 jobs/schema/settings and739 inventoried files remain unchanged. The [current handoff](docs/assistant/HANDOFF.md) owns actual status and the [provisional plan](docs/assistant/exec_plans/completed/2026-10-22_provisional_main_update.md) owns rollout.

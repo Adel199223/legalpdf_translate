@@ -13,6 +13,17 @@ Operational runbook for coding agents in `legalpdf_translate`.
 3. Run targeted tests first, then full regression if required by workflow.
 4. Keep changes scoped; avoid unrelated edits.
 
+## Translation quality decisions
+
+1. Name the user-visible failure. Record the document family, expected source relationship and the first place it breaks, whether in original visible evidence, extracted reading order, translated wording, layout assignment, or Word rendering. A diagnostic copy can explain a defect. Acceptance uses the file produced by ordinary Start.
+2. Keep three results visible separately: correctness of legal content and source relationships, fidelity of appearance in Word, and the build actually installed. For each result name the case, build and evidence type (synthetic test, retained-response replay, fresh run, or installed check). A later build can preserve a useful result without inheriting its fresh-run status.
+3. Reproduce the failure offline when retained evidence allows it. Test a counterexample that must keep its current behavior. When the same family fails again, compare the shared representation with an unseen example before adding another document-specific rule. Use focused feedback while iterating and schedule mandatory broad validation on the candidate whose results will be used.
+4. In the current handoff keep one row per case, the actual validation result, the next action and its authority. The active plan holds acceptance conditions and links back for status. Move superseded narratives to dated history. A receipt or process check supersedes a stale running label. Read old checkpoints only to answer a specific evidence question.
+
+For release review, bind the actual case ID, file and source-to-Word page map. If a helper rejects valid reflow or a later execution, retain that failure and check a narrow successor against both accepted artifacts and false-acceptance controls before considering another provider run.
+
+Apply stage and spending gates to the next operation. A routine offline replay, source comparison or documentation correction within an authorized scope can proceed. A genuinely new risk-triggered stage follows the staged workflow. Renew live-service, financial, destructive or publication authority where the proposed operation requires it.
+
 ## Approval Gates
 Ask before executing any of the following:
 1. Destructive operations.

@@ -1,5 +1,23 @@
 # Validation guide
 
+For current build and case results use the [handoff](HANDOFF.md). For translation defects report ordinary-path replay, fresh source/native review and installed-build validation separately. The [panel and table diagnostic](reviews/PANEL_READING_ORDER.md) provides a small offline source-order comparison.
+
+## W10 installation and source-structure evaluation — November 2
+
+Full28 passed on W10 runtime `504d0ce4` in 108 minutes, with all 861 protected files and the lock unchanged. The 267 browser tests, the 4,049-test main group and subsequent selected groups passed. The Dart launcher needed its successful direct-Dart fallback. The ordinary Start trials and real Word review are separate from those tests. The [completed release plan](exec_plans/completed/2026-10-21_fresh_autonomy_and_main_application.md) records the three accepted cases.
+
+The native gate maps original page ownership onto actual Word pages. Latest30 reflowed from three source pages to four native pages. The first helper failed its equal-count assertion. An independently checked successor located all 114 paragraphs, bound all page pixels and verified the source-owned folios. The prior failure remains recorded. The release guard likewise checked the genuine NOTICE09 predecessor without reclassifying historical NOTICE08. The pricing and expiry controls were unchanged.
+
+Canonical product `c0056547` passed exact staged, committed and installed checks. The strict Git whitespace diagnostic reported seven preexisting end-of-file blank lines in the frozen product scope. All other whitespace diagnostics passed. The seven accepted files were staged byte for byte. Startup verification resolves the normal abbreviated Git SHA uniquely to the full commit, checks the live listener owners and compares served JavaScript with the canonical file. The browser loaded New Job and Recent Work. The pre-installation, post-fast-forward and post-startup checks preserved all 85 jobs and 731 inventoried files. Eight additional current outputs matched. One output root was subject to the documented bounded inventory.
+
+The [blind source experiment](reviews/PANEL_READING_ORDER.md) covered eight fictional documents across ten pages. No holdout provider call was made. It found no case for promoting automatic ownership from rectangle geometry.
+
+## Decisions GA evaluation — October 30
+
+The [assessment](DECISIONS_GA_ASSESSMENT.md) records a failed preregistered quality screen, not a product acceptance pass. Four complete retained native artifacts yielded3 correct routes and only1 of2 known defects detected; the incomplete-document control abstained correctly. Two question-image repeats and two cache requests are engineering evidence, excluded from independent quality counts. All9 HTTP requests completed; total response-attributed estimate is USD0.00450672. Preserve the original C01 parser-failure receipt and its exact versioned offline reconciliation; no paid response was repurchased.
+
+On the unchanged installed product,168 targeted semantic/repair/footer/closing tests passed and47 existing cache-usage compatibility tests passed. The private evaluation runner passed55 tests, then its versioned TTL compatibility successor passed78; these overlap and are not summed. All802 protected files still match the Full03 freeze and all15 retained render pins match. No Full rerun or fresh three-original acceptance is claimed. The current main app already supports the observed optional30m TTL usage breakdown. No production integration was warranted, and the evaluation protocol is closed.
+
 ## Provisional installation validation — October 22
 
 The user authorized a provisional local installation without new API calls. Preserve the exact Full03 candidate and reuse its pass only while all802 protected source/test/script/tooling files match freeze04. Full03 terminal receipt e6a9320e records exit0 and reaped workers; all606 ordinary-layout cases,579 final pricing/application cases and the earlier selected groups passed. Counts overlap and selected Full is not the entire repository collection. The known Dart AOT wrapper error occurred; both direct-Dart docs/hygiene fallbacks passed. No additional broad rerun is justified solely by a docs-only update or exact-byte installation.
@@ -8,7 +26,7 @@ The final offline native candidate332a preserves text/fonts/spacing/geometry and
 
 Executed installation verification passed: all802 canonical files match Full03; actual canonical/main server PID20032 and assets73534205c101 match the installed build; ordinary New Job/Recent Work hydrate and expose saved records. The post-normal-start snapshot preserves85 jobs/schema/settings,739 inventoried files,8 originals/references and7 legacy untracked entries. Baseline26 already-missing historical paths and one bounded root remain explicit coverage limits. Guarded startup recorded zero external attempts, then an ordinary restart removed the process-only guard. No provider or job-mutating action occurred. One optional full runtime-details request exceeded its10-second read deadline; the dedicated readiness endpoint and actual UI succeeded, so no comprehensive diagnostic-endpoint pass is claimed. Private provisional_main_update_20261022_01 owns the terminal result; [HANDOFF](HANDOFF.md) reports status. Earlier preservation packet05 confirmed85 jobs,9 protected settings/routing items,8 original/reference pins and7 legacy untracked entries; the fresh baseline and post-normal-start comparison independently re-established those counts.
 
-The [provisional plan](exec_plans/completed/2026-10-22_provisional_main_update.md) owns this local rollout. The [fresh plan](exec_plans/active/2026-10-21_fresh_autonomy_and_main_application.md) remains paused and requires three new unattended document passes for its original goal. Provisional installation does not satisfy those missing checks.
+The [provisional plan](exec_plans/completed/2026-10-22_provisional_main_update.md) owns this local rollout. The [fresh plan](exec_plans/completed/2026-10-21_fresh_autonomy_and_main_application.md) subsequently completed on November 2. The October provisional installation was a separate, earlier outcome.
 
 ## October 21 parity checkpoint
 

@@ -1,5 +1,18 @@
 # External Source Registry
 
+## Translation structure and harness review — 2026-11-02
+
+| Source | Use in this review | Verified |
+|---|---|---|
+| [OpenAI Codex best practices](https://learn.chatgpt.com/guides/best-practices) | Keep durable instructions concise, task-specific guidance linked, and completion criteria observable. | 2026-11-02 |
+| [OpenAI evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices) | Use task-specific examples, explicit success criteria and independent human assessment to calibrate automated checks. | 2026-11-02 |
+| [OpenAI Decisions guide](https://developers.openai.com/api/docs/guides/decisions) | Typed predicates, choices and scores suit bounded classification. Compare with the local quality screen before changing routing. | 2026-11-02 |
+| [PyMuPDF text extraction](https://pymupdf.readthedocs.io/en/latest/recipes-text.html#how-to-extract-text-in-natural-reading-order) and [Microsoft on PDF conversion](https://support.microsoft.com/en-gb/word/opening-pdfs-in-word?ver=15) | Reading order and document relationships may need to be inferred from positioned content. Compare with native Word rendering. | 2026-11-02 |
+| [Software Engineering at Google, Testing Overview](https://abseil.io/resources/swe-book/html/ch11.html) | Use fast focused feedback alongside larger real-path checks. | 2026-11-02 |
+| [OpenAI API pricing](https://developers.openai.com/api/docs/pricing) and [GPT-6 Astra model limits](https://developers.openai.com/api/docs/models/gpt-6-astra) | Reverified Standard pricing and model limits for the bounded release calls. Account, tier, payment and usage witnesses are retained privately. | 2026-11-02 |
+
+The [project decision](reviews/TRANSLATION_DIRECTION_2026-11-02.md) records our local interpretation and its evidence.
+
 ## Prepaid funding boundary — 2026-10-22
 
 The official [prepaid billing guidance](https://help.openai.com/en/articles/8264644-setting-up-and-managing-prepaid-api-billing), verified 2026-10-22, explains that request cutoff may lag exhausted prepaid credit and a resulting negative balance can be deducted from a later purchase. This does not reconcile the current dashboard with the retained per-call ledger. Continued request acceptance is not proof of remaining allowance; no paid exhaustion probe, further top-up request or purchase is authorized. Current funding and stopping status belong to [HANDOFF](HANDOFF.md).
@@ -37,7 +50,7 @@ Official OpenAI references verified 2026-10-20 for the isolated autonomous-draft
 | https://developers.openai.com/api/docs/guides/images-vision | Ordered source-page images | Responses input supports multiple image content parts, including base64 data URLs. The application's 12-page/image ceiling is a local bound, not a provider limit. | 2026-10-20 |
 | https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses | Semantic audit response shape | Responses supports strict JSON Schema output. Refusal and incomplete responses still require explicit handling; local source, page, literal and evidence validation remains necessary. | 2026-10-20 |
 
-These sources support request mechanics, not translation-quality claims. The new stage uses the saved translation model/effort, preserves Images Off as a text-only audit, and does not mark human review complete. Actual quality, cost and recovery behavior require the private fresh-run evidence and local tests recorded in the [active parity plan](exec_plans/active/2026-10-20_autonomous_draft_parity.md). No dependency upgrade or saved production-default change follows.
+These sources support request mechanics, not translation-quality claims. The new stage uses the saved translation model/effort, preserves Images Off as a text-only audit, and does not mark human review complete. Actual quality, cost and recovery behavior require the private fresh-run evidence and local tests recorded in the [active parity plan](exec_plans/completed/2026-10-20_autonomous_draft_parity.md). No dependency upgrade or saved production-default change follows.
 
 ## Default OCR accounting policy — 2026-10-15
 
@@ -109,13 +122,13 @@ Python 3.11.9 and package/build versions are the observed working baseline. They
 
 ## Two unsent translation repeats — 2026-09-27
 
-Rechecked the official [GPT-5.2 model page](https://developers.openai.com/api/docs/models/gpt-5.2) for the [two-job retest](exec_plans/active/2026-09-27_two_latest_unsent_retest.md). Standard USD per million tokens remains 1.75 input, 0.175 cached input and 14 output. The page lists a 400,000-token context, 128,000 maximum output tokens, high reasoning effort and snapshot `gpt-5.2-2025-12-11`.
+Rechecked the official [GPT-5.2 model page](https://developers.openai.com/api/docs/models/gpt-5.2) for the [two-job retest](exec_plans/completed/2026-09-27_two_latest_unsent_retest.md). Standard USD per million tokens remains 1.75 input, 0.175 cached input and 14 output. The page lists a 400,000-token context, 128,000 maximum output tokens, high reasoning effort and snapshot `gpt-5.2-2025-12-11`.
 
 The fresh task preserves the existing provider-enforced 32,000-output limit and conservative 400,000-input reservation bound, giving a maximum reservation of USD1.148 per request. Reservations settle sequentially against reported usage; they are not expected charges. The lifetime ceiling remains USD15, with USD6.65216805 historical known spend and the unresolved USD0.119 hold preserved. The new allowance cannot exceed USD8.22883195. No saved model/default promotion or reconciliation of the old unknown charge follows from this source check. The exact registry beforeimage is preserved privately under `two_latest_unsent_retest_20260927_01/docs_beforeimages_01/`.
 
 ## Test performance tooling — 2026-09-26
 
-Official sources checked for the [test performance plan](exec_plans/active/2026-09-26_test_performance.md):
+Official sources checked for the [test performance plan](exec_plans/completed/2026-09-26_test_performance.md):
 
 - [pytest invocation and durations](https://docs.pytest.org/en/stable/how-to/usage.html): selected paths and `--durations` support measured feedback without removing assertions.
 - [GitHub workflow triggers](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow): separate matching push/PR events create separate runs; a main-only push filter retains PR and manual validation.

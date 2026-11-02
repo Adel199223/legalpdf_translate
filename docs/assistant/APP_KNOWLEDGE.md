@@ -2,6 +2,8 @@
 
 This intentionally shorter bridge defers to [root APP_KNOWLEDGE.md](../../APP_KNOWLEDGE.md); source code is final truth when docs conflict.
 
+Use the [handoff](HANDOFF.md) for the installed W10 product and actual case status. The [direction review](reviews/TRANSLATION_DIRECTION_2026-11-02.md) traces the ordinary translation path and explains why the experimental ownership rule stayed outside it. Sections below are dated checkpoints.
+
 ## Provisional main update — October 22
 
 The user authorized installing the exact offline-tested candidate locally with no further API spending. Selected Full03 passed on runtime9f7d5e7c and802 protected files; the repaired retained output passed all-four-page native review. Provisional installation and normal New Job/Recent Work startup passed;85 jobs/schema/settings and739 inventoried files were preserved. Fresh autonomy remains paused/incomplete at0/3. Follow [HANDOFF](HANDOFF.md), the [provisional plan](exec_plans/completed/2026-10-22_provisional_main_update.md) and root architecture for actual receipt-backed installation status. Earlier all-three-before-main restrictions are superseded only for this provisional rollout.

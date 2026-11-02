@@ -16,6 +16,11 @@ Quick guardrails for Codex/agent work in `legalpdf_translate`.
 - Primary UI: local browser app; live/Gmail port `8877`; Gmail bridge port `8765`
 - Development UI review mode: browser `mode=shadow` with isolated app data
 
+## Translation quality work
+- Success means an ordinary Start produces editable Word output with accurate legal meaning, intact literals and the original relationships among headings, fields, rows, paragraphs, signatures and footers. Review the actual Word pages. Record appearance differences separately.
+- For a defect, use the smallest ordinary-path replay that can distinguish source extraction, translation and rendering. Check an unaffected control. Keep fresh-run acceptance and installed status separate. See `agent.md` under “Translation quality decisions”.
+- Resume from the short current handoff. Verify a claimed running job against its terminal evidence before acting. An expired spending permission stops new dispatch, while offline investigation and scoped documentation can continue.
+
 ## Approval Gates
 Ask before executing any of the following:
 1. Destructive operations (delete/reset/overwrite data or history).

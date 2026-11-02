@@ -1,31 +1,23 @@
 # Current handoff
 
-## Provisional local installation — October 22
+<!-- CURRENT_CAMPAIGN_AUTHORITY_START -->
+**Installed on local main, November 2, 2026.** The ordinary browser app runs the W10/V19 product from commit `c00565479b79de10b74261e972750a6c52c435f3` in `C:/Users/FA507/.codex/legalpdf_translate`. The separate parity worktree supplied the tested product. Identify the running build from its readiness response and served assets. A later documentation-only commit has the same product bytes.
 
-The user explicitly authorized a provisional main installation without further API spending. This supersedes the previous all-three-before-main installation gate. Fresh autonomy remains paused/incomplete at0/3; local installation and startup/preservation are verified separately. The [provisional installation plan](exec_plans/completed/2026-10-22_provisional_main_update.md) owns this bounded work. The provisional installation and normal startup/preservation checks passed. The broader fresh goal is still paused and incomplete.
+| Original | Verified unattended result on W10 | Final case record |
+|---|---|---|
+| Court order (ORDER14) | 34/34 source criteria, three readable native Word pages, one correct folio per page with contact details intact. | `e449db9e` |
+| Scanned notice (NOTICE09) | 32/32 criteria, 62 paragraphs and two native pages. Postal identifiers, response routes and conditional deadlines passed. | `29edc105` |
+| Longer draft (Latest30) | 76/76 source criteria, all 18 priorities, 16 literal groups and six reference risks. Three original pages flowed across four Word pages. The closing and both printed fractions passed. | `a2b0dc81` |
 
-## Candidate and validation
+**Release complete.** All three cases passed from one ordinary Start each on the same frozen product. Full28 passed in 108 minutes with all 861 protected files exact (`2b2fbb1a`). Main received the verified 122 paths. The canonical server and bridge were ready on 8877/8765. The served JavaScript matched disk, New Job loaded the saved Arabic target, and Recent Work showed 12 items. All 85 saved jobs, the schema, settings, native routes, 731 inventoried files and eight additional current outputs were preserved within the recorded inventory scope.
+<!-- CURRENT_CAMPAIGN_AUTHORITY_END -->
 
-Installed product commit28505607db47e1315b1b7497ff6d6f4c95011ecd and initial docs commitc9cf6f3c45fef87d52eda939032a33f37622578a are on canonical main. All802 protected files remain byte-identical to Full03. Later closeout commits change documentation only; the live process retains its startup build label c9cf6f3 and the same exact product bytes. The private terminal receipt records final disk HEAD.
+## Development direction
 
-The ordinary canonical source launcher starts successfully on8877; its owned live server PID20032 also owns the expected local bridge8765. Actual Edge New Job and Recent Work hydrated successfully, with12 recent cards and25 saved-translation cards visible. Startup build identity is canonical/main, assets73534205c101; served app.js matches disk. No source or saved row was opened and no translation/provider/Gmail action was executed. A temporary process-only guard was used for the first smoke, recorded zero external attempts, and was removed by stopping only the owned verification server and restarting normally. No persistent environment/settings changes remain.
+The [eight-document blind comparison](reviews/PANEL_READING_ORDER.md) stopped the proposed rectangle-based ownership rule. It recovered zero of 26 expected links. Ordinary extraction put five measured relationships in the wrong order, but the full source images can still inform translation. Keep the existing ordinary path and keep Decisions outside production acceptance. If further fidelity work is requested, start with a demonstrable final Word error, locate the first incorrect representation and compare an unaffected control. The historical paragraph-merging and body-centering examples are candidates for investigation.
 
-Fresh post-normal-start preservation passed: all85 job rows across the existing database tables and schema, settings/native-host/launcher routing,8 original/reference pins,7 old untracked items and739 inventoried files match the before snapshot. The baseline separately recorded26 already-missing historical paths and one bounded folder traversal; this is not an all-files-on-computer claim. Browser bootstrap's normal local transient metadata/canary activity is outside immutable user-file inventory.
+## Evidence and constraints
 
-Source: C:/Users/FA507/.codex/worktrees/autonomous-draft-parity/legalpdf_translate, branch feat/autonomous-draft-parity-20261020, based on main9b0ffe97a852233ac3e6e31260f335dbde75d61d. Target: canonical C:/Users/FA507/.codex/legalpdf_translate on main. Runtime9f7d5e7c8533e04ae54bb91c5719b6a5f2d36f062a7954da7eb504d483df97e2 includes the independently reviewed source/semantic/layout/accounting repairs.
-
-Selected Full03 passed on all802 exact protected files, with the known Dart AOT wrapper error followed by successful direct-Dart fallbacks. The native-reviewed offline closing-group candidate preserves all109 paragraph texts, fonts, spacing and geometry while keeping the closing clauses, signing lines and source footer together. It has four coherent native pages. This is supporting offline evidence, not a new unattended translation pass.
-
-Private provisional_main_update_20261022_01 owns the fresh baseline, integration review, local commit/main installation, startup/UI observation and after-state comparison. Private terminal receipt final_closeout_01/receipt.sanitized.json binds final installation/startup/preservation evidence; absent or failed final receipt means closeout remains unconfirmed. The normal startup check must not dispatch provider, translation, OCR, semantic, model discovery or Gmail operations, change saved settings, or create/alter jobs.
-
-## Fresh autonomy remains incomplete
-
-Latest trial04 completed automatically and passed content review, but its actual Word output detached the final interpreter signature/footer. The final repair passed retained-input/native review only. No fresh original is accepted, and order/notice have not had fresh runs on the candidate. The [fresh plan](exec_plans/active/2026-10-21_fresh_autonomy_and_main_application.md) remains paused/incomplete. Installing provisionally does not change those outcomes.
-
-The previous fresh campaign has34 settled calls/calculated USD18.48080115. Its billing observations remained unreconciled; no zero-balance claim is made. The user prohibits any further API spending and declines top-ups. Do not refresh paid evidence, run an exhaustion probe, request/purchase credit or change auto-reload. Cache compatibility and scoped documentation cleanup are included; no measured cache savings are claimed.
-
-## Continuity and boundaries
-
-Preserve source and integration worktrees, prior trials, originals/reference files, settings and all existing jobs. Local integration is authorized; remote publication, Gmail delivery, translation trials and new product work are outside this task. The previously queued shutdown helper is terminal; do not replay it during this new startup-verification task.
-
-[Exact pre-installation entry documents](history/2026-10-22_provisional_main_update_before/README.md) preserve the previous current state and evidence references. [Architecture](../../APP_KNOWLEDGE.md), [validation](VALIDATION.md) and the [cache assessment](CACHE_COMPATIBILITY_ASSESSMENT.md) retain durable rules. Later fresh acceptance requires separate explicit resumption within the user's spending authority.
+- The [three-original release contract](exec_plans/completed/2026-10-21_fresh_autonomy_and_main_application.md), [implementation outcome](exec_plans/completed/2026-11-02_w10_release_and_structure_evaluation.md) and [direction review](reviews/TRANSLATION_DIRECTION_2026-11-02.md) separate installed behavior, case evidence and known appearance differences. Word output remains marked unreviewed until checked for delivery.
+- Private release evidence is under `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/fresh_autonomy_20261030_02/local_integration_execution_32_nov02_w10`. The two new cases used 22 calls, at estimated cost $9.09958725. The earlier failed trials retain their own outcomes. This campaign has no remaining paid case.
+- The [pre-review handoff](history/2026-11-02_direction_review_before/HANDOFF.before.md) and [pre-review campaign plan](history/2026-11-02_direction_review_before/FRESH_CAMPAIGN.before.md) are exact historical snapshots. Normal test instructions are in [VALIDATION](VALIDATION.md).
