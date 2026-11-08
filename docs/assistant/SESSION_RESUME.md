@@ -1,8 +1,8 @@
 # SESSION_RESUME
 
-## Current structure-improvement goal — November 8
+## Completed structure improvement and local installation — November 8
 
-Read [HANDOFF](HANDOFF.md), then the [current translation-structure plan](exec_plans/active/2026-11-08_translation_structure.md). The user authorized independent work and a fresh USD30.54 spending cap. Candidate `1405ccba` is implemented and validated in the isolated worktree; local-release approval remains before application to the normal app. Installed main remains W10/V19. No test or paid run is active. Historical installation and funding instructions below are evidence only. The roadmap remains dormant; this is normal scoped ExecPlan work.
+Read [HANDOFF](HANDOFF.md), then the [completed translation-structure plan](exec_plans/completed/2026-11-08_translation_structure.md). The user approved applying the validated update locally. Canonical main now contains V20 source-line alignment (`1405ccba` product), with passing startup and data-preservation checks. All paid trials and validation runs have ended; usage-attributed cost is USD4.65596565 of the USD30.54 authorization. The remaining allowance is not a mandate to dispatch. Historical installation/funding instructions below are evidence only. Remote publication and live Gmail remain outside this completed scope. The roadmap stays dormant.
 
 ## Current provisional installation — October 22
 

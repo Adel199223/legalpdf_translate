@@ -2,9 +2,9 @@
 
 This intentionally shorter bridge defers to [root APP_KNOWLEDGE.md](../../APP_KNOWLEDGE.md); source code is final truth when docs conflict.
 
-Use the [handoff](HANDOFF.md) for the installed W10 product and actual case status. The [direction review](reviews/TRANSLATION_DIRECTION_2026-11-02.md) traces the ordinary translation path and explains why the experimental ownership rule stayed outside it. Sections below are dated checkpoints.
+Use the [handoff](HANDOFF.md) for the installed V20 source-line product and actual case status. The [direction review](reviews/TRANSLATION_DIRECTION_2026-11-02.md) traces the ordinary translation path and explains why the experimental ownership rule stayed outside it. Sections below are dated checkpoints.
 
-The [November 8 source-line evaluation](reviews/TRANSLATION_STRUCTURE_2026-11-08.md) records the development candidate's accepted English alignment result, retained failed trials and separate control/validation/installation status. Root architecture remains canonical.
+The [November 8 source-line evaluation](reviews/TRANSLATION_STRUCTURE_2026-11-08.md) records the installed change's accepted English alignment result, retained failed trials and separate control/validation/installation status. Local installation was explicitly approved and startup/data-preservation checks passed. Root architecture remains canonical.
 
 ## Provisional main update — October 22
 

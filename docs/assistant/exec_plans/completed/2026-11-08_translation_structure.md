@@ -14,7 +14,7 @@ The user authorized independent work on November 8 and up to USD30.54 in additio
 - Base SHA `afe169c1169f541f2ca2b33ce526d18e86c714d9`
 - Approved-base floor `4e9d20e` is an ancestor
 - Noncanonical development copy with isolated shadow state
-- Installed baseline W10/V19 remains identified in the canonical handoff
+- Original baseline W10/V19 is retained as historical evidence; canonical main now contains the approved V20 product
 
 ## Interfaces and implementation steps
 
@@ -51,7 +51,7 @@ The map includes exact extracted line text, stable line IDs and normalized font-
 
 ## Rollout and fallback
 
-Prepare a reviewable candidate in the isolated worktree. Consider local integration only after validation and current installation authority are established. Retain the original outputs, failure evidence and installed W10 baseline. Rejected experiments remain outside production.
+The user approved local integration after the isolated candidate passed validation. Canonical main received the exact tested product and passed startup/preservation checks. Retain the original outputs, failure evidence and installed W10 baseline. Rejected experiments remain outside production.
 
 ## Risks and assumptions
 
@@ -96,3 +96,7 @@ The two retained examples are historical, so they are leads rather than proof th
 - November 8, 18:14 UTC. The unchanged sequential shard 3 passed all 3,101 cases in 1,745.72 pytest seconds, including the three previously timed-out workflows with their downstream assertions. Terminal `994208d4` confirms unchanged 865 files, clean owned-process exit and no deadline; session `54792` was reaped. The official latest-attempt selector and exhaustive verifier subsequently accepted 12,792 unique tests across attempts 1, 1, 1 and 2, with zero failures/errors/skips in selected evidence (`d2a68808`, provenance `12ec0b12`). Original failures and every attempt remain intact. No test or provider run is active.
 - November 8. Source commit `1405ccba3ce0acf5e64a1111accf13cbedbc413a` records the eight tested source/test/script files after each staged blob matched the final freeze byte-for-byte. Main remains unchanged at `afe169c1`, with its two preexisting modified docs and attachment directory preserved. Implementation and acceptance work are complete; prepare the documentation commit and request local-release approval under AGENTS.md before applying this tested candidate to the normal app. No historical stage token is required and no further paid run is planned.
 - November 8. Post-commit verification `1dd59581` confirms all 865 protected files and all eight committed source/test/script blobs still match the final freeze. Direct-Dart agent-docs and workspace-hygiene checks passed after the final status updates. Independent final documentation review found no material contradictions in case results, preserved timeouts, aggregate coverage, budget or installed status.
+
+- November 8. The user explicitly approved applying code `1405ccb` and review notes `7b5af31` to the normal local app and verifying startup while preserving jobs/settings. Canonical main was fast-forwarded to `7b5af31`; all 865 protected files matched the tested freeze (`2c34597b`). Two unrelated dirty docs were preserved by exact beforeimages and stash `cfa1f6df`, then restored through a clean three-way application and verified against the prepared merged bytes. Attachments were untouched; no remote publication.
+- November 8. Fresh read-only preservation captured 85 jobs/all table values and schema, settings backup, native routes, referenced outputs and deeper persisted reviews/accounting/session state. Normal detached startup passed on canonical main/live/workspace-1, with exact served JavaScript, preserved target language, 50 translation-history entries and 12 Recent Work entries. The app also ran its ordinary temporary Word export canary. The original broad zero-native claim and strict preservation failure are retained; correction `6611f29f` and successor preservation `28206294` verify only the two active canary working files as mutable, with temp-document paths, successful cleanup and exact process exit. All 1,717 inventoried existing files outside those two runtime files, all 85 jobs/schema/settings and native routes remain exact. No new API generation or Gmail operation occurred.
+- November 8. Implementation, actual Word acceptance, required regression verification and approved local application are complete. This plan is moved to completed; the final documentation-only promotion retains identical product bytes and its running build is attested by the installation startup receipts. Pre-install guidance remains exact in commit `7b5af31`; initial W10 guidance is preserved in the scoped beforeimages. No additional paid run is planned.

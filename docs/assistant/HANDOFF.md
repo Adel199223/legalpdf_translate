@@ -1,8 +1,9 @@
 # Current handoff
 
-## Validated translation-structure candidate — November 8
+<!-- CURRENT_CAMPAIGN_AUTHORITY_START -->
+## Installed source-line alignment — November 8
 
-Implementation and validation are complete in `C:/Users/FA507/.codex/worktrees/translation-structure-20261108/legalpdf_translate`, branch `feat/translation-structure-20261108`, based on `afe169c1`. Code commit `1405ccba3ce0acf5e64a1111accf13cbedbc413a` contains the exact tested product. Installed main remains W10/V19. The remaining step is local-release approval under `AGENTS.md` before applying this candidate to the normal app. The user authorized independent development and up to USD30.54 additional API spending before November 25; historical stage tokens and spending stops are not current authority. Follow the [current plan](exec_plans/active/2026-11-08_translation_structure.md).
+The user approved local installation of the tested update on November 8. Canonical `main` at `C:/Users/FA507/.codex/legalpdf_translate` now contains V20 source-line alignment from code commit `1405ccba3ce0acf5e64a1111accf13cbedbc413a`, runtime `ef13a1a3`, recipe `bb362bce`. It was developed in `feat/translation-structure-20261108`, based on `afe169c1`. The normal detached launcher and live startup checks passed on main; later documentation-only commits retain the same product. Read current readiness for the running Git HEAD and served asset identity. The [completed plan](exec_plans/completed/2026-11-08_translation_structure.md) records approval, execution and evidence. No historical stage token or new paid trial is needed.
 
 | Case | Actual result | Remaining limitation |
 |---|---|---|
@@ -12,10 +13,14 @@ Implementation and validation are complete in `C:/Users/FA507/.codex/worktrees/t
 
 V20 adds bounded advisory native source-line text and positions alongside the full image. Released saved recipes stay intact. Selected Full passed (`c5bf49de`). The complete collection is verified across passing shard attempts: 12,792 unique cases, zero failures/errors/skips in selected evidence (`d2a68808`). Three initial 30-second formatting-wait failures remain retained; the unchanged 3,101-case shard passed sequentially (`994208d4`). All 865 protected files remained exact and owned processes exited cleanly. No test, native review or provider run is active. See [VALIDATION](VALIDATION.md) for the initial failure and latest-attempt selection; do not repeat broad tests solely for the later Git metadata change.
 
-Private evidence is under `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/structure_fidelity_20261108_01`. Usage-attributed cost across 24 generation calls is USD4.65596565, leaving USD25.88403435 of the authorized allowance; dashboard posting is not established. No further paid run is needed for this candidate. English acceptance is `candidate_en_alignment_trial03_acceptance.private.json`; Arabic acceptance is `ar_candidate_independent_review01/acceptance.private.json`. Exact reviewed Word/PDF copies are in `reviewed_examples01`. Earlier failures remain preserved. Canonical main and its preexisting unrelated changes are untouched. Remote publication and live Gmail are outside scope. Exact previous guidance is retained in [the scoped beforeimages](history/2026-11-08_structure_alignment_before/manifest.json).
+Private evidence is under `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/structure_fidelity_20261108_01`. Usage-attributed cost across 24 generation calls is USD4.65596565, leaving USD25.88403435 of the authorized allowance; dashboard posting is not established. No further paid run is needed for this completed change. English acceptance is `candidate_en_alignment_trial03_acceptance.private.json`; Arabic acceptance is `ar_candidate_independent_review01/acceptance.private.json`. Exact reviewed Word/PDF copies are in `reviewed_examples01`. Earlier failures remain preserved. The two preexisting local documentation edits remain uncommitted and exact after three-way integration; attachments are preserved. No remote publication occurred. Remote publication and live Gmail are outside scope. Exact previous guidance is retained in [the scoped beforeimages](history/2026-11-08_structure_alignment_before/manifest.json).
 
-<!-- CURRENT_CAMPAIGN_AUTHORITY_START -->
-**Installed on local main, November 2, 2026.** The ordinary browser app runs the W10/V19 product from commit `c00565479b79de10b74261e972750a6c52c435f3` in `C:/Users/FA507/.codex/legalpdf_translate`. The separate parity worktree supplied the tested product. Identify the running build from its readiness response and served assets. A later documentation-only commit has the same product bytes.
+Live startup used canonical main, `mode=live`, `workspace-1`. Browser and bridge readiness passed, served JavaScript matched disk, saved target language was preserved, translation history returned 50 entries and Recent Work returned 12. These are service/loading checks, not a new visual UI review. All 85 database jobs, all table values/schema, settings, native routes and 1,717 inventoried existing files remained exact within the recorded scope. Two Word-canary working files were refreshed by the app's normal temporary export check; its successful cleanup and process exit were verified. The original strict preservation failure is retained and explicitly reconciled; no user document was exported. Private installation receipts are under `local_installation01`, including startup correction `6611f29f` and preservation `28206294`.
+<!-- CURRENT_CAMPAIGN_AUTHORITY_END -->
+
+## Previous W10 installation — November 2 (historical)
+
+**Installed on local main, November 2, 2026.** At that release the ordinary browser app ran the W10/V19 product from commit `c00565479b79de10b74261e972750a6c52c435f3` in `C:/Users/FA507/.codex/legalpdf_translate`. The separate parity worktree supplied the tested product. Identify the running build from its readiness response and served assets. A later documentation-only commit has the same product bytes.
 
 | Original | Verified unattended result on W10 | Final case record |
 |---|---|---|
@@ -24,11 +29,10 @@ Private evidence is under `C:/Users/FA507/.codex/legalpdf_translate_private_benc
 | Longer draft (Latest30) | 76/76 source criteria, all 18 priorities, 16 literal groups and six reference risks. Three original pages flowed across four Word pages. The closing and both printed fractions passed. | `a2b0dc81` |
 
 **Release complete.** All three cases passed from one ordinary Start each on the same frozen product. Full28 passed in 108 minutes with all 861 protected files exact (`2b2fbb1a`). Main received the verified 122 paths. The canonical server and bridge were ready on 8877/8765. The served JavaScript matched disk, New Job loaded the saved Arabic target, and Recent Work showed 12 items. All 85 saved jobs, the schema, settings, native routes, 731 inventoried files and eight additional current outputs were preserved within the recorded inventory scope.
-<!-- CURRENT_CAMPAIGN_AUTHORITY_END -->
 
 ## Development direction
 
-The [eight-document blind comparison](reviews/PANEL_READING_ORDER.md) stopped the proposed rectangle-based ownership rule. It recovered zero of 26 expected links. Ordinary extraction put five measured relationships in the wrong order, but the full source images can still inform translation. Keep the existing ordinary path and keep Decisions outside production acceptance. If further fidelity work is requested, start with a demonstrable final Word error, locate the first incorrect representation and compare an unaffected control. The historical paragraph-merging and body-centering examples are candidates for investigation.
+The [eight-document blind comparison](reviews/PANEL_READING_ORDER.md) stopped the proposed rectangle-based ownership rule. It recovered zero of 26 expected links. Ordinary extraction put five measured relationships in the wrong order, but the full source images can still inform translation. Keep the existing ordinary path and keep Decisions outside production acceptance. If further fidelity work is requested, start with a demonstrable final Word error, locate the first incorrect representation and compare an unaffected control. The November 8 work reproduced and corrected the English body-centering defect; the Arabic paragraph case already passed on W10. Remaining findings include the inherited M1 generated counters and mixed-direction header appearance described above.
 
 ## Evidence and constraints
 

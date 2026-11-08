@@ -2,7 +2,7 @@
 
 For current build and case results use the [handoff](HANDOFF.md). For translation defects report ordinary-path replay, fresh source/native review and installed-build validation separately. The [panel and table diagnostic](reviews/PANEL_READING_ORDER.md) provides a small offline source-order comparison.
 
-## Source-line alignment candidate — November 8
+## Installed source-line alignment — November 8
 
 The [current evaluation](reviews/TRANSLATION_STRUCTURE_2026-11-08.md) separates fresh Word acceptance from offline regression. Final English trial03 on runtime `ef13a1a3`, V20 recipe `bb362bce`, passes all nine frozen criteria in actual Word. Source content, all 16 numeric occurrences and 13 paragraph texts pass; indentation, footer flow and other appearance differences remain explicit. The Arabic baseline passes 22/22; candidate controls retain their own current status in [HANDOFF](HANDOFF.md).
 
@@ -19,6 +19,8 @@ The existing `tooling/ci_test_evidence.py` selected shard attempts 1, 1, 1 and 2
 Code commit `1405ccba3ce0acf5e64a1111accf13cbedbc413a` records the eight tested source/test/script changes; each staged blob matched its final freeze exactly. The tests ran before that Git metadata change. Post-commit receipt `1dd59581` rechecks all 865 protected files and the eight committed blobs against the final freeze. Direct-Dart agent-docs and workspace-hygiene validation passed after the final status updates. No product change or repeat provider run followed acceptance. Installation remains separately governed by [HANDOFF](HANDOFF.md).
 
 The Arabic control passes 22/22; M1 passes 40/41 and retains a strict failure for inherited generated counters, proven identical by V19/V20 retained-input replay. Private launchers own their entire Windows Job Object, handle interrupted setup/monitoring and reject surviving descendants; network/native checks remain sampled, not a global sandbox. The validation freeze has closed; later documentation-only closeout does not change the tested product.
+
+Local application was explicitly approved after validation. Canonical main received the exact 865 protected files (`2c34597b`), while both unrelated local documentation edits were preserved separately. Normal detached startup reported canonical/live identity, correct served JavaScript, preserved saved target language and 12 Recent Work entries. Current installation evidence is in private `local_installation01`; no new provider generation was used. Startup receipt `be47c525` originally overstated zero native operations. Correction `6611f29f` records the app's ordinary temporary Word-export canary. The first strict preservation report `76aae560` found only its two active runtime working files changed; the narrow successor `28206294` verifies canary temp paths, completed cleanup and exact process exit, and preserves all 85 jobs, table values/schema, settings, native routes and 1,717 inventoried existing files. Neither initial failure was erased. Inventory scope and existing missing historical paths remain explicit; this is not an entire-machine preservation claim.
 
 ## W10 installation and source-structure evaluation — November 2
 
