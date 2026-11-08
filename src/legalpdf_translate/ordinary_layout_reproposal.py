@@ -73,9 +73,9 @@ def extra_calls(count, policy):
 def automatic_policy(policy, render_fingerprint=None):
     _check(policy)
     from .ordinary_auto_layout import (_bounded_page_reproposal_v11_policy,
-        _per_page_reproposal_v12_policy, _in_flow_folio_bridges_v13_policy, _labeled_folio_direction_v14_policy, _terminal_punctuation_folio_v15_policy, _bounded_signature_label_v16_policy, _local_footer_closing_v17_policy, _contact_folio_v18_policy, _contact_folio_overlap_v19_policy)
+        _per_page_reproposal_v12_policy, _in_flow_folio_bridges_v13_policy, _labeled_folio_direction_v14_policy, _terminal_punctuation_folio_v15_policy, _bounded_signature_label_v16_policy, _local_footer_closing_v17_policy, _contact_folio_v18_policy, _contact_folio_overlap_v19_policy, _source_alignment_v20_policy)
     if render_fingerprint is not None:
-        for value in (_in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy()):
+        for value in (_in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy(), _source_alignment_v20_policy()):
             if policy == POLICY_V2 and render_fingerprint == value.split(":", 1)[1]:
                 return value
         fail("proposal_repair_policy_changed", 409)
@@ -177,12 +177,30 @@ def eligible(snapshot, view, proposal, policy, error_code):
         and validation(snapshot, view, proposal, policy) == {"valid": False, "error_code": error_code})
 
 
-def page_request(view, page, policy, *, prior=None):
-    from .ordinary_layout_manager import INSTRUCTIONS as INITIAL_INSTRUCTIONS
+def page_request(view, page, policy, *, prior=None, source_pdf=None, source_pdf_sha256=None,
+                 _verified_image=None, _source_line_map_cache=None):
+    from .ordinary_layout_manager import instructions_for_render_policy
     rows = [r for r in view["paragraphs"] if r["id"] in page_ids(view, page)]
     payload = {"version": PROPOSAL_VERSION_V3, "page_number": page,
         "target_lang": view["target_lang"], "paragraphs": rows}
-    instructions = INITIAL_INSTRUCTIONS
+    instructions = instructions_for_render_policy(policy.get(RENDER_KEY))
+    from .ordinary_auto_layout import _source_alignment_v20_policy
+    if policy.get(RENDER_KEY) == _source_alignment_v20_policy().split(":", 1)[1]:
+        from .ordinary_source_line_map import KEY as SOURCE_LINE_MAP_KEY, derive_source_line_map
+        owners = {region["page_number"] for choice in view["decisions"]["paragraphs"] for region in choice["regions"]}
+        frames = [frame for frame in view["pages"] if frame["page_number"] == page]
+        if len(frames) != 1 or page not in owners:
+            fail("source_line_map_context_changed", 409)
+        if type(source_pdf) is not bytes or digest(source_pdf) != source_pdf_sha256:
+            fail("source_line_map_context_changed", 409)
+        cache = {} if _source_line_map_cache is None else _source_line_map_cache
+        # Cache lifetime is one immutable live operation or witness verification.
+        cache_key = (source_pdf_sha256, page, digest(encode(frames[0])), len(owners))
+        if cache_key not in cache:
+            cache[cache_key] = derive_source_line_map(source_pdf, frames[0],
+                expected_source_sha256=source_pdf_sha256, selected_page_count=len(owners),
+                _verified_image=_verified_image)
+        payload[SOURCE_LINE_MAP_KEY] = cache[cache_key]
     if prior is not None:
         payload["proposal_repair"] = {"version": policy[KEY], "page_number": page,
             "original_request_sha256": prior["intent"]["request_sha256"],
@@ -191,10 +209,30 @@ def page_request(view, page, policy, *, prior=None):
         instructions += INSTRUCTIONS
         if prior["validation"]["error_code"] == "ordinary_layout_invalid_source_footer_evidence":
             instructions += FOOTER_CONSTRAINT_INSTRUCTIONS
-    return {"instructions": instructions, "prompt_text": encode(payload).decode(),
+    request = {"instructions": instructions, "prompt_text": encode(payload).decode(),
         "effort": policy["effort"], "response_format": proposal_schema(page, page_ids(view, page)),
         "max_output_tokens": policy["max_output_tokens"], "timeout_seconds": policy["timeout_seconds"],
         "image_detail": "high"}
+    if (policy.get(RENDER_KEY) == _source_alignment_v20_policy().split(":", 1)[1]
+            and payload[SOURCE_LINE_MAP_KEY]["status"] == "available"
+            and not _within_existing_input_bound(request, policy["model"])):
+        # The optional evidence must not consume an otherwise admitted repair.
+        # Apply this after feedback/schema/instructions exist, identically on replay.
+        payload[SOURCE_LINE_MAP_KEY] = {**payload[SOURCE_LINE_MAP_KEY],
+            "status": "unavailable", "reason": "request_capacity", "lines": []}
+        request["prompt_text"] = encode(payload).decode()
+    return request
+
+
+def _within_existing_input_bound(request, model):
+    from .ordinary_layout_accounting import layout_accounting_policy
+    from .openai_client import _request_accounting_details
+    limits = layout_accounting_policy().accounting_arguments()["dispatch_limits"][f"openai:layout_suggestion:{model}"]
+    # Image URLs are removed from the accounting text-byte bound. One empty
+    # placeholder therefore reproduces the complete real envelope's exact bound.
+    sdk, _ = native_request(request, b"", model)
+    observed = _request_accounting_details(sdk)[1]
+    return observed["input_bytes"] + limits["max_image_input_tokens"] <= limits["max_input_tokens"]
 
 
 def native_request(request, image, model):
@@ -274,10 +312,12 @@ def _events(journal):
 
 class AttemptStore:
     """One live operation only; constructing an existing store never dispatches."""
-    def __init__(self, operation, *, view, snapshot, identity, policy):
+    def __init__(self, operation, *, view, snapshot, identity, policy, source_pdf=None):
         _check(policy.get(KEY))
         self.operation, self.folder = Path(operation), Path(operation) / "attempts"
         self.view, self.snapshot, self.policy = view, snapshot, policy
+        self.source_pdf = source_pdf
+        self.source_line_map_cache = {}
         self.version = ledger_version(policy[KEY])
         self.base = {"version": self.version, "identity": identity, "policy": policy,
             "initial_view": view, "snapshot_sha256": digest(encode(snapshot))}
@@ -299,7 +339,9 @@ class AttemptStore:
             intent_path = prefix.with_suffix(".intent.json")
             if intent_path.exists():
                 fail("proposal_repair_replay_dispatch_forbidden", 409)
-            request = page_request(self.view, page, self.policy, prior=prior)
+            request = page_request(self.view, page, self.policy, prior=prior,
+                source_pdf=self.source_pdf, source_pdf_sha256=self.base["identity"]["source_sha256"],
+                _verified_image=image, _source_line_map_cache=self.source_line_map_cache)
             sdk, request_hash = native_request(request, image, self.policy["model"])
             limits = accountant.request_limits("openai", "layout_suggestion", self.policy["model"])
             from .openai_client import _request_accounting_details
@@ -454,6 +496,7 @@ def verify_witness(witness, *, snapshot, frames, source_pdf, page_groups, select
     if len(records) > record_limit(base):
         fail("proposal_repair_ledger_changed", 409)
     image = _image_lookup(source_pdf, frames)
+    source_line_map_cache = {}
     used, calls, proposals, repaired = set(), [], [], []
     def read(name):
         used.add(name)
@@ -470,7 +513,9 @@ def verify_witness(witness, *, snapshot, frames, source_pdf, page_groups, select
         for ordinal in range(2):
             stem = prefix + f"attempt-{ordinal:02d}"
             intent = read(stem + ".intent.json")
-            request = page_request(view, page, policy, prior=prior)
+            request = page_request(view, page, policy, prior=prior,
+                source_pdf=source_pdf, source_pdf_sha256=identity["source_sha256"],
+                _verified_image=image(page), _source_line_map_cache=source_line_map_cache)
             _, request_hash = native_request(request, image(page), policy["model"])
             expected_intent = {"version": version, "manifest_sha256": digest(encode(base)),
                 "page_number": page, "ordinal": ordinal, "request": request,

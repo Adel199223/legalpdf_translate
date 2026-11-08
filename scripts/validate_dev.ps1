@@ -228,6 +228,7 @@ $fullExtraCommands = @(
             "tests/test_ordinary_source_acronyms.py",
             "tests/test_contact_folio_direction_v18.py",
             "tests/test_contact_folio_overlap_v19.py",
+            "tests/test_source_alignment_instructions_v20.py",
             "tests/test_workflow_semantic_audit_integration.py",
             "tests/test_workflow_semantic_review_integration.py",
             "tests/test_semantic_audit_context_preservation.py",

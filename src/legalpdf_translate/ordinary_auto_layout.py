@@ -23,7 +23,7 @@ _POLICY_RE = re.compile(r"source_image_unreviewed_v1:([a-f0-9]{64})\Z")
 
 def frozen_automatic_layout_policy() -> str:
     """Freeze local price, request and validation versions before translation."""
-    return _contact_folio_overlap_v19_policy()
+    return _source_alignment_v20_policy()
 
 
 def _body_columns_v3_policy() -> str:
@@ -31,21 +31,30 @@ def _body_columns_v3_policy() -> str:
     return _optional_hint_policy("ordinary_optional_layout_hint_normalization_v3", emphasis_normalization=True, metadata_normalization=True, primary_folio_version="terminal_source_bound_folio_v4", source_folio_proof=True, metadata_normalization_version="ordinary_metadata_band_normalization_v3", source_folio_direction_version="numeric_run_ltr_v3")
 
 
-def _optional_hint_policy(normalization_version: str, *, emphasis_normalization=False, metadata_normalization=False, primary_folio_version="terminal_labeled_folio_v1", source_folio_proof=False, metadata_normalization_version="ordinary_metadata_band_normalization_v1", source_folio_direction_version="numeric_run_ltr_v2", clock_direction_version=None, source_folio_inline_direction_version=None, emphasis_normalization_version="ordinary_optional_emphasis_normalization_v1", terminal_source_layout=False, closing_group=False, closing_group_version="bounded_terminal_signature_context_v1", proposal_repair_policy=None, source_in_flow_folio_direction_version=None, source_labeled_folio_direction_version=None) -> str:
+def _optional_hint_policy(normalization_version: str, *, emphasis_normalization=False, metadata_normalization=False, primary_folio_version="terminal_labeled_folio_v1", source_folio_proof=False, metadata_normalization_version="ordinary_metadata_band_normalization_v1", source_folio_direction_version="numeric_run_ltr_v2", clock_direction_version=None, source_folio_inline_direction_version=None, emphasis_normalization_version="ordinary_optional_emphasis_normalization_v1", terminal_source_layout=False, closing_group=False, closing_group_version="bounded_terminal_signature_context_v1", proposal_repair_policy=None, source_in_flow_folio_direction_version=None, source_labeled_folio_direction_version=None, instruction_version=None) -> str:
     """Exact versioned capability identities; no arbitrary historical-policy admission."""
     from .ordinary_layout_accounting import layout_accounting_policy
     from .ordinary_layout_contracts import PROPOSAL_VERSION_V3
-    from .ordinary_layout_manager import INSTRUCTIONS
+    from .ordinary_layout_manager import INSTRUCTIONS, INSTRUCTIONS_SOURCE_ALIGNMENT_V1
 
+    if instruction_version is None:
+        instructions = INSTRUCTIONS
+    elif instruction_version == "source_alignment_v1":
+        instructions = INSTRUCTIONS_SOURCE_ALIGNMENT_V1
+    else:
+        fail("source_alignment_instruction_version")
     accounting = layout_accounting_policy()
     identity = {"version": ORDINARY_AUTO_LAYOUT_POLICY,
         "proposal_version": PROPOSAL_VERSION_V3,
         "automatic_writer_version": "saved_docx_layout_writer_source_layout_v7",
         "source_folio_direction_version": source_folio_direction_version,
         "source_layout_normalization_version": normalization_version,
-        "instructions_sha256": hashlib.sha256(INSTRUCTIONS.encode("utf-8")).hexdigest(),
+        "instructions_sha256": hashlib.sha256(instructions.encode("utf-8")).hexdigest(),
         "pricing_catalog": json.loads(accounting._pricing_json),
         "dispatch_limits": json.loads(accounting._limits_json)}
+    if instruction_version == "source_alignment_v1":
+        from .ordinary_source_line_map import recipe_descriptor
+        identity["native_source_line_map_policy"] = recipe_descriptor()
     if emphasis_normalization:
         if emphasis_normalization_version not in {"ordinary_optional_emphasis_normalization_v1", "ordinary_optional_emphasis_normalization_v2", "ordinary_optional_emphasis_normalization_v3"}:
             fail("invalid_emphasis_normalization_version")
@@ -123,14 +132,14 @@ def _inline_folio_direction_policy():
 
 
 def _source_folio_inline_direction_version(policy_fingerprint):
-    if policy_fingerprint == _contact_folio_overlap_v19_policy().split(":",1)[1]:
+    if policy_fingerprint in {_contact_folio_overlap_v19_policy().split(":",1)[1], _source_alignment_v20_policy().split(":",1)[1]}:
         from .ordinary_source_layout import INLINE_FOLIO_DIRECTION_V3
         return INLINE_FOLIO_DIRECTION_V3
     if policy_fingerprint == _contact_folio_v18_policy().split(":",1)[1]:
         from .ordinary_source_layout import INLINE_FOLIO_DIRECTION_V2
         return INLINE_FOLIO_DIRECTION_V2
     return ("source_bound_folio_separator_ltr_v1"
-        if policy_fingerprint in {p.split(":",1)[1] for p in (_inline_folio_direction_policy(),_complete_lrm_emphasis_policy(),_terminal_source_layout_policy(),_terminal_closing_group_policy(),_plain_list_columns_v6_policy(),_terminal_footer_membership_v7_policy(),_in_body_terminal_closing_v8_policy(),_adjacent_lrm_emphasis_v9_policy(),_protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy())} else None)
+        if policy_fingerprint in {p.split(":",1)[1] for p in (_inline_folio_direction_policy(),_complete_lrm_emphasis_policy(),_terminal_source_layout_policy(),_terminal_closing_group_policy(),_plain_list_columns_v6_policy(),_terminal_footer_membership_v7_policy(),_in_body_terminal_closing_v8_policy(),_adjacent_lrm_emphasis_v9_policy(),_protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy(), _source_alignment_v20_policy())} else None)
 
 
 def _complete_lrm_emphasis_policy():
@@ -251,7 +260,8 @@ def _proposal_repair_version(policy_fingerprint):
                            (POLICY_V2, _terminal_punctuation_folio_v15_policy()),
                            (POLICY_V2, _bounded_signature_label_v16_policy()),
                            (POLICY_V2, _local_footer_closing_v17_policy()),
-                           (POLICY_V2, _contact_folio_v18_policy()), (POLICY_V2, _contact_folio_overlap_v19_policy())):
+                           (POLICY_V2, _contact_folio_v18_policy()), (POLICY_V2, _contact_folio_overlap_v19_policy()),
+                           (POLICY_V2, _source_alignment_v20_policy())):
         if policy_fingerprint == recipe.split(":", 1)[1]:
             return policy
     return None
@@ -352,7 +362,13 @@ def _contact_folio_overlap_v19_policy():
     return _local_footer_policy(INLINE_FOLIO_DIRECTION_V3)
 
 
-def _local_footer_policy(inline_mode):
+def _source_alignment_v20_policy():
+    """Source-line alignment guidance with the complete concrete V19 capabilities."""
+    from .ordinary_source_layout import INLINE_FOLIO_DIRECTION_V3
+    return _local_footer_policy(INLINE_FOLIO_DIRECTION_V3, instruction_version="source_alignment_v1")
+
+
+def _local_footer_policy(inline_mode, *, instruction_version=None):
     """The contact-folio version changes local direction only, after proposal selection."""
     from .ordinary_layout_reproposal import POLICY_V2
     from .ordinary_in_flow_folio_bridges import VERSION
@@ -366,13 +382,14 @@ def _local_footer_policy(inline_mode):
         emphasis_normalization_version="ordinary_optional_emphasis_normalization_v3",
         terminal_source_layout=True, closing_group=True,
         closing_group_version="bounded_terminal_signature_context_v5", proposal_repair_policy=POLICY_V2,
-        source_in_flow_folio_direction_version=VERSION, source_labeled_folio_direction_version=LABELED)
+        source_in_flow_folio_direction_version=VERSION, source_labeled_folio_direction_version=LABELED,
+        instruction_version=instruction_version)
 
 
 
 def _proposal_render_profile(policy_fingerprint):
     """Only V13 supplies a new private renderer; absent still means saved V12."""
-    return policy_fingerprint if policy_fingerprint in {p.split(":", 1)[1] for p in (_in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy())} else None
+    return policy_fingerprint if policy_fingerprint in {p.split(":", 1)[1] for p in (_in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy(), _source_alignment_v20_policy())} else None
 
 
 def manual_automatic_layout_policy():
@@ -388,7 +405,7 @@ def supports_manual_layout_recovery(policy):
 
 def _source_folio_direction_version(policy_fingerprint):
     """Exact saved numeric identities shared by evidence and actual attachment."""
-    if policy_fingerprint in {p.split(":",1)[1] for p in (_protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy())}:
+    if policy_fingerprint in {p.split(":",1)[1] for p in (_protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy(), _source_alignment_v20_policy())}:
         return "numeric_run_ltr_v4"
     if policy_fingerprint in {p.split(":",1)[1] for p in (
             _adjacent_lrm_emphasis_v9_policy(), _in_body_terminal_closing_v8_policy(),
@@ -402,7 +419,7 @@ def _source_folio_direction_version(policy_fingerprint):
 
 
 def _terminal_source_layout_versions(policy_fingerprint):
-    if policy_fingerprint in {_contact_folio_v18_policy().split(":",1)[1], _contact_folio_overlap_v19_policy().split(":",1)[1]}:
+    if policy_fingerprint in {_contact_folio_v18_policy().split(":",1)[1], _contact_folio_overlap_v19_policy().split(":",1)[1], _source_alignment_v20_policy().split(":",1)[1]}:
         return _terminal_source_layout_versions(_local_footer_closing_v17_policy().split(":",1)[1])
     if policy_fingerprint == _local_footer_closing_v17_policy().split(":", 1)[1]:
         return {**_terminal_source_layout_versions(_bounded_signature_label_v16_policy().split(":", 1)[1]),
@@ -419,7 +436,7 @@ def _terminal_source_layout_versions(policy_fingerprint):
     if policy_fingerprint == _in_flow_folio_bridges_v13_policy().split(":", 1)[1]:
         from .ordinary_in_flow_folio_bridges import KEY, VERSION
         return {**_terminal_source_layout_versions(_per_page_reproposal_v12_policy().split(":", 1)[1]), KEY: VERSION}
-    if policy_fingerprint in {p.split(":",1)[1] for p in (_in_body_terminal_closing_v8_policy(), _adjacent_lrm_emphasis_v9_policy(), _protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy())}:
+    if policy_fingerprint in {p.split(":",1)[1] for p in (_in_body_terminal_closing_v8_policy(), _adjacent_lrm_emphasis_v9_policy(), _protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy(), _source_alignment_v20_policy())}:
         return {"source_footer_placement_version":"terminal_body_flow_v1",
                 "source_spacing_version":"baseline_metadata_heading_spacing_v1",
                 "source_closing_group_version":"bounded_terminal_signature_context_v3"}
@@ -437,7 +454,7 @@ def _terminal_source_layout_versions(policy_fingerprint):
 
 
 def _emphasis_normalization_version(policy_fingerprint):
-    if policy_fingerprint in {p.split(":",1)[1] for p in (_adjacent_lrm_emphasis_v9_policy(), _protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy())}:
+    if policy_fingerprint in {p.split(":",1)[1] for p in (_adjacent_lrm_emphasis_v9_policy(), _protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy(), _source_alignment_v20_policy())}:
         return "ordinary_optional_emphasis_normalization_v3"
     if policy_fingerprint in {p.split(":",1)[1] for p in (_complete_lrm_emphasis_policy(),_terminal_source_layout_policy(),_terminal_closing_group_policy(),_plain_list_columns_v6_policy(),_terminal_footer_membership_v7_policy(),_in_body_terminal_closing_v8_policy())}:
         return "ordinary_optional_emphasis_normalization_v2"
@@ -457,7 +474,7 @@ def _verify_emphasis_version(record, version):
 def _clock_direction_version(policy_fingerprint):
     """Only the exact old clock and fresh heading policies authorize clocks."""
     return "clock_h_colon_ltr_v1" if policy_fingerprint in {
-        p.split(":", 1)[1] for p in (_clock_direction_policy(), _heading_columns_v4_policy(), _reference_footer_v5_policy(), _inline_folio_direction_policy(), _complete_lrm_emphasis_policy(), _terminal_source_layout_policy(),_terminal_closing_group_policy(),_plain_list_columns_v6_policy(),_terminal_footer_membership_v7_policy(),_in_body_terminal_closing_v8_policy(),_adjacent_lrm_emphasis_v9_policy(),_protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy())} else None
+        p.split(":", 1)[1] for p in (_clock_direction_policy(), _heading_columns_v4_policy(), _reference_footer_v5_policy(), _inline_folio_direction_policy(), _complete_lrm_emphasis_policy(), _terminal_source_layout_policy(),_terminal_closing_group_policy(),_plain_list_columns_v6_policy(),_terminal_footer_membership_v7_policy(),_in_body_terminal_closing_v8_policy(),_adjacent_lrm_emphasis_v9_policy(),_protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy(), _source_alignment_v20_policy())} else None
 
 
 def _source_bound_v4_policy() -> str:
@@ -479,7 +496,7 @@ def _source_bound_v3_policy() -> str:
 
 def _metadata_normalization_policies() -> set[str]:
     """Exact old/new primary recipes share the same saved layout semantics."""
-    return {frozen_automatic_layout_policy(), _contact_folio_v18_policy(), _local_footer_closing_v17_policy(), _bounded_signature_label_v16_policy(), _terminal_punctuation_folio_v15_policy(), _labeled_folio_direction_v14_policy(), _in_flow_folio_bridges_v13_policy(), _per_page_reproposal_v12_policy(), _bounded_page_reproposal_v11_policy(), _protected_folio_bridges_v10_policy(), _adjacent_lrm_emphasis_v9_policy(), _in_body_terminal_closing_v8_policy(), _terminal_footer_membership_v7_policy(), _plain_list_columns_v6_policy(), _terminal_closing_group_policy(), _terminal_source_layout_policy(), _complete_lrm_emphasis_policy(), _inline_folio_direction_policy(), _reference_footer_v5_policy(), _heading_columns_v4_policy(), _clock_direction_policy(), _body_columns_v3_policy(), _source_bound_v4_policy(), _source_bound_v3_policy(), _optional_hint_policy(
+    return {_source_alignment_v20_policy(), _contact_folio_overlap_v19_policy(), _contact_folio_v18_policy(), _local_footer_closing_v17_policy(), _bounded_signature_label_v16_policy(), _terminal_punctuation_folio_v15_policy(), _labeled_folio_direction_v14_policy(), _in_flow_folio_bridges_v13_policy(), _per_page_reproposal_v12_policy(), _bounded_page_reproposal_v11_policy(), _protected_folio_bridges_v10_policy(), _adjacent_lrm_emphasis_v9_policy(), _in_body_terminal_closing_v8_policy(), _terminal_footer_membership_v7_policy(), _plain_list_columns_v6_policy(), _terminal_closing_group_policy(), _terminal_source_layout_policy(), _complete_lrm_emphasis_policy(), _inline_folio_direction_policy(), _reference_footer_v5_policy(), _heading_columns_v4_policy(), _clock_direction_policy(), _body_columns_v3_policy(), _source_bound_v4_policy(), _source_bound_v3_policy(), _optional_hint_policy(
         "ordinary_optional_layout_hint_normalization_v3", emphasis_normalization=True,
         metadata_normalization=True, primary_folio_version="terminal_labeled_folio_v2", source_folio_proof=True), _optional_hint_policy(
         "ordinary_optional_layout_hint_normalization_v3", emphasis_normalization=True,
@@ -505,14 +522,14 @@ def _source_normalization_version(policy_fingerprint):
 
 
 def _source_folio_policies():
-    return {frozen_automatic_layout_policy(), _contact_folio_v18_policy(), _local_footer_closing_v17_policy(), _bounded_signature_label_v16_policy(), _terminal_punctuation_folio_v15_policy(), _labeled_folio_direction_v14_policy(), _in_flow_folio_bridges_v13_policy(), _per_page_reproposal_v12_policy(), _bounded_page_reproposal_v11_policy(), _protected_folio_bridges_v10_policy(), _adjacent_lrm_emphasis_v9_policy(), _in_body_terminal_closing_v8_policy(), _terminal_footer_membership_v7_policy(), _plain_list_columns_v6_policy(), _terminal_closing_group_policy(), _terminal_source_layout_policy(), _complete_lrm_emphasis_policy(), _inline_folio_direction_policy(), _reference_footer_v5_policy(), _heading_columns_v4_policy(), _clock_direction_policy(), _body_columns_v3_policy(), _source_bound_v4_policy(), _source_bound_v3_policy(), _optional_hint_policy(
+    return {_source_alignment_v20_policy(), _contact_folio_overlap_v19_policy(), _contact_folio_v18_policy(), _local_footer_closing_v17_policy(), _bounded_signature_label_v16_policy(), _terminal_punctuation_folio_v15_policy(), _labeled_folio_direction_v14_policy(), _in_flow_folio_bridges_v13_policy(), _per_page_reproposal_v12_policy(), _bounded_page_reproposal_v11_policy(), _protected_folio_bridges_v10_policy(), _adjacent_lrm_emphasis_v9_policy(), _in_body_terminal_closing_v8_policy(), _terminal_footer_membership_v7_policy(), _plain_list_columns_v6_policy(), _terminal_closing_group_policy(), _terminal_source_layout_policy(), _complete_lrm_emphasis_policy(), _inline_folio_direction_policy(), _reference_footer_v5_policy(), _heading_columns_v4_policy(), _clock_direction_policy(), _body_columns_v3_policy(), _source_bound_v4_policy(), _source_bound_v3_policy(), _optional_hint_policy(
         "ordinary_optional_layout_hint_normalization_v3", emphasis_normalization=True,
         metadata_normalization=True, primary_folio_version="terminal_labeled_folio_v2", source_folio_proof=True)}
 
 
 def _band_normalization_version(policy_fingerprint):
     """Fresh flow repair is never silently applied to an older paid operation."""
-    if policy_fingerprint in {p.split(":",1)[1] for p in (_in_body_terminal_closing_v8_policy(), _adjacent_lrm_emphasis_v9_policy(), _protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy())}:
+    if policy_fingerprint in {p.split(":",1)[1] for p in (_in_body_terminal_closing_v8_policy(), _adjacent_lrm_emphasis_v9_policy(), _protected_folio_bridges_v10_policy(), _bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy(), _source_alignment_v20_policy())}:
         return "ordinary_metadata_band_normalization_v8"
     if policy_fingerprint == _terminal_footer_membership_v7_policy().split(":", 1)[1]:
         return "ordinary_metadata_band_normalization_v7"
@@ -1321,9 +1338,9 @@ def run_automatic_layout(manager, accounting, job_id: str, frozen_policy: str,
     if cancel_requested(job_id):
         fail("automatic_layout_cancelled", 409)
     expected_dispatch_policy = manual_automatic_layout_policy() if recovery_old_policy is not None else frozen_automatic_layout_policy()
-    if (recovery_old_policy is None and frozen_policy in {_local_footer_closing_v17_policy(), _contact_folio_v18_policy()}
-            and expected_dispatch_policy == _contact_folio_overlap_v19_policy()):
-        # An unfinished saved V17/V18 Start still owns its original automatic stage.
+    if (recovery_old_policy is None and frozen_policy in {_local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy()}
+            and expected_dispatch_policy == _source_alignment_v20_policy()):
+        # An unfinished saved V17/V18/V19 Start still owns its original automatic stage.
         # Its selected source and checkpoint must authorize this exact policy.
         from .checkpoint import load_run_state
         state = load_run_state(Path(baseline["run_dir"]) / "run_state.json")
@@ -1530,7 +1547,7 @@ def _completed_rebuild_proof(manager, accounting, job_id, *, check_invoking_stat
                 fail("automatic_rebuild_parent_changed", 409)
             if marker.get("identity", {}).get("policy_fingerprint") in {
                     _reference_footer_v5_policy().split(":", 1)[1], _bounded_page_reproposal_v11_policy().split(":", 1)[1],
-                    _per_page_reproposal_v12_policy().split(":", 1)[1], _in_flow_folio_bridges_v13_policy().split(":", 1)[1], _labeled_folio_direction_v14_policy().split(":", 1)[1], _terminal_punctuation_folio_v15_policy().split(":", 1)[1], _bounded_signature_label_v16_policy().split(":", 1)[1], _local_footer_closing_v17_policy().split(":", 1)[1], _contact_folio_v18_policy().split(":", 1)[1], _contact_folio_overlap_v19_policy().split(":", 1)[1]}:
+                    _per_page_reproposal_v12_policy().split(":", 1)[1], _in_flow_folio_bridges_v13_policy().split(":", 1)[1], _labeled_folio_direction_v14_policy().split(":", 1)[1], _terminal_punctuation_folio_v15_policy().split(":", 1)[1], _bounded_signature_label_v16_policy().split(":", 1)[1], _local_footer_closing_v17_policy().split(":", 1)[1], _contact_folio_v18_policy().split(":", 1)[1], _contact_folio_overlap_v19_policy().split(":", 1)[1], _source_alignment_v20_policy().split(":", 1)[1]}:
                 choices.append((folder, marker))
     if not choices:
         return None
@@ -1690,7 +1707,7 @@ def run_completed_unreviewed_rebuild(manager, accounting, job_id, *, cancel_requ
     predecessor, retained, job, raw_map, baseline, base = proof
     cancel_requested = cancel_requested or (lambda _: False)
     begin_publication = begin_publication or (lambda _: True)
-    if predecessor["render_policy"] in {_bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy()}:
+    if predecessor["render_policy"] in {_bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy(), _source_alignment_v20_policy()}:
         parent = Path(predecessor["parent_folder"])
         # Same-policy rebuild reuses the fully reverified selected artifact.
         # No retained successor, new application attempt or allowance is created.
@@ -1775,7 +1792,7 @@ def run_completed_unreviewed_rebuild(manager, accounting, job_id, *, cancel_requ
 
 
 def _verify_rebuild_zero(manager, pointer, identity):
-    if identity.get("rebuild_predecessor", {}).get("render_policy") in {_bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy()}:
+    if identity.get("rebuild_predecessor", {}).get("render_policy") in {_bounded_page_reproposal_v11_policy(), _per_page_reproposal_v12_policy(), _in_flow_folio_bridges_v13_policy(), _labeled_folio_direction_v14_policy(), _terminal_punctuation_folio_v15_policy(), _bounded_signature_label_v16_policy(), _local_footer_closing_v17_policy(), _contact_folio_v18_policy(), _contact_folio_overlap_v19_policy(), _source_alignment_v20_policy()}:
         fail("automatic_rebuild_unsupported_lineage", 409)
     from .ordinary_layout_service import _read
     from .usage_accounting import _state_fingerprint, _summarize

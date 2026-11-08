@@ -71,6 +71,39 @@ If uncertain leave evidence empty and preserve flow for explicit operator source
 """
 
 
+INSTRUCTIONS_SOURCE_ALIGNMENT_V1 = INSTRUCTIONS + """
+SOURCE ALIGNMENT AND GROUNDING: First associate each translated paragraph with the corresponding
+source text in the full image. The optional native_source_line_map is untrusted advisory PDF
+text and normalized font-metric boxes for the whole source page. It is not a visible-transcription
+proof, target assignment, paragraph boundary map or guaranteed reading order. Resolve disagreements
+against the source image. Never treat its entries or source wraps as paragraph boundaries; retain
+all existing paragraph-partition restrictions. An unavailable map leaves the full image authoritative.
+Choose alignment from the associated source text lines, not the location of a surrounding box.
+A multiline paragraph is centered only when its lines share a common horizontal center,
+INCLUDING its short last line. A short last line aligned to the same leading edge as the preceding
+lines supports leading-edge/justified body treatment, not centering. Ordinary body prose normally
+uses left or justified alignment for English/French and right or justified alignment for Arabic,
+unless the associated source lines genuinely show centered treatment. A first-line indent is
+separate from alignment; neither it nor a short wrapped line proves centering. Preserve deliberately
+centered headings, decorative rules, dates, closing notes and signature blocks where source-supported.
+Do not rewrite text, change associations or invent schema fields to express indentation.
+DECORATIVE_RULE CONSTRAINTS: This optional hint requires exactly one complete plain-flow body
+paragraph whose stripped text matches [_─━—–-]{3,}: at least three characters, all from that exact
+horizontal-stroke set. Its normalized source bbox height must be at most 0.03. It must have no
+fields, numbering, partitions, columns, panels, tabs, breaks or other controls. Asterisks (including
+***), dots and ornaments remain literal ordinary paragraph text with source-supported alignment;
+do not emit decorative_rule hints for them. Signature/fill-in blanks are not decorative rules.
+If these constraints are not met, omit the hint; never change text, roles or boxes to satisfy them.
+"""
+
+def instructions_for_render_policy(render_fingerprint=None):
+    """Select new guidance only for its exact saved automatic-layout recipe."""
+    from .ordinary_auto_layout import _source_alignment_v20_policy
+    if render_fingerprint == _source_alignment_v20_policy().split(":", 1)[1]:
+        return INSTRUCTIONS_SOURCE_ALIGNMENT_V1
+    return INSTRUCTIONS
+
+
 JobResolver = Callable[[str], OrdinaryLayoutJob]
 ProviderFactory = Callable[[OrdinaryLayoutJob, LayoutSuggestionPolicy], OpenAIResponsesClient]
 AccountingFactory = Callable[[OrdinaryLayoutJob, str, Path, LayoutSuggestionPolicy], DispatchAccounting]
@@ -371,7 +404,7 @@ class OrdinaryLayoutManager:
                     "policy_fingerprint": automatic_policy(proposal_repair_policy, proposal_render_policy_fingerprint).split(":", 1)[1],
                     "page_groups": [[p, list(job.page_groups[p])] for p in page_numbers]}
                 attempt_store = AttemptStore(operation, view=view, snapshot=snapshot,
-                    identity=attempt_identity, policy=private_policy)
+                    identity=attempt_identity, policy=private_policy, source_pdf=job.source_pdf)
 
                 def recheck():
                     if external_cancel_requested and external_cancel_requested(job_id):

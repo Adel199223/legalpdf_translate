@@ -147,7 +147,7 @@ def test_actual_v19_inherits_same_proposal_wire_and_v18_stays_resolvable(tmp_pat
     from legalpdf_translate.ordinary_layout_contracts import decode,encode
     from tests import test_ordinary_layout_reproposal as lifecycle
     lifecycle.isolate_provider(monkeypatch)
-    case=lifecycle.normal_start(tmp_path,monkeypatch)
+    case=lifecycle.normal_start(tmp_path,monkeypatch,saved_policy=auto._contact_folio_overlap_v19_policy())
     result=case.job["result"]["automatic_layout"]
     assert result["status"]=="automatic_unreviewed",result
     witness,context=lifecycle.witness_context(case)
