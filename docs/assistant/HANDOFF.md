@@ -1,5 +1,19 @@
 # Current handoff
 
+## Validated translation-structure candidate — November 8
+
+Implementation and validation are complete in `C:/Users/FA507/.codex/worktrees/translation-structure-20261108/legalpdf_translate`, branch `feat/translation-structure-20261108`, based on `afe169c1`. Code commit `1405ccba3ce0acf5e64a1111accf13cbedbc413a` contains the exact tested product. Installed main remains W10/V19. The remaining step is local-release approval under `AGENTS.md` before applying this candidate to the normal app. The user authorized independent development and up to USD30.54 additional API spending before November 25; historical stage tokens and spending stops are not current authority. Follow the [current plan](exec_plans/active/2026-11-08_translation_structure.md).
+
+| Case | Actual result | Remaining limitation |
+|---|---|---|
+| English order, physical page 4 | Final V20 ordinary Start passes 9/9 frozen criteria in actual Word. Body is justified, all five centered controls and literal `***` remain, and all 16 numeric occurrences and 13 paragraph texts pass. | Footer flow, first-line indentation, emblem and typography differ. This is not facsimile acceptance. |
+| One-page Arabic notice | W10 and V20 ordinary Starts both pass 22/22 source/content criteria in native Word, including three distinct prose paragraphs and the postal R. | Mixed Arabic/Latin header parentheses wrap awkwardly; logical characters and the code remain intact. |
+| Mixed digital/raster M1 | Independent source/native review passes 40/41. P209 fails for added generated counters; no other content, literal-ownership or structural failure. Exact V19/V20 retained-input replay produces identical DOCX bytes and maps. | Keep strict failure visible. The inherited counter-policy limitation is deferred; the passing Arabic case supplies the unaffected control. |
+
+V20 adds bounded advisory native source-line text and positions alongside the full image. Released saved recipes stay intact. Selected Full passed (`c5bf49de`). The complete collection is verified across passing shard attempts: 12,792 unique cases, zero failures/errors/skips in selected evidence (`d2a68808`). Three initial 30-second formatting-wait failures remain retained; the unchanged 3,101-case shard passed sequentially (`994208d4`). All 865 protected files remained exact and owned processes exited cleanly. No test, native review or provider run is active. See [VALIDATION](VALIDATION.md) for the initial failure and latest-attempt selection; do not repeat broad tests solely for the later Git metadata change.
+
+Private evidence is under `C:/Users/FA507/.codex/legalpdf_translate_private_benchmarks/structure_fidelity_20261108_01`. Usage-attributed cost across 24 generation calls is USD4.65596565, leaving USD25.88403435 of the authorized allowance; dashboard posting is not established. No further paid run is needed for this candidate. English acceptance is `candidate_en_alignment_trial03_acceptance.private.json`; Arabic acceptance is `ar_candidate_independent_review01/acceptance.private.json`. Exact reviewed Word/PDF copies are in `reviewed_examples01`. Earlier failures remain preserved. Canonical main and its preexisting unrelated changes are untouched. Remote publication and live Gmail are outside scope. Exact previous guidance is retained in [the scoped beforeimages](history/2026-11-08_structure_alignment_before/manifest.json).
+
 <!-- CURRENT_CAMPAIGN_AUTHORITY_START -->
 **Installed on local main, November 2, 2026.** The ordinary browser app runs the W10/V19 product from commit `c00565479b79de10b74261e972750a6c52c435f3` in `C:/Users/FA507/.codex/legalpdf_translate`. The separate parity worktree supplied the tested product. Identify the running build from its readiness response and served assets. A later documentation-only commit has the same product bytes.
 

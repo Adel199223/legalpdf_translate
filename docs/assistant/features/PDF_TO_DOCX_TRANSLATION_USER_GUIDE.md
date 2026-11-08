@@ -1,5 +1,7 @@
 # PDF to DOCX Translation User Guide
 
+Builds containing the source-line alignment update better distinguish ordinary body prose from deliberately centered text. Existing saved jobs keep their original formatting recipe. Word wrapping, indentation, spacing, emblems and footer position can still differ from the PDF, so inspect every output page. See [current build and tested cases](../HANDOFF.md).
+
 Builds containing the terminal-footer update keep identified source footer text after the complete text from that source page and reduce excess spacing in verified headings and form fields. Builds containing the later closing-group update also keep an eligible short closing/signature block together with its source footer. Wording and font sizes stay intact; the document can still span extra pages. Older saved layouts retain their saved behavior; inspect every page of the unreviewed Word copy. See [current build status](../HANDOFF.md).
 
 ## When extracted text conflicts with the page image

@@ -1,0 +1,34 @@
+{
+  "schema": "scoped_beforeimages_v1",
+  "base_head": "afe169c1169f541f2ca2b33ce526d18e86c714d9",
+  "files": [
+    {
+      "path": "APP_KNOWLEDGE.md",
+      "sha256": "79072fe61c2d1a296b0f655b8f10c2c4d34f8fd42e6c3fd8d4035dbc909d81d4"
+    },
+    {
+      "path": "docs/assistant/APP_KNOWLEDGE.md",
+      "sha256": "a1ffc7eb35ad62e0ae8baa72092da4d6ffd8cd54b6e9dbdbcd2026de535ba31a"
+    },
+    {
+      "path": "docs/assistant/HANDOFF.md",
+      "sha256": "b346867cc6c78340ea92e5bcafb8f8c04cb041272c4da0d9c7062874c8854be9"
+    },
+    {
+      "path": "docs/assistant/VALIDATION.md",
+      "sha256": "435de4a4de4f9f4a383389d3dafef908d6bf7b70502da614e5d2ce8813508132"
+    },
+    {
+      "path": "docs/assistant/SESSION_RESUME.md",
+      "sha256": "de8c4f618d82e75c7965e026ef3c46f589b597d132a16ad47dd0cc83209a8bf0"
+    },
+    {
+      "path": "docs/assistant/EXTERNAL_SOURCE_REGISTRY.md",
+      "sha256": "c0708429b3fa127578c1903d4ab6fa9003a6cf035816c37d200870145c67af9d"
+    },
+    {
+      "path": "docs/assistant/features/PDF_TO_DOCX_TRANSLATION_USER_GUIDE.md",
+      "sha256": "22f3a745a320b577636ce63306ecbee869f789e11a0edbf7a9a2f31eb2d45d11"
+    }
+  ]
+}

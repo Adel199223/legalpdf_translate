@@ -1,5 +1,16 @@
 # External Source Registry
 
+## Bounded structure-improvement campaign — 2026-11-08
+
+| Source | Verified use | Date |
+|---|---|---|
+| [Responses input-token count](https://developers.openai.com/api/reference/resources/responses/subresources/input_tokens/methods/count) and [token-counting guide](https://developers.openai.com/api/docs/guides/token-counting) | The private evaluation runner counts the exact prospective request, including image/schema framing, before reserving generation capacity. Its generation request is unchanged and counted input must match returned usage. | 2026-11-08 |
+| [API pricing](https://developers.openai.com/api/docs/pricing) | Standard public prices and optional cache-write categories support conservative reservations and returned-usage attribution within the new USD30.54 allowance. This is not invoice reconciliation. | 2026-11-08 |
+| [GPT-5.2](https://developers.openai.com/api/docs/models/gpt-5.2), [GPT-4o Mini](https://developers.openai.com/api/docs/models/gpt-4o-mini) and [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) | Rechecked context/output capacities for the app's existing translation, OCR and semantic choices. No model, request tier or retention setting was changed. | 2026-11-08 |
+| [Vision limitations](https://developers.openai.com/api/docs/guides/images-vision#limitations) and [PyMuPDF line dictionaries](https://pymupdf.readthedocs.io/en/latest/textpage.html#line-dictionary) | Image models can misjudge precise positions; native extraction exposes line text, bounds and direction. This supports testing advisory line evidence alongside the image, not treating extracted boxes as verified visible content or paragraph ownership. | 2026-11-08 |
+
+These references support request accounting, not translation acceptance. The current [handoff](HANDOFF.md) separates native Word review, regression validation and installed status. Account identity, tier, prepaid balance and auto-reload observations are private campaign evidence.
+
 ## Translation structure and harness review — 2026-11-02
 
 | Source | Use in this review | Verified |

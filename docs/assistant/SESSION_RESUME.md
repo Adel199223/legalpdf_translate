@@ -1,5 +1,9 @@
 # SESSION_RESUME
 
+## Current structure-improvement goal — November 8
+
+Read [HANDOFF](HANDOFF.md), then the [current translation-structure plan](exec_plans/active/2026-11-08_translation_structure.md). The user authorized independent work and a fresh USD30.54 spending cap. Candidate `1405ccba` is implemented and validated in the isolated worktree; local-release approval remains before application to the normal app. Installed main remains W10/V19. No test or paid run is active. Historical installation and funding instructions below are evidence only. The roadmap remains dormant; this is normal scoped ExecPlan work.
+
 ## Current provisional installation — October 22
 
 Read [HANDOFF](HANDOFF.md), then the [provisional installation plan](exec_plans/completed/2026-10-22_provisional_main_update.md). The user explicitly authorized applying offline-tested fixes to main without API spending. The bounded provisional installation passed normal startup and preservation checks. It is separate from the paused0/3 fresh-autonomy goal; current HANDOFF and the private terminal receipt own final installed/runtime identities. Existing older completion and shutdown instructions below are historical; do not replay their operations. The roadmap remains dormant.
