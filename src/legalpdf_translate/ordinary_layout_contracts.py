@@ -132,7 +132,7 @@ class LayoutSuggestionPolicy:
                 raise ValueError
         except (ValueError, InvalidOperation, TypeError):
             fail("paid_policy_unavailable", 503)
-        if (type(self.model) is not str or not self.model or self.effort not in {"low", "medium", "high"}
+        if (type(self.model) is not str or not self.model or self.effort not in {"low", "medium", "high", "xhigh"}
                 or type(self.max_output_tokens) is not int or not 1 <= self.max_output_tokens <= MAX_OUTPUT_TOKENS
                 or type(self.timeout_seconds) not in {float, int} or not 5 <= self.timeout_seconds <= REQUEST_TIMEOUT_SECONDS):
             fail("paid_policy_unavailable", 503)

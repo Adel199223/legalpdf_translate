@@ -46,10 +46,24 @@ from .checkpoint import (
     sha256_of_text,
 )
 from .config import (
+    DEFAULT_TRANSLATION_PROVIDER,
     DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
     DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+    GEMINI_MODEL,
     OPENAI_MODEL,
     load_environment,
+)
+from .gemini_client import GeminiInteractionsClient
+from .provider_client import (
+    TranslationClient,
+    client_provider,
+    create_translation_client,
+    default_translation_model,
+    is_provider_auth_failure,
+    is_translation_client,
+    normalize_translation_provider,
+    provider_display_name,
+    run_provider_auth_test,
 )
 from .config import IMAGE_MAX_DATA_URL_BYTES_AR, IMAGE_MAX_DATA_URL_BYTES_ENFR
 from .cost_guardrails import (
@@ -668,6 +682,7 @@ class TranslationWorkflow:
         from .accounting_policy import OrdinaryAccountingPolicy, ordinary_accounting_policy
         if accounting_policy is not None and not isinstance(accounting_policy, OrdinaryAccountingPolicy):
             raise TypeError("accounting_policy must be an immutable OrdinaryAccountingPolicy.")
+        self._accounting_policy_explicit = accounting_policy is not None
         self._accounting_policy = accounting_policy or ordinary_accounting_policy()
         self._acceptance_continuation = acceptance_continuation
         self._environment_loader = environment_loader
@@ -678,7 +693,16 @@ class TranslationWorkflow:
         self._translation_protocol = requested
         self._structured_run = None
         self._provided_client = client
-        self._translation_model = client.model if isinstance(client, OpenAIResponsesClient) else OPENAI_MODEL
+        self._translation_provider = (
+            client_provider(client)
+            if is_translation_client(client)
+            else DEFAULT_TRANSLATION_PROVIDER
+        )
+        self._translation_model = (
+            client.model
+            if is_translation_client(client)
+            else default_translation_model(self._translation_provider)
+        )
         self._log_callback = log_callback
         self._progress_callback = progress_callback
         self._cancel_event = threading.Event()
@@ -757,7 +781,6 @@ class TranslationWorkflow:
 
     def _run_locked(self, config: RunConfig, *, output_preprobed: bool = False) -> RunSummary:
         run_started_perf = time.perf_counter()
-        self._translation_model = self._provided_client.model if isinstance(self._provided_client, OpenAIResponsesClient) else OPENAI_MODEL
         self._translation_protocol = self._configured_translation_protocol
         self._structured_run = None
         self._cancel_event.clear()
@@ -794,6 +817,34 @@ class TranslationWorkflow:
             else None
         )
         gui_settings = load_gui_settings() if self._gui_settings is None else deepcopy(self._gui_settings)
+        if is_translation_client(self._provided_client):
+            self._translation_provider = client_provider(self._provided_client)
+            self._translation_model = self._provided_client.model
+        elif self._provided_client is not None:
+            self._translation_provider = client_provider(self._provided_client)
+            self._translation_model = str(
+                getattr(self._provided_client, "model", "") or default_translation_model(self._translation_provider)
+            )
+        elif config.translation_provider is not None:
+            self._translation_provider = normalize_translation_provider(config.translation_provider).value
+            self._translation_model = (
+                (config.translation_model or "").strip()
+                or str(gui_settings.get("translation_model", "") or "").strip()
+                or default_translation_model(self._translation_provider)
+            )
+        else:
+            raw_provider = gui_settings.get("translation_provider")
+            if raw_provider:
+                self._translation_provider = normalize_translation_provider(raw_provider).value
+            elif self._accounting_policy_explicit and self._gui_settings is not None:
+                self._translation_provider = "openai"
+            else:
+                self._translation_provider = DEFAULT_TRANSLATION_PROVIDER
+            self._translation_model = (
+                (config.translation_model or "").strip()
+                or str(gui_settings.get("translation_model", "") or "").strip()
+                or default_translation_model(self._translation_provider)
+            )
         self._hydrate_request_settings(config=config, gui_settings=gui_settings)
         self._last_config = config
         self._diagnostics_admin_mode = bool(config.diagnostics_admin_mode)
@@ -978,23 +1029,35 @@ class TranslationWorkflow:
         if semantic_recipe is not None and provided_client is None:
             ordinary_client_options["model"] = semantic_recipe["model"]
 
-        def _get_thread_client() -> OpenAIResponsesClient | Any:
+        def _build_default_client():
+            timeout_val = max(
+                self._translation_timeout_text_seconds,
+                self._translation_timeout_image_seconds,
+            )
+            if self._translation_provider == "gemini":
+                gemini_options = dict(ordinary_client_options)
+                gemini_options.setdefault("model", self._translation_model)
+                return GeminiInteractionsClient(
+                    request_timeout_seconds=timeout_val,
+                    logger=self._log,
+                    **gemini_options,
+                )
+            return OpenAIResponsesClient(
+                request_timeout_seconds=timeout_val,
+                logger=self._log,
+                **ordinary_client_options,
+            )
+
+        def _get_thread_client() -> Any:
             cached = getattr(thread_local, "client", None)
-            if isinstance(cached, OpenAIResponsesClient):
+            if is_translation_client(cached):
                 return cached
-            if provided_client is not None and not isinstance(provided_client, OpenAIResponsesClient):
+            if provided_client is not None and not is_translation_client(provided_client):
                 return provided_client
-            if isinstance(provided_client, OpenAIResponsesClient):
+            if is_translation_client(provided_client):
                 client_instance = provided_client.clone(logger=self._log)
             else:
-                client_instance = OpenAIResponsesClient(
-                    request_timeout_seconds=max(
-                        self._translation_timeout_text_seconds,
-                        self._translation_timeout_image_seconds,
-                    ),
-                    logger=self._log,
-                    **ordinary_client_options,
-                )
+                client_instance = _build_default_client()
             thread_local.client = client_instance
             return client_instance
 
@@ -1002,7 +1065,7 @@ class TranslationWorkflow:
             client = _get_thread_client()
             if semantic_recipe is not None and "semantic_review_model_policy" in semantic_recipe:
                 from .semantic_review_model_policy import effective_model
-                if not isinstance(client, OpenAIResponsesClient):
+                if not is_translation_client(client):
                     raise SemanticIntegrationError("dedicated_review_client_required")
                 return client.for_semantic_review(model=effective_model(semantic_recipe))
             return client
@@ -1125,15 +1188,11 @@ class TranslationWorkflow:
             if provided_client is None:
                 # Resolve once; worker clones must not re-read ambient credentials.
                 try:
-                    provided_client = OpenAIResponsesClient(
-                        request_timeout_seconds=max(self._translation_timeout_text_seconds,
-                                                    self._translation_timeout_image_seconds),
-                        logger=self._log,
-                        **ordinary_client_options,
-                    )
+                    provided_client = _build_default_client()
                 except ValueError:
+                    provider_label = provider_display_name(self._translation_provider)
                     auth_result = TranslationAuthTestResult(ok=False, status="missing",
-                        message="OpenAI translation credentials are not configured.", credential_source=None)
+                        message=f"{provider_label} translation credentials are not configured.", credential_source=None)
             if provided_client is not None and hasattr(provided_client, "local_credential_preflight"):
                 maybe_result = provided_client.local_credential_preflight()
                 if isinstance(maybe_result, TranslationAuthTestResult):
@@ -1144,7 +1203,8 @@ class TranslationWorkflow:
             if auth_result is not None and not auth_result.ok and auth_result.status in {"missing", "unauthorized"}:
                 authentication_failure = True
                 failure_context = _translation_auth_failure_context_from_result(auth_result)
-                halt_reason = "OpenAI translation authentication failed before page processing."
+                provider_label = provider_display_name(self._translation_provider)
+                halt_reason = f"{provider_label} translation authentication failed before page processing."
                 self._log(
                     "translate_auth_preflight "
                     f"status={auth_result.status} "
@@ -1710,6 +1770,9 @@ class TranslationWorkflow:
             current_ocr_mode=config.ocr_mode.value,
             current_image_mode=config.image_mode.value,
             source="analyze_report",
+            decisions_advisory_enabled=bool(
+                config.gemini_decisions_advisory_enabled and self._translation_provider == "gemini"
+            ),
         )
         payload = {
             "run_id": paths.run_started_at,
@@ -1733,6 +1796,8 @@ class TranslationWorkflow:
             "advisor_track": str(advisor_recommendation.get("advisor_track", "enfr") or "enfr"),
             "pages": rows,
         }
+        if "decisions_advisory" in advisor_recommendation:
+            payload["decisions_advisory"] = advisor_recommendation["decisions_advisory"]
         analyze_report_path = paths.run_dir / "analyze_report.json"
         tmp_path = analyze_report_path.with_suffix(".tmp")
         tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2134,8 +2199,13 @@ class TranslationWorkflow:
                 saved = ordinary_semantic_audit_recipe(self._last_state.settings) if self._last_state is not None else None
                 strict_ocr = saved.get("ocr_text_transport_policy") if saved and request_reason == "required" else None
                 if strict_ocr is not None:
-                    from .ocr_text_transport import POLICY, OcrTextTransportError
-                    if strict_ocr != POLICY or config.ocr_api_provider.value != "openai":
+                    from .ocr_text_transport import GEMINI_POLICY, POLICY, SUPPORTED_POLICIES, OcrTextTransportError
+                    expected_ocr_policy = (
+                        GEMINI_POLICY
+                        if config.ocr_api_provider.value == "gemini"
+                        else POLICY
+                    )
+                    if strict_ocr not in SUPPORTED_POLICIES or strict_ocr != expected_ocr_policy:
                         raise OcrTextTransportError("unsupported_configuration")
                     engine_config.text_transport_policy = strict_ocr
                 try:
@@ -2988,7 +3058,12 @@ class TranslationWorkflow:
             _finalize_page_metadata()
             failure_error = (
                 "authentication_failure"
-                if is_openai_auth_failure(exception_class=exc.exception_class, status_code=exc.status_code)
+                if is_provider_auth_failure(
+                    self._translation_provider,
+                    exception_class=exc.exception_class,
+                    status_code=exc.status_code,
+                    message=str(exc),
+                )
                 else "runtime_failure"
             )
             return _PageOutcome(
@@ -3236,7 +3311,12 @@ class TranslationWorkflow:
             _finalize_page_metadata()
             failure_error = (
                 "authentication_failure"
-                if is_openai_auth_failure(exception_class=exc.exception_class, status_code=exc.status_code)
+                if is_provider_auth_failure(
+                    self._translation_provider,
+                    exception_class=exc.exception_class,
+                    status_code=exc.status_code,
+                    message=str(exc),
+                )
                 else "runtime_failure"
             )
             return _PageOutcome(
@@ -3553,6 +3633,9 @@ class TranslationWorkflow:
                 budget = ReservationBudget(journal_dir / "budget.json", cap_usd=str(config.budget_cap_usd),
                                            identity=identity, create=not bool(run_state.dispatch_accounting))
             accounting_policy = self._accounting_policy
+            if not self._accounting_policy_explicit and self._translation_provider == "gemini":
+                from .accounting_policy import gemini_accounting_policy
+                accounting_policy = gemini_accounting_policy()
             if semantic_identity:
                 from .accounting_policy import with_semantic_review_policy
                 accounting_policy = with_semantic_review_policy(accounting_policy, semantic_identity["semantic_review_model_policy"])
@@ -3805,7 +3888,15 @@ class TranslationWorkflow:
             total_output_tokens=total_output_tokens,
             total_reasoning_tokens=total_reasoning_tokens,
         )
-        quality_risk_payload = build_quality_risk_summary(page_rows, target_lang=config.target_lang.value)
+        decisions_opt_in = bool(
+            config.gemini_decisions_advisory_enabled and self._translation_provider == "gemini"
+        )
+        quality_risk_payload = build_quality_risk_summary(
+            page_rows,
+            target_lang=config.target_lang.value,
+            decisions_advisory_enabled=decisions_opt_in,
+            decisions_accountant=self._dispatch_accounting,
+        )
         advisor_rows = [page for _, page in page_rows]
         advisor_recommendation = build_ocr_image_advisor(
             rows=advisor_rows,
@@ -3813,6 +3904,8 @@ class TranslationWorkflow:
             current_ocr_mode=config.ocr_mode.value,
             current_image_mode=config.image_mode.value,
             source="run_summary",
+            decisions_advisory_enabled=decisions_opt_in,
+            decisions_accountant=self._dispatch_accounting,
         )
         advisor_recommendation_applied = (
             self._advisor_recommendation_applied
@@ -3975,6 +4068,11 @@ class TranslationWorkflow:
             "quality_risk_score": quality_risk_payload.get("quality_risk_score", 0.0),
             "review_queue_count": quality_risk_payload.get("review_queue_count", 0),
             "review_queue": quality_risk_payload.get("review_queue", []),
+            **(
+                {"decisions_advisory": quality_risk_payload["decisions_advisory"]}
+                if "decisions_advisory" in quality_risk_payload
+                else {}
+            ),
         }
         if dispatch_summary is not None:
             payload["dispatch_accounting"] = dispatch_summary

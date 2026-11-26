@@ -371,7 +371,7 @@ def run_semantic_repair(*, pages, recipe, pdf_sha256, evidence_dir, client=None,
             or (not is_v3 and (semantic_literal_authority_policy is not None or source_origins is not None))
             or (is_v4 != (semantic_enclosure_authority_policy == "source_enclosure_authority_v1"))
             or (semantic_enclosure_authority_policy is not None and not is_v4)
-            or semantic_repair_policy not in {POLICY, POLICY_V2, POLICY_V3, POLICY_V4} or recipe.model != "gpt-6-astra"
+            or semantic_repair_policy not in {POLICY, POLICY_V2, POLICY_V3, POLICY_V4} or recipe.model not in ("gpt-6-astra", "gemini-4-neon")
             or options.get("semantic_source_review_policy") not in (source_policy.POLICY_V5, source_policy.POLICY_V6, source_policy.POLICY_V7, source_policy.POLICY_V8, source_policy.POLICY_V9)
             or (options.get("semantic_source_review_policy") in {source_policy.POLICY_V6, source_policy.POLICY_V7, source_policy.POLICY_V8, source_policy.POLICY_V9} and not is_v4)
             or options != {"semantic_unit_reference_policy": refs.POLICY,

@@ -120,6 +120,8 @@ from legalpdf_translate.power_tools_service import (
     run_settings_preflight,
     save_browser_settings,
     save_browser_ocr_key,
+    save_browser_gemini_key,
+    clear_browser_gemini_key,
     save_browser_translation_key,
     save_glossary_workspace,
 )
@@ -2164,6 +2166,7 @@ def create_shadow_app(
             response = save_browser_translation_key(
                 settings_path=target.data_paths.settings_path,
                 key=payload.get("key") if isinstance(payload, dict) else "",
+                provider=payload.get("provider") if isinstance(payload, dict) else None,
             )
         except (ValueError, RuntimeError) as exc:
             return _validation_error_response(context, target, message=str(exc))
@@ -2179,7 +2182,43 @@ def create_shadow_app(
             workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
         )
         try:
-            response = clear_browser_translation_key(settings_path=target.data_paths.settings_path)
+            response = clear_browser_translation_key(
+                settings_path=target.data_paths.settings_path,
+                provider=payload.get("provider") if isinstance(payload, dict) else None,
+            )
+        except RuntimeError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/gemini-key/save")
+    async def api_settings_gemini_key_save(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = save_browser_gemini_key(
+                settings_path=target.data_paths.settings_path,
+                key=payload.get("key") if isinstance(payload, dict) else "",
+            )
+        except (ValueError, RuntimeError) as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/gemini-key/clear")
+    async def api_settings_gemini_key_clear(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = clear_browser_gemini_key(settings_path=target.data_paths.settings_path)
         except RuntimeError as exc:
             return _validation_error_response(context, target, message=str(exc))
         return JSONResponse(_merge_response(context, target, response))

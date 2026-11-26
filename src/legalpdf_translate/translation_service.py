@@ -48,14 +48,22 @@ from .ocr_engine import (
     normalize_ocr_api_provider,
     resolve_ocr_api_key,
 )
+from .config import DEFAULT_TRANSLATION_PROVIDER, GEMINI_MODEL
+from .gemini_client import GeminiInteractionsClient
 from .openai_client import OpenAIResponsesClient, resolve_openai_key_with_source
+from .provider_client import (
+    default_translation_model,
+    normalize_translation_provider,
+    provider_display_name,
+    resolve_translation_key_with_source,
+)
 from .output_paths import require_writable_output_dir
 from .pricing import translation_fee_eur
 from .review_export import export_review_queue
 from .run_report import build_run_report_markdown
 from .run_workspace_lock import RunWorkspaceBusy
 from .source_document import get_source_page_count, is_pdf_source, is_supported_source_file
-from .types import AnalyzeSummary, OcrMode, RunConfig, RunSummary, TargetLang
+from .types import AnalyzeSummary, OcrApiProvider, OcrMode, RunConfig, RunSummary, TargetLang
 from .user_settings import (
     load_gui_settings_from_path,
     load_joblog_settings_from_path,
@@ -342,7 +350,7 @@ def _translation_raw_values(form_values: Mapping[str, Any], *, seed: JobLogSeed)
 def build_translation_capability_flags(*, settings_path: Path) -> dict[str, Any]:
     gui_settings = load_gui_settings_from_path(settings_path)
     provider = normalize_ocr_api_provider(
-        gui_settings.get("ocr_api_provider", gui_settings.get("ocr_api_provider_default", "openai"))
+        gui_settings.get("ocr_api_provider", gui_settings.get("ocr_api_provider_default", "gemini"))
     )
     ocr_env_name = str(
         gui_settings.get("ocr_api_key_env_name")
@@ -364,7 +372,18 @@ def build_translation_capability_flags(*, settings_path: Path) -> dict[str, Any]
         api_key_env_name=ocr_env_name,
         api_timeout_seconds=float(gui_settings.get("ocr_api_timeout_seconds", 60.0) or 60.0),
     )
-    translation_key, translation_source = resolve_openai_key_with_source()
+    translation_provider = normalize_translation_provider(
+        gui_settings.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
+    )
+    translation_model = (
+        str(gui_settings.get("translation_model", "") or "").strip()
+        or default_translation_model(translation_provider)
+    )
+    allow_ocr_fallback = translation_provider == normalize_translation_provider("gemini") and provider == OcrApiProvider.GEMINI
+    translation_key, translation_source = resolve_translation_key_with_source(
+        translation_provider,
+        allow_gemini_ocr_fallback=allow_ocr_fallback,
+    )
     translation_source_payload = (
         translation_source.to_payload() if translation_source is not None else {"kind": "missing", "name": ""}
     )
@@ -379,6 +398,8 @@ def build_translation_capability_flags(*, settings_path: Path) -> dict[str, Any]
             "default_env_name": ocr_env_name,
         },
         "translation": {
+            "provider": translation_provider.value,
+            "model": translation_model,
             "status": "ready" if translation_key is not None else "needs_auth",
             "credentials_configured": translation_key is not None,
             "credential_source": translation_source_payload,
@@ -405,16 +426,30 @@ def build_translation_capability_flags(*, settings_path: Path) -> dict[str, Any]
 def build_translation_defaults(*, settings_path: Path, outputs_dir: Path) -> dict[str, Any]:
     gui_settings = load_gui_settings_from_path(settings_path)
     provider = normalize_ocr_api_provider(
-        gui_settings.get("ocr_api_provider", gui_settings.get("ocr_api_provider_default", "openai"))
+        gui_settings.get("ocr_api_provider", gui_settings.get("ocr_api_provider_default", "gemini"))
+    )
+    translation_provider = normalize_translation_provider(
+        gui_settings.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
+    )
+    translation_model = (
+        str(gui_settings.get("translation_model", "") or "").strip()
+        or default_translation_model(translation_provider)
     )
     return {
         "source_path": "",
         "uploaded_source_path": "",
         "output_dir": _default_output_dir_text(gui_settings, outputs_dir),
         "target_lang": str(gui_settings.get("last_lang", gui_settings.get("default_lang", "EN")) or "EN").strip().upper(),
-        "effort": str(gui_settings.get("effort", "high") or "high").strip().lower(),
+        "translation_provider": translation_provider.value,
+        "translation_model": translation_model,
+        "helper_thinking_level": str(gui_settings.get("helper_thinking_level", "high") or "high").strip().lower(),
+        "gemini_decisions_advisory_enabled": _coerce_bool(
+            gui_settings.get("gemini_decisions_advisory_enabled"),
+            False,
+        ),
+        "effort": str(gui_settings.get("effort", "xhigh") or "xhigh").strip().lower(),
         "effort_policy": str(
-            gui_settings.get("effort_policy", gui_settings.get("default_effort_policy", "adaptive")) or "adaptive"
+            gui_settings.get("effort_policy", gui_settings.get("default_effort_policy", "fixed_xhigh")) or "fixed_xhigh"
         ).strip().lower(),
         "image_mode": str(gui_settings.get("image_mode", gui_settings.get("default_images_mode", "off")) or "off").strip().lower(),
         "ocr_mode": str(gui_settings.get("ocr_mode", gui_settings.get("ocr_mode_default", "auto")) or "auto").strip().lower(),
@@ -432,7 +467,7 @@ def build_translation_defaults(*, settings_path: Path, outputs_dir: Path) -> dic
         "context_file": "",
         "context_text": "",
         "glossary_file": _normalize_optional_path(gui_settings.get("glossary_file_path")),
-        "allow_xhigh_escalation": _coerce_bool(gui_settings.get("allow_xhigh_escalation"), False),
+        "allow_xhigh_escalation": _coerce_bool(gui_settings.get("allow_xhigh_escalation"), True),
         "diagnostics_admin_mode": _coerce_bool(gui_settings.get("diagnostics_admin_mode"), True),
         "diagnostics_include_sanitized_snippets": _coerce_bool(
             gui_settings.get("diagnostics_include_sanitized_snippets"),
@@ -499,7 +534,21 @@ def _build_config_from_form(
     glossary_file = Path(glossary_file_text).expanduser().resolve() if glossary_file_text else None
 
     provider = normalize_ocr_api_provider(
-        defaults.get("ocr_api_provider", defaults.get("ocr_api_provider_default", "openai"))
+        defaults.get("ocr_api_provider", defaults.get("ocr_api_provider_default", "gemini"))
+    )
+    translation_provider = normalize_translation_provider(
+        form_values.get("translation_provider", defaults.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER))
+    )
+    translation_model = (
+        str(form_values.get("translation_model", defaults.get("translation_model", "")) or "").strip()
+        or default_translation_model(translation_provider)
+    )
+    helper_thinking_level = str(
+        form_values.get("helper_thinking_level", defaults.get("helper_thinking_level", "high")) or "high"
+    ).strip().lower()
+    gemini_decisions_advisory = _coerce_bool(
+        form_values.get("gemini_decisions_advisory_enabled", defaults.get("gemini_decisions_advisory_enabled")),
+        False,
     )
     ocr_api_key_env_name = str(
         defaults.get("ocr_api_key_env_name")
@@ -525,20 +574,24 @@ def _build_config_from_form(
         pdf_path=source,
         output_dir=output_dir,
         target_lang=TargetLang(target_lang_text),
-        effort=parse_effort(str(form_values.get("effort", defaults.get("effort", "high")) or "high")),
+        effort=parse_effort(str(form_values.get("effort", defaults.get("effort", "xhigh")) or "xhigh")),
         effort_policy=parse_effort_policy(
             str(
                 form_values.get(
                     "effort_policy",
-                    defaults.get("effort_policy", defaults.get("default_effort_policy", "adaptive")),
+                    defaults.get("effort_policy", defaults.get("default_effort_policy", "fixed_xhigh")),
                 )
-                or "adaptive"
+                or "fixed_xhigh"
             )
         ),
         allow_xhigh_escalation=_coerce_bool(
             form_values.get("allow_xhigh_escalation", defaults.get("allow_xhigh_escalation")),
-            False,
+            True,
         ),
+        translation_provider=translation_provider,
+        translation_model=translation_model,
+        helper_thinking_level=helper_thinking_level,
+        gemini_decisions_advisory_enabled=gemini_decisions_advisory,
         image_mode=parse_image_mode(
             str(form_values.get("image_mode", image_mode_default) or "off")
         ),
@@ -1384,9 +1437,10 @@ class TranslationJobManager:
         diagnostics = dict(job.diagnostics_payload)
         if self._job_actions(job).get("recover_layout"):
             try:
-                from .ordinary_layout_accounting import verified_page_ceiling
+                from .ordinary_layout_accounting import verified_page_ceiling_for_provider
+                job_provider = str((job.config_payload or {}).get("translation_provider") or DEFAULT_TRANSLATION_PROVIDER).strip().lower()
                 diagnostics["layout_recovery_quote"] = {"available": True,
-                    "max_page_cost_usd": str(verified_page_ceiling()), "currency": "USD",
+                    "max_page_cost_usd": str(verified_page_ceiling_for_provider(job_provider)), "currency": "USD",
                     "paid_operation": True, "prior_charges_retained": True}
             except Exception:
                 diagnostics["layout_recovery_quote"] = {"available": False,
@@ -1925,11 +1979,31 @@ class TranslationJobManager:
                     retries_setting = gui_settings.get("perf_max_transport_retries", 4)
                     max_retries = 4 if retries_setting is None else int(retries_setting)
                     backoff_cap = float(gui_settings.get("perf_backoff_cap_seconds", 12.0) or 12.0)
-                    client = None if selected_context is not None else OpenAIResponsesClient(
-                        max_transport_retries=max_retries,
-                        backoff_cap_seconds=backoff_cap,
-                        logger=lambda message: self._append_log(job_id, message),
+                    resolved_provider = normalize_translation_provider(
+                        config.translation_provider
+                        or gui_settings.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
                     )
+                    resolved_model = (
+                        (config.translation_model or "").strip()
+                        or str(gui_settings.get("translation_model", "") or "").strip()
+                        or default_translation_model(resolved_provider)
+                    )
+                    if selected_context is not None:
+                        client = None
+                    elif resolved_provider.value == "gemini":
+                        client = GeminiInteractionsClient(
+                            model=resolved_model,
+                            max_transport_retries=max_retries,
+                            backoff_cap_seconds=backoff_cap,
+                            logger=lambda message: self._append_log(job_id, message),
+                        )
+                    else:
+                        client = OpenAIResponsesClient(
+                            model=resolved_model,
+                            max_transport_retries=max_retries,
+                            backoff_cap_seconds=backoff_cap,
+                            logger=lambda message: self._append_log(job_id, message),
+                        )
                     from .workflow import TranslationWorkflow
 
                     from .translation_policy import resolve_ordinary_auto_layout_policy, resolve_translation_protocol
@@ -1941,10 +2015,10 @@ class TranslationJobManager:
                     if auto_policy and self._automatic_layout_runner is None:
                         raise ValueError("ordinary_auto_layout_runner_unavailable")
                     if auto_policy:
-                        from .ordinary_layout_accounting import verified_page_ceiling
+                        from .ordinary_layout_accounting import verified_page_ceiling_for_provider
                         per_page = None
                         try:
-                            per_page = verified_page_ceiling()
+                            per_page = verified_page_ceiling_for_provider(resolved_provider.value)
                             progress_text = ("Translating; automatic source layout follows "
                                 f"(up to USD{per_page} per selected page)")
                         except Exception:
@@ -1976,7 +2050,11 @@ class TranslationJobManager:
                             status_text = "Translation cancelled"
                         elif str(summary.error or "") == "authentication_failure":
                             status = "failed"
-                            status_text = "OpenAI authentication failed"
+                            provider_label = provider_display_name(
+                                config.translation_provider
+                                or gui_settings.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
+                            )
+                            status_text = f"{provider_label} authentication failed"
                         elif str(summary.error or "") == "source_unavailable":
                             status = "failed"
                             status_text = "Source text is unavailable. Enable page images or OCR, then retry."

@@ -585,7 +585,7 @@ def _stage(stage, request, directory, binding_sha, predecessor, client, recipe,
             cancelled_settlement = (getattr(exc, "exception_class", None) == "CancelledError"
                 and getattr(exc, "response_status", None) == "completed"
                 and bool(getattr(exc, "response_id", None)) and isinstance(getattr(exc, "raw_output", None), str))
-            billing_settlement = (recipe.model == "gpt-6-astra"
+            billing_settlement = (recipe.model in ("gpt-6-astra", "gemini-4-neon")
                 and getattr(exc, "exception_class", None) == "SemanticReviewBillingError")
             if (cancelled_settlement or billing_settlement or getattr(exc, "refused", False) is True or
                     (getattr(exc, "response_id", None) and getattr(exc, "response_status", None) in {"incomplete", "failed", "cancelled"})):
@@ -630,7 +630,8 @@ def _stage(stage, request, directory, binding_sha, predecessor, client, recipe,
     # Reuse the authoritative usage completeness rules, without implementing a
     # second cost ledger. The actual provider payload remains in immutable raw
     # evidence; missing/invalid usage must stop before another paid stage.
-    if type(envelope.get("usage")) is not dict or normalize_usage(envelope["usage"])["usage_status"] != "available":
+    usage_provider = "gemini" if str(recipe.model).startswith("gemini-") else "openai"
+    if type(envelope.get("usage")) is not dict or normalize_usage(envelope["usage"], provider=usage_provider)["usage_status"] != "available":
         _fail("usage_unknown_or_unsettled")
     _cancel(cancel_check)
     return envelope, {"stage": stage, "intent_sha256": intent_sha, "raw_sha256": receipt["raw_sha256"],

@@ -120,6 +120,9 @@ async function fetchJsonAllowFailed(path, options = {}) {
 }
 
 const settingsFieldMap = {
+  "settings-translation-provider": "translation_provider",
+  "settings-translation-model": "translation_model",
+  "settings-helper-thinking-level": "helper_thinking_level",
   "settings-default-lang": "default_lang",
   "settings-default-effort": "default_effort",
   "settings-default-effort-policy": "default_effort_policy",
@@ -147,6 +150,7 @@ const settingsCheckboxMap = {
   "settings-default-keep": "default_keep_intermediates",
   "settings-default-breaks": "default_page_breaks",
   "settings-allow-xhigh": "allow_xhigh_escalation",
+  "settings-gemini-decisions-advisory": "gemini_decisions_advisory_enabled",
   "settings-gmail-bridge-enabled": "gmail_intake_bridge_enabled",
   "settings-diagnostics-admin-mode": "diagnostics_admin_mode",
   "settings-diagnostics-snippets": "diagnostics_include_sanitized_snippets",
@@ -173,6 +177,7 @@ function renderProviderState(providerState, { preserveStatus = false } = {}) {
   }
   renderCredentialRecoveryStateInto({
     translation: qs("settings-translation-key-state"),
+    geminiKey: qs("settings-gemini-key-state"),
     ocr: qs("settings-ocr-key-state"),
     nativeHost: qs("settings-native-host-state"),
     word: qs("settings-word-pdf-export-state"),
@@ -456,7 +461,10 @@ async function handleTranslationKeySave() {
   const payload = await fetchJsonAllowFailed("/api/settings/translation-key/save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key: fieldValue("settings-translation-key-input") }),
+    body: JSON.stringify({
+      key: fieldValue("settings-translation-key-input"),
+      provider: fieldValue("settings-translation-provider") || undefined,
+    }),
   });
   applySettingsActionFeedback(payload, "Translation key save completed.", {
     diagnosticsSlot: "settings-admin",
@@ -469,11 +477,39 @@ async function handleTranslationKeyClear() {
   const payload = await fetchJsonAllowFailed("/api/settings/translation-key/clear", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
+    body: JSON.stringify({
+      provider: fieldValue("settings-translation-provider") || undefined,
+    }),
   });
   applySettingsActionFeedback(payload, "Translation key clear completed.", {
     diagnosticsSlot: "settings-admin",
     clearFieldId: "settings-translation-key-input",
+    invalidateBootstrapOnOk: true,
+  });
+}
+
+async function handleGeminiKeySave() {
+  const payload = await fetchJsonAllowFailed("/api/settings/gemini-key/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: fieldValue("settings-gemini-key-input") }),
+  });
+  applySettingsActionFeedback(payload, "Gemini key save completed.", {
+    diagnosticsSlot: "settings-admin",
+    clearFieldId: "settings-gemini-key-input",
+    invalidateBootstrapOnOk: true,
+  });
+}
+
+async function handleGeminiKeyClear() {
+  const payload = await fetchJsonAllowFailed("/api/settings/gemini-key/clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  applySettingsActionFeedback(payload, "Gemini key clear completed.", {
+    diagnosticsSlot: "settings-admin",
+    clearFieldId: "settings-gemini-key-input",
     invalidateBootstrapOnOk: true,
   });
 }
@@ -656,6 +692,8 @@ export function initializePowerToolsUi() {
     "settings-save",
     "settings-save-translation-key",
     "settings-clear-translation-key",
+    "settings-save-gemini-key",
+    "settings-clear-gemini-key",
     "settings-save-ocr-key",
     "settings-clear-ocr-key",
     "settings-test-native-host",
@@ -744,6 +782,42 @@ export function initializePowerToolsUi() {
             panelSlot: "settings",
             diagnosticsSlot: "settings-admin",
             fallback: "Clearing the translation key failed.",
+          });
+        }
+      },
+    );
+  });
+
+  qs("settings-save-gemini-key")?.addEventListener("click", async () => {
+    await runWithBusy(
+      settingsActionButtons,
+      { "settings-save-gemini-key": "Saving..." },
+      async () => {
+        try {
+          await handleGeminiKeySave();
+        } catch (error) {
+          applyActionFailureFeedback(error, {
+            panelSlot: "settings",
+            diagnosticsSlot: "settings-admin",
+            fallback: "Saving the Gemini key failed.",
+          });
+        }
+      },
+    );
+  });
+
+  qs("settings-clear-gemini-key")?.addEventListener("click", async () => {
+    await runWithBusy(
+      settingsActionButtons,
+      { "settings-clear-gemini-key": "Clearing..." },
+      async () => {
+        try {
+          await handleGeminiKeyClear();
+        } catch (error) {
+          applyActionFailureFeedback(error, {
+            panelSlot: "settings",
+            diagnosticsSlot: "settings-admin",
+            fallback: "Clearing the Gemini key failed.",
           });
         }
       },

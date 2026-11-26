@@ -101,14 +101,16 @@ def versions(policy):
         "emphasis_normalization_version": policy["emphasis_normalization_version"]}
 
 
-def expected_policy(count, repair_policy=POLICY, render_fingerprint=None):
+def expected_policy(count, repair_policy=POLICY, render_fingerprint=None, *, model=None, page_ceiling=None, effort="high"):
     from .ordinary_layout_accounting import PAGE_CEILING, MODEL
     from .ordinary_layout_contracts import LayoutSuggestionPolicy
     render = {}
     if render_fingerprint is not None:
         automatic_policy(repair_policy, render_fingerprint)
         render[RENDER_KEY] = render_fingerprint
-    return {**LayoutSuggestionPolicy(MODEL, str(PAGE_CEILING), str(PAGE_CEILING * (count + extra_calls(count, repair_policy)))).public(),
+    selected_model = model or MODEL
+    selected_ceiling = Decimal(str(page_ceiling)) if page_ceiling is not None else PAGE_CEILING
+    return {**LayoutSuggestionPolicy(selected_model, str(selected_ceiling), str(selected_ceiling * (count + extra_calls(count, repair_policy))), effort=effort).public(),
         KEY: repair_policy, "band_normalization_version": "ordinary_metadata_band_normalization_v8",
         "emphasis_normalization_version": "ordinary_optional_emphasis_normalization_v3", **render}
 
@@ -225,9 +227,15 @@ def page_request(view, page, policy, *, prior=None, source_pdf=None, source_pdf_
 
 
 def _within_existing_input_bound(request, model):
-    from .ordinary_layout_accounting import layout_accounting_policy
-    from .openai_client import _request_accounting_details
-    limits = layout_accounting_policy().accounting_arguments()["dispatch_limits"][f"openai:layout_suggestion:{model}"]
+    is_gemini = str(model).startswith("gemini-")
+    if is_gemini:
+        from .ordinary_layout_accounting import gemini_layout_accounting_policy
+        from .gemini_client import _request_accounting_details
+        limits = gemini_layout_accounting_policy().accounting_arguments()["dispatch_limits"][f"gemini:layout_suggestion:{model}"]
+    else:
+        from .ordinary_layout_accounting import layout_accounting_policy
+        from .openai_client import _request_accounting_details
+        limits = layout_accounting_policy().accounting_arguments()["dispatch_limits"][f"openai:layout_suggestion:{model}"]
     # Image URLs are removed from the accounting text-byte bound. One empty
     # placeholder therefore reproduces the complete real envelope's exact bound.
     sdk, _ = native_request(request, b"", model)
@@ -236,9 +244,14 @@ def _within_existing_input_bound(request, model):
 
 
 def native_request(request, image, model):
-    from .openai_client import _build_page_request, _request_accounting_details
     kwargs = {k: v for k, v in request.items() if k != "timeout_seconds"}
-    sdk = _build_page_request(**kwargs, image_data_url="data:image/png;base64," + base64.b64encode(image).decode(), model=model)
+    image_data_url = "data:image/png;base64," + base64.b64encode(image).decode()
+    if str(model).startswith("gemini-"):
+        from .gemini_client import _build_gemini_page_request, _request_accounting_details
+        sdk = _build_gemini_page_request(**kwargs, image_data_url=image_data_url, model=model)
+        return sdk, _request_accounting_details(sdk)[0]
+    from .openai_client import _build_page_request, _request_accounting_details
+    sdk = _build_page_request(**kwargs, image_data_url=image_data_url, model=model)
     sdk["service_tier"] = "default"
     return sdk, _request_accounting_details(sdk)[0]
 
@@ -263,16 +276,33 @@ def _events(journal):
     from .usage_accounting import _state_fingerprint, _summarize
     if journal.get("fingerprint") != _state_fingerprint(journal):
         fail("proposal_repair_accounting_changed", 409)
-    from .ordinary_layout_accounting import layout_accounting_policy, PAGE_CEILING, MODEL
+    from .ordinary_layout_accounting import (
+        GEMINI_MODEL,
+        GEMINI_PAGE_CEILING,
+        MODEL,
+        PAGE_CEILING,
+        gemini_layout_accounting_policy,
+        layout_accounting_policy,
+    )
     from .cost_guardrails import PricingSnapshot, estimate_cost_decimal
-    arguments = layout_accounting_policy().accounting_arguments()
+    events = journal.get("events")
+    if type(events) is not list:
+        fail("proposal_repair_accounting_changed", 409)
+    dispatch_limits = journal.get("dispatch_limits") or {}
+    is_gemini = (
+        isinstance(dispatch_limits, dict)
+        and any(str(k).startswith("gemini:") for k in dispatch_limits)
+    )
+    policy_factory = gemini_layout_accounting_policy if is_gemini else layout_accounting_policy
+    expected_provider = "gemini" if is_gemini else "openai"
+    expected_model = GEMINI_MODEL if is_gemini else MODEL
+    expected_scope = "gemini_developer_api" if is_gemini else "openai_public_api"
+    expected_ceiling = GEMINI_PAGE_CEILING if is_gemini else PAGE_CEILING
+    arguments = policy_factory().accounting_arguments()
     pricing = PricingSnapshot.from_mapping(arguments["pricing_snapshot"])
     if journal.get("pricing_catalog") != pricing.to_mapping() or journal.get("pricing_snapshot") != pricing.metadata():
         fail("proposal_repair_accounting_changed", 409)
-    if journal.get("dispatch_limits") != arguments["dispatch_limits"]:
-        fail("proposal_repair_accounting_changed", 409)
-    events = journal.get("events")
-    if type(events) is not list:
+    if dispatch_limits != arguments["dispatch_limits"]:
         fail("proposal_repair_accounting_changed", 409)
     begins = [e for e in events if e.get("event") == "begin"]
     finishes = [e for e in events if e.get("event") == "finish"]
@@ -296,16 +326,16 @@ def _events(journal):
         counts = ("input_tokens", "output_tokens", "reasoning_tokens", "cached_input_tokens", "cache_write_tokens")
         if (usage.get("usage_status") != "available" or any(type(usage.get(k)) is not int or usage[k] < 0 for k in counts)
                 or usage["input_tokens"] > 400000 or usage["output_tokens"] > 32000
-                or begin.get("provider") != "openai" or begin.get("requested_model") != MODEL
-                or begin.get("requested_service_tier") != "default" or begin.get("billing_scope") != "openai_public_api"
+                or begin.get("provider") != expected_provider or begin.get("requested_model") != expected_model
+                or begin.get("requested_service_tier") != "default" or begin.get("billing_scope") != expected_scope
                 or finish.get("actual_service_tier") != "default"):
             fail("proposal_repair_accounting_changed", 409)
-        resolution = pricing.resolve("openai", finish.get("actual_model"), service_tier="default",
-            billing_scope="openai_public_api", currency="USD")
+        resolution = pricing.resolve(expected_provider, finish.get("actual_model"), service_tier="default",
+            billing_scope=expected_scope, currency="USD")
         if resolution.status != "available" or resolution.rates is None:
             fail("proposal_repair_accounting_changed", 409)
         cost = estimate_cost_decimal(**{k: usage[k] for k in counts}, rates=resolution.rates)
-        if cost != Decimal(str(finish["cost_usd"])) or not 0 <= cost <= PAGE_CEILING:
+        if cost != Decimal(str(finish["cost_usd"])) or not 0 <= cost <= expected_ceiling:
             fail("proposal_repair_accounting_changed", 409)
     return begins, finishes, summary
 
@@ -343,9 +373,14 @@ class AttemptStore:
                 source_pdf=self.source_pdf, source_pdf_sha256=self.base["identity"]["source_sha256"],
                 _verified_image=image, _source_line_map_cache=self.source_line_map_cache)
             sdk, request_hash = native_request(request, image, self.policy["model"])
-            limits = accountant.request_limits("openai", "layout_suggestion", self.policy["model"])
-            from .openai_client import _request_accounting_details
-            _validate_dispatch_input_bound(accountant, limits, _request_accounting_details(sdk)[1])
+            is_gemini = str(self.policy["model"]).startswith("gemini-")
+            layout_provider = "gemini" if is_gemini else "openai"
+            limits = accountant.request_limits(layout_provider, "layout_suggestion", self.policy["model"])
+            if is_gemini:
+                from .gemini_client import _request_accounting_details as _details_fn
+            else:
+                from .openai_client import _request_accounting_details as _details_fn
+            _validate_dispatch_input_bound(accountant, limits, _details_fn(sdk)[1])
             intent = {"version": self.version, "manifest_sha256": digest(encode(self.base)),
                 "page_number": page, "ordinal": ordinal, "request": request,
                 "image_sha256": digest(image), "request_sha256": request_hash}

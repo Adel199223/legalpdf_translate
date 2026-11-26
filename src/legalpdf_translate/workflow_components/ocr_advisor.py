@@ -69,6 +69,9 @@ def build_ocr_image_advisor(
     current_ocr_mode: str,
     current_image_mode: str,
     source: str,
+    decisions_advisory_enabled: bool = False,
+    decisions_sdk_client: Any = None,
+    decisions_accountant: Any = None,
 ) -> dict[str, Any]:
     """Build deterministic recommendation packet from page-level signals."""
     track = _track_for_lang(target_lang)
@@ -179,21 +182,32 @@ def build_ocr_image_advisor(
     confidence = 0.55 + (0.35 * signal_strength) + (0.10 * min(1.0, total_pages / 5.0))
     confidence = round(max(0.5, min(0.99, confidence)), 4)
 
-    return {
+    signal_packet = {
+        "pages": int(total_pages),
+        "low_text_ratio": round(low_text_ratio, 4),
+        "very_low_text_ratio": round(very_low_text_ratio, 4),
+        "fragmented_layout_ratio": round(fragmented_layout_ratio, 4),
+        "image_candidate_ratio": round(image_candidate_ratio, 4),
+        "ocr_required_ratio": round(ocr_required_ratio, 4),
+        "ocr_helpful_ratio": round(ocr_helpful_ratio, 4),
+        "ocr_unavailable_ratio": round(ocr_unavailable_ratio, 4),
+    }
+    payload: dict[str, Any] = {
         "recommended_ocr_mode": recommended_ocr_mode,
         "recommended_image_mode": recommended_image_mode,
         "recommendation_reasons": reasons,
         "confidence": confidence,
         "advisor_track": track,
         "source": source,
-        "signal_packet": {
-            "pages": int(total_pages),
-            "low_text_ratio": round(low_text_ratio, 4),
-            "very_low_text_ratio": round(very_low_text_ratio, 4),
-            "fragmented_layout_ratio": round(fragmented_layout_ratio, 4),
-            "image_candidate_ratio": round(image_candidate_ratio, 4),
-            "ocr_required_ratio": round(ocr_required_ratio, 4),
-            "ocr_helpful_ratio": round(ocr_helpful_ratio, 4),
-            "ocr_unavailable_ratio": round(ocr_unavailable_ratio, 4),
-        },
+        "signal_packet": signal_packet,
     }
+    if decisions_advisory_enabled:
+        from ..gemini_decisions import evaluate_page_routing_advisory
+
+        payload["decisions_advisory"] = evaluate_page_routing_advisory(
+            signal_summary=signal_packet,
+            enabled=True,
+            sdk_client=decisions_sdk_client,
+            accountant=decisions_accountant,
+        )
+    return payload

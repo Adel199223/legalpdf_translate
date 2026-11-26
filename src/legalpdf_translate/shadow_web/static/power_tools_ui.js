@@ -1,6 +1,17 @@
 import { clearNode, createEmptyState, createTextElement } from "./safe_rendering.js";
 import { formatDiagnosticValue } from "./diagnostics_presentation.js";
 
+function titleCaseProvider(value = "") {
+  const cleaned = String(value ?? "").trim().toLowerCase();
+  if (cleaned === "openai") {
+    return "OpenAI";
+  }
+  if (cleaned === "gemini") {
+    return "Gemini";
+  }
+  return cleaned ? cleaned.charAt(0).toUpperCase() + cleaned.slice(1) : "Gemini";
+}
+
 function describeTranslationCredentialSource(translation = {}) {
   const source = translation.effective_credential_source || translation.credential_source || {};
   const kind = String(source.kind || "").trim();
@@ -30,6 +41,9 @@ function describeOcrCredentialSource(ocr = {}) {
   if (kind === "stored" && name === "openai_api_key_fallback") {
     return "stored OpenAI translation key fallback";
   }
+  if (kind === "stored" && name === "gemini_api_key_fallback") {
+    return "stored Gemini translation key fallback";
+  }
   if (kind === "stored") {
     return "stored OCR key";
   }
@@ -58,6 +72,8 @@ export function renderCredentialRecoveryStateInto(nodes, providerState = {}) {
   }
 
   const translation = providerState.translation || {};
+  const providerName = titleCaseProvider(translation.provider || "gemini");
+  const modelName = String(translation.model || "").trim();
   if (nodes.translation) {
     const storedState = translation.stored_credential_configured ? "yes" : "no";
     const fallbackState = translation.ocr_fallback_configured ? "available" : "not available";
@@ -69,13 +85,25 @@ export function renderCredentialRecoveryStateInto(nodes, providerState = {}) {
     ].join(" ");
   }
 
+  if (nodes.geminiKey) {
+    const geminiStored = translation.gemini_stored_credential_configured ? "yes" : "no";
+    nodes.geminiKey.textContent = [
+      `Active provider: ${providerName}${modelName ? ` (${modelName})` : ""}.`,
+      `Stored Gemini key: ${geminiStored}.`,
+      "The browser never shows the stored key value.",
+    ].join(" ");
+  }
+
   const ocr = providerState.ocr || {};
   if (nodes.ocr) {
     const storedState = ocr.stored_credential_configured ? "yes" : "no";
     const fallbackState = ocr.translation_fallback_configured ? "available" : "not available";
+    const fallbackLabel = ocr.provider === "gemini"
+      ? "Gemini translation fallback"
+      : "OpenAI translation fallback";
     nodes.ocr.textContent = [
       `Stored OCR key: ${storedState}.`,
-      `OpenAI translation fallback: ${fallbackState}.`,
+      `${fallbackLabel}: ${fallbackState}.`,
       `Effective source: ${describeOcrCredentialSource(ocr)}.`,
       "The browser never shows the stored key value.",
     ].join(" ");

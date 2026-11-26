@@ -16,11 +16,14 @@ POLICY = "astra_public_standard_lower_band_v1"
 FRESH_POLICY = "astra_public_standard_lower_band_30m_v2"
 MODEL = "gpt-6-astra"
 MAX_INPUT_TOKENS = 272000
+GEMINI_POLICY = "gemini_neon_public_standard_v1"
+GEMINI_MODEL = "gemini-4-neon"
+GEMINI_MAX_INPUT_TOKENS = 1048576
 _KEY = "semantic_review_billing_policy"
 
 
 def strict_limits(limits):
-    return limits.get(_KEY) in (POLICY, FRESH_POLICY)
+    return limits.get(_KEY) in (POLICY, FRESH_POLICY, GEMINI_POLICY)
 
 
 def _mapping(value):
@@ -32,9 +35,13 @@ def _mapping(value):
     return vars(value) if hasattr(value, "__dict__") else value
 
 
-def _tree(value, depth=0):
-    if depth > 3:
+def _tree(value, depth=0, *, allow_gemini_modalities=False):
+    if depth > 4 if allow_gemini_modalities else depth > 3:
         raise ValueError
+    if allow_gemini_modalities and isinstance(value, list):
+        if len(value) > 16:
+            raise ValueError
+        return [_tree(item, depth + 1, allow_gemini_modalities=True) for item in value]
     if isinstance(value, Mapping) or hasattr(value, "__dict__"):
         value = _mapping(value)
         if type(value) is not dict or len(value) > 32:
@@ -43,7 +50,11 @@ def _tree(value, depth=0):
                or k.lower() in {"prompt", "source_text", "document_text", "api_key", "secret", "content"}
                for k in value):
             raise ValueError
-        return {k: _tree(v, depth + 1) for k, v in value.items()}
+        return {k: _tree(v, depth + 1, allow_gemini_modalities=allow_gemini_modalities) for k, v in value.items()}
+    if allow_gemini_modalities and type(value) is str:
+        if len(value) <= 32 and value.replace("_", "").isalnum():
+            return value
+        raise ValueError
     if value is not None and type(value) not in (int, float, bool):
         raise ValueError
     return value
@@ -53,13 +64,18 @@ def usage_evidence(usage, *, max_output_tokens, policy=POLICY):
     """Retain bounded dimensions under the caller's frozen billing policy."""
     raw, digest, status = None, None, "unsupported_usage_shape"
     try:
-        raw = _tree(_mapping(usage))
+        allow_gemini = policy == GEMINI_POLICY
+        raw = _tree(_mapping(usage), allow_gemini_modalities=allow_gemini)
         encoded = json.dumps(raw, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
         if len(encoded) > 16000:
             raise ValueError
         digest = hashlib.sha256(encoded).hexdigest()
-        status = (_admit(raw, max_output_tokens, policy) if policy in (POLICY, FRESH_POLICY)
-                  else "unsupported_billing_policy")
+        if policy == GEMINI_POLICY:
+            status = _admit_gemini(raw, max_output_tokens)
+        elif policy in (POLICY, FRESH_POLICY):
+            status = _admit(raw, max_output_tokens, policy)
+        else:
+            status = "unsupported_billing_policy"
     except (ValueError, TypeError, AttributeError, RecursionError, OverflowError):
         raw = None
     return {"policy": policy, "raw_usage": raw, "raw_usage_sha256": digest, "status": status}
@@ -115,6 +131,41 @@ def _admit(raw, maximum, policy):
     if normalized["usage_status"] != "available":
         return "invalid_or_missing_usage"
     if normalized["input_tokens"] > MAX_INPUT_TOKENS:
+        return "input_price_band_unsupported"
+    if type(maximum) is not int or normalized["output_tokens"] > maximum:
+        return "output_bound_exceeded"
+    return "available"
+
+
+def _admit_gemini(raw, maximum):
+    if type(raw) is not dict:
+        return "missing_usage"
+    allowed = {
+        "total_input_tokens",
+        "total_output_tokens",
+        "total_thought_tokens",
+        "total_cached_tokens",
+        "total_tokens",
+        "total_tool_use_tokens",
+        "initial_input_tokens",
+        "grounding_tool_count",
+        "input_tokens_by_modality",
+        "output_tokens_by_modality",
+        "cached_tokens_by_modality",
+        "tool_use_tokens_by_modality",
+        "input_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+        "cached_input_tokens",
+        "cache_write_tokens",
+    }
+    if set(raw) - allowed:
+        return "unsupported_usage_dimensions"
+    from .usage_accounting import normalize_usage
+    normalized = normalize_usage(raw, provider="gemini")
+    if normalized["usage_status"] != "available":
+        return "invalid_or_missing_usage"
+    if normalized["input_tokens"] > GEMINI_MAX_INPUT_TOKENS:
         return "input_price_band_unsupported"
     if type(maximum) is not int or normalized["output_tokens"] > maximum:
         return "output_bound_exceeded"
@@ -188,8 +239,11 @@ def response_billing_evidence(journal_dir, evidence, *, max_output_tokens,
           or len(response["id"]) > 512 or response["id"].strip() != response["id"]
           or "\n" in response["id"] or "\r" in response["id"]):
         result["status"] = "missing_response_identity"
-    elif any(response.get(key) != value for key, value in
-             (("id", response_id), ("model", actual_model), ("service_tier", actual_service_tier))):
+    elif (
+        response.get("id") != response_id
+        or response.get("model") != actual_model
+        or ((response.get("service_tier") or "default") if policy == GEMINI_POLICY else response.get("service_tier")) != actual_service_tier
+    ):
         result["status"] = "response_identity_mismatch"
     return response, result
 

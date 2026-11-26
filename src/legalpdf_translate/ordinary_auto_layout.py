@@ -1805,10 +1805,22 @@ def _verify_rebuild_zero(manager, pointer, identity):
     preparation = _read_record(folder / "preparation.json")
     owner = intent.get("identity", {})
     private = intent["request"]["policy"]
-    from .ordinary_layout_accounting import MODEL, verified_page_ceiling
+    from .ordinary_layout_accounting import (
+        GEMINI_MODEL,
+        MODEL,
+        verified_page_ceiling_for_provider,
+    )
     from .ordinary_layout_contracts import LayoutSuggestionPolicy, VERSION
-    ceiling = verified_page_ceiling()
-    expected_policy = LayoutSuggestionPolicy(MODEL, str(ceiling), str(ceiling * len(identity["selected_pages"]))).public()
+    private_model = private.get("model", MODEL)
+    rebuild_provider = "gemini" if str(private_model).startswith("gemini-") else "openai"
+    rebuild_effort = private.get("effort", "xhigh" if rebuild_provider == "gemini" else "high")
+    ceiling = verified_page_ceiling_for_provider(rebuild_provider)
+    expected_policy = LayoutSuggestionPolicy(
+        GEMINI_MODEL if rebuild_provider == "gemini" else MODEL,
+        str(ceiling),
+        str(ceiling * len(identity["selected_pages"])),
+        effort=rebuild_effort,
+    ).public()
     expected_policy.update(retained_only=True, missing_pages=[], max_new_calls=0,
         completed_rebuild_identity_sha256=identity_sha,
         band_normalization_version=_band_normalization_version(identity["policy_fingerprint"]))

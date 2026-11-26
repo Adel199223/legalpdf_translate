@@ -63,7 +63,13 @@ def fresh_recipe(config, model, policy, *, context_text, context_hash):
             "semantic_source_review_policy": "source_commitment_visual_v9",
             "semantic_page_coverage_policy": "complete_selected_pages_v1"}
     from .semantic_review_model_policy import fresh_semantic_review_model_policy, validate_policy
-    model_policy = fresh_semantic_review_model_policy()
+    if str(model or "").strip().lower().startswith("gemini-"):
+        try:
+            model_policy = fresh_semantic_review_model_policy(primary_model=model)
+        except TypeError:
+            model_policy = fresh_semantic_review_model_policy()
+    else:
+        model_policy = fresh_semantic_review_model_policy()
     if model_policy is not None:
         recipe["semantic_review_model_policy"] = validate_policy(model_policy)
         recipe["semantic_repair_policy"] = "source_grounded_repair_once_v4"
@@ -76,9 +82,11 @@ def fresh_recipe(config, model, policy, *, context_text, context_hash):
         if config.strip_bidi_controls is True and policy == frozen_automatic_layout_policy():
             from . import primary_literal_markup as markup
             recipe[markup.KEY] = markup.POLICY
-    if (config.ocr_engine.value in {"api", "local_then_api"}
-            and config.ocr_api_provider.value == "openai"):
-        recipe["ocr_text_transport_policy"] = "openai_ocr_text_envelope_v1"
+    if config.ocr_engine.value in {"api", "local_then_api"}:
+        if config.ocr_api_provider.value == "openai":
+            recipe["ocr_text_transport_policy"] = "openai_ocr_text_envelope_v1"
+        elif config.ocr_api_provider.value == "gemini":
+            recipe["ocr_text_transport_policy"] = "gemini_ocr_text_envelope_v1"
     return recipe
 
 
@@ -617,9 +625,21 @@ def repair_stage_guard(*, state, run_dir, accountant=None):
     from .usage_accounting import DispatchAccounting, _summarize, normalize_usage, TOKEN_FIELDS
     from .openai_client import (_build_page_request, _apply_openai_dispatch_limits,
         _request_accounting_details, _extract_output_text, _has_refusal, _has_incomplete_message)
+    from .gemini_client import (
+        _build_gemini_page_request,
+        _apply_gemini_dispatch_limits,
+        _request_accounting_details as _gemini_request_accounting_details,
+        _extract_gemini_output_text,
+        _gemini_has_refusal,
+        _gemini_incomplete_reason,
+    )
     from .semantic_review_billing import strict_limits, read_response
+    from .semantic_review_model_policy import effective_model
     from .ordinary_semantic_audit import _write_new, _read_json
     saved_recipe = ordinary_semantic_audit_recipe(state.settings)
+    review_model = effective_model(saved_recipe)
+    is_gemini = str(review_model).startswith("gemini-")
+    review_provider = "gemini" if is_gemini else "openai"
     if (saved_recipe.get("semantic_repair_policy") not in {"source_grounded_repair_once_v1", "source_grounded_repair_once_v2", "source_grounded_repair_once_v3", "source_grounded_repair_once_v4"}
             or (accountant is not None and (not isinstance(accountant, DispatchAccounting) or accountant.hard_budget))):
         _fail("repair_native_accounting_required")
@@ -689,16 +709,27 @@ def repair_stage_guard(*, state, run_dir, accountant=None):
         from .ordinary_semantic_audit import _json
         high_hash = _sha(_json(request).encode("utf-8"))
         limits = next((dict(saved["dispatch_limits"][key]) for key in (
-            "openai:semantic_audit:gpt-6-astra", "openai:*:gpt-6-astra", "openai:semantic_audit")
-            if key in saved["dispatch_limits"]), None)
+            f"{review_provider}:semantic_audit:{review_model}",
+            f"{review_provider}:*:{review_model}",
+            f"{review_provider}:semantic_audit",
+        ) if key in saved["dispatch_limits"]), None)
         if not isinstance(limits, dict) or not strict_limits(limits):
             _fail("repair_native_limits")
-        if accountant is not None and dict(accountant.request_limits("openai", "semantic_audit", "gpt-6-astra")) != limits:
+        if accountant is not None and dict(accountant.request_limits(review_provider, "semantic_audit", review_model)) != limits:
             _fail("repair_native_limits")
         arguments = {key: value for key, value in request.items() if key != "timeout_seconds"}
-        wire = _build_page_request(**arguments, model="gpt-6-astra")
-        wire = _apply_openai_dispatch_limits(wire, accountant or SimpleNamespace(hard_budget=False), limits)
-        wire_hash, observed = _request_accounting_details(wire)
+        if is_gemini:
+            wire = _build_gemini_page_request(**arguments, model=review_model)
+            wire = _apply_gemini_dispatch_limits(wire, accountant or SimpleNamespace(hard_budget=False), limits)
+            wire_hash, observed = _gemini_request_accounting_details(wire)
+            expected_route = "interactions.create"
+            expected_tier = "default"
+        else:
+            wire = _build_page_request(**arguments, model=review_model)
+            wire = _apply_openai_dispatch_limits(wire, accountant or SimpleNamespace(hard_budget=False), limits)
+            wire_hash, observed = _request_accounting_details(wire)
+            expected_route = "responses.create"
+            expected_tier = wire.get("service_tier", "auto")
         expected_bounds = {**limits, **observed}
         native = directory.parent / (directory.name + "_native")
         if native.is_symlink():
@@ -755,14 +786,14 @@ def repair_stage_guard(*, state, run_dir, accountant=None):
             begin, finish = rows[index:index + 2]
             if (begin.get("event") != "begin" or finish.get("event") != "finish"
                     or finish.get("call_id") != begin.get("call_id")
-                    or begin.get("provider") != "openai" or begin.get("purpose") != "semantic_audit"
-                    or begin.get("requested_model") != "gpt-6-astra" or begin.get("effort") != request["effort"]
+                    or begin.get("provider") != review_provider or begin.get("purpose") != "semantic_audit"
+                    or begin.get("requested_model") != review_model or begin.get("effort") != request["effort"]
                     or begin.get("request_hash") != wire_hash or begin.get("bounds") != expected_bounds
-                    or begin.get("route") != "responses.create"
+                    or begin.get("route") != expected_route
                     or begin.get("base_url") not in [str(value).rstrip("/") for value in limits.get("allowed_base_urls", [])]
                     or begin.get("billing_scope") != limits.get("billing_scope")
                     or begin.get("currency") != limits.get("currency", "USD")
-                    or begin.get("requested_service_tier") != wire.get("service_tier", "auto")
+                    or begin.get("requested_service_tier") != expected_tier
                     or begin.get("attempt") != index // 2 + 1
                     or finish.get("cost_status") != "available" or finish.get("usage", {}).get("usage_status") != "available"):
                 _fail("repair_native_stage_partition")
@@ -773,17 +804,20 @@ def repair_stage_guard(*, state, run_dir, accountant=None):
             _fail("repair_native_stage_request")
         billing = terminal.get("semantic_review_billing_evidence", {})
         body = read_response(path.parent, billing.get("response"))
-        normalized = normalize_usage(envelope["usage"])
+        normalized = normalize_usage(envelope["usage"], provider=review_provider)
+        body_refused = _gemini_has_refusal(body) if is_gemini else _has_refusal(body)
+        body_incomplete = (_gemini_incomplete_reason(body) is not None) if is_gemini else _has_incomplete_message(body)
         if (terminal.get("outcome") not in ({"succeeded"} if action == "settled" else {"succeeded", "refused", "failed", "timeout"})
                 or terminal.get("response_id") != envelope.get("response_id")
                 or body.get("id") != envelope.get("response_id") or body.get("model") != envelope.get("model")
-                or body.get("status") != envelope.get("response_status")
-                or envelope.get("effort") != request["effort"] or _has_refusal(body) is not envelope.get("refused")
-                or (envelope.get("raw_response_available") is True and _extract_output_text(body) != envelope["raw_output"])
+                or (body.get("status") or "completed" if is_gemini else body.get("status")) != envelope.get("response_status")
+                or envelope.get("effort") != request["effort"] or body_refused is not envelope.get("refused")
+                or (envelope.get("raw_response_available") is True
+                    and (_extract_gemini_output_text(body) if is_gemini else _extract_output_text(body)) != envelope["raw_output"])
                 or any(normalized[key] != terminal["usage"][key] for key in TOKEN_FIELDS)):
             _fail("repair_native_response_mismatch")
-        if action == "settled" and (_has_refusal(body) or _has_incomplete_message(body)
-                or body.get("status") != "completed" or body.get("incomplete_details") is not None):
+        if action == "settled" and (body_refused or body_incomplete
+                or body.get("status") != "completed" or (not is_gemini and body.get("incomplete_details") is not None)):
             _fail("repair_native_response_hard_stop")
         proof = {**pre, "after_event_count": end, "stage_events_sha256": _sha(_encode(rows)),
             "call_ids": calls, "stage_intent_sha256": _sha(_json(intent).encode("utf-8")),

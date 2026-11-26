@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from typing import Any, Iterable, Literal
 
-from .openai_client import OpenAIResponsesClient
+from .provider_client import TranslationClient, create_translation_client
 from .output_normalize import normalize_output_text
 from .prompt_builder import build_page_prompt
 from .resources_loader import load_system_instructions
@@ -973,7 +973,7 @@ def translate_term_for_lang(
     term_pt: str,
     target_lang: TargetLang | str,
     *,
-    client: OpenAIResponsesClient | None = None,
+    client: TranslationClient | None = None,
     timeout_seconds: float = 45.0,
     effort: str = "medium",
 ) -> str:
@@ -981,7 +981,17 @@ def translate_term_for_lang(
     phrase = _normalize_term(term_pt)
     if phrase == "":
         return ""
-    local_client = client or OpenAIResponsesClient(request_timeout_seconds=max(5.0, timeout_seconds))
+    if client is not None:
+        local_client = client
+    else:
+        from .user_settings import load_gui_settings
+
+        settings = load_gui_settings()
+        local_client = create_translation_client(
+            provider=settings.get("translation_provider", "gemini"),
+            model=settings.get("translation_model"),
+            request_timeout_seconds=max(5.0, timeout_seconds),
+        )
     instructions = load_system_instructions(lang)
     prompt_text = build_page_prompt(
         lang=lang,
@@ -1004,7 +1014,7 @@ def fill_translations_for_entry(
     entry: StudyGlossaryEntry,
     *,
     supported_langs: list[str],
-    client: OpenAIResponsesClient | None = None,
+    client: TranslationClient | None = None,
     timeout_seconds: float = 45.0,
     fill_only_missing: bool = True,
     effort: str = "medium",

@@ -23,7 +23,7 @@ from .glossary import (
 from .image_io import render_page_image_data_url, should_include_image
 from .ocr_engine import build_ocr_engine, ocr_engine_config_from_run_config
 from .ocr_helpers import ocr_pdf_page_text
-from .openai_client import OpenAIResponsesClient
+from .provider_client import TranslationClient, create_translation_client
 from .output_normalize import normalize_output_text
 from .output_paths import build_output_paths
 from .pdf_text_order import extract_ordered_page_text, get_page_count
@@ -257,7 +257,7 @@ def _normalize_findings(payload: dict[str, object]) -> list[CalibrationFinding]:
 
 def _call_verifier_with_retries(
     *,
-    client: OpenAIResponsesClient,
+    client: TranslationClient,
     prompt_text: str,
 ) -> dict[str, object]:
     current_prompt = prompt_text
@@ -334,7 +334,7 @@ def run_calibration_audit(
     user_seed: str = "",
     include_excerpts: bool = False,
     excerpt_max_chars: int = 200,
-    client: OpenAIResponsesClient | None = None,
+    client: TranslationClient | None = None,
     logger: Callable[[str], None] | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
     cancel_requested: Callable[[], bool] | None = None,
@@ -353,7 +353,16 @@ def run_calibration_audit(
     merged_glossaries = merge_glossary_scopes(project_glossaries_by_lang, personal_glossaries_by_lang)
     addendum = str(prompt_addendum_by_lang.get(config.target_lang.value, "") or "").strip()
     instructions = load_system_instructions(config.target_lang)
-    local_client = client or OpenAIResponsesClient()
+    if client is not None:
+        local_client = client
+    else:
+        from .user_settings import load_gui_settings
+
+        settings = load_gui_settings()
+        local_client = create_translation_client(
+            provider=config.translation_provider or settings.get("translation_provider", "gemini"),
+            model=config.translation_model or settings.get("translation_model"),
+        )
     ocr_engine = build_ocr_engine(ocr_engine_config_from_run_config(config))
 
     findings_payload: list[dict[str, object]] = []

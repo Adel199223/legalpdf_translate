@@ -25,7 +25,10 @@ from legalpdf_translate.gmail_batch import (
     prepare_gmail_interpretation_session,
 )
 from legalpdf_translate.gmail_intake import InboundMailContext
+from legalpdf_translate.gemini_client import GeminiInteractionsClient
 from legalpdf_translate.openai_client import OpenAIResponsesClient
+from legalpdf_translate.provider_client import default_translation_model, normalize_translation_provider
+from legalpdf_translate.user_settings import load_gui_settings
 from legalpdf_translate.queue_runner import (
     QueueRunCancelled,
     queue_result_from_run_summary,
@@ -139,11 +142,29 @@ class TranslationRunWorker(QObject):
             self.progress.emit(selected_index, selected_total, real_page, status, image_used, retry_used)
 
         try:
-            client = OpenAIResponsesClient(
-                max_transport_retries=self._max_transport_retries,
-                backoff_cap_seconds=self._backoff_cap_seconds,
-                logger=_log_callback,
+            settings = load_gui_settings()
+            provider = normalize_translation_provider(
+                self._config.translation_provider or settings.get("translation_provider", "gemini")
             )
+            model = (
+                (self._config.translation_model or "").strip()
+                or str(settings.get("translation_model", "") or "").strip()
+                or default_translation_model(provider)
+            )
+            if provider.value == "gemini":
+                client = GeminiInteractionsClient(
+                    model=model,
+                    max_transport_retries=self._max_transport_retries,
+                    backoff_cap_seconds=self._backoff_cap_seconds,
+                    logger=_log_callback,
+                )
+            else:
+                client = OpenAIResponsesClient(
+                    model=model,
+                    max_transport_retries=self._max_transport_retries,
+                    backoff_cap_seconds=self._backoff_cap_seconds,
+                    logger=_log_callback,
+                )
             workflow = TranslationWorkflow(
                 client=client,
                 log_callback=_log_callback,
@@ -238,11 +259,29 @@ class QueueRunWorker(QObject):
                 if self._cancel_requested:
                     raise QueueRunCancelled("queue_cancelled_by_user")
                 config = self._build_config(job_payload)
-                client = OpenAIResponsesClient(
-                    max_transport_retries=self._max_transport_retries,
-                    backoff_cap_seconds=self._backoff_cap_seconds,
-                    logger=self.log.emit,
+                settings = load_gui_settings()
+                provider = normalize_translation_provider(
+                    config.translation_provider or settings.get("translation_provider", "gemini")
                 )
+                model = (
+                    (config.translation_model or "").strip()
+                    or str(settings.get("translation_model", "") or "").strip()
+                    or default_translation_model(provider)
+                )
+                if provider.value == "gemini":
+                    client = GeminiInteractionsClient(
+                        model=model,
+                        max_transport_retries=self._max_transport_retries,
+                        backoff_cap_seconds=self._backoff_cap_seconds,
+                        logger=self.log.emit,
+                    )
+                else:
+                    client = OpenAIResponsesClient(
+                        model=model,
+                        max_transport_retries=self._max_transport_retries,
+                        backoff_cap_seconds=self._backoff_cap_seconds,
+                        logger=self.log.emit,
+                    )
                 workflow = TranslationWorkflow(
                     client=client,
                     log_callback=self.log.emit,

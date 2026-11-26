@@ -116,7 +116,7 @@ def ordinary_semantic_audit_recipe(settings: dict) -> dict | None:
                     keys.add(optional)
     if (type(recipe) is not dict or set(recipe) != keys
             or recipe.get("version") not in ("ordinary_semantic_audit_v1", "ordinary_semantic_audit_v2", "ordinary_semantic_audit_v3")
-            or recipe.get("model") not in ("gpt-5.2", "gpt-5.6-terra", "gpt-5.6-sol")
+            or recipe.get("model") not in ("gpt-5.2", "gpt-5.6-terra", "gpt-5.6-sol", "gemini-4-neon")
             or recipe.get("reasoning_effort") not in ("medium", "high", "xhigh")
             or recipe.get("effort_policy") not in ("fixed_high", "fixed_xhigh", "adaptive")
             or recipe.get("target_language") != "AR"
@@ -237,7 +237,7 @@ def ordinary_semantic_audit_recipe(settings: dict) -> dict | None:
                     assembly_version=assembly.get("version") if type(assembly) is dict else None)):
             raise SemanticAuditRecipeError("semantic_audit_invalid_primary_literal_markup_policy")
     if "ocr_text_transport_policy" in recipe:
-        if (recipe["ocr_text_transport_policy"] != "openai_ocr_text_envelope_v1"
+        if (recipe["ocr_text_transport_policy"] not in {"openai_ocr_text_envelope_v1", "gemini_ocr_text_envelope_v1"}
                 or settings.get("ocr_engine") not in {"api", "local_then_api"}):
             raise SemanticAuditRecipeError("semantic_audit_invalid_ocr_text_transport_policy")
     if ("semantic_page_coverage_policy" in recipe

@@ -10,6 +10,7 @@ from typing import Callable
 
 from . import saved_docx_layout_service as storage
 from .openai_client import OpenAIResponsesClient
+from .provider_client import client_provider, is_translation_client
 from .ordinary_layout_contracts import (LayoutSuggestionPolicy, OrdinaryLayoutJob, OrdinaryLayoutError,
     VERSION, MAX_RESPONSE_BYTES, PROPOSAL_VERSION_V3, BAND_NORMALIZATION_V1, BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8, decode, digest, encode, fail, generation, identifier,
     job_identity, nonce, normalize_proposals, page_ids, proposal_schema, proposal_source_evidence,
@@ -258,7 +259,14 @@ class OrdinaryLayoutManager:
             private_policy["band_normalization_version"] = band_normalization_version
         if proposal_repair_policy is not None:
             from .ordinary_layout_reproposal import expected_policy
-            if private_policy != expected_policy(len(page_numbers), proposal_repair_policy, proposal_render_policy_fingerprint):
+            if private_policy != expected_policy(
+                len(page_numbers),
+                proposal_repair_policy,
+                proposal_render_policy_fingerprint,
+                model=policy.model,
+                page_ceiling=policy.max_page_cost_usd,
+                effort=policy.effort,
+            ):
                 fail("proposal_repair_policy_changed", 409)
         view = state["review"]
         if retained_only and view["generation"] == expected_generation + 1:
@@ -382,14 +390,19 @@ class OrdinaryLayoutManager:
             if (not isinstance(accountant, DispatchAccounting) or not accountant.hard_budget
                     or accountant.budget_context is None):
                 fail("durable_accounting_required", 503)
-            limits = accountant.request_limits("openai", "layout_suggestion", policy.model)
-            ceiling = _ceiling_for(pricing_snapshot=accountant.pricing_snapshot, provider="openai", model=policy.model,
+            layout_provider = "gemini" if str(policy.model).startswith("gemini-") else "openai"
+            limits = accountant.request_limits(layout_provider, "layout_suggestion", policy.model)
+            ceiling = _ceiling_for(pricing_snapshot=accountant.pricing_snapshot, provider=layout_provider, model=policy.model,
                                    bounds=limits, hard=True)
             if ceiling is None or ceiling > Decimal(policy.max_page_cost_usd):
                 fail("paid_policy_bound_mismatch", 409)
             client = None if retained_only else self.provider_factory(job, policy)
-            if not retained_only and (not isinstance(client, OpenAIResponsesClient) or client.model != policy.model
-                    or client._max_transport_retries != 0):
+            if not retained_only and (
+                not is_translation_client(client)
+                or client_provider(client) != layout_provider
+                or client.model != policy.model
+                or client._max_transport_retries != 0
+            ):
                 fail("bounded_provider_required", 503)
             started = time.monotonic()
             attempt_store = None

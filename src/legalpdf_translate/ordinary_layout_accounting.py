@@ -13,10 +13,30 @@ from .usage_accounting import DispatchAccounting
 PAGE_CEILING = Decimal("1.148")
 MODEL = "gpt-5.2"
 ACTUAL_MODEL = "gpt-5.2-2025-12-11"
+GEMINI_PAGE_CEILING = Decimal("1.68")
+GEMINI_MODEL = "gemini-4-neon"
 
 
 def verified_page_ceiling() -> Decimal:
     """Recompute the hard reservation from the fresh published price and bounds."""
+    return verified_page_ceiling_for_provider("openai")
+
+
+def verified_page_ceiling_for_provider(provider: str = "openai") -> Decimal:
+    """Recompute the hard reservation from the fresh published price and bounds."""
+    normalized = str(provider or "openai").strip().lower()
+    if normalized == "gemini":
+        args = gemini_layout_accounting_policy().accounting_arguments()
+        pricing = args["pricing_snapshot"]
+        if pricing is None:
+            fail("pricing_reference_expired", 503)
+        limit = args["dispatch_limits"][f"gemini:layout_suggestion:{GEMINI_MODEL}"]
+        rate = pricing["models"][f"gemini:{GEMINI_MODEL}|default|gemini_developer_api|USD"]
+        amount = (Decimal(str(limit["max_input_tokens"])) * Decimal(str(rate["input_per_1m"]))
+                  + Decimal(str(limit["max_output_tokens"])) * Decimal(str(rate["output_per_1m"]))) / Decimal(1_000_000)
+        if amount != GEMINI_PAGE_CEILING:
+            fail("paid_policy_bound_mismatch", 503)
+        return amount
     args = layout_accounting_policy().accounting_arguments()
     pricing = args["pricing_snapshot"]
     if pricing is None:
@@ -28,6 +48,60 @@ def verified_page_ceiling() -> Decimal:
     if amount != PAGE_CEILING:
         fail("paid_policy_bound_mismatch", 503)
     return amount
+
+
+def gemini_layout_accounting_policy():
+    from .accounting_policy import OrdinaryAccountingPolicy
+    source = "https://aistudio.google.com/docs/models/gemini-4-neon"
+    rates = {
+        "input_per_1m": 3.0,
+        "cached_input_per_1m": 0.15,
+        "output_per_1m": 15.0,
+        "provider": "gemini",
+        "pricing_model": GEMINI_MODEL,
+        "service_tier": "default",
+        "billing_scope": "gemini_developer_api",
+        "currency": "USD",
+        "source_url": source,
+    }
+    policy = OrdinaryAccountingPolicy.from_mapping(
+        pricing={
+            "snapshot_id": "layout_gemini_standard_2026_11_26",
+            "verified_at": "2026-11-26",
+            "source": source,
+            "models": {f"gemini:{GEMINI_MODEL}|default|gemini_developer_api|USD": dict(rates)},
+        },
+        limits={
+            f"gemini:layout_suggestion:{GEMINI_MODEL}": {
+                "requested_model": GEMINI_MODEL,
+                "allowed_actual_models": [GEMINI_MODEL],
+                "requested_service_tier": "default",
+                "allowed_actual_service_tiers": ["default"],
+                "billing_scope": "gemini_developer_api",
+                "currency": "USD",
+                "allowed_base_urls": ["https://generativelanguage.googleapis.com"],
+                "max_input_tokens": 400000,
+                "max_image_input_tokens": 10000,
+                "max_image_count": 1,
+                "image_bound_verified": True,
+                "image_bound_source_url": source,
+                "image_bound_verified_at": "2026-11-26",
+                "image_bound_basis": "Gemini 4 Neon image token cap bounded within 400k single-page ceiling",
+                "max_output_tokens": 32000,
+                "bound_source_url": source,
+                "bound_verified_at": "2026-11-26",
+            }
+        },
+    )
+    return OrdinaryAccountingPolicy(policy._pricing_json, policy._limits_json, date(2026, 11, 26))
+
+
+def _layout_spec_for_accountant(accountant):
+    limits = getattr(accountant, "dispatch_limits", None)
+    is_gemini = isinstance(limits, dict) and any(str(key).startswith("gemini:") for key in limits)
+    if is_gemini:
+        return "gemini", GEMINI_MODEL, GEMINI_PAGE_CEILING, "xhigh", gemini_layout_accounting_policy
+    return "openai", MODEL, PAGE_CEILING, "high", layout_accounting_policy
 
 
 def layout_accounting_policy():
@@ -86,6 +160,7 @@ class OrdinaryLayoutAccounting:
             if record["binding"] != dict(job.binding):
                 fail("budget_binding_changed", 409)
             if recovery.name == "revalidation_capacity_v2":
+                _, _, recovery_ceiling, _, _ = _layout_spec_for_accountant(accountant)
                 digest = record.get("direct_continuation_identity_sha256")
                 missing = record.get("missing_pages")
                 if (type(digest) is not str or len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest)
@@ -94,8 +169,10 @@ class OrdinaryLayoutAccounting:
                         or sorted(set(missing)) != missing or not set(missing) <= set(job.selected_pages)
                         or record["identity"].get("missing_pages") != missing
                         or record["identity"].get("prior_layout_cost_usd") != record.get("prior_layout_cost_usd")
-                        or money(record["cap_usd"]) != money(record["translation_cost_usd"])
-                           + money(record["prior_layout_cost_usd"]) + PAGE_CEILING * len(missing)):
+                        or money(record["cap_usd"]) not in (
+                            money(record["translation_cost_usd"]) + money(record["prior_layout_cost_usd"]) + PAGE_CEILING * len(missing),
+                            money(record["translation_cost_usd"]) + money(record["prior_layout_cost_usd"]) + recovery_ceiling * len(missing),
+                        )):
                     fail("budget_binding_changed", 409)
             key = (job.job_id, recovery.name)
             if key not in self._budgets:
@@ -124,6 +201,8 @@ class OrdinaryLayoutAccounting:
                 "max_page_cost_usd": str(PAGE_CEILING)}
         try:
             accountant, folder, cost = self._source(job)
+            _, _, ceiling, _, _ = _layout_spec_for_accountant(accountant)
+            base["max_page_cost_usd"] = str(ceiling)
             with self._lock:
                 budget = self._budget(job, accountant, folder)
             recovery_receipt = folder / "recovery_capacity_v2" / "authorization.json"
@@ -133,8 +212,8 @@ class OrdinaryLayoutAccounting:
                 recovery_receipt = folder / "revalidation_capacity_v2" / "authorization.json"
             recovery_record = decode(recovery_receipt.read_bytes()) if recovery_receipt.is_file() else None
             prior = money(recovery_record["prior_layout_cost_usd"]) if recovery_record else Decimal(0)
-            base.update(translation_cost_usd=str(cost), minimum_cap_usd=str(cost + prior + PAGE_CEILING),
-                suggested_cap_usd=str(cost + prior + PAGE_CEILING * len(job.selected_pages)),
+            base.update(translation_cost_usd=str(cost), minimum_cap_usd=str(cost + prior + ceiling),
+                suggested_cap_usd=str(cost + prior + ceiling * len(job.selected_pages)),
                 authorization_available=budget is None, authorized=budget is not None,
                 shared_existing_cap=bool(accountant.hard_budget))
             if recovery_record:
@@ -154,6 +233,7 @@ class OrdinaryLayoutAccounting:
         nonce(authorization_nonce)
         cap = money(cap_usd)
         accountant, folder, cost = self._source(job)
+        _, _, ceiling, _, _ = _layout_spec_for_accountant(accountant)
         if accountant.hard_budget:
             fail("shared_budget_already_configured", 409)
         identity = {"job_id": job.job_id, "run_id": job.run_id, "binding": dict(job.binding),
@@ -165,7 +245,7 @@ class OrdinaryLayoutAccounting:
                 if decode((folder / "authorization.json").read_bytes()) != record:
                     fail("budget_already_authorized", 409)
                 return self.state(job)
-            if cap < cost + PAGE_CEILING:
+            if cap < cost + ceiling:
                 fail("budget_below_one_page_bound", 409)
             # Exclusive directory retains an interrupted authorization instead of
             # silently recreating a ledger or releasing its committed spend.
@@ -182,8 +262,9 @@ class OrdinaryLayoutAccounting:
 
     def authorize_automatic(self, job, policy_fingerprint: str, *, proposal_repair_policy=None):
         """Bound the fresh job's included layout stage without claiming user review."""
-        ceiling = verified_page_ceiling()
         accountant, folder, cost = self._source(job)
+        layout_provider, _, _, _, _ = _layout_spec_for_accountant(accountant)
+        ceiling = verified_page_ceiling_for_provider(layout_provider)
         extra = 0
         if proposal_repair_policy is not None:
             from .ordinary_layout_reproposal import extra_calls
@@ -239,7 +320,6 @@ class OrdinaryLayoutAccounting:
     def authorize_recovery(self, job, policy_fingerprint: str, prior_layout_cost_usd: str, *, missing_pages=None,
                            direct_continuation_identity_sha256=None):
         """Reserve a new explicit operation while retaining known predecessor spend."""
-        ceiling = verified_page_ceiling()
         prior = money(prior_layout_cost_usd)
         if direct_continuation_identity_sha256 is not None and (missing_pages is None
                 or type(direct_continuation_identity_sha256) is not str
@@ -247,6 +327,8 @@ class OrdinaryLayoutAccounting:
                 or any(c not in '0123456789abcdef' for c in direct_continuation_identity_sha256)):
             fail("budget_binding_changed", 409)
         accountant, folder, cost = self._source(job)
+        layout_provider, _, _, _, _ = _layout_spec_for_accountant(accountant)
+        ceiling = verified_page_ceiling_for_provider(layout_provider)
         if accountant.hard_budget:
             if accountant.budget_context is None:
                 fail("durable_accounting_required", 503)
@@ -292,11 +374,12 @@ class OrdinaryLayoutAccounting:
 
     def policy(self, job):
         accountant, folder, _ = self._source(job)
+        layout_provider, layout_model, _, effort, _ = _layout_spec_for_accountant(accountant)
         with self._lock:
             budget = self._budget(job, accountant, folder)
         if budget is None or getattr(budget, "blocked", False):
             fail("budget_authorization_required", 409)
-        ceiling = verified_page_ceiling()
+        ceiling = verified_page_ceiling_for_provider(layout_provider)
         extra = 0
         receipt = folder / ("automatic_reproposal_authorization.json" if accountant.hard_budget else "authorization.json")
         if receipt.is_file():
@@ -309,19 +392,20 @@ class OrdinaryLayoutAccounting:
                         or record.get("binding") != dict(job.binding)):
                     fail("budget_binding_changed", 409)
                 extra = extra_calls(len(job.selected_pages), record["proposal_repair_policy"])
-        return LayoutSuggestionPolicy(MODEL, str(ceiling), str(ceiling * (len(job.selected_pages) + extra)))
+        return LayoutSuggestionPolicy(layout_model, str(ceiling), str(ceiling * (len(job.selected_pages) + extra)), effort=effort)
 
     def accountant(self, job, operation_nonce, operation_dir, policy):
         accountant, folder, _ = self._source(job)
+        layout_provider, layout_model, _, _, policy_factory = _layout_spec_for_accountant(accountant)
         with self._lock:
             budget = self._budget(job, accountant, folder)
         if budget is None:
             fail("budget_authorization_required", 409)
-        arguments = layout_accounting_policy().accounting_arguments()
+        arguments = policy_factory().accounting_arguments()
         # A caller-pinned 8k manual policy retains its smaller request bound;
         # a fresh included operation uses the 32k default. Saved operations
         # return before this factory is consulted.
-        arguments["dispatch_limits"][f"openai:layout_suggestion:{MODEL}"]["max_output_tokens"] = policy.max_output_tokens
+        arguments["dispatch_limits"][f"{layout_provider}:layout_suggestion:{layout_model}"]["max_output_tokens"] = policy.max_output_tokens
         return DispatchAccounting(operation_dir / "accounting", run_identity={"job_id": job.job_id,
             "run_id": job.run_id, "operation_nonce": operation_nonce, "binding": dict(job.binding)},
             budget_context=budget, **arguments)
@@ -329,6 +413,7 @@ class OrdinaryLayoutAccounting:
     def completed_rebuild(self, job, folder, identity_sha256, prior_layout_cost_usd):
         """Authorize local replay with existing budget primitives and no new capacity."""
         source, _, cost = self._source(job)
+        layout_provider, layout_model, _, effort, policy_factory = _layout_spec_for_accountant(source)
         prior = money(prior_layout_cost_usd)
         identity = {"completed_rebuild_identity_sha256": identity_sha256,
             "original_accounting_identity": source.run_identity, "missing_pages": [], "max_new_calls": 0}
@@ -352,8 +437,8 @@ class OrdinaryLayoutAccounting:
                     create=not budget_path.exists())
             if budget is None:
                 fail("durable_accounting_required", 503)
-        ceiling = verified_page_ceiling()
-        policy = LayoutSuggestionPolicy(MODEL, str(ceiling), str(ceiling * len(job.selected_pages)))
+        ceiling = verified_page_ceiling_for_provider(layout_provider)
+        policy = LayoutSuggestionPolicy(layout_model, str(ceiling), str(ceiling * len(job.selected_pages)), effort=effort)
 
         def accountant(native_job, operation_nonce, operation_dir, selected_policy):
             from .ordinary_layout_service import _read
@@ -366,10 +451,13 @@ class OrdinaryLayoutAccounting:
                 fail("budget_binding_changed", 409)
             return DispatchAccounting(operation_dir / "accounting", run_identity={"job_id": native_job.job_id,
                 "run_id": native_job.run_id, "operation_nonce": operation_nonce, "binding": dict(native_job.binding)},
-                budget_context=budget, **layout_accounting_policy().accounting_arguments())
+                budget_context=budget, **policy_factory().accounting_arguments())
         return policy, accountant
 
     @staticmethod
     def provider(job, policy):
+        if str(policy.model).startswith("gemini-"):
+            from .gemini_client import GeminiInteractionsClient
+            return GeminiInteractionsClient(model=policy.model, max_transport_retries=0)
         from .openai_client import OpenAIResponsesClient
         return OpenAIResponsesClient(model=policy.model, max_transport_retries=0)

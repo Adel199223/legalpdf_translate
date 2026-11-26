@@ -56,8 +56,11 @@ from PySide6.QtWidgets import (
 )
 
 from legalpdf_translate.config import (
+    DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+    DEFAULT_TRANSLATION_PROVIDER,
     DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
     DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+    GEMINI_MODEL,
     OPENAI_MODEL,
 )
 from legalpdf_translate.pricing import translation_fee_eur
@@ -143,6 +146,11 @@ from legalpdf_translate.metadata_autofill import (
     rank_court_email_suggestions,
 )
 from legalpdf_translate.openai_client import OpenAIResponsesClient
+from legalpdf_translate.provider_client import (
+    default_translation_model,
+    normalize_translation_provider,
+    run_provider_auth_test,
+)
 from legalpdf_translate.ocr_engine import (
     OcrEngineConfig,
     candidate_ocr_api_env_names,
@@ -174,10 +182,13 @@ from legalpdf_translate.qt_gui.worker import (
 from legalpdf_translate.review_export import export_review_queue
 from legalpdf_translate.resources_loader import resource_path
 from legalpdf_translate.secrets_store import (
+    delete_gemini_key,
     delete_openai_key,
     delete_ocr_key,
+    get_gemini_key,
     get_openai_key,
     get_ocr_key,
+    set_gemini_key,
     set_openai_key,
     set_ocr_key,
 )
@@ -6291,7 +6302,15 @@ class _StudyTranslationWorker(QObject):
 
     def run(self) -> None:
         try:
-            client = OpenAIResponsesClient()
+            from legalpdf_translate.config import DEFAULT_TRANSLATION_PROVIDER as _DEFAULT_TX_PROVIDER
+            from legalpdf_translate.provider_client import create_translation_client as _create_study_client
+            from legalpdf_translate.user_settings import load_gui_settings as _load_study_settings
+
+            _study_settings = _load_study_settings()
+            client = _create_study_client(
+                provider=_study_settings.get("translation_provider", _DEFAULT_TX_PROVIDER),
+                model=str(_study_settings.get("translation_model", "") or "").strip() or None,
+            )
             updated: list[StudyGlossaryEntry] = []
             total = max(1, len(self._entries))
             for index, entry in enumerate(self._entries, start=1):
@@ -6699,6 +6718,26 @@ class QtSettingsDialog(QDialog):
         openai_layout.setColumnStretch(1, 1)
         layout.addWidget(openai_group)
 
+        gemini_group = QGroupBox("Gemini (Translation & Decisions)")
+        gemini_layout = QGridLayout(gemini_group)
+        gemini_layout.addWidget(QLabel("API key"), 0, 0)
+        self.gemini_key_edit = QLineEdit()
+        self.gemini_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        gemini_layout.addWidget(self.gemini_key_edit, 0, 1)
+        self.gemini_toggle_btn = QPushButton("Show")
+        self.gemini_save_btn = QPushButton("Save")
+        self.gemini_clear_btn = QPushButton("Clear")
+        self.gemini_clear_btn.setObjectName("DangerButton")
+        self.gemini_test_btn = QPushButton("Test")
+        gemini_layout.addWidget(self.gemini_toggle_btn, 0, 2)
+        gemini_layout.addWidget(self.gemini_save_btn, 0, 3)
+        gemini_layout.addWidget(self.gemini_clear_btn, 0, 4)
+        gemini_layout.addWidget(self.gemini_test_btn, 0, 5)
+        self.gemini_status_label = QLabel("Not stored")
+        gemini_layout.addWidget(self.gemini_status_label, 1, 0, 1, 6)
+        gemini_layout.setColumnStretch(1, 1)
+        layout.addWidget(gemini_group)
+
         ocr_group = QGroupBox("OCR API (Fallback)")
         ocr_layout = QGridLayout(ocr_group)
         ocr_layout.addWidget(QLabel("API key"), 0, 0)
@@ -6721,6 +6760,14 @@ class QtSettingsDialog(QDialog):
 
         provider_group = QGroupBox("Provider Settings")
         provider_form = QFormLayout(provider_group)
+        self.translation_provider_combo = NoWheelComboBox()
+        self.translation_provider_combo.addItems(["gemini", "openai"])
+        self.translation_provider_combo.setEditable(False)
+        self.translation_model_edit = QLineEdit()
+        self.helper_thinking_combo = NoWheelComboBox()
+        self.helper_thinking_combo.addItems(["low", "medium", "high", "xhigh"])
+        self.helper_thinking_combo.setEditable(False)
+        self.gemini_decisions_advisory_check = QCheckBox("Enable advisory Gemini Decisions QA triage (opt-in)")
         self.ocr_provider_combo = NoWheelComboBox()
         self.ocr_provider_combo.addItems(["openai", "gemini"])
         self.ocr_provider_combo.setEditable(False)
@@ -6728,6 +6775,10 @@ class QtSettingsDialog(QDialog):
         self.ocr_model_edit = QLineEdit()
         self.ocr_env_edit = QLineEdit()
         self.provider_summary_label = QLabel("")
+        provider_form.addRow("Translation provider", self.translation_provider_combo)
+        provider_form.addRow("Translation model", self.translation_model_edit)
+        provider_form.addRow("Helper thinking level", self.helper_thinking_combo)
+        provider_form.addRow("Decisions advisory", self.gemini_decisions_advisory_check)
         provider_form.addRow("OCR provider", self.ocr_provider_combo)
         provider_form.addRow("OCR base URL", self.ocr_base_url_edit)
         provider_form.addRow("OCR model", self.ocr_model_edit)
@@ -6765,10 +6816,15 @@ class QtSettingsDialog(QDialog):
         layout.addStretch(1)
 
         self.openai_toggle_btn.clicked.connect(self._toggle_openai_key)
+        self.gemini_toggle_btn.clicked.connect(self._toggle_gemini_key)
         self.ocr_toggle_btn.clicked.connect(self._toggle_ocr_key)
         self.openai_save_btn.clicked.connect(self._save_openai_key)
         self.openai_clear_btn.clicked.connect(self._clear_openai_key)
         self.openai_test_btn.clicked.connect(self._test_openai_key)
+        self.gemini_save_btn.clicked.connect(self._save_gemini_key)
+        self.gemini_clear_btn.clicked.connect(self._clear_gemini_key)
+        self.gemini_test_btn.clicked.connect(self._test_gemini_key)
+        self.translation_provider_combo.currentTextChanged.connect(self._refresh_provider_controls)
         self.ocr_save_btn.clicked.connect(self._save_ocr_key)
         self.ocr_clear_btn.clicked.connect(self._clear_ocr_key)
         self.ocr_test_btn.clicked.connect(self._test_ocr_key)
@@ -8523,9 +8579,26 @@ class QtSettingsDialog(QDialog):
         self.ui_theme_combo.setCurrentText(str(settings.get("ui_theme", "dark_futuristic")))
         self.ui_scale_combo.setCurrentText(f"{float(settings.get('ui_scale', 1.0)):.2f}")
         self.default_lang_combo.setCurrentText(str(settings.get("default_lang", "EN")))
-        self.default_effort_combo.setCurrentText(str(settings.get("default_effort", "high")))
-        self.default_effort_policy_combo.setCurrentText(str(settings.get("default_effort_policy", "adaptive")))
+        self.default_effort_combo.setCurrentText(str(settings.get("default_effort", "xhigh")))
+        self.default_effort_policy_combo.setCurrentText(str(settings.get("default_effort_policy", "fixed_xhigh")))
         self.lemma_effort_combo.setCurrentText(str(settings.get("openai_reasoning_effort_lemma", "high")))
+        trans_provider = normalize_translation_provider(
+            settings.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
+        )
+        if hasattr(self, "translation_provider_combo"):
+            self.translation_provider_combo.setCurrentText(trans_provider.value)
+        if hasattr(self, "translation_model_edit"):
+            self.translation_model_edit.setText(
+                str(settings.get("translation_model", "") or default_translation_model(trans_provider))
+            )
+        if hasattr(self, "helper_thinking_combo"):
+            self.helper_thinking_combo.setCurrentText(
+                str(settings.get("helper_thinking_level", DEFAULT_GEMINI_HELPER_THINKING_LEVEL) or DEFAULT_GEMINI_HELPER_THINKING_LEVEL)
+            )
+        if hasattr(self, "gemini_decisions_advisory_check"):
+            self.gemini_decisions_advisory_check.setChecked(
+                bool(settings.get("gemini_decisions_advisory_enabled", False))
+            )
         self.default_images_combo.setCurrentText(str(settings.get("default_images_mode", "off")))
         self.default_workers_combo.setCurrentText(str(settings.get("default_workers", 3)))
         self.default_resume_check.setChecked(bool(settings.get("default_resume", True)))
@@ -8535,7 +8608,7 @@ class QtSettingsDialog(QDialog):
         self.default_end_edit.setText("" if default_end in (None, "") else str(default_end))
         self.default_outdir_edit.setText(str(settings.get("default_outdir", "")))
         self.glossary_file_edit.setText(str(settings.get("glossary_file_path", "")))
-        current_provider = str(settings.get("ocr_api_provider", settings.get("ocr_api_provider_default", "openai")) or "openai")
+        current_provider = str(settings.get("ocr_api_provider", settings.get("ocr_api_provider_default", "gemini")) or "gemini")
         self.ocr_provider_combo.setCurrentText(current_provider)
         self.ocr_provider_default_combo.setCurrentText(
             str(settings.get("ocr_api_provider_default", current_provider) or current_provider)
@@ -8560,7 +8633,7 @@ class QtSettingsDialog(QDialog):
         self.timeout_image_edit.setText(
             str(settings.get("perf_timeout_image_seconds", DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS))
         )
-        self.allow_xhigh_check.setChecked(bool(settings.get("allow_xhigh_escalation", False)))
+        self.allow_xhigh_check.setChecked(bool(settings.get("allow_xhigh_escalation", True)))
         self.diag_cost_summary_check.setChecked(bool(settings.get("diagnostics_show_cost_summary", True)))
         self.diag_verbose_meta_check.setChecked(bool(settings.get("diagnostics_verbose_metadata_logs", False)))
         self.diag_admin_mode_check.setChecked(bool(settings.get("diagnostics_admin_mode", True)))
@@ -8595,10 +8668,19 @@ class QtSettingsDialog(QDialog):
         summary = getattr(self, "provider_summary_label", None)
         if summary is None:
             return
+        trans_combo = getattr(self, "translation_provider_combo", None)
+        trans_model_edit = getattr(self, "translation_model_edit", None)
+        if trans_combo is not None and trans_model_edit is not None:
+            trans_provider = normalize_translation_provider(trans_combo.currentText())
+            trans_model_edit.setPlaceholderText(default_translation_model(trans_provider))
         try:
             openai_stored = bool(get_openai_key())
         except RuntimeError:
             openai_stored = False
+        try:
+            gemini_stored = bool(get_gemini_key())
+        except RuntimeError:
+            gemini_stored = False
         resolved_model = model_edit.text().strip() if model_edit is not None else ""
         resolved_env = env_edit.text().strip() if env_edit is not None else ""
         resolved_base = base_edit.text().strip() if base_edit is not None else ""
@@ -8624,6 +8706,7 @@ class QtSettingsDialog(QDialog):
             f"OCR provider: {provider.value}; model: {resolved_model}; env: {resolved_env}; "
             f"base URL: {resolved_base}; env candidates: {', '.join(env_candidates)}; "
             f"effective OCR credentials: {effective_credentials}; local Tesseract {local_status}; "
+            f"Gemini credentials {'present' if gemini_stored else 'missing'}; "
             f"OpenAI credentials {'present' if openai_stored else 'missing'}."
         )
         QtSettingsDialog._refresh_gmail_bridge_summary(self)
@@ -8824,24 +8907,107 @@ class QtSettingsDialog(QDialog):
     def _refresh_key_status(self) -> None:
         try:
             openai_stored = bool(get_openai_key())
+            gemini_stored = bool(get_gemini_key())
             ocr_stored = bool(get_ocr_key())
         except RuntimeError as exc:
             QMessageBox.critical(self, "Settings", str(exc))
             openai_stored = False
+            gemini_stored = False
             ocr_stored = False
         self.openai_status_label.setText("Stored" if openai_stored else "Not stored")
+        if hasattr(self, "gemini_status_label"):
+            self.gemini_status_label.setText("Stored" if gemini_stored else "Not stored")
         self.ocr_status_label.setText("Stored" if ocr_stored else "Not stored")
         self.openai_toggle_btn.setEnabled(openai_stored)
+        if hasattr(self, "gemini_toggle_btn"):
+            self.gemini_toggle_btn.setEnabled(gemini_stored)
         self.ocr_toggle_btn.setEnabled(ocr_stored)
         if not openai_stored:
             self.openai_key_edit.clear()
             self.openai_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
             self.openai_toggle_btn.setText("Show")
+        if not gemini_stored and hasattr(self, "gemini_key_edit"):
+            self.gemini_key_edit.clear()
+            self.gemini_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self.gemini_toggle_btn.setText("Show")
         if not ocr_stored:
             self.ocr_key_edit.clear()
             self.ocr_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
             self.ocr_toggle_btn.setText("Show")
         QtSettingsDialog._refresh_provider_controls(self)
+
+    def _toggle_gemini_key(self) -> None:
+        if self.gemini_key_edit.echoMode() == QLineEdit.EchoMode.Password:
+            confirm = QMessageBox.question(
+                self,
+                "Reveal Gemini key",
+                "Reveal stored Gemini API key in plain text?",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if confirm != QMessageBox.StandardButton.Ok:
+                return
+            try:
+                stored = get_gemini_key()
+            except RuntimeError as exc:
+                QMessageBox.critical(self, "Settings", str(exc))
+                return
+            if not stored:
+                QMessageBox.warning(self, "Settings", "Gemini key is not stored.")
+                self._refresh_key_status()
+                return
+            self.gemini_key_edit.setText(stored)
+            self.gemini_key_edit.setEchoMode(QLineEdit.EchoMode.Normal)
+            self.gemini_toggle_btn.setText("Hide")
+        else:
+            self.gemini_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self.gemini_toggle_btn.setText("Show")
+
+    def _save_gemini_key(self) -> None:
+        key = self.gemini_key_edit.text().strip()
+        if not key:
+            QMessageBox.critical(self, "Settings", "Gemini API key cannot be empty.")
+            return
+        try:
+            set_gemini_key(key)
+            if not get_gemini_key():
+                raise RuntimeError("Secure credential storage is unavailable on this system.")
+        except RuntimeError as exc:
+            QMessageBox.critical(self, "Settings", str(exc))
+            return
+        self.gemini_key_edit.clear()
+        self.gemini_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.gemini_toggle_btn.setText("Show")
+        self._refresh_key_status()
+        QMessageBox.information(self, "Settings", "Saved")
+
+    def _clear_gemini_key(self) -> None:
+        try:
+            delete_gemini_key()
+        except RuntimeError as exc:
+            QMessageBox.critical(self, "Settings", str(exc))
+            return
+        self.gemini_key_edit.clear()
+        self.gemini_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.gemini_toggle_btn.setText("Show")
+        self._refresh_key_status()
+
+    def _test_gemini_key(self) -> None:
+        model = (
+            self.translation_model_edit.text().strip()
+            if hasattr(self, "translation_model_edit")
+            else GEMINI_MODEL
+        ) or GEMINI_MODEL
+        if not model.startswith("gemini-"):
+            model = GEMINI_MODEL
+        result = run_provider_auth_test("gemini", model=model)
+        if result.ok:
+            latency_text = f" ({result.latency_ms} ms)" if result.latency_ms is not None else ""
+            QMessageBox.information(self, "Key Test", f"{result.message}{latency_text}")
+        elif result.status == "missing":
+            QMessageBox.warning(self, "Key Test", result.message)
+        else:
+            QMessageBox.critical(self, "Key Test", result.message)
 
     def _save_openai_key(self) -> None:
         key = self.openai_key_edit.text().strip()
@@ -8965,9 +9131,17 @@ class QtSettingsDialog(QDialog):
         )
 
     def _restore_defaults(self) -> None:
+        if hasattr(self, "translation_provider_combo"):
+            self.translation_provider_combo.setCurrentText(DEFAULT_TRANSLATION_PROVIDER)
+        if hasattr(self, "translation_model_edit"):
+            self.translation_model_edit.setText(GEMINI_MODEL)
+        if hasattr(self, "helper_thinking_combo"):
+            self.helper_thinking_combo.setCurrentText(DEFAULT_GEMINI_HELPER_THINKING_LEVEL)
+        if hasattr(self, "gemini_decisions_advisory_check"):
+            self.gemini_decisions_advisory_check.setChecked(False)
         self.default_lang_combo.setCurrentText("EN")
-        self.default_effort_combo.setCurrentText("high")
-        self.default_effort_policy_combo.setCurrentText("adaptive")
+        self.default_effort_combo.setCurrentText("xhigh")
+        self.default_effort_policy_combo.setCurrentText("fixed_xhigh")
         self.lemma_effort_combo.setCurrentText("high")
         self.default_images_combo.setCurrentText("off")
         self.default_workers_combo.setCurrentText("3")
@@ -8999,13 +9173,13 @@ class QtSettingsDialog(QDialog):
                 "study_glossary_default_coverage_percent": 80,
             }
         )
-        self.ocr_provider_combo.setCurrentText("openai")
-        self.ocr_provider_default_combo.setCurrentText("openai")
+        self.ocr_provider_combo.setCurrentText("gemini")
+        self.ocr_provider_default_combo.setCurrentText("gemini")
         self.ocr_mode_default_combo.setCurrentText("auto")
         self.ocr_engine_default_combo.setCurrentText("local_then_api")
         self.ocr_base_url_edit.clear()
         self.ocr_model_edit.clear()
-        self.ocr_env_edit.setText(default_ocr_api_env_name(OcrApiProvider.OPENAI))
+        self.ocr_env_edit.setText(default_ocr_api_env_name(OcrApiProvider.GEMINI))
         self.gmail_gog_path_edit.clear()
         self.gmail_account_edit.clear()
         self.gmail_intake_enabled_check.setChecked(False)
@@ -9015,7 +9189,7 @@ class QtSettingsDialog(QDialog):
         self.backoff_cap_edit.setText("12.0")
         self.timeout_text_edit.setText(str(DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS))
         self.timeout_image_edit.setText(str(DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS))
-        self.allow_xhigh_check.setChecked(False)
+        self.allow_xhigh_check.setChecked(True)
         self._refresh_provider_controls()
 
     def _collect_values(self) -> dict[str, object]:
@@ -9047,9 +9221,33 @@ class QtSettingsDialog(QDialog):
             bridge_token = secrets.token_urlsafe(24)
             self.gmail_intake_token_edit.setText(bridge_token)
 
+        trans_provider = normalize_translation_provider(
+            self.translation_provider_combo.currentText()
+            if hasattr(self, "translation_provider_combo")
+            else DEFAULT_TRANSLATION_PROVIDER
+        )
+        trans_model = (
+            self.translation_model_edit.text().strip()
+            if hasattr(self, "translation_model_edit")
+            else ""
+        ) or default_translation_model(trans_provider)
+        helper_thinking = (
+            self.helper_thinking_combo.currentText().strip().lower()
+            if hasattr(self, "helper_thinking_combo")
+            else DEFAULT_GEMINI_HELPER_THINKING_LEVEL
+        ) or DEFAULT_GEMINI_HELPER_THINKING_LEVEL
+        decisions_advisory = (
+            bool(self.gemini_decisions_advisory_check.isChecked())
+            if hasattr(self, "gemini_decisions_advisory_check")
+            else False
+        )
         return {
             "ui_theme": self.ui_theme_combo.currentText().strip(),
             "ui_scale": ui_scale,
+            "translation_provider": trans_provider.value,
+            "translation_model": trans_model,
+            "helper_thinking_level": helper_thinking,
+            "gemini_decisions_advisory_enabled": decisions_advisory,
             "default_lang": self.default_lang_combo.currentText().strip().upper(),
             "default_effort": self.default_effort_combo.currentText().strip().lower(),
             "default_effort_policy": self.default_effort_policy_combo.currentText().strip().lower(),

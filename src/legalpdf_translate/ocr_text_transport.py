@@ -14,6 +14,8 @@ import os
 from pathlib import Path
 
 POLICY = "openai_ocr_text_envelope_v1"
+GEMINI_POLICY = "gemini_ocr_text_envelope_v1"
+SUPPORTED_POLICIES = (POLICY, GEMINI_POLICY)
 KEY = "ocr_text_transport_policy"
 MAX_TEXT = 300_000
 MAX_RAW = 2_000_000
@@ -96,8 +98,10 @@ def response_format():
         "required": ["text"], "additionalProperties": False}}
 
 
-def descriptor():
-    return {"policy": POLICY, "schema_sha256": _sha(_json(response_format())),
+def descriptor(policy: str = POLICY):
+    if policy not in SUPPORTED_POLICIES:
+        _fail("unsupported_policy")
+    return {"policy": policy, "schema_sha256": _sha(_json(response_format())),
         "instructions_sha256": _sha(INSTRUCTIONS), "max_text_chars": MAX_TEXT,
         "max_raw_output_chars": MAX_RAW, "text_semantics": "exact_decoded_string_v1",
         "retention": "exact_provider_output_string_and_flags_not_http_bytes_v1"}
@@ -174,9 +178,17 @@ def _journal(path):
     return data
 
 
+def _identity_provider(identity) -> str:
+    policy_obj = identity.get("policy")
+    if isinstance(policy_obj, dict) and policy_obj.get("policy") == GEMINI_POLICY:
+        return "gemini"
+    return "openai"
+
+
 def _begins(journal, identity):
+    provider = _identity_provider(identity)
     return [row for row in journal["events"] if row.get("event") == "begin"
-        and row.get("provider") == "openai" and row.get("purpose") == "ocr"
+        and row.get("provider") == provider and row.get("purpose") == "ocr"
         and row.get("page_number") == identity["page"]
         and row.get("request_hash") == identity["wire_request_sha256"]]
 
@@ -189,8 +201,9 @@ def _native(journal, identity, response_id=None, *, call_id=None):
     if type(begin.get("call_id")) is not str or not begin["call_id"]:
         _fail("native_call_ownership")
     finishes = [r for r in journal["events"] if r.get("event") == "finish" and r.get("call_id") == begin["call_id"]]
+    expected_route = "interactions.create" if _identity_provider(identity) == "gemini" else "responses.create"
     if (len(finishes) != 1 or begin.get("requested_model") != identity["model"]
-            or begin.get("route") != "responses.create" or begin.get("attempt") != 1
+            or begin.get("route") != expected_route or begin.get("attempt") != 1
             or (call_id is not None and begin["call_id"] != call_id)):
         _fail("native_call_ownership")
     finish = finishes[0]
@@ -246,6 +259,33 @@ def _response(response):
         "incomplete_details": _field(response, "incomplete_details") is not None}
 
 
+def _gemini_response(response):
+    from .gemini_client import _extract_gemini_output_text, _gemini_has_refusal, _gemini_incomplete_reason
+    from .openai_client import _field
+    parts: list[str] = []
+    unsupported = False
+    try:
+        extracted = _extract_gemini_output_text(response)
+        parts = [extracted]
+    except RuntimeError:
+        extracted = ""
+        unsupported = True
+    refused = _gemini_has_refusal(response)
+    incomplete_reason = _gemini_incomplete_reason(response)
+    status = _field(response, "status") or "completed"
+    return {
+        "raw_output": extracted if len(parts) == 1 else "",
+        "output_text_parts": parts,
+        "unsupported_output_shape": unsupported,
+        "response_id": _field(response, "id"),
+        "response_model": _field(response, "model"),
+        "response_status": status,
+        "refused": refused,
+        "incomplete": incomplete_reason is not None,
+        "incomplete_details": incomplete_reason is not None,
+    }
+
+
 def _decoded(answer):
     response = answer["response"]
     keys = {"raw_output", "output_text_parts", "unsupported_output_shape", "response_id", "response_model",
@@ -265,10 +305,25 @@ def _decoded(answer):
     return decode(response["raw_output"])
 
 
-def acquire(*, client, fallback_accountant, image_bytes, request):
+def acquire(*, client, fallback_accountant, image_bytes, request, policy: str = POLICY):
     """One immutable request slot; a paid/answered slot is never dispatched twice."""
-    from .openai_client import (_active_accountant, _dispatch_limits, _apply_openai_dispatch_limits,
-        _request_accounting_details, _accounted_openai_create)
+    if policy not in SUPPORTED_POLICIES:
+        _fail("unsupported_policy")
+    is_gemini = policy == GEMINI_POLICY
+    provider_name = "gemini" if is_gemini else "openai"
+    from .openai_client import _active_accountant, _dispatch_limits
+    if is_gemini:
+        from .gemini_client import (
+            _accounted_gemini_interaction_create,
+            _apply_gemini_dispatch_limits,
+            _request_accounting_details,
+        )
+    else:
+        from .openai_client import (
+            _accounted_openai_create,
+            _apply_openai_dispatch_limits,
+            _request_accounting_details,
+        )
     from .usage_accounting import DispatchAccounting, current_accounting_binding
     context = _SCOPE.get()
     active = _active_accountant(fallback_accountant)
@@ -276,8 +331,12 @@ def acquire(*, client, fallback_accountant, image_bytes, request):
     if (context is None or not isinstance(active, DispatchAccounting) or binding is None
             or binding.page_number != context.page):
         _fail("acquisition_context_required")
-    _, limits = _dispatch_limits(active, provider="openai", purpose="ocr", model=request["model"])
-    wire = _apply_openai_dispatch_limits(request, active, limits)
+    _, limits = _dispatch_limits(active, provider=provider_name, purpose="ocr", model=request["model"])
+    wire = (
+        _apply_gemini_dispatch_limits(request, active, limits)
+        if is_gemini
+        else _apply_openai_dispatch_limits(request, active, limits)
+    )
     request_sha, _ = _request_accounting_details(wire)
     try:
         journal_relative = Path(active.journal_path).resolve().relative_to(context.run_dir.resolve()).as_posix()
@@ -285,7 +344,7 @@ def acquire(*, client, fallback_accountant, image_bytes, request):
         _fail("native_context")
     journal_path = _owned(context.run_dir, journal_relative)
     journal = _journal(journal_path)
-    identity = {"version": "ocr_text_acquisition_intent_v1", "policy": descriptor(),
+    identity = {"version": "ocr_text_acquisition_intent_v1", "policy": descriptor(policy),
         "pdf_sha256": context.pdf_sha256, "page": context.page, "image_sha256": _sha(image_bytes),
         "model": request["model"], "wire_request_sha256": request_sha,
         "journal_path": journal_relative, "native_run_identity_sha256": _sha(_json(journal.get("run_identity")))}
@@ -312,7 +371,7 @@ def acquire(*, client, fallback_accountant, image_bytes, request):
         if not answered_path.is_file():
             _fail("acquisition_unsettled")
     else:
-        prior_page_call = any(row.get("event") == "begin" and row.get("provider") == "openai"
+        prior_page_call = any(row.get("event") == "begin" and row.get("provider") == provider_name
             and row.get("purpose") == "ocr" and row.get("page_number") == context.page for row in journal["events"])
         if answered_path.exists() or prior_page_call:
             _fail("native_evidence_missing")
@@ -320,10 +379,13 @@ def acquire(*, client, fallback_accountant, image_bytes, request):
         # Native accounting completes its settlement before returning a response.
         # An exception leaves the intent conservative; it cannot authorize retry.
         try:
-            response = _accounted_openai_create(client=client, accountant=fallback_accountant, purpose="ocr", **request)
+            if is_gemini:
+                response = _accounted_gemini_interaction_create(client=client, accountant=fallback_accountant, purpose="ocr", **request)
+            else:
+                response = _accounted_openai_create(client=client, accountant=fallback_accountant, purpose="ocr", **request)
         except Exception as exc:
             raise OcrTextTransportError("acquisition_failed") from exc
-        retained = _response(response)
+        retained = _gemini_response(response) if is_gemini else _response(response)
         proof, _ = _native(_journal(journal_path), identity, retained["response_id"])
         _persist(answered_path, {"version": "ocr_text_acquisition_answer_v1",
             "intent_sha256": _sha(intent_path.read_bytes()), "native": proof, "response": retained})
@@ -367,7 +429,10 @@ def validate_ref(*, run_dir, pdf_sha256, page, reference, original_source_text=N
     identity = _read(path.parent/"intent.json")
     keys = {"version", "policy", "pdf_sha256", "page", "image_sha256", "model", "wire_request_sha256",
         "journal_path", "native_run_identity_sha256"}
-    if (type(identity) is not dict or set(identity) != keys or identity.get("policy") != descriptor()
+    if (type(identity) is not dict or set(identity) != keys
+            or not isinstance(identity.get("policy"), dict)
+            or identity["policy"].get("policy") not in SUPPORTED_POLICIES
+            or identity.get("policy") != descriptor(identity["policy"]["policy"])
             or type(identity["page"]) is not int or identity["page"] != page or identity["pdf_sha256"] != pdf_sha256
             or identity["version"] != "ocr_text_acquisition_intent_v1"
             or any(not _digest(identity[k]) for k in ("pdf_sha256", "image_sha256", "wire_request_sha256", "native_run_identity_sha256"))

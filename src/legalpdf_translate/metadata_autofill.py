@@ -14,9 +14,17 @@ from typing import Any
 from openai import OpenAI
 from PIL import Image
 
-from .config import DEFAULT_METADATA_AI_TIMEOUT_SECONDS, DEFAULT_OCR_API_TIMEOUT_SECONDS
+from .config import (
+    DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+    DEFAULT_METADATA_AI_TIMEOUT_SECONDS,
+    DEFAULT_OCR_API_TIMEOUT_SECONDS,
+)
+from .gemini_client import (
+    GeminiInteractionsClient,
+    normalize_gemini_thinking_level,
+)
 from .legal_header_glossary import extract_best_case_entity_match
-from .ocr_engine import OcrEngineConfig, OcrResult, build_ocr_engine
+from .ocr_engine import GEMINI_OCR_DEFAULT_MODEL, OcrEngineConfig, OcrResult, build_ocr_engine
 from .ocr_engine import (
     candidate_ocr_api_env_names,
     default_ocr_api_env_name,
@@ -272,6 +280,7 @@ class MetadataAutofillConfig:
     metadata_ai_timeout_seconds: float = float(DEFAULT_METADATA_AI_TIMEOUT_SECONDS)
     metadata_ai_enabled: bool = True
     metadata_allow_header_ocr_even_if_ocr_off: bool = True
+    helper_thinking_level: str = DEFAULT_GEMINI_HELPER_THINKING_LEVEL
 
 
 @dataclass(slots=True)
@@ -319,7 +328,7 @@ def metadata_config_from_settings(settings: dict[str, object]) -> MetadataAutofi
     ocr_engine_text = str(settings.get("ocr_engine", "local_then_api") or "local_then_api").strip().lower()
     if ocr_engine_text not in {"local", "local_then_api", "api"}:
         ocr_engine_text = "local_then_api"
-    provider = normalize_ocr_api_provider(settings.get("ocr_api_provider", settings.get("ocr_api_provider_default", "openai")))
+    provider = normalize_ocr_api_provider(settings.get("ocr_api_provider", settings.get("ocr_api_provider_default", "gemini")))
     key_env_name = str(
         settings.get(
             "ocr_api_key_env_name",
@@ -340,6 +349,10 @@ def metadata_config_from_settings(settings: dict[str, object]) -> MetadataAutofi
         metadata_ai_timeout_seconds=float(DEFAULT_METADATA_AI_TIMEOUT_SECONDS),
         metadata_ai_enabled=bool(settings.get("metadata_ai_enabled", True)),
         metadata_allow_header_ocr_even_if_ocr_off=True,
+        helper_thinking_level=normalize_gemini_thinking_level(
+            settings.get("helper_thinking_level", DEFAULT_GEMINI_HELPER_THINKING_LEVEL),
+            default=DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+        ),
     )
 
 
@@ -914,6 +927,7 @@ def _resolve_api_client(config: MetadataAutofillConfig) -> OpenAI | None:
             api_model=config.ocr_api_model,
             api_key_env_name=config.ocr_api_key_env_name,
             api_timeout_seconds=float(config.ocr_api_timeout_seconds),
+            helper_thinking_level=config.helper_thinking_level,
         )
     )
     if not key:
@@ -931,6 +945,43 @@ def _ai_extract_json(
     *,
     config: MetadataAutofillConfig,
 ) -> dict[str, str] | None:
+    if config.ocr_api_provider == OcrApiProvider.GEMINI:
+        key = resolve_ocr_api_key(
+            OcrEngineConfig(
+                policy=config.ocr_engine_policy,
+                api_provider=config.ocr_api_provider,
+                api_base_url=config.ocr_api_base_url,
+                api_model=config.ocr_api_model,
+                api_key_env_name=config.ocr_api_key_env_name,
+                api_timeout_seconds=float(config.ocr_api_timeout_seconds),
+                helper_thinking_level=config.helper_thinking_level,
+            )
+        )
+        if not key:
+            return None
+        model = (config.ocr_api_model or "").strip() or GEMINI_OCR_DEFAULT_MODEL
+        timeout_val = max(0.1, float(config.metadata_ai_timeout_seconds))
+        try:
+            gemini_client = GeminiInteractionsClient(
+                api_key=key,
+                model=model,
+                max_transport_retries=0,
+                pre_call_jitter_seconds=0.0,
+                request_timeout_seconds=timeout_val,
+            )
+            result = gemini_client.create_page_response(
+                instructions="Extract structured court metadata fields as a single JSON object. Return valid JSON only.",
+                prompt_text=prompt,
+                effort=config.helper_thinking_level,
+                timeout_seconds=timeout_val,
+            )
+        except Exception:
+            return None
+        payload = _parse_json_object(result.raw_output)
+        if payload is None:
+            return None
+        return {str(k): str(v).strip() for k, v in payload.items()}
+
     client = _resolve_api_client(config)
     if client is None:
         return None
@@ -1421,6 +1472,7 @@ def _build_ocr_engine_from_config(config: MetadataAutofillConfig):
             api_model=config.ocr_api_model,
             api_key_env_name=config.ocr_api_key_env_name,
             api_timeout_seconds=float(config.ocr_api_timeout_seconds),
+            helper_thinking_level=config.helper_thinking_level,
         )
     )
 
@@ -1494,6 +1546,7 @@ def _interpretation_notice_ocr_config(config: MetadataAutofillConfig) -> Metadat
         metadata_ai_timeout_seconds=float(config.metadata_ai_timeout_seconds),
         metadata_ai_enabled=config.metadata_ai_enabled,
         metadata_allow_header_ocr_even_if_ocr_off=config.metadata_allow_header_ocr_even_if_ocr_off,
+        helper_thinking_level=config.helper_thinking_level,
     )
 
 
