@@ -1,10 +1,12 @@
 # Workflow & Git Checklist (for AI Agents and Non-Coder Users)
 
+> **Antigravity Note:** For coding-agent sessions in Antigravity, [AGENTS.md](../../AGENTS.md), [COMMIT_PUBLISH_WORKFLOW.md](workflows/COMMIT_PUBLISH_WORKFLOW.md), and [.agents/skills/legalpdf-commit-publish](../../.agents/skills/legalpdf-commit-publish/SKILL.md) are authoritative for commit, push, and worktree rules. Always run project commands through `.\.venv311\Scripts\python.exe` rather than bare `python`.
+
 ## 1. State Snapshot
 
 Run these commands before and after any change. If the AI agent has repo access, it **MUST** run the snapshot and paste outputs in its final response.
 
-```bash
+```powershell
 # What branch am I on? Any uncommitted changes?
 git status --short
 
@@ -12,10 +14,10 @@ git status --short
 git diff --name-only
 
 # Do all tests pass?
-python -m pytest -q
+.\.venv311\Scripts\python.exe -m pytest -q
 
 # Does all code compile without syntax errors?
-python -m compileall src tests
+.\.venv311\Scripts\python.exe -m compileall src tests
 
 # Recent commits (context for commit messages)
 git log --oneline -5
@@ -25,8 +27,8 @@ git log --oneline -5
 |---------|-------------------|
 | `git status --short` | Uncommitted changes (M = modified, ?? = new untracked file) |
 | `git diff --name-only` | List of files changed but not yet committed |
-| `python -m pytest -q` | All tests pass (e.g. `420 passed in 12s`) or which failed |
-| `python -m compileall src tests` | No Python syntax errors in any file |
+| `.\.venv311\Scripts\python.exe -m pytest -q` | All tests pass (e.g. `420 passed in 12s`) or which failed |
+| `.\.venv311\Scripts\python.exe -m compileall src tests` | No Python syntax errors in any file |
 | `git log --oneline -5` | Last 5 commit messages (follow the same style) |
 
 ## 2. Safe Change Flow
@@ -44,9 +46,9 @@ git checkout -b feat/my-change-name
 
 ### Step 2 — Make changes, then run tests
 
-```bash
-python -m pytest -q
-python -m compileall src tests
+```powershell
+.\.venv311\Scripts\python.exe -m pytest -q
+.\.venv311\Scripts\python.exe -m compileall src tests
 ```
 
 If tests fail, fix them before proceeding. Never commit broken tests.
@@ -79,8 +81,8 @@ gh pr create --title "Short title" --body "$(cat <<'EOF'
 - What changed and why
 
 ## Verification
-- python -m pytest -q -> <paste result>
-- python -m compileall src tests -> success
+- .\.venv311\Scripts\python.exe -m pytest -q -> <paste result>
+- .\.venv311\Scripts\python.exe -m compileall src tests -> success
 - git diff --name-only -> <paste list>
 - git status --short -> <paste status>
 EOF
@@ -101,8 +103,8 @@ git pull origin main
 The minimum required outputs in every final response:
 
 ```
-python -m pytest -q        -> <actual result>
-python -m compileall src tests -> <actual result>
+.\.venv311\Scripts\python.exe -m pytest -q        -> <actual result>
+.\.venv311\Scripts\python.exe -m compileall src tests -> <actual result>
 git diff --name-only       -> <actual file list>
 git status --short         -> <actual status>
 ```

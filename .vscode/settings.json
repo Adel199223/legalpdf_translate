@@ -2,20 +2,30 @@
   "files.watcherExclude": {
     "**/.git/**": true,
     "**/.venv/**": true,
+    "**/.venv311/**": true,
     "**/__pycache__/**": true,
     "**/.pytest_cache/**": true,
     "**/.mypy_cache/**": true,
+    "**/.playwright-cli/**": true,
+    "**/.playwright-mcp/**": true,
     "**/build/**": true,
     "**/dist/**": true,
+    "**/tmp/**": true,
     "**/*_run/**": true
   },
   "search.exclude": {
     "**/.venv/**": true,
+    "**/.venv311/**": true,
     "**/__pycache__/**": true,
     "**/.pytest_cache/**": true,
     "**/.mypy_cache/**": true,
+    "**/.playwright-cli/**": true,
+    "**/.playwright-mcp/**": true,
     "**/build/**": true,
     "**/dist/**": true,
-    "**/*_run/**": true
+    "**/tmp/**": true,
+    "**/*_run/**": true,
+    "**/docs/assistant/history/**": true,
+    "**/docs/assistant/exec_plans/completed/**": true
   }
 }

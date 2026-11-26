@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import re
@@ -145,6 +146,20 @@ foreach ($c in $cases) {{
         self.assertEqual(results.get("APP_KNOWLEDGE.md"), "True")
         self.assertEqual(results.get("src/legalpdf_translate/cli.py"), "False")
         self.assertEqual(results.get("tests/test_cli_flags.py"), "False")
+
+    def test_vscode_settings_excludes_noisy_dirs(self) -> None:
+        settings_path = ROOT / ".vscode" / "settings.json"
+        self.assertTrue(settings_path.is_file(), ".vscode/settings.json is required.")
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+        watcher = data.get("files.watcherExclude", {})
+        search = data.get("search.exclude", {})
+
+        for pattern in ("**/.venv311/**", "**/.playwright-cli/**", "**/.playwright-mcp/**", "**/tmp/**"):
+            self.assertIs(watcher.get(pattern), True, f"files.watcherExclude missing {pattern}")
+            self.assertIs(search.get(pattern), True, f"search.exclude missing {pattern}")
+
+        for pattern in ("**/docs/assistant/history/**", "**/docs/assistant/exec_plans/completed/**"):
+            self.assertIs(search.get(pattern), True, f"search.exclude missing {pattern}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,21 @@
+{
+  "files.watcherExclude": {
+    "**/.git/**": true,
+    "**/.venv/**": true,
+    "**/__pycache__/**": true,
+    "**/.pytest_cache/**": true,
+    "**/.mypy_cache/**": true,
+    "**/build/**": true,
+    "**/dist/**": true,
+    "**/*_run/**": true
+  },
+  "search.exclude": {
+    "**/.venv/**": true,
+    "**/__pycache__/**": true,
+    "**/.pytest_cache/**": true,
+    "**/.mypy_cache/**": true,
+    "**/build/**": true,
+    "**/dist/**": true,
+    "**/*_run/**": true
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schema": "scoped_beforeimages_v1",
+  "base_head": "6d478de831280114377a097204431fafce280acf",
+  "files": [
+    {
+      "path": ".vscode/settings.json",
+      "sha256": "a2c21179ee88d9501083d1d071e7cb088c768471400d1bbd9fab7f182ba1715a"
+    },
+    {
+      "path": "docs/assistant/PERFORMANCE_BASELINES.md",
+      "sha256": "f7383f10c5bd088d79baaf5d32b9afd2848f332637ff956180fca211e67b3277"
+    },
+    {
+      "path": "docs/assistant/WORKFLOW_GIT_AI.md",
+      "sha256": "2b574d8e0df34ab61b400d1b029ed2e4b9a3c413c089c0c5328e686abf7b6c50"
+    },
+    {
+      "path": "docs/assistant/features/WORKTREE_WORKSPACE_USER_GUIDE.md",
+      "sha256": "c82c10d9b95ca95ca76dfd4177ba2496ec8170964accd4626c92507154dcbe97"
+    }
+  ]
+}
