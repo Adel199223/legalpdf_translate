@@ -276,6 +276,7 @@ def _app(tmp_path: Path, monkeypatch, outputs: tuple[str, ...], pages: tuple[int
 def _start(client, source, output, lang, *, start, end, image_mode, ocr_mode="off",
            page_breaks=False, resume=False):
     body = {"mode": "shadow", "workspace_id": "fictional", "form_values": {
+        "translation_provider": "openai", "translation_model": "gpt-5.2",
         "source_path": str(source), "output_dir": str(output), "target_lang": lang,
         "image_mode": image_mode, "ocr_mode": ocr_mode, "workers": 1,
         "start_page": start, "end_page": end, "resume": resume, "page_breaks": page_breaks}}

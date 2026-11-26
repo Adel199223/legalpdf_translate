@@ -475,6 +475,8 @@ def test_provider_state_uses_stored_translation_key_for_openai_ocr_fallback(
     power_tools_service.save_browser_settings(
         settings_path=settings_file,
         values={
+            "translation_provider": "openai",
+            "translation_model": "gpt-5.2",
             "ocr_api_provider": "openai",
             "ocr_api_provider_default": "openai",
         },
@@ -519,6 +521,8 @@ def test_provider_state_uses_stored_ocr_key_for_translation_fallback(
     power_tools_service.save_browser_settings(
         settings_path=settings_file,
         values={
+            "translation_provider": "openai",
+            "translation_model": "gpt-5.2",
             "ocr_api_provider": "openai",
             "ocr_api_provider_default": "openai",
         },
@@ -603,12 +607,16 @@ def test_browser_secret_save_and_clear_actions_return_safe_provider_state(
     save_translation = power_tools_service.save_browser_translation_key(
         settings_path=settings_file,
         key="  sk-translation  ",
+        provider="openai",
     )
     save_ocr = power_tools_service.save_browser_ocr_key(
         settings_path=settings_file,
         key="  ocr-secret  ",
     )
-    clear_translation = power_tools_service.clear_browser_translation_key(settings_path=settings_file)
+    clear_translation = power_tools_service.clear_browser_translation_key(
+        settings_path=settings_file,
+        provider="openai",
+    )
     clear_ocr = power_tools_service.clear_browser_ocr_key(settings_path=settings_file)
 
     assert stored == {}
@@ -805,6 +813,8 @@ def test_run_ocr_provider_test_returns_failed_payload_for_provider_error(
     power_tools_service.save_browser_settings(
         settings_path=settings_file,
         values={
+            "translation_provider": "openai",
+            "translation_model": "gpt-5.2",
             "ocr_api_provider": "openai",
             "ocr_api_provider_default": "openai",
         },

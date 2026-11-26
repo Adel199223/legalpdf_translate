@@ -9,8 +9,8 @@ from legalpdf_translate.types import OcrApiProvider
 
 def test_provider_cases_include_flash_and_flash_lite() -> None:
     cases = ocr_benchmark._provider_cases("all")
-    assert (OcrApiProvider.GEMINI, "gemini-3.1-flash-lite-preview") in cases
-    assert (OcrApiProvider.GEMINI, "gemini-3-flash-preview") in cases
+    assert (OcrApiProvider.GEMINI, "gemini-4-neon") in cases
+    assert (OcrApiProvider.GEMINI, "gemini-4-hydrogen") in cases
     assert (OcrApiProvider.OPENAI, "gpt-4o-mini") in cases
 
 

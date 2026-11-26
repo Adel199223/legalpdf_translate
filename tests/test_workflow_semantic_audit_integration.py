@@ -334,7 +334,7 @@ def test_reused_workflow_restores_constructor_model_before_a_saved_resume_overri
     # Simulate a prior no-client Resume restoring a different saved model.
     flow._translation_model = "gpt-5.6-terra"
     with pytest.raises(StopBeforeAnyWork): flow._run_locked(config)
-    assert observed == [client.model if provided else module.OPENAI_MODEL]
+    assert observed == [client.model if provided else module.GEMINI_MODEL]
     assert not sdk.requests
     if provided: assert client.model == "gpt-5.6-sol"
 

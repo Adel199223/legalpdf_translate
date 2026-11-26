@@ -67,7 +67,7 @@ def test_preflight_available_when_env_key_present(monkeypatch) -> None:
     payload = module.run_ocr_preflight(
         environment={
             "OCR_PREFLIGHT_IGNORE_STORED_KEY": "true",
-            "OPENAI_API_KEY": "key",
+            "GEMINI_API_KEY": "key",
         },
         runner=_runner,
     )
@@ -75,11 +75,12 @@ def test_preflight_available_when_env_key_present(monkeypatch) -> None:
     assert payload["fallback_readiness"]["local_only"] == "available"
     assert payload["fallback_readiness"]["local_then_api_required_only"] == "available"
     assert payload["api_fallback"]["configured"] is True
-    assert payload["api_fallback"]["key_env_name"] == "OPENAI_API_KEY"
+    assert payload["api_fallback"]["key_env_name"] == "GEMINI_API_KEY"
 
 
 def test_preflight_available_when_legacy_env_key_present(monkeypatch) -> None:
     module = _load_module()
+    monkeypatch.setattr(module, "_configured_ocr_env_name_from_settings", lambda: "OPENAI_API_KEY")
     monkeypatch.setattr(module, "which", lambda _name: "/usr/bin/tesseract")
 
     def _runner(command: list[str]) -> tuple[int, str, str]:

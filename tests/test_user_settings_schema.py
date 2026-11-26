@@ -66,8 +66,13 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert "preferred_translation" in loaded["glossaries_by_lang"]["AR"][0]
     assert "match_mode" in loaded["glossaries_by_lang"]["AR"][0]
     assert "tier" in loaded["glossaries_by_lang"]["AR"][0]
-    assert loaded["default_effort_policy"] == "adaptive"
-    assert loaded["effort_policy"] == "adaptive"
+    assert loaded["default_effort_policy"] == "fixed_xhigh"
+    assert loaded["effort_policy"] == "fixed_xhigh"
+    assert loaded["default_effort"] == "xhigh"
+    assert loaded["translation_provider"] == "gemini"
+    assert loaded["translation_model"] == "gemini-4-neon"
+    assert loaded["helper_thinking_level"] == "high"
+    assert loaded["gemini_decisions_advisory_enabled"] is False
     assert loaded["default_workers"] == 3
     assert loaded["workers"] == 3
     assert loaded["default_resume"] is True
@@ -91,9 +96,9 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert isinstance(loaded["allow_xhigh_escalation"], bool)
     assert loaded["perf_timeout_text_seconds"] == 480
     assert loaded["perf_timeout_image_seconds"] == 720
-    assert loaded["ocr_api_provider"] in {"openai", "gemini"}
-    assert loaded["ocr_api_provider_default"] in {"openai", "gemini"}
-    assert loaded["ocr_api_key_env_name"] == "OPENAI_API_KEY"
+    assert loaded["ocr_api_provider"] == "gemini"
+    assert loaded["ocr_api_provider_default"] == "gemini"
+    assert loaded["ocr_api_key_env_name"] == "GEMINI_API_KEY"
 
 
 def test_load_gui_settings_coerces_gmail_intake_bridge_fields(tmp_path: Path, monkeypatch) -> None:
