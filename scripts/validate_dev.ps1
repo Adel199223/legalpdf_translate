@@ -117,7 +117,14 @@ function Test-DocsValidationTriggered {
 
     foreach ($path in @($Paths)) {
         $normalized = ([string]$path).Trim().Replace('\', '/').ToLowerInvariant()
-        if ($normalized.StartsWith("docs/assistant/") -or $normalized -eq "readme.md" -or $normalized -eq "app_knowledge.md") {
+        if (
+            $normalized.StartsWith("docs/assistant/") -or
+            $normalized.StartsWith(".agents/") -or
+            $normalized -eq "agents.md" -or
+            $normalized -eq "agent.md" -or
+            $normalized -eq "readme.md" -or
+            $normalized -eq "app_knowledge.md"
+        ) {
             return $true
         }
     }
