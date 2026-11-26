@@ -18,7 +18,7 @@ from legalpdf_translate.workflow_components.quality_risk import build_quality_ri
 
 def _make_choice_response(choice: str, confidence: float, probabilities: dict[str, float], input_tokens: int = 150):
     return SimpleNamespace(
-        answers=[SimpleNamespace(choice=choice, confidence=confidence, probabilities=probabilities)],
+        answers={"route": SimpleNamespace(choice=choice, confidence=confidence, probabilities=probabilities)},
         usage=SimpleNamespace(
             total_input_tokens=input_tokens,
             total_output_tokens=0,
@@ -30,14 +30,14 @@ def _make_choice_response(choice: str, confidence: float, probabilities: dict[st
 
 def _make_qa_response(noul: float, noul_conf: float, triage: str, triage_conf: float, input_tokens: int = 200):
     return SimpleNamespace(
-        answers=[
-            SimpleNamespace(noul=noul, confidence=noul_conf),
-            SimpleNamespace(
+        answers={
+            "noul_risk": SimpleNamespace(noul=noul, confidence=noul_conf),
+            "triage": SimpleNamespace(
                 choice=triage,
                 confidence=triage_conf,
                 probabilities={"pass": 0.1, "spot_check": triage_conf, "priority_review": 0.05},
             ),
-        ],
+        },
         usage=SimpleNamespace(
             total_input_tokens=input_tokens,
             total_tokens=input_tokens,

@@ -91,6 +91,17 @@ def test_build_gemini_page_request_uses_store_false_image_and_strict_schema() ->
         {"type": "text", "text": "Source text"},
         {"type": "image", "mime_type": "image/png", "data": "QUJD"},
     ]
+    req_high = gemini_client._build_gemini_page_request(
+        instructions="Translate carefully.",
+        prompt_text="Source text",
+        effort="high",
+        image_data_url="data:image/png;base64,QUJD",
+        image_detail="high",
+    )
+    assert req_high["input"] == [
+        {"type": "text", "text": "Source text"},
+        {"type": "image", "mime_type": "image/png", "data": "QUJD", "resolution": "high"},
+    ]
     assert req["response_format"] == {
         "type": "text",
         "mime_type": "application/json",
