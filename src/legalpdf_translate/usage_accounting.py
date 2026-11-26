@@ -1136,6 +1136,48 @@ def _summarize(
 def _normalize_gemini_usage_input(usage: Any) -> Any:
     if usage is None:
         return None
+    # Already-normalized dict (e.g. from GeminiInteractionsClient)
+    if (
+        isinstance(usage, Mapping)
+        and ("input_tokens" in usage or "output_tokens" in usage)
+        and "total_input_tokens" not in usage
+        and "promptTokenCount" not in usage
+        and "prompt_token_count" not in usage
+    ):
+        return usage
+    # Interactions API / Decisions API Usage schema
+    if (
+        _first_field(usage, "total_input_tokens", "total_output_tokens", "total_thought_tokens", "total_cached_tokens")
+        is not None
+    ):
+        total_input = _first_field(usage, "total_input_tokens")
+        total_output = _first_field(usage, "total_output_tokens")
+        thoughts = _first_field(usage, "total_thought_tokens")
+        cached = _first_field(usage, "total_cached_tokens")
+        total = _first_field(usage, "total_tokens")
+        if total_output is None and total_input is not None and total is not None and total == total_input:
+            # Decisions API generates zero output tokens and may omit total_output_tokens.
+            output = 0
+            if thoughts is None:
+                thoughts = 0
+        elif total_output is not None:
+            if _token_count(total_output) is not None and (
+                thoughts is None or _token_count(thoughts) is not None
+            ):
+                output = total_output + (thoughts or 0)
+            else:
+                output = total_output
+        else:
+            output = None
+        return {
+            "input_tokens": total_input,
+            "output_tokens": output,
+            "total_tokens": total,
+            "reasoning_tokens": thoughts,
+            "cached_input_tokens": cached,
+            "cache_write_tokens": 0,
+        }
+    # Legacy generateContent usageMetadata
     prompt = _first_field(usage, "promptTokenCount", "prompt_token_count")
     candidates = _first_field(usage, "candidatesTokenCount", "candidates_token_count")
     thoughts = _first_field(usage, "thoughtsTokenCount", "thoughts_token_count")

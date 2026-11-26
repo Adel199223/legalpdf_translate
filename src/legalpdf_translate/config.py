@@ -10,6 +10,16 @@ from dotenv import load_dotenv
 OPENAI_MODEL: Final[str] = "gpt-5.2"
 OPENAI_STORE: Final[bool] = False
 
+DEFAULT_TRANSLATION_PROVIDER: Final[str] = "gemini"
+GEMINI_MODEL: Final[str] = "gemini-4-neon"
+GEMINI_SEMANTIC_REVIEW_MODEL: Final[str] = "gemini-4-neon"
+GEMINI_LAYOUT_MODEL: Final[str] = "gemini-4-neon"
+GEMINI_OCR_MODEL: Final[str] = "gemini-4-neon"
+GEMINI_DECISIONS_MODEL: Final[str] = "gemini-decision-1"
+GEMINI_STORE: Final[bool] = False
+DEFAULT_GEMINI_THINKING_LEVEL: Final[str] = "xhigh"
+DEFAULT_GEMINI_HELPER_THINKING_LEVEL: Final[str] = "high"
+
 DEFAULT_REASONING_EFFORT: Final[str] = "high"
 RETRY_REASONING_EFFORT: Final[str] = "medium"
 

@@ -201,6 +201,8 @@ def run_translation_auth_test(
 
 
 class OpenAIResponsesClient:
+    provider = "openai"
+
     def __init__(
         self,
         api_key: str | None = None,

@@ -103,7 +103,7 @@ try {
     $null = Invoke-CheckedCommand -Executable $uvExe -Arguments @(
         "pip", "check", "--python", $venvPython, "--offline", "--no-python-downloads"
     ) -Description "Check installed dependency compatibility"
-    $healthCode = "import sys, html.entities, idna, pip, openai, fitz, docx, PySide6, fastapi; assert sys.version.split()[0] == '$pythonPin'; print('python and package health check: ok')"
+    $healthCode = "import sys, html.entities, idna, pip, openai, google.genai, fitz, docx, PySide6, fastapi; assert sys.version.split()[0] == '$pythonPin'; print('python and package health check: ok')"
     $null = Invoke-CheckedCommand -Executable $uvExe -Arguments @(
         "run", "--no-project", "--no-env-file", "--offline", "--no-python-downloads",
         "--python", $venvPython, "python", "-c", $healthCode
