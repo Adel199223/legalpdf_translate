@@ -1,3 +1,5 @@
+> **Superseded / Legacy Notice (2026-11-26):** This file reflects an older Claude Code configuration with outdated `.venv` paths and docs-sync prohibitions. For active work in Antigravity or other agents, use [AGENTS.md](AGENTS.md), [agent.md](agent.md), [docs/assistant/HANDOFF.md](docs/assistant/HANDOFF.md), and `.agents/skills/` instead. The original content below is retained for historical reference.
+
 # docs/assistant/CLAUDE.md — Coding Agent Guardrails (LegalPDF Translate)
 
 Short, always-on rules for coding agents working inside this repo. Optimize quality and robustness, but avoid unnecessary work that increases token usage.

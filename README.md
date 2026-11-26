@@ -6,6 +6,7 @@ Windows-first Python app with a primary local browser interface, a secondary Qt/
 - Canonical app knowledge: `APP_KNOWLEDGE.md`
 - Agent runbook: `agent.md`
 - Agent guardrails / compatibility entrypoint: `AGENTS.md`
+- Antigravity workspace skills: `.agents/skills/` (progressive-disclosure wrappers for validation, shadow browser review, Word visual/quality review, and commit/publish)
 - Fresh-session handoff: `docs/assistant/HANDOFF.md`
 - Validation guide: `docs/assistant/VALIDATION.md`
 - Live Gmail testing guide: `docs/assistant/GMAIL_LIVE_TESTING.md`
@@ -22,7 +23,7 @@ Windows-first Python app with a primary local browser interface, a secondary Qt/
 - OpenAI API key
 
 ## Beginner Safe Setup (Recommended)
-For development with Codex, first see the [workstation setup guide](docs/assistant/WORKSTATION_SETUP.md). It provides a tailored exact-version WinGet recipe and a read-only checker while preserving the locked Python setup. Node 24.14.0 and Dart 3.11.0 are tracked in `.node-version` and `.dart-version` and shared with CI.
+For local development with Antigravity or another coding agent, first see the [workstation setup guide](docs/assistant/WORKSTATION_SETUP.md). It provides a tailored exact-version WinGet recipe and a read-only checker while preserving the locked Python setup. Node 24.14.0 and Dart 3.11.0 are tracked in `.node-version` and `.dart-version` and shared with CI.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_dev_workstation.ps1

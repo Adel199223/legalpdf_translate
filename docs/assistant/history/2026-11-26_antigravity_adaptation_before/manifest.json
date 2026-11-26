@@ -1,0 +1,38 @@
+{
+    "schema":  "scoped_beforeimages_v1",
+    "base_head":  "d5e6d6ff8c89fc89d1ed9cb8c244131c6b53937a",
+    "files":  [
+                  {
+                      "path":  "AGENTS.md",
+                      "sha256":  "fd3d7e59e2f5a1a371d1bbc8a02c307f9b1499a2dc716feb5710504e596bd5d9"
+                  },
+                  {
+                      "path":  "agent.md",
+                      "sha256":  "ae317cbf3851c7b83a5588aa59a5bbd3b746b499a43280eb4079856529c110bd"
+                  },
+                  {
+                      "path":  "README.md",
+                      "sha256":  "7b72bf13eabf83fa7f899e188d2a53cb1616d7886118d1e9d0b55a2ffb0c8846"
+                  },
+                  {
+                      "path":  "CLAUDE.md",
+                      "sha256":  "9ae9eb0ea8ad0e4141280fb40d1beca80f8a2e707d586a6de898422e6d9b657e"
+                  },
+                  {
+                      "path":  "docs/assistant/LOCAL_CAPABILITIES.md",
+                      "sha256":  "0cfbbfb589ec314d09772d57db9e278076fb50d751c2af5eafe51cffd1498eae"
+                  },
+                  {
+                      "path":  "docs/assistant/CODEX_ENVIRONMENT.md",
+                      "sha256":  "bed64ce0f3f1312ef261c385b97d311fdb57c977f887864062cb8ea96c022a76"
+                  },
+                  {
+                      "path":  "docs/assistant/GMAIL_LIVE_TESTING.md",
+                      "sha256":  "22567c5f501a3f6b190e6bd7f9dc01f2d3a833ced495cf3ba83ef1ea2a619841"
+                  },
+                  {
+                      "path":  "docs/assistant/INDEX.md",
+                      "sha256":  "5d7118a18f5f78b4475dd8e305f36732c61315da09c86296dfa113a33ea39d70"
+                  }
+              ]
+}

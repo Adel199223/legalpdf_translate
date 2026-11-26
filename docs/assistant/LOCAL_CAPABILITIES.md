@@ -13,19 +13,27 @@ Keep it factual and current. Do not list aspirational tooling that is not actual
 - Canonical browser-app launcher: `tooling/launch_browser_app_live_detached.py`
 
 ## Relevant Skills
-- `openai-docs`: official OpenAI docs lookup for unstable OpenAI/Codex facts
-- `doc`: DOCX-focused editing/review workflows
-- `pdf`: PDF-focused extraction/render/review workflows
-- `playwright`: browser automation when a real browser is required
-- `playwright-interactive`: iterative browser/Electron debugging
-- `screenshot`: OS-level screenshot capture when needed
-- `winui-app`: relevant for Windows desktop app design/development guidance
+- Workspace skills under `.agents/skills/` (Antigravity auto-discovered wrappers for canonical workflows):
+  - `legalpdf-validate`: `.venv311` pytest tiers, `scripts/validate_dev.ps1`, direct-Dart doc/hygiene fallback, and workstation checks
+  - `legalpdf-browser-review`: isolated `mode=shadow` browser review (`127.0.0.1:8888`), asset-version verification, and live-Gmail guardrails
+  - `legalpdf-word-review`: headless `tooling/render_docx.py` and live Windows Word inspection via `windows-desktop-control` MCP
+  - `legalpdf-commit-publish`: `commit`/`push` shorthand semantics, `CANONICAL_BUILD.json` floor checks, and worktree/branch closeout
+- Installed Antigravity and migrated global skills:
+  - `openai-docs`: official OpenAI docs lookup for unstable OpenAI API and model facts
+  - `pdf`: PDF extraction/render/review workflows
+  - `playwright` and `playwright-interactive`: terminal/REPL browser automation when a real browser flow is required
+  - `chrome-devtools` and `a11y-debugging`: Chrome DevTools MCP debugging, DOM/network/performance inspection, and accessibility auditing
+  - `screenshot`: OS-level screenshot capture when tool-specific capture is unavailable
+  - `court-translation-drafts`, `gh-fix-ci`, `gh-address-comments`, and `agy-customizations`
+- Legacy/absent Codex notes: Codex-only skills previously listed here (`doc`, `winui-app`) are not installed in Antigravity, and `browser-iab-safe-tabs` in `migrated-settings` is a legacy Codex in-app-browser helper unused by Antigravity.
 
 ## Relevant Tooling and MCP Surfaces
-- OpenAI docs MCP/doc tooling is available for OpenAI-specific freshness checks
-- Browser automation tooling is available for web/UI validation when appropriate
-- Browser automation is now part of the normal product surface because the browser app supports both real `live` mode and isolated `shadow` mode from one localhost server.
-- Canonical local browser-automation preflight on this machine is `dart tooling/automation_preflight.dart`; direct script execution is preferred over the package-run form because the `dartdev` launcher can misreport availability here even when Playwright and the browser are healthy.
+- `windows-desktop-control` MCP (`Screenshot` first; `Snapshot` only for UI clicks; always release via `ControlStatus(release=true)`) for live Microsoft Word page review and Qt visual checks
+- Antigravity built-in `browser` subagent, `chrome-devtools` MCP, and `migrated-settings` `playwright` MCP for isolated `mode=shadow` browser UI review (never live Gmail without explicit user authorization)
+- `migrated-settings` `openaiDeveloperDocs` MCP for OpenAI API citations and freshness checks
+- Installed Google Workspace plugins (`gmail`, `gdrive`, `gdocs`, `gcalendar`, `gsheets`, `gslides`) are assistant-side connectors separate from the app's Windows `gog` CLI and must not touch live Gmail unless explicitly authorized
+- Browser automation is part of the normal product surface because the browser app supports both real `live` mode and isolated `shadow` mode from one localhost server
+- Canonical local browser-automation preflight on this machine is `dart tooling/automation_preflight.dart`; direct script execution is preferred over the package-run form because the `dartdev` launcher can misreport availability here even when Playwright and the browser are healthy
 - Qt build identity enforcement exists through `tooling/launch_qt_build.py`
 - PowerShell COM automation is available for host-bound Word actions when Microsoft Word is installed on Windows
 - Local test isolation via pytest/temp-dir patterns and listener-ownership debugging are expected and available for host-bound workflow triage
@@ -51,3 +59,4 @@ Keep it factual and current. Do not list aspirational tooling that is not actual
 - Host-bound tests should avoid live `%APPDATA%`/roaming settings and default user-facing ports unless the test explicitly opts into real machine state.
 - Browser-app testing should prefer `mode=shadow` instead of reusing live data, and browser-app Gmail bridge checks must distinguish browser-owned live bridge state from intentionally isolated shadow state.
 - The Dart-based browser automation preflight must prefer direct script execution on this machine; the package-run launcher form can still degrade through the `dartdev` launcher and should be treated as a launcher-path issue, not a product failure.
+- Antigravity's installed `gmail` plugin and `browser` subagent / `playwright` / `chrome-devtools` MCP must not touch live Gmail or click the live Gmail extension without explicit user authorization; when using `windows-desktop-control`, always release control via `ControlStatus(release=true)` when finished or waiting on the user.

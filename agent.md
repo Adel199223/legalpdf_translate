@@ -12,6 +12,7 @@ Operational runbook for coding agents in `legalpdf_translate`.
 2. Choose the correct workflow document in `docs/assistant/workflows/`.
 3. Run targeted tests first, then full regression if required by workflow.
 4. Keep changes scoped; avoid unrelated edits.
+- In Antigravity, `.agents/skills/` provides progressive-disclosure wrappers (`legalpdf-validate`, `legalpdf-browser-review`, `legalpdf-word-review`, `legalpdf-commit-publish`) pointing back to canonical `docs/assistant/workflows/`.
 
 ## Translation quality decisions
 
@@ -134,4 +135,4 @@ Standing user authorization (2026-09-16): perform useful Docs Sync autonomously.
 Follow `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`, keeping current entry points and relevant user guides aligned. Record deferred gaps rather than repeatedly asking for permission. Do not apply templates or UCBS unless explicitly requested.
 
 ## Assistant model and available tools
-Use the user's standing assistant preference: Astra Ultra for complex analysis, planning, and decisions; GPT-6.1 Sol for implementation and extraction, when those assistant models and task routing are available. Keep assistant model selection separate from the app's translation-provider settings and evidence. Use tools available in the current session; inspect their documentation and actual app/build ownership. A static capability inventory or old screenshot does not establish current tool availability, model quality, credentials or live state.
+Rely on Antigravity's native plan/execute workflow and active session models for coding-agent tasks (historical Codex Astra Ultra / GPT-6.1 Sol routing applies only in Codex sessions). Keep coding-agent model selection separate from the app's translation, OCR, and semantic-review settings and evidence. In Antigravity, use native file/terminal tools for code/tests, `windows-desktop-control` MCP (`Screenshot` first; release via `ControlStatus(release=true)`) for live Microsoft Word or Qt visual checks, the built-in `browser` subagent / `playwright` / `chrome-devtools` MCP for isolated `mode=shadow` browser checks, and `openaiDeveloperDocs` MCP for OpenAI API citations; keep assistant-side Gmail plugins and browser automation off live Gmail without explicit user authorization. Inspect current tool documentation and actual app/build ownership; a static capability inventory or old screenshot does not establish current tool availability, model quality, credentials or live state.

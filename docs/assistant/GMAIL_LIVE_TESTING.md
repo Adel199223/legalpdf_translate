@@ -74,7 +74,7 @@ Before the click, verify the actual canonical build/served asset and check wheth
 7. Treat numeric mismatch warnings as a legal-review gate.
 8. Review generated DOCX/PDF files before sending any Gmail draft.
 
-Codex should click the extension or operate live Gmail only within explicit current user authorization. Existing authorization persists across interruption; an old failed or consumed extension operation must not be replayed merely to resume the task.
+Coding agents (Antigravity or any other agent) should click the extension, operate live Gmail via the built-in `browser` subagent / Playwright / Chrome DevTools, or call assistant-side Gmail plugins (such as Antigravity's `gmail` plugin) only within explicit current user authorization. Do not substitute an assistant Gmail plugin for the app's own Windows `gog` CLI helper when validating app Gmail intake or draft creation. Existing authorization persists across interruption; an old failed or consumed extension operation must not be replayed merely to resume the task.
 
 ## Scoped intake and preparation checks
 
