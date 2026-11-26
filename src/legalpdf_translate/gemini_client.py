@@ -128,15 +128,18 @@ def _trusted_gemini_billing_scope(client: Any, limits: dict[str, Any]) -> str | 
     return scope if actual in [str(value).rstrip("/") for value in allowed] else None
 
 
-def _parse_data_url_image(url: str) -> dict[str, Any]:
+def _parse_data_url_image(url: str, *, image_detail: str = "low") -> dict[str, Any]:
     match = _DATA_URL_PATTERN.fullmatch(url)
     if match is None:
         raise ValueError("Each image must be a nonempty base64 image data URL.")
-    return {
+    payload: dict[str, Any] = {
         "type": "image",
         "mime_type": match.group(1),
         "data": match.group(2),
     }
+    if str(image_detail or "").strip().lower() == "high":
+        payload["resolution"] = "high"
+    return payload
 
 
 def _build_gemini_page_request(
@@ -151,7 +154,6 @@ def _build_gemini_page_request(
     max_output_tokens: int | None = None,
     model: str = GEMINI_MODEL,
 ) -> dict[str, Any]:
-    del image_detail  # Interactions ImageContent uses resolution/default; preserve signature parity.
     if max_output_tokens is not None and (type(max_output_tokens) is not int or max_output_tokens <= 0):
         raise ValueError("max_output_tokens must be a positive integer.")
     if response_format is not None and (
@@ -166,10 +168,10 @@ def _build_gemini_page_request(
     images = _validated_page_images(image_data_url, image_data_urls)
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt_text}]
     if images is not None:
-        content.extend(_parse_data_url_image(url) for url in images)
+        content.extend(_parse_data_url_image(url, image_detail=image_detail) for url in images)
     elif image_data_url:
         _validated_page_images(None, [image_data_url])
-        content.append(_parse_data_url_image(image_data_url))
+        content.append(_parse_data_url_image(image_data_url, image_detail=image_detail))
 
     thinking_level = normalize_gemini_thinking_level(effort, default="high")
     generation_config: dict[str, Any] = {"thinking_level": thinking_level}

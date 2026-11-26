@@ -107,6 +107,7 @@ from .openai_client import (
     resolve_openai_key_with_source,
     run_translation_auth_test,
 )
+from .gemini_client import GeminiInteractionsClient
 from .output_paths import require_writable_output_dir
 from .page_selection import resolve_page_selection
 from .pt_legal_glossary_aliases import build_priority_pt_legal_alias_entries
@@ -131,7 +132,7 @@ from .types import (
     TargetLang,
 )
 from .user_settings import load_gui_settings
-from .translation_policy import resolve_translation_protocol
+from .translation_policy import GEMINI_STRUCTURAL_PROTOCOL, resolve_translation_protocol
 from .workflow_components.contracts import (
     OutputEvaluation,
     SummarySignalInputs,
@@ -692,6 +693,7 @@ class TranslationWorkflow:
         self._configured_translation_protocol = requested
         self._translation_protocol = requested
         self._structured_run = None
+        self._last_structural_advisory: dict[str, Any] | None = None
         self._provided_client = client
         self._translation_provider = (
             client_provider(client)
@@ -886,6 +888,20 @@ class TranslationWorkflow:
                 and existing_state.settings.get("ordinary_source_review") != ordinary_source_identity):
             from .ordinary_reviewed_source import OrdinaryReviewedSourceError
             raise OrdinaryReviewedSourceError("ordinary_source_review_resume_context_changed")
+        if (
+            self._explicit_translation_protocol is None
+            and "LEGALPDF_TRANSLATION_PROTOCOL" not in os.environ
+            and self._reviewed_source_context is None
+            and self._acceptance_continuation is None
+            and self._ordinary_auto_layout_policy is None
+        ):
+            if config.resume and existing_state is not None:
+                saved_proto = str(existing_state.settings.get("translation_protocol") or "legacy_text_v1")
+                if saved_proto == GEMINI_STRUCTURAL_PROTOCOL:
+                    self._translation_protocol = GEMINI_STRUCTURAL_PROTOCOL
+            elif self._translation_provider == "gemini":
+                if self._provided_client is None or isinstance(self._provided_client, GeminiInteractionsClient):
+                    self._translation_protocol = GEMINI_STRUCTURAL_PROTOCOL
         if self._translation_protocol == "legal_blocks_v2":
             from .new_translation_blocks import NewTranslationBlocks
             self._structured_run = NewTranslationBlocks(self, config, selected_pages,
@@ -980,8 +996,13 @@ class TranslationWorkflow:
                 self._prompt_glossaries_by_lang.get(config.target_lang.value, [])
             )
 
-        instructions = (self._structured_run.instructions if self._structured_run is not None
-                        else load_system_instructions(config.target_lang))
+        if self._structured_run is not None:
+            instructions = self._structured_run.instructions
+        elif self._translation_protocol == GEMINI_STRUCTURAL_PROTOCOL:
+            from .gemini_structural_schema import build_structural_system_instructions
+            instructions = build_structural_system_instructions(config.target_lang)
+        else:
+            instructions = load_system_instructions(config.target_lang)
         self._system_instructions_text = instructions
 
         if self._diagnostics_admin_mode:
@@ -1491,18 +1512,50 @@ class TranslationWorkflow:
             try:
                 docx_started = time.perf_counter()
                 _docx_stats: dict[str, int] = {}
-                _layout_preparation = self._prepare_docx_layout(config, assembly_pages, paths.frozen_outdir,
-                                                               cancelled=self._cancel_event.is_set)
-                output_docx = assemble_docx(
-                    assembly_pages,
-                    paths.final_docx_path,
-                    lang=config.target_lang,
-                    page_breaks=config.page_breaks,
-                    strip_bidi_controls=config.strip_bidi_controls,
-                    stats=_docx_stats,
-                    **self._structured_assembly_options(run_state, assembly_pages),
+                from .gemini_structural_runner import (
+                    assemble_structural_output,
+                    load_structural_bundles,
+                    structural_pages_available,
+                    summarize_structural_run,
                 )
-                self._record_docx_layout_review(output_docx, assembly_pages, run_state, _layout_preparation)
+                if self._translation_protocol == GEMINI_STRUCTURAL_PROTOCOL and structural_pages_available(
+                    paths.pages_dir, selected_pages
+                ):
+                    output_docx = assemble_structural_output(
+                        run_dir=paths.run_dir,
+                        pages_dir=paths.pages_dir,
+                        output_path=paths.final_docx_path,
+                        page_numbers=selected_pages,
+                        lang=config.target_lang,
+                        page_breaks=config.page_breaks,
+                        strip_bidi_controls=config.strip_bidi_controls,
+                        stats=_docx_stats,
+                    )
+                    if config.gemini_decisions_advisory_enabled:
+                        from .gemini_decisions import evaluate_structural_parity_advisory
+                        bundles = load_structural_bundles(
+                            run_dir=paths.run_dir,
+                            pages_dir=paths.pages_dir,
+                            page_numbers=selected_pages,
+                        )
+                        self._last_structural_advisory = evaluate_structural_parity_advisory(
+                            structural_summary=summarize_structural_run(bundles),
+                            enabled=True,
+                            accountant=self._dispatch_accounting,
+                        )
+                else:
+                    _layout_preparation = self._prepare_docx_layout(config, assembly_pages, paths.frozen_outdir,
+                                                                   cancelled=self._cancel_event.is_set)
+                    output_docx = assemble_docx(
+                        assembly_pages,
+                        paths.final_docx_path,
+                        lang=config.target_lang,
+                        page_breaks=config.page_breaks,
+                        strip_bidi_controls=config.strip_bidi_controls,
+                        stats=_docx_stats,
+                        **self._structured_assembly_options(run_state, assembly_pages),
+                    )
+                    self._record_docx_layout_review(output_docx, assembly_pages, run_state, _layout_preparation)
                 self._run_stage_timings_ms["docx_rebuild"] = round((time.perf_counter() - docx_started) * 1000.0, 3)
                 if self._diagnostics_admin_mode:
                     from .translation_diagnostics import emit_docx_write_event
@@ -2002,6 +2055,17 @@ class TranslationWorkflow:
         completed = list_completed_pages(self._last_state)
         if not completed:
             return None
+        from .gemini_structural_runner import assemble_structural_output, structural_pages_available
+        if structural_pages_available(self._last_paths.pages_dir, completed):
+            return assemble_structural_output(
+                run_dir=self._last_paths.run_dir,
+                pages_dir=self._last_paths.pages_dir,
+                output_path=self._last_paths.partial_docx_path,
+                page_numbers=completed,
+                lang=self._last_config.target_lang,
+                page_breaks=self._last_config.page_breaks,
+                strip_bidi_controls=self._last_config.strip_bidi_controls,
+            )
         from .checkpoint import ordinary_semantic_audit_recipe
         if ordinary_semantic_audit_recipe(self._last_state.settings) is not None:
             # An explicit primary partial is diagnostic evidence, never an
@@ -2059,6 +2123,22 @@ class TranslationWorkflow:
             completed = list_completed_pages(run_state)
             assembly_options = {**assembly_options, **self._primary_folio_options(run_state, config),
                 "page_numbers": completed, "partial_output": len(completed) < run_state.selection_page_count}
+        from .gemini_structural_runner import assemble_structural_output, structural_pages_available
+        target_pages = list(assembly_options.get("page_numbers") or sorted(
+            int(p.stem.split("_")[1]) for p in pages_dir.glob("page_*.txt")
+            if re.fullmatch(r"page_[0-9]{4,}\.txt", p.name)
+        ))
+        if structural_pages_available(pages_dir, target_pages):
+            output = assemble_structural_output(
+                run_dir=run_dir,
+                pages_dir=pages_dir,
+                output_path=output_path,
+                page_numbers=target_pages,
+                lang=config.target_lang,
+                page_breaks=config.page_breaks,
+                strip_bidi_controls=config.strip_bidi_controls,
+            )
+            return output, (run_state.pages if run_state is not None else {})
         preparation = self._prepare_docx_layout(config, pages_dir, output_dir)
         output = assemble_docx(pages_dir, output_path, lang=config.target_lang,
             page_breaks=config.page_breaks, strip_bidi_controls=config.strip_bidi_controls,
@@ -2369,6 +2449,14 @@ class TranslationWorkflow:
                 ocr_request_reason = "helpful"
         if integrity_assessment.suspect and config.ocr_mode != OcrMode.OFF:
             ocr_request_reason = "required"
+        if (
+            self._translation_protocol == GEMINI_STRUCTURAL_PROTOCOL
+            and config.image_mode != ImageMode.OFF
+            and config.ocr_mode != OcrMode.ALWAYS
+            and ocr_request_reason == "required"
+        ):
+            # Multimodal structural pages attach high-res page images directly; avoid slow/blocked API OCR verbatim calls.
+            ocr_request_reason = "helpful"
 
         page_metadata: dict[str, object] = {
             "started_at_iso": started_at_iso,
@@ -2684,7 +2772,11 @@ class TranslationWorkflow:
         short_or_failed = ordered.extraction_failed or len(effective_image_text.strip()) < 20
         ordinary_visual_source = bool(self._ordinary_auto_layout_policy and self._structured_run is None)
         image_detail = "low"
-        if (ordinary_visual_source and image_used) or (short_or_failed and config.image_mode in (ImageMode.AUTO, ImageMode.ALWAYS)):
+        if (
+            (self._translation_protocol == GEMINI_STRUCTURAL_PROTOCOL and image_used)
+            or (ordinary_visual_source and image_used)
+            or (short_or_failed and config.image_mode in (ImageMode.AUTO, ImageMode.ALWAYS))
+        ):
             image_detail = "high"
 
         image_data_url = None
@@ -2773,6 +2865,28 @@ class TranslationWorkflow:
                 source_unusable=(not self._is_usable_source_text(source_text)
                     or (force_visual_grounding and merged_visual_source_text is None)
                     or (ocr_required and not ocr_used_for_source)))
+        if self._translation_protocol == GEMINI_STRUCTURAL_PROTOCOL:
+            from .gemini_structural_runner import execute_structural_page
+            return execute_structural_page(
+                self,
+                client=client,
+                config=config,
+                paths=paths,
+                page_number=page_number,
+                total_pages=total_pages,
+                source_text=source_text,
+                glossary_source_text=glossary_source_text,
+                context_text=context_text,
+                image_data_url=image_data_url,
+                image_detail=image_detail,
+                attempt1_effort=attempt1_effort,
+                page_metadata=page_metadata,
+                usage_payload=usage_payload,
+                started_monotonic=started_monotonic,
+                page_request_started=page_request_started,
+                request_timeout_budget_seconds=request_timeout_budget_seconds,
+                expected_ar_tokens=expected_ar_tokens,
+            )
 
         ocr_reason = ocr_result.failed_reason or "none"
         self._log(
@@ -4213,6 +4327,13 @@ class TranslationWorkflow:
             return ReasoningEffort.XHIGH
 
         # Adaptive policy.
+        if self._translation_protocol == GEMINI_STRUCTURAL_PROTOCOL:
+            return (
+                ReasoningEffort.HIGH
+                if config.target_lang in (TargetLang.EN, TargetLang.FR)
+                or config.effort not in (ReasoningEffort.HIGH, ReasoningEffort.XHIGH)
+                else config.effort
+            )
         if config.target_lang in (TargetLang.EN, TargetLang.FR):
             if (
                 config.allow_xhigh_escalation
@@ -4478,6 +4599,8 @@ class TranslationWorkflow:
             return False, "image_mode_off"
         if config.image_mode == ImageMode.ALWAYS:
             return True, "image_mode_always"
+        if self._translation_protocol == GEMINI_STRUCTURAL_PROTOCOL and config.image_mode != ImageMode.OFF:
+            return True, "structural_full_page_visual"
         if self._ordinary_auto_layout_policy and self._structured_run is None:
             return True, "ordinary_full_page_visual_source"
 
@@ -4596,7 +4719,10 @@ class TranslationWorkflow:
             raise ValueError("Accounting evidence lacks its saved identity; explicit recovery is required.")
         if config.resume and existing is not None and self._explicit_translation_protocol is None:
             # An environment opt-in affects fresh runs, not saved protocol identity.
-            self._translation_protocol = existing.protocol_identity.get("protocol", "legacy_text_v1")
+            saved_setting_proto = str(existing.settings.get("translation_protocol") or "").strip()
+            self._translation_protocol = existing.protocol_identity.get(
+                "protocol", saved_setting_proto or "legacy_text_v1"
+            )
         if config.resume and existing is not None:
             recorded_auto = existing.settings.get("ordinary_auto_layout_policy")
             if self._ordinary_auto_layout_policy is not None and self._ordinary_auto_layout_policy != recorded_auto:
@@ -4610,7 +4736,7 @@ class TranslationWorkflow:
                 self._translation_model = saved_semantic["model"]
             from .workflow_semantic_audit import validate_retained_source_pins
             validate_retained_source_pins(state=existing, run_dir=paths.run_dir)
-        if self._translation_protocol not in {"legacy_text_v1", "legal_blocks_v2"}:
+        if self._translation_protocol not in {"legacy_text_v1", "legal_blocks_v2", GEMINI_STRUCTURAL_PROTOCOL}:
             raise ValueError("Checkpoint translation protocol is not supported.")
         has_structured_files = paths.pages_dir.exists() and (
             any(paths.pages_dir.glob("page_*.commit.json")) or
@@ -4759,6 +4885,7 @@ class TranslationWorkflow:
                 primary_recipe=existing.settings.get("primary_assembly_recipe"),
                 semantic_recipe=existing.settings.get("ordinary_semantic_audit_recipe"),
                 semantic_qualification=existing.settings.get("ordinary_semantic_audit_qualification"),
+                translation_protocol=self._translation_protocol,
             )
             if mismatch_reason is None:
                 from .workflow_semantic_audit import validate_context
@@ -4842,6 +4969,7 @@ class TranslationWorkflow:
             primary_recipe=primary_recipe,
             semantic_recipe=semantic_recipe,
             semantic_qualification=semantic_qualification,
+            translation_protocol=self._translation_protocol,
         )
         from .workflow_semantic_audit import capture_context
         capture_context(state=state, run_dir=paths.run_dir, context_text=context_text, context_hash=context_hash)
@@ -4898,6 +5026,10 @@ class TranslationWorkflow:
             effort=config.effort,
             effort_policy=config.effort_policy,
             allow_xhigh_escalation=config.allow_xhigh_escalation,
+            translation_provider=config.translation_provider,
+            translation_model=config.translation_model,
+            helper_thinking_level=config.helper_thinking_level,
+            gemini_decisions_advisory_enabled=bool(config.gemini_decisions_advisory_enabled),
             image_mode=config.image_mode,
             start_page=config.start_page,
             end_page=config.end_page,

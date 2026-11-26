@@ -291,7 +291,8 @@ def ordinary_semantic_audit_qualification(settings: dict) -> dict | None:
 
 def settings_fingerprint(config: RunConfig, *, ordinary_source_review: dict | None = None,
                          ordinary_auto_layout_policy: str | None = None, primary_recipe: dict | None = None,
-                         semantic_recipe: dict | None = None, semantic_qualification: dict | None = None) -> dict[str, Any]:
+                         semantic_recipe: dict | None = None, semantic_qualification: dict | None = None,
+                         translation_protocol: str | None = None) -> dict[str, Any]:
     result = {
         "effort": config.effort.value,
         "effort_policy": config.effort_policy.value,
@@ -310,6 +311,8 @@ def settings_fingerprint(config: RunConfig, *, ordinary_source_review: dict | No
         "max_pages": config.max_pages,
         "workers": config.workers,
     }
+    if translation_protocol == "gemini_structural_v1":
+        result["translation_protocol"] = translation_protocol
     if ordinary_source_review is not None:
         result["ordinary_source_review"] = deepcopy(ordinary_source_review)
     if ordinary_auto_layout_policy is not None:
@@ -408,6 +411,7 @@ def new_run_state(
     primary_recipe: dict | None = None,
     semantic_recipe: dict | None = None,
     semantic_qualification: dict | None = None,
+    translation_protocol: str | None = None,
 ) -> RunState:
     from .structured_artifacts import normalize_protocol_identity
 
@@ -437,7 +441,8 @@ def new_run_state(
         selection_page_count=selection_page_count,
         settings=settings_fingerprint(config, ordinary_source_review=ordinary_source_review,
             ordinary_auto_layout_policy=ordinary_auto_layout_policy, primary_recipe=primary_recipe,
-            semantic_recipe=semantic_recipe, semantic_qualification=semantic_qualification),
+            semantic_recipe=semantic_recipe, semantic_qualification=semantic_qualification,
+            translation_protocol=translation_protocol),
         context_hash=context_hash,
         created_at=now,
         updated_at=now,
@@ -625,6 +630,7 @@ def resume_incompatibility_reason(
     primary_recipe: dict | None = None,
     semantic_recipe: dict | None = None,
     semantic_qualification: dict | None = None,
+    translation_protocol: str | None = None,
 ) -> str | None:
     from .structured_artifacts import StructuredArtifactError, normalize_protocol_identity
 
@@ -647,7 +653,8 @@ def resume_incompatibility_reason(
         return "context mismatch."
     expected_settings = settings_fingerprint(config, ordinary_source_review=ordinary_source_review,
         ordinary_auto_layout_policy=ordinary_auto_layout_policy, primary_recipe=primary_recipe,
-        semantic_recipe=semantic_recipe, semantic_qualification=semantic_qualification)
+        semantic_recipe=semantic_recipe, semantic_qualification=semantic_qualification,
+        translation_protocol=translation_protocol)
     ordinary_semantic_audit_recipe(state.settings)
     ordinary_semantic_audit_qualification(state.settings)
     checkpoint_settings = dict(state.settings)

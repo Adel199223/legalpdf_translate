@@ -121,7 +121,7 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "default_lang": "EN",
     "default_effort": "xhigh",
     "default_effort_policy": "fixed_xhigh",
-    "default_images_mode": "off",
+    "default_images_mode": "auto",
     "default_workers": 3,
     "default_resume": True,
     "default_keep_intermediates": True,

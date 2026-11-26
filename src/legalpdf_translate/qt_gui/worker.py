@@ -165,10 +165,14 @@ class TranslationRunWorker(QObject):
                     backoff_cap_seconds=self._backoff_cap_seconds,
                     logger=_log_callback,
                 )
+            from legalpdf_translate.translation_policy import resolve_provider_translation_protocol
+
+            qt_protocol = resolve_provider_translation_protocol(provider=provider.value)
             workflow = TranslationWorkflow(
                 client=client,
                 log_callback=_log_callback,
                 progress_callback=_progress_callback,
+                translation_protocol=qt_protocol,
             )
             self._workflow = workflow
             summary = workflow.run(self._config)

@@ -2006,12 +2006,17 @@ class TranslationJobManager:
                         )
                     from .workflow import TranslationWorkflow
 
-                    from .translation_policy import resolve_ordinary_auto_layout_policy, resolve_translation_protocol
+                    from .translation_policy import (
+                        resolve_ordinary_auto_layout_policy,
+                        resolve_provider_translation_protocol,
+                    )
+                    effective_protocol = resolve_provider_translation_protocol(provider=resolved_provider.value)
                     auto_policy = resolve_ordinary_auto_layout_policy(
-                        protocol=resolve_translation_protocol(),
+                        protocol=effective_protocol,
                         fresh_browser_job=self._automatic_layout_runner is not None and (
                             not config.resume or not _has_prior_run_evidence(reserved_run_dir)),
-                        reviewed_source=selected_context is not None)
+                        reviewed_source=selected_context is not None,
+                        translation_provider=resolved_provider.value)
                     if auto_policy and self._automatic_layout_runner is None:
                         raise ValueError("ordinary_auto_layout_runner_unavailable")
                     if auto_policy:
@@ -2034,6 +2039,7 @@ class TranslationJobManager:
                         client=client,
                         log_callback=lambda message: self._append_log(job_id, message),
                         progress_callback=lambda idx, total, status: self._update_progress(job_id, idx, total, status),
+                        translation_protocol=effective_protocol,
                         gui_settings=gui_settings,
                         **self._workflow_accounting,
                         ordinary_auto_layout_policy=auto_policy,

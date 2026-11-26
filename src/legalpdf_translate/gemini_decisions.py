@@ -45,7 +45,7 @@ def _accounted_decision_create(
     client: Any,
     accountant: Any,
     input_items: Any,
-    questions: Sequence[Mapping[str, Any]],
+    questions: Mapping[str, Mapping[str, Any]] | Sequence[Mapping[str, Any]],
     model: str = GEMINI_DECISIONS_MODEL,
 ) -> Any:
     active = _active_accountant(accountant or _DECISIONS_DEFAULT_ACCOUNTING)
@@ -55,10 +55,15 @@ def _accounted_decision_create(
     if active.hard_budget and billing_scope is None:
         raise ValueError("Hard-budget dispatch requires a verified Gemini Decisions endpoint and scope.")
     base_url = _extract_gemini_base_url(client)
+    normalized_questions: dict[str, Mapping[str, Any]] | list[Mapping[str, Any]]
+    if isinstance(questions, Mapping):
+        normalized_questions = {str(k): dict(v) for k, v in questions.items()}
+    else:
+        normalized_questions = [dict(v) for v in questions]
     request_hash = _decisions_request_hash(
         {
             "model": model,
-            "questions": list(questions),
+            "questions": normalized_questions,
             "input_count": len(input_items) if isinstance(input_items, list) else 1,
         }
     )
@@ -81,7 +86,7 @@ def _accounted_decision_create(
         response = client.decisions.create(
             model=model,
             input=input_items,
-            questions=list(questions),
+            questions=normalized_questions,
         )
     except Exception as exc:  # noqa: BLE001
         active.finish(
@@ -124,6 +129,17 @@ def _build_decision_input(
     return content
 
 
+def _extract_decision_answer(response: Any, key: str, fallback_index: int = 0) -> Any:
+    answers = _field(response, "answers")
+    if isinstance(answers, Mapping):
+        if key in answers:
+            return answers[key]
+        vals = list(answers.values())
+        return vals[fallback_index] if 0 <= fallback_index < len(vals) else None
+    seq = list(answers or [])
+    return seq[fallback_index] if 0 <= fallback_index < len(seq) else None
+
+
 def evaluate_page_routing_advisory(
     *,
     signal_summary: Mapping[str, Any],
@@ -160,8 +176,8 @@ def evaluate_page_routing_advisory(
     else:
         client = sdk_client
 
-    questions = [
-        {
+    questions = {
+        "route": {
             "type": "choice",
             "instructions": (
                 "Based on the document signal metrics, choose the safest visual/OCR routing mode for legal translation."
@@ -172,7 +188,7 @@ def evaluate_page_routing_advisory(
                 "api_ocr_recommended": "Low embedded text or scanned content where API OCR fallback should be used.",
             },
         }
-    ]
+    }
     input_items = _build_decision_input(
         f"Deterministic advisor signal summary:\n{json.dumps(dict(signal_summary), sort_keys=True)}"
     )
@@ -184,10 +200,9 @@ def evaluate_page_routing_advisory(
             questions=questions,
             model=model,
         )
-        answers = list(_field(response, "answers") or [])
-        if not answers:
+        first = _extract_decision_answer(response, "route", 0)
+        if first is None:
             raise ValueError("Decisions API returned no answers.")
-        first = answers[0]
         choice = str(_field(first, "choice") or "").strip() or None
         confidence = float(_field(first, "confidence") or 0.0)
         probabilities = dict(_field(first, "probabilities") or {})
@@ -253,8 +268,8 @@ def evaluate_visual_qa_advisory(
     else:
         client = sdk_client
 
-    questions = [
-        {
+    questions = {
+        "noul_risk": {
             "type": "noul",
             "instructions": (
                 "Evaluate whether the translated legal document metrics indicate complete, faithful legal parity "
@@ -265,7 +280,7 @@ def evaluate_visual_qa_advisory(
                 "false_description": "Telemetry or image indicators show potential omissions, mismatches, or review-worthy defects.",
             },
         },
-        {
+        "triage": {
             "type": "choice",
             "instructions": "Select the additive operator QA triage recommendation.",
             "criteria": {
@@ -274,7 +289,7 @@ def evaluate_visual_qa_advisory(
                 "priority_review": "Elevated risk; prioritize operator inspection before delivery.",
             },
         },
-    ]
+    }
     input_items = _build_decision_input(
         f"Visual & deterministic QA telemetry:\n{json.dumps(dict(qa_summary), sort_keys=True)}",
         image_data_url=image_data_url,
@@ -287,9 +302,10 @@ def evaluate_visual_qa_advisory(
             questions=questions,
             model=model,
         )
-        answers = list(_field(response, "answers") or [])
-        noul_ans = answers[0] if len(answers) >= 1 else None
-        choice_ans = answers[1] if len(answers) >= 2 else (answers[0] if len(answers) == 1 else None)
+        noul_ans = _extract_decision_answer(response, "noul_risk", 0)
+        choice_ans = _extract_decision_answer(response, "triage", 1)
+        if choice_ans is None and noul_ans is not None and _field(noul_ans, "choice") is not None:
+            choice_ans = noul_ans
         noul_val = float(_field(noul_ans, "noul") or 0.0) if noul_ans is not None else None
         noul_conf = float(_field(noul_ans, "confidence") or 0.0) if noul_ans is not None else 0.0
         choice = str(_field(choice_ans, "choice") or "").strip() or None if choice_ans is not None else None
@@ -320,4 +336,109 @@ def evaluate_visual_qa_advisory(
             "advisory_only": True,
             "overrides_deterministic": False,
             "triage": None,
+        }
+
+
+def evaluate_structural_parity_advisory(
+    *,
+    structural_summary: Mapping[str, Any],
+    sample_page_image_data_url: str | None = None,
+    enabled: bool = False,
+    api_key: str | None = None,
+    sdk_client: Any | None = None,
+    accountant: Any | None = None,
+    abstain_threshold: float = DEFAULT_DECISIONS_ABSTAIN_THRESHOLD,
+    model: str = GEMINI_DECISIONS_MODEL,
+) -> dict[str, Any]:
+    """Optional advisory structural parity check comparing DOCX IR telemetry vs visual page."""
+    if not enabled:
+        return {
+            "enabled": False,
+            "status": "disabled",
+            "model": model,
+            "advisory_only": True,
+            "overrides_deterministic": False,
+            "parity_triage": None,
+        }
+    if sdk_client is None:
+        resolved_key, _ = resolve_gemini_key_with_source(api_key, allow_ocr_fallback=True)
+        if not resolved_key:
+            return {
+                "enabled": True,
+                "status": "unavailable",
+                "reason": "missing_gemini_credentials",
+                "model": model,
+                "advisory_only": True,
+                "overrides_deterministic": False,
+                "parity_triage": None,
+            }
+        client = _create_decisions_client(resolved_key)
+    else:
+        client = sdk_client
+
+    questions = {
+        "parity_severity": {
+            "type": "noul",
+            "instructions": (
+                "Evaluate whether the reconstructed DOCX structural regions (tables, columns, stationery headers/footers, "
+                "and archetypes) align coherently with the document structure."
+            ),
+            "criteria": {
+                "true_description": "Structural layout metrics capture document tables, columns, and stationery coherently.",
+                "false_description": "Document shows flat collapse or missing structural hierarchy that warrants review.",
+            },
+        },
+        "triage": {
+            "type": "choice",
+            "instructions": "Classify structural layout parity risk for operator review.",
+            "criteria": {
+                "aligned": "Structure matches expected legal layout closely.",
+                "minor_differences": "Structure is mostly aligned with minor formatting differences.",
+                "needs_review": "Significant structural mismatch suspected; review generated Word layout.",
+            },
+        },
+    }
+    input_items = _build_decision_input(
+        f"Structural DOCX reconstruction summary:\n{json.dumps(dict(structural_summary), sort_keys=True)}",
+        image_data_url=sample_page_image_data_url,
+    )
+    try:
+        response = _accounted_decision_create(
+            client=client,
+            accountant=accountant,
+            input_items=input_items,
+            questions=questions,
+            model=model,
+        )
+        noul_ans = _extract_decision_answer(response, "parity_severity", 0)
+        choice_ans = _extract_decision_answer(response, "triage", 1)
+        if choice_ans is None and noul_ans is not None and _field(noul_ans, "choice") is not None:
+            choice_ans = noul_ans
+        noul_val = float(_field(noul_ans, "noul") or 0.0) if noul_ans is not None else None
+        noul_conf = float(_field(noul_ans, "confidence") or 0.0) if noul_ans is not None else 0.0
+        choice = str(_field(choice_ans, "choice") or "").strip() or None if choice_ans is not None else None
+        choice_conf = float(_field(choice_ans, "confidence") or 0.0) if choice_ans is not None else 0.0
+        best_conf = max(noul_conf, choice_conf)
+        abstained = best_conf < float(abstain_threshold) or choice is None
+        return {
+            "enabled": True,
+            "status": "abstained" if abstained else "ok",
+            "model": model,
+            "advisory_only": True,
+            "overrides_deterministic": False,
+            "abstain_threshold": float(abstain_threshold),
+            "confidence": round(best_conf, 4),
+            "noul": round(noul_val, 4) if noul_val is not None else None,
+            "raw_choice": choice,
+            "parity_triage": None if abstained else choice,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "enabled": True,
+            "status": "unavailable",
+            "reason": type(exc).__name__,
+            "model": model,
+            "advisory_only": True,
+            "overrides_deterministic": False,
+            "parity_triage": None,
         }
