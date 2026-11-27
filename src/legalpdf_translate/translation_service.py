@@ -445,7 +445,7 @@ def build_translation_defaults(*, settings_path: Path, outputs_dir: Path) -> dic
         "helper_thinking_level": str(gui_settings.get("helper_thinking_level", "high") or "high").strip().lower(),
         "gemini_decisions_advisory_enabled": _coerce_bool(
             gui_settings.get("gemini_decisions_advisory_enabled"),
-            False,
+            True,
         ),
         "effort": str(gui_settings.get("effort", "xhigh") or "xhigh").strip().lower(),
         "effort_policy": str(

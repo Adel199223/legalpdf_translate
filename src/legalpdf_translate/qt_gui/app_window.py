@@ -2154,9 +2154,9 @@ class QtMainWindow(QMainWindow):
         if lang not in {"EN", "FR", "AR"}:
             lang = "EN"
         self.lang_combo.setCurrentText(lang)
-        self.effort_combo.setCurrentText(str(defaults.get("effort", defaults.get("default_effort", "high")) or "high"))
+        self.effort_combo.setCurrentText(str(defaults.get("effort", defaults.get("default_effort", "xhigh")) or "xhigh"))
         self.effort_policy_combo.setCurrentText(
-            str(defaults.get("effort_policy", defaults.get("default_effort_policy", "adaptive")) or "adaptive")
+            str(defaults.get("effort_policy", defaults.get("default_effort_policy", "fixed_xhigh")) or "fixed_xhigh")
         )
         self.images_combo.setCurrentText(str(defaults.get("image_mode", defaults.get("default_images_mode", "off")) or "off"))
         self.ocr_mode_combo.setCurrentText(str(defaults.get("ocr_mode", defaults.get("ocr_mode_default", "auto")) or "auto"))
@@ -4833,7 +4833,7 @@ class QtMainWindow(QMainWindow):
             .lower()
         )
         gemini_decisions_advisory = bool(
-            self._defaults.get("gemini_decisions_advisory_enabled", False)
+            self._defaults.get("gemini_decisions_advisory_enabled", True)
         )
 
         return RunConfig(

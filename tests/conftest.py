@@ -142,3 +142,19 @@ def _freeze_bundled_accounting_policy_clock() -> None:
             _test_accounting_arguments,
         )
         yield
+
+
+@pytest.fixture(autouse=True)
+def _block_live_gemini_decisions_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Block accidental live Gemini Decisions API calls in offline tests."""
+    from types import SimpleNamespace
+    import legalpdf_translate.gemini_decisions as gemini_decisions_mod
+
+    def _blocked_create(**_kwargs):
+        raise RuntimeError("Live Gemini Decisions API blocked in tests")
+
+    def _blocked_decisions_client(api_key: str):
+        return SimpleNamespace(decisions=SimpleNamespace(create=_blocked_create))
+
+    monkeypatch.setattr(gemini_decisions_mod, "resolve_gemini_key_with_source", lambda *a, **k: (None, None))
+    monkeypatch.setattr(gemini_decisions_mod, "_create_decisions_client", _blocked_decisions_client)

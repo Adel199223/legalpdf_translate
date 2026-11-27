@@ -72,7 +72,7 @@ def test_load_gui_settings_provides_schema_and_defaults(tmp_path: Path, monkeypa
     assert loaded["translation_provider"] == "gemini"
     assert loaded["translation_model"] == "gemini-4-neon"
     assert loaded["helper_thinking_level"] == "high"
-    assert loaded["gemini_decisions_advisory_enabled"] is False
+    assert loaded["gemini_decisions_advisory_enabled"] is True
     assert loaded["default_workers"] == 3
     assert loaded["workers"] == 3
     assert loaded["default_resume"] is True
@@ -733,3 +733,33 @@ def test_load_gui_settings_expands_consistency_glossaries_for_future_langs(tmp_p
     ]
     assert loaded["glossaries_by_lang"]["ES"] == []
     assert loaded["enabled_glossary_tiers_by_target_lang"]["ES"] == [1, 2]
+
+
+def test_load_gui_settings_migrates_real_v9_effort_policy_and_gemini_defaults(tmp_path: Path, monkeypatch) -> None:
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(user_settings, "settings_path", lambda: settings_file)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": 9,
+                "effort": "high",
+                "effort_policy": "adaptive",
+                "ocr_api_provider": "openai",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = user_settings.load_gui_settings()
+
+    assert loaded["translation_provider"] == "gemini"
+    assert loaded["translation_model"] == "gemini-4-neon"
+    assert loaded["effort"] == "xhigh"
+    assert loaded["default_effort"] == "xhigh"
+    assert loaded["effort_policy"] == "fixed_xhigh"
+    assert loaded["default_effort_policy"] == "fixed_xhigh"
+    assert loaded["ocr_api_provider"] == "gemini"
+    assert loaded["ocr_api_provider_default"] == "gemini"
+    assert loaded["ocr_api_key_env_name"] == "GEMINI_API_KEY"
+    assert loaded["gemini_decisions_advisory_enabled"] is True

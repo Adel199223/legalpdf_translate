@@ -117,7 +117,7 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "translation_provider": DEFAULT_TRANSLATION_PROVIDER,
     "translation_model": GEMINI_MODEL,
     "helper_thinking_level": DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
-    "gemini_decisions_advisory_enabled": False,
+    "gemini_decisions_advisory_enabled": True,
     "default_lang": "EN",
     "default_effort": "xhigh",
     "default_effort_policy": "fixed_xhigh",
@@ -539,7 +539,9 @@ def _normalize_gui_settings(data: dict[str, Any]) -> dict[str, Any]:
     if "default_effort" not in data and "effort" in data:
         merged["default_effort"] = data["effort"]
     if "default_effort_policy" not in data:
-        if "adaptive_effort_enabled" in data:
+        if "effort_policy" in data:
+            merged["default_effort_policy"] = data["effort_policy"]
+        elif "adaptive_effort_enabled" in data:
             merged["default_effort_policy"] = "adaptive" if bool(data.get("adaptive_effort_enabled")) else "fixed_high"
         elif "default_effort" in data:
             merged["default_effort_policy"] = "fixed_xhigh" if str(data.get("default_effort")).strip().lower() == "xhigh" else "fixed_high"
@@ -584,7 +586,7 @@ def _normalize_gui_settings(data: dict[str, Any]) -> dict[str, Any]:
     )
     merged["gemini_decisions_advisory_enabled"] = _coerce_bool(
         merged.get("gemini_decisions_advisory_enabled"),
-        False,
+        True,
     )
     merged["effort"] = str(merged.get("effort", "xhigh") or "xhigh")
     if "effort_policy" not in data:
@@ -751,6 +753,8 @@ def _normalize_gui_settings(data: dict[str, Any]) -> dict[str, Any]:
     if _is_legacy_pre_gemini_settings(data, settings_schema_version_raw):
         merged["translation_provider"] = DEFAULT_TRANSLATION_PROVIDER
         merged["translation_model"] = GEMINI_MODEL
+        if "gemini_decisions_advisory_enabled" not in data:
+            merged["gemini_decisions_advisory_enabled"] = True
         if (
             merged["ocr_api_provider"] == "openai"
             and not merged["ocr_api_base_url"].strip()
