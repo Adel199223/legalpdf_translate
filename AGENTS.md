@@ -64,6 +64,7 @@ Ask before executing any of the following:
 - Keep assistant-side Google Workspace plugins (`gmail`, `gdrive`, `gdocs`) strictly separate from the app's own Windows `gog` CLI helper.
 - Generated DOCX/PDF files must be manually reviewed before any Gmail draft is sent.
 - Keep Portuguese court reply Gmail drafts (both agent-prepared and app-generated) simple and concise matching the user's sent emails (`Bom dia,`, `Envio em anexo a tradução solicitada e o requerimento de honorários.`, an optional single sentence such as `Junto também o termo de compromisso.` only when an oath/declaration PDF is attached, `Estou à disposição para quaisquer esclarecimentos adicionais que se façam necessários.`, `Atenciosamente,\n<name>`); do not add verbose numbered attachment lists or fee/word-count/VAT/IRS/IBAN summaries already inside the attached `Requerimento de Honorários` PDF.
+- Close any `Termo de Compromisso` / `Declaração de Compromisso de Honra` (whether standalone PDF or included in the fee request) with the centered location/date and the translator's name directly underneath (matching the `Requerimento de Honorários` closing), with no `Assinatura:` label or blank signature space.
 
 ## Routing Rules
 - For support or non-technical explanations, route to:

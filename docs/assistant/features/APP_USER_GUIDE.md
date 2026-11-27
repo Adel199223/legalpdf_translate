@@ -121,7 +121,7 @@ Completed translations in those builds offer **Source layout and delivery**. Rev
 
 ## Word and PDF copies of honorários
 
-For a translation batch, you can override the recipient text and explicitly include an editable, unsigned translator declaration. Leaving the override blank uses the named institution. The declaration starts unchecked and adds a blank signature line only when selected. These choices affect the current fee document, preserving saved profile/payment details and earlier files.
+For a translation batch, you can override the recipient text and explicitly include an editable translator declaration. Leaving the override blank uses the named institution. The declaration starts unchecked and closes with the centered date and translator name (matching the fee request, with no blank signature line). These choices affect the current fee document, preserving saved profile/payment details and earlier files.
 
 Your translation stays in an editable Word document; you do not need a PDF translation. The separate `Requerimento de Honorários` keeps an editable DOCX and uses Microsoft Word to create a PDF with the same basename. The app checks the newly generated PDF before reporting success. An older PDF is not counted as a successful new export.
 

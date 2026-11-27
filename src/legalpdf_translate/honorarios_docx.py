@@ -379,7 +379,6 @@ def _translation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]
         )
         closing = paragraphs.index(("Espera deferimento,", "center"))
         paragraphs[closing:closing] = [(declaration, "left"), ("", "left")]
-        paragraphs.extend([("", "left"), ("Assinatura: ______________________________", "center")])
     return paragraphs
 
 
