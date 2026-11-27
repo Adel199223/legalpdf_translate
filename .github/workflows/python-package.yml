@@ -13,8 +13,13 @@ concurrency:
 jobs:
   windows_contracts:
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
 
     steps:
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
+
       - name: Checkout
         uses: actions/checkout@v7
 
@@ -80,11 +85,16 @@ jobs:
   python_shards:
     name: Python 3.11 shard ${{ matrix.shard }}
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
     strategy:
       fail-fast: false
       matrix:
         shard: [0, 1, 2, 3]
     steps:
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf false
+
       - name: Checkout
         uses: actions/checkout@v7
 

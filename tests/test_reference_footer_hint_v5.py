@@ -152,7 +152,7 @@ def test_normal_retained_recover_reuses_every_paid_response_and_preserves_old_ev
         with monkeypatch.context() as old:
             old.setattr(automatic,'frozen_automatic_layout_policy',lambda:old_policy)
             response=client.post('/api/translation/jobs/translate',json={'mode':'shadow','workspace_id':'fictional',
-                'form_values':{'source_path':str(source),'output_dir':str(output),'target_lang':'EN','start_page':1,'end_page':3,
+                'form_values':{'source_path':str(source),'output_dir':str(output),'target_lang':'EN','translation_provider':'openai','start_page':1,'end_page':3,
                     'image_mode':'off','ocr_mode':'off','workers':1,'gmail_batch_context':gmail_context}})
             assert response.status_code==200,response.text
             job_id=response.json()['normalized_payload']['job']['job_id']
@@ -172,7 +172,7 @@ def test_normal_retained_recover_reuses_every_paid_response_and_preserves_old_ev
             manager=app.state.ordinary_layouts.manager_for_context(app.state.shadow_context,'shadow','fictional')
         # The ordinary saved-checkpoint Resume remains old V4 and costs zero.
         response=client.post('/api/translation/jobs/translate',json={'mode':'shadow','workspace_id':'fictional',
-            'form_values':{'source_path':str(source),'output_dir':str(output),'target_lang':'EN','start_page':1,'end_page':3,
+            'form_values':{'source_path':str(source),'output_dir':str(output),'target_lang':'EN','translation_provider':'openai','start_page':1,'end_page':3,
                 'image_mode':'off','ocr_mode':'off','workers':1,'resume':True,'gmail_batch_context':gmail_context}})
         assert response.status_code==200,response.text
         job_id=response.json()['normalized_payload']['job']['job_id']

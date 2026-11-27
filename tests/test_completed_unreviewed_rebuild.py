@@ -60,7 +60,7 @@ def seed(tmp_path, monkeypatch, *, source_hard=False):
         jobs._workflow_accounting['accounting_factory']=lambda **kwargs:DispatchAccounting(**kwargs,
             budget_context=budget,**policy)
     loaded, session, gmail = gmail_fixture(source, output)
-    form = {'source_path':str(source),'output_dir':str(output),'target_lang':'EN','start_page':1,'end_page':3,
+    form = {'source_path':str(source),'output_dir':str(output),'target_lang':'EN','translation_provider':'openai','start_page':1,'end_page':3,
         'image_mode':'off','ocr_mode':'off','workers':1,'gmail_batch_context':gmail}
     client = TestClient(app)
     with monkeypatch.context() as old:

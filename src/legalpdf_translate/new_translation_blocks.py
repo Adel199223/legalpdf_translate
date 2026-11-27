@@ -13,7 +13,7 @@ import time
 import unicodedata
 from types import SimpleNamespace
 
-from .config import GEMINI_MODEL
+from .config import GEMINI_MODEL, OPENAI_MODEL
 from .document_structure import (PageStructure, SOURCE_STRUCTURE_VERSION, STRUCTURE_VERSION, classify_document_boundaries,
     apply_reviewed_document_boundary,
     rebind_page_structure, structure_from_ordered, structure_from_text)

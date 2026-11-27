@@ -2020,12 +2020,17 @@ class TranslationJobManager:
                     from .workflow import TranslationWorkflow
 
                     from .translation_policy import (
+                        DEFAULT_TRANSLATION_PROTOCOL,
                         resolve_ordinary_auto_layout_policy,
                         resolve_provider_translation_protocol,
                     )
-                    effective_protocol = resolve_provider_translation_protocol(provider=resolved_provider.value)
+                    effective_protocol = (
+                        None
+                        if selected_context is not None
+                        else resolve_provider_translation_protocol(provider=resolved_provider.value)
+                    )
                     auto_policy = resolve_ordinary_auto_layout_policy(
-                        protocol=effective_protocol,
+                        protocol=effective_protocol or DEFAULT_TRANSLATION_PROTOCOL,
                         fresh_browser_job=self._automatic_layout_runner is not None and (
                             not config.resume or not _has_prior_run_evidence(reserved_run_dir)),
                         reviewed_source=selected_context is not None,

@@ -51,7 +51,7 @@ def test_real_recover_route_revalidates_all_three_paid_responses_without_dispatc
                 normalize(*a, **{**kw, "normalization_version": OPTIONAL_HINT_NORMALIZATION_V2}))
             response = client.post("/api/translation/jobs/translate", json={"mode": "shadow",
                 "workspace_id": "fictional", "form_values": {"source_path": str(source),
-                "output_dir": str(output), "target_lang": "EN", "start_page": 1, "end_page": 3,
+                "output_dir": str(output), "target_lang": "EN", "translation_provider": "openai", "start_page": 1, "end_page": 3,
                 "image_mode": "off", "ocr_mode": "off", "workers": 1,
                 "gmail_batch_context": gmail_context}})
             assert response.status_code == 200, response.text

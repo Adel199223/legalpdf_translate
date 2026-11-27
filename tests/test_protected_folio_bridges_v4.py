@@ -220,7 +220,7 @@ def test_saved_v9_actual_resume_and_restart_remain_v9_under_fresh_v10(tmp_path, 
     app, jobs, sdk, requests = flow._app(tmp_path, monkeypatch, ("Fictional body text.",), (1,))
     loaded, session, gmail = gmail_fixture(source, output)
     form = {"source_path": str(source), "output_dir": str(output), "target_lang": "EN",
-            "start_page": 1, "end_page": 1, "image_mode": "off", "ocr_mode": "off", "workers": 1,
+            "translation_provider": "openai", "start_page": 1, "end_page": 1, "image_mode": "off", "ocr_mode": "off", "workers": 1,
             "gmail_batch_context": gmail}
     with TestClient(app) as client:
         with monkeypatch.context() as prior:

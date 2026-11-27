@@ -79,7 +79,7 @@ def upload(client, *, headers=HEADERS):
 
 def form(c, source, **extra):
     return {"source_path": str(source), "output_dir": str(c.output), "target_lang": "EN",
-        "workers": 1, "resume": False, "image_mode": "off", **extra}
+        "translation_provider": "openai", "workers": 1, "resume": False, "image_mode": "off", **extra}
 
 
 def view(response):

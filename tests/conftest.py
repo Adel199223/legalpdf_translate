@@ -117,8 +117,8 @@ def _cleanup_qt_widgets_after_test(_block_external_file_launches, _block_native_
     _cleanup_qt_widgets()
 
 
-@pytest.fixture(autouse=True)
-def _freeze_bundled_accounting_policy_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture(autouse=True, scope="session")
+def _freeze_bundled_accounting_policy_clock() -> None:
     """Keep bundled public-pricing policies fresh for unit tests that do not test clock expiry."""
     from datetime import date as _real_date
     import legalpdf_translate.accounting_policy as accounting_policy_mod
@@ -135,8 +135,10 @@ def _freeze_bundled_accounting_policy_clock(monkeypatch: pytest.MonkeyPatch) -> 
             return original(self, today=self.reference_verified_on)
         return original(self, today=today)
 
-    monkeypatch.setattr(
-        OrdinaryAccountingPolicy,
-        "accounting_arguments",
-        _test_accounting_arguments,
-    )
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            OrdinaryAccountingPolicy,
+            "accounting_arguments",
+            _test_accounting_arguments,
+        )
+        yield
