@@ -88,3 +88,22 @@ def test_windows_dart_pin_read_preserves_github_output_and_emits_utf8(tmp_path: 
     assert output.read_text(encoding="utf-8-sig").splitlines() == [
         "existing=preserved", f"sdk={pin}"
     ]
+
+
+def test_ci_python_shards_matrix_and_evidence_verifier_agree_on_shard_count():
+    from tooling import ci_test_evidence, test_shards
+
+    shards_job = _job("python_shards")
+    matrix_match = re.search(r"^\s+shard:\s*\[([^\]]+)\]", shards_job, re.MULTILINE)
+    assert matrix_match is not None
+    indexes = [int(item.strip()) for item in matrix_match.group(1).split(",")]
+    expected_count = 16
+    assert indexes == list(range(expected_count))
+    assert expected_count in test_shards.SHARD_COUNTS
+    assert ci_test_evidence.SHARD_COUNT == expected_count
+
+    run_step = _step(shards_job, "Full Tests (one exhaustive partition)")
+    assert f"--shard-count {expected_count}" in run_step
+
+    verify_step = _step(_job("test"), "Verify complete coverage exactly once")
+    assert f"--shard-count {expected_count}" in verify_step

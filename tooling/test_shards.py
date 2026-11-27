@@ -22,8 +22,16 @@ import time
 import xml.etree.ElementTree as ET
 
 
-COUNTS = (1, 2, 4)
+WORKER_COUNTS = (1, 2, 4)
+SHARD_COUNTS = (1, 2, 4, 8, 12, 16)
+COUNTS = WORKER_COUNTS
 SCRIPT = Path(__file__).resolve()
+
+
+def is_qt_file(name):
+    basename = PurePosixPath(name).name
+    return (basename.startswith("test_qt_") or basename.endswith("_qt.py")
+            or basename == "test_honorarios_docx.py")
 
 
 def digest(value):
@@ -50,9 +58,9 @@ def test_file(node_id):
 
 
 def make_plan(node_ids, shard_count=1, timings=None):
-    """LPT balance measured file seconds, with per-case estimates for new files."""
-    if type(shard_count) is not int or shard_count not in COUNTS:
-        raise ValueError("Shard count must be 1, 2, or 4")
+    """LPT balance measured file/node seconds, with per-case estimates for new items."""
+    if type(shard_count) is not int or shard_count not in SHARD_COUNTS:
+        raise ValueError("Shard count must be 1, 2, 4, 8, 12, or 16")
     if not node_ids or len(node_ids) != len(set(node_ids)):
         raise ValueError("Collection must be nonempty and contain no duplicate node IDs")
     files = {}
@@ -60,37 +68,84 @@ def make_plan(node_ids, shard_count=1, timings=None):
         files.setdefault(test_file(node), []).append(node)
     timings = {} if timings is None else timings
     if not isinstance(timings, dict):
-        raise ValueError("Timings must map repository-relative files to positive seconds")
+        raise ValueError("Timings must map repository-relative files or node IDs to positive seconds")
+    file_timings = {}
+    node_timings = {}
     for name, seconds in timings.items():
-        test_file(name + "::placeholder")
+        if not isinstance(name, str):
+            raise ValueError("Timings must map repository-relative files or node IDs to positive seconds")
+        if "::" in name:
+            test_file(name)
+            if not name.split("::", 1)[1]:
+                raise ValueError("Expected a collected pytest node ID")
+        else:
+            test_file(name + "::placeholder")
         if type(seconds) not in (float, int) or not math.isfinite(seconds) or seconds <= 0:
             raise ValueError("Timing weights must be finite positive numbers")
-    rates = [timings[name] / len(nodes) for name, nodes in files.items() if name in timings]
-    per_case = statistics.median(rates) if rates else 1.0
-    weights = {name: float(timings.get(name, len(nodes) * per_case)) for name, nodes in files.items()}
+        if "::" in name:
+            node_timings[name] = float(seconds)
+        else:
+            file_timings[name] = float(seconds)
+    rates = [file_timings[name] / len(nodes) for name, nodes in files.items() if name in file_timings]
+    if rates:
+        per_case = statistics.median(rates)
+    else:
+        matched_node_rates = [node_timings[node] for node in node_ids if node in node_timings]
+        per_case = statistics.median(matched_node_rates) if matched_node_rates else 1.0
+
+    weights = {}
+    node_weights = {}
+    split_files = set()
+    for name, nodes in files.items():
+        matched_nodes = [node for node in nodes if node in node_timings]
+        if not is_qt_file(name) and matched_nodes and len(nodes) > 1:
+            split_files.add(name)
+            file_per_case = statistics.median(node_timings[node] for node in matched_nodes)
+            for node in nodes:
+                node_weights[node] = float(node_timings.get(node, file_per_case))
+            weights[name] = sum(node_weights[node] for node in nodes)
+        elif name in file_timings:
+            weights[name] = float(file_timings[name])
+        elif matched_nodes:
+            file_per_case = statistics.median(node_timings[node] for node in matched_nodes)
+            weights[name] = sum(float(node_timings.get(node, file_per_case)) for node in nodes)
+        else:
+            weights[name] = float(len(nodes) * per_case)
+
     # Qt focus/window tests share a process-global GUI resource. Keep this
     # family together for both test_qt_* and test_*_qt naming conventions.
     units = {}
-    for name in files:
-        basename = PurePosixPath(name).name
-        is_qt = (basename.startswith("test_qt_") or basename.endswith("_qt.py")
-                 or basename == "test_honorarios_docx.py")
-        affinity = "qt" if is_qt else name
-        units.setdefault(affinity, []).append(name)
+    unit_weights = {}
+    for name, nodes in files.items():
+        if is_qt_file(name):
+            units.setdefault("qt", []).extend(nodes)
+            unit_weights["qt"] = unit_weights.get("qt", 0.0) + weights[name]
+        elif name in split_files:
+            for node in nodes:
+                units[node] = [node]
+                unit_weights[node] = node_weights[node]
+        else:
+            units[name] = list(nodes)
+            unit_weights[name] = weights[name]
+
     assignments = [[] for _ in range(shard_count)]
     totals = [0.0] * shard_count
-    for unit in sorted(units, key=lambda item: (-sum(weights[name] for name in units[item]), item)):
+    for unit in sorted(units, key=lambda item: (-unit_weights[item], item)):
         index = min(range(shard_count), key=lambda i: (totals[i], i))
         assignments[index].extend(units[unit])
-        totals[index] += sum(weights[name] for name in units[unit])
+        totals[index] += unit_weights[unit]
     shards = []
     for index, assigned in enumerate(assignments):
         chosen = set(assigned)
-        nodes = [node for node in node_ids if test_file(node) in chosen]
-        shards.append({"index": index, "files": [name for name in files if name in chosen],
+        nodes = [node for node in node_ids if node in chosen]
+        shard_files = list(dict.fromkeys(test_file(node) for node in nodes))
+        shards.append({"index": index, "files": shard_files,
                        "node_ids": nodes, "estimated_seconds": totals[index]})
-    return {"version": 1, "collection_sha256": digest(node_ids), "node_ids": list(node_ids),
+    plan = {"version": 1, "collection_sha256": digest(node_ids), "node_ids": list(node_ids),
             "shard_count": shard_count, "file_weights": weights, "shards": shards}
+    if node_weights:
+        plan["node_weights"] = node_weights
+    return plan
 
 
 def junit_summary(path):
@@ -227,10 +282,10 @@ def pytest_child(request_path):
 
 
 def run_suite(repo, output, pytest_args, *, workers=1, shard_count=None, shard_index=None, timings=None):
-    if workers not in COUNTS:
+    if workers not in WORKER_COUNTS:
         raise ValueError("Workers must be 1, 2, or 4")
     count = workers if shard_count is None else shard_count
-    if count not in COUNTS or ((shard_index is None) != (shard_count is None)):
+    if count not in SHARD_COUNTS or ((shard_index is None) != (shard_count is None)):
         raise ValueError("Use --shard-count and --shard-index together")
     if shard_index is not None and (workers != 1 or not 0 <= shard_index < count):
         raise ValueError("A CI shard requires workers=1 and an index within its shard count")
@@ -299,7 +354,15 @@ def verify_results(paths):
         result = read_json(path)
         candidate = read_json(path.parent / "plan.json")
         # Recompute the plan to detect inconsistent or omitted assignments.
-        canonical = make_plan(candidate["node_ids"], candidate["shard_count"], candidate["file_weights"])
+        plan_timings = dict(candidate["file_weights"])
+        if "node_weights" in candidate:
+            node_weights = candidate["node_weights"]
+            if not isinstance(node_weights, dict) or not node_weights or any(
+                not isinstance(key, str) or "::" not in key for key in node_weights
+            ):
+                raise ValueError("Invalid partition plan")
+            plan_timings.update(node_weights)
+        canonical = make_plan(candidate["node_ids"], candidate["shard_count"], plan_timings)
         if canonical != candidate or result.get("plan_sha256") != digest(candidate):
             raise ValueError("Invalid partition plan")
         if plan is None:
@@ -343,8 +406,8 @@ def main(argv=None):
     run = commands.add_parser("run")
     run.add_argument("--repo", type=Path, default=Path.cwd())
     run.add_argument("--output", required=True, type=Path)
-    run.add_argument("--workers", type=int, choices=COUNTS, default=1)
-    run.add_argument("--shard-count", type=int, choices=COUNTS)
+    run.add_argument("--workers", type=int, choices=WORKER_COUNTS, default=1)
+    run.add_argument("--shard-count", type=int, choices=SHARD_COUNTS)
     run.add_argument("--shard-index", type=int)
     run.add_argument("--timings", type=Path)
     verify = commands.add_parser("verify")

@@ -18,18 +18,78 @@ def nodes_for(*names):
     return [f"tests/{name}.py::test_{case}" for name in names for case in ("a", "b")]
 
 
-@pytest.mark.parametrize("count", [1, 2, 4])
+@pytest.mark.parametrize("count", [1, 2, 4, 8, 12, 16])
 def test_partition_covers_every_collected_case_once_and_preserves_file_order(count):
     nodes = nodes_for("test_b", "test_a", "test_c", "test_new")
     plan = shards.make_plan(nodes, count, {"tests/test_b.py": 20, "tests/test_a.py": 3})
     assigned = [node for shard in plan["shards"] for node in shard["node_ids"]]
     assert sorted(assigned) == sorted(nodes) and len(assigned) == len(set(assigned))
     for name in {shards.test_file(node) for node in nodes}:
-        owners = [part for part in plan["shards"] if name in part["files"]]
-        assert len(owners) == 1
-        assert [node for node in owners[0]["node_ids"] if shards.test_file(node) == name] == [
-            node for node in nodes if shards.test_file(node) == name]
+        if name not in plan.get("node_weights", {}):
+            owners = [part for part in plan["shards"] if name in part["files"]]
+            assert len(owners) == 1
+            assert [node for node in owners[0]["node_ids"] if shards.test_file(node) == name] == [
+                node for node in nodes if shards.test_file(node) == name]
     assert shards.make_plan(nodes, count, {"tests/test_a.py": 3, "tests/test_b.py": 20}) == plan
+
+
+@pytest.mark.parametrize("count", [8, 12, 16])
+def test_high_shard_counts_fill_every_shard_when_enough_units_exist(count):
+    nodes = nodes_for(*(f"test_f{idx:02d}" for idx in range(16)))
+    plan = shards.make_plan(nodes, count, {f"tests/test_f{idx:02d}.py": 10 + idx for idx in range(16)})
+    assert len(plan["shards"]) == count
+    assert all(part["node_ids"] for part in plan["shards"])
+    assigned = [node for part in plan["shards"] for node in part["node_ids"]]
+    assert sorted(assigned) == sorted(nodes) and len(assigned) == len(set(assigned))
+
+
+def test_opt_in_node_level_splitting_preserves_order_and_weights_new_cases():
+    nodes = [
+        "tests/test_heavy.py::test_slow",
+        "tests/test_heavy.py::test_medium",
+        "tests/test_heavy.py::test_new",
+        "tests/test_other.py::test_a",
+    ]
+    timings = {
+        "tests/test_heavy.py": 50.0,
+        "tests/test_heavy.py::test_slow": 20.0,
+        "tests/test_heavy.py::test_medium": 10.0,
+        "tests/test_other.py": 15.0,
+    }
+    plan = shards.make_plan(nodes, 4, timings)
+    assert plan["node_weights"]["tests/test_heavy.py::test_new"] == 15.0
+    assert plan["file_weights"]["tests/test_heavy.py"] == 45.0
+    assigned = [node for part in plan["shards"] for node in part["node_ids"]]
+    assert sorted(assigned) == sorted(nodes) and len(assigned) == len(set(assigned))
+    owners = {part["index"] for part in plan["shards"] if "tests/test_heavy.py" in part["files"]}
+    assert len(owners) > 1
+    for part in plan["shards"]:
+        assert part["node_ids"] == [node for node in nodes if node in part["node_ids"]]
+        assert part["files"] == list(dict.fromkeys(shards.test_file(node) for node in part["node_ids"]))
+
+
+def test_qt_files_never_split_even_with_node_timings():
+    nodes = [
+        "tests/test_qt_app_state.py::test_one",
+        "tests/test_qt_app_state.py::test_two",
+        "tests/test_plain.py::test_a",
+        "tests/test_plain.py::test_b",
+    ]
+    plan = shards.make_plan(nodes, 2, {
+        "tests/test_qt_app_state.py::test_one": 5.0,
+        "tests/test_qt_app_state.py::test_two": 6.0,
+        "tests/test_plain.py": 11.0,
+    })
+    assert "node_weights" not in plan
+    owners = [part for part in plan["shards"] if "tests/test_qt_app_state.py" in part["files"]]
+    assert len(owners) == 1
+    assert owners[0]["node_ids"] == [n for n in nodes if n.startswith("tests/test_qt_app_state.py::")]
+
+
+@pytest.mark.parametrize("bad_key", ["tests/test_a.py::", "../outside.py::test_a", "C:/outside.py::test_a"])
+def test_invalid_node_timing_keys_fail_closed(bad_key):
+    with pytest.raises(ValueError):
+        shards.make_plan(nodes_for("test_a"), timings={bad_key: 1.0})
 
 
 def test_new_files_are_automatically_assigned_with_a_positive_estimated_weight():
@@ -247,18 +307,44 @@ def test_existing_output_is_never_overwritten(tmp_path):
 
 def test_independent_ci_shards_reconcile_using_only_relative_artifact_paths(tmp_path):
     repo = fictional_repo(tmp_path / "repo")
-    for index in range(4):
+    for index in range(8):
         (repo / "tests" / f"test_file_{index}.py").write_text("def test_case():\n    pass\n", encoding="utf-8")
     paths = []
-    for index in range(4):
+    for index in range(8):
         root = tmp_path / f"shard-{index}"
-        result, _ = run_cli(repo, root, "--shard-count", "4", "--shard-index", str(index))
+        result, _ = run_cli(repo, root, "--shard-count", "8", "--shard-index", str(index))
         assert result.returncode == 0, result.stderr
         paths.append(root / "result.json")
     result = shards.verify_results(paths)
-    assert result["tests"] == 4 and result["shards"] == 4
+    assert result["tests"] == 8 and result["shards"] == 8
     with pytest.raises(ValueError, match="exhaustive"):
-        shards.verify_results(paths[:3])
+        shards.verify_results(paths[:7])
+
+
+def test_tampered_node_weights_in_plan_fail_verification(tmp_path):
+    repo = fictional_repo(tmp_path / "repo")
+    (repo / "tests" / "test_heavy.py").write_text(
+        "def test_a():\n    pass\ndef test_b():\n    pass\n", encoding="utf-8")
+    (repo / "tests" / "test_light.py").write_text("def test_c():\n    pass\n", encoding="utf-8")
+    timings_path = tmp_path / "timings.json"
+    shards.write_json(timings_path, {
+        "tests/test_heavy.py::test_a": 10.0,
+        "tests/test_heavy.py::test_b": 10.0,
+        "tests/test_light.py": 5.0,
+    })
+    paths = []
+    for index in range(2):
+        root = tmp_path / f"s-{index}"
+        res, _ = run_cli(repo, root, "--shard-count", "2", "--shard-index", str(index), "--timings", str(timings_path))
+        assert res.returncode == 0, res.stderr
+        paths.append(root / "result.json")
+    assert shards.verify_results(paths)["tests"] == 3
+    bad_plan_path = tmp_path / "s-0" / "plan.json"
+    bad_plan = shards.read_json(bad_plan_path)
+    bad_plan["node_weights"]["tests/test_heavy.py::test_a"] = 999.0
+    shards.write_json(bad_plan_path, bad_plan)
+    with pytest.raises(ValueError, match="Invalid partition plan"):
+        shards.verify_results(paths)
 
 
 def test_windows_cleanup_targets_only_still_running_owned_pids_and_reaps_all(monkeypatch):

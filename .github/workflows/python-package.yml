@@ -90,7 +90,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     steps:
       - name: Disable CRLF conversion
         run: git config --global core.autocrlf false
@@ -123,7 +123,7 @@ jobs:
       - name: Full Tests (one exhaustive partition)
         run: >-
           .\.venv311\Scripts\python.exe tooling/test_shards.py run
-          --shard-count 4 --shard-index ${{ matrix.shard }}
+          --shard-count 16 --shard-index ${{ matrix.shard }}
           --timings tooling/test_timings.json
           --output tmp/ci-shard-${{ matrix.shard }} -- tests
 
@@ -177,7 +177,7 @@ jobs:
 
       - name: Verify complete coverage exactly once
         run: >-
-          python tooling/ci_test_evidence.py
+          python tooling/ci_test_evidence.py --shard-count 16
           --artifacts tmp/ci-results --output tmp/ci-verification
 
       - name: Retain coverage verification
