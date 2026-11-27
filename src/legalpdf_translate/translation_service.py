@@ -841,6 +841,12 @@ def _serialize_run_config(config: RunConfig) -> dict[str, Any]:
         "source_path": str(config.pdf_path.expanduser().resolve()),
         "output_dir": str(config.output_dir.expanduser().resolve()),
         "target_lang": config.target_lang.value,
+        "translation_provider": (
+            config.translation_provider.value
+            if config.translation_provider is not None
+            else None
+        ),
+        "translation_model": str(config.translation_model) if config.translation_model else None,
         "effort": config.effort.value,
         "effort_policy": config.effort_policy.value,
         "allow_xhigh_escalation": bool(config.allow_xhigh_escalation),
@@ -1437,10 +1443,14 @@ class TranslationJobManager:
         diagnostics = dict(job.diagnostics_payload)
         if self._job_actions(job).get("recover_layout"):
             try:
-                from .ordinary_layout_accounting import verified_page_ceiling_for_provider
+                from .ordinary_layout_accounting import (
+                    verified_page_ceiling,
+                    verified_page_ceiling_for_provider,
+                )
                 job_provider = str((job.config_payload or {}).get("translation_provider") or DEFAULT_TRANSLATION_PROVIDER).strip().lower()
+                ceiling = verified_page_ceiling() if job_provider == "openai" else verified_page_ceiling_for_provider(job_provider)
                 diagnostics["layout_recovery_quote"] = {"available": True,
-                    "max_page_cost_usd": str(verified_page_ceiling_for_provider(job_provider)), "currency": "USD",
+                    "max_page_cost_usd": str(ceiling), "currency": "USD",
                     "paid_operation": True, "prior_charges_retained": True}
             except Exception:
                 diagnostics["layout_recovery_quote"] = {"available": False,
@@ -1988,6 +1998,9 @@ class TranslationJobManager:
                         or str(gui_settings.get("translation_model", "") or "").strip()
                         or default_translation_model(resolved_provider)
                     )
+                    with self._lock:
+                        self._jobs[job_id].config_payload["translation_provider"] = resolved_provider.value
+                        self._jobs[job_id].config_payload["translation_model"] = resolved_model
                     if selected_context is not None:
                         client = None
                     elif resolved_provider.value == "gemini":
@@ -2020,10 +2033,17 @@ class TranslationJobManager:
                     if auto_policy and self._automatic_layout_runner is None:
                         raise ValueError("ordinary_auto_layout_runner_unavailable")
                     if auto_policy:
-                        from .ordinary_layout_accounting import verified_page_ceiling_for_provider
+                        from .ordinary_layout_accounting import (
+                            verified_page_ceiling,
+                            verified_page_ceiling_for_provider,
+                        )
                         per_page = None
                         try:
-                            per_page = verified_page_ceiling_for_provider(resolved_provider.value)
+                            per_page = (
+                                verified_page_ceiling()
+                                if resolved_provider.value == "openai"
+                                else verified_page_ceiling_for_provider(resolved_provider.value)
+                            )
                             progress_text = ("Translating; automatic source layout follows "
                                 f"(up to USD{per_page} per selected page)")
                         except Exception:
