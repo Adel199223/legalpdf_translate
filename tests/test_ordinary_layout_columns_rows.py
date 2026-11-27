@@ -120,6 +120,11 @@ def test_direct_coverage_eligibility_keeps_exact_policy_and_existing_lineage(tmp
 
 @pytest.mark.parametrize('resume', [None, False, True])
 def test_settled_coverage_failure_retains_L1_and_sends_only_L2_then_Save(tmp_path, monkeypatch, resume):
+    if resume is not None:
+        from legalpdf_translate import ordinary_auto_layout as automatic
+        # This branch exercises the saved pre-reproposal manual recovery contract.
+        monkeypatch.setattr(automatic, "frozen_automatic_layout_policy",
+            automatic._protected_folio_bridges_v10_policy)
     source, output = tmp_path/'source.pdf', tmp_path/'output'
     output.mkdir(); _source(source, ('digital','digital'))
     app, jobs, translation_sdk, _ = _app(tmp_path, monkeypatch,
@@ -134,7 +139,12 @@ def test_settled_coverage_failure_retains_L1_and_sends_only_L2_then_Save(tmp_pat
                 page = json.loads(request['input'][0]['content'][0]['text'])['page_number']
                 sent.append(page)
                 value = _proposal(manager.service.state(job.job_id)['review'], page)
-                value.update(version=PROPOSAL_VERSION_V2, paragraph_partitions=[])
+                if resume is None:
+                    # Current fresh requests require V3; keep legacy V2 replies below exact.
+                    value.update(version="ordinary_layout_proposal_v3", paragraph_partitions=[],
+                        source_coverage_findings=[], source_layout_evidence=[])
+                else:
+                    value.update(version=PROPOSAL_VERSION_V2, paragraph_partitions=[])
                 if page == 1:
                     choices = value['paragraphs']; ids = [p['paragraph_id'] for p in choices]
                     assert len(ids) == 8
@@ -158,9 +168,9 @@ def test_settled_coverage_failure_retains_L1_and_sends_only_L2_then_Save(tmp_pat
                 max_transport_retries=0,pre_call_jitter_seconds=0)
         manager.provider_factory = provider
         normalize = manager_module.normalize_proposals
-        def previous_guard(snapshot,view,proposals):
+        def previous_guard(snapshot,view,proposals,**kwargs):
             if proposals[0]['page_number'] == 1: fail('proposal_coverage')
-            return normalize(snapshot,view,proposals)
+            return normalize(snapshot,view,proposals,**kwargs)
         if resume is None:
             # Fresh SDK completion also exercises the new generated-response
             # path, without a retained-replay-only success standing in for it.

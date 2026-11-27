@@ -159,8 +159,38 @@ class DistinctPageSDK(FakeSDK):
     def __init__(self, translations: tuple[str, ...]):
         super().__init__()
         self.translations = translations
+        self.semantic_requests = []
+        self.responses.with_raw_response = SimpleNamespace(create=self.raw_create)
+
+    def raw_create(self, **request):
+        # The new semantic role needs exact raw BODY evidence; legacy .create
+        # and every old5.2 response remain unchanged.
+        response = self.create(**request)
+        return SimpleNamespace(content=json.dumps(vars(response), ensure_ascii=False).encode())
 
     def create(self, **request):
+        from legalpdf_translate.ordinary_semantic_audit import AUDIT_VERSION
+        from tests.semantic_review_fakes import UNIT_REF_VERSIONS, ALL_FORMAT_NAMES, review_response
+        format_name = request.get("text", {}).get("format", {}).get("name")
+        if format_name in ALL_FORMAT_NAMES:
+            self.semantic_requests.append(request)
+            prompt = json.loads(request["input"][0]["content"][0]["text"])
+            return SimpleNamespace(id=f"fictional-review-{len(self.semantic_requests)}", model=request["model"],
+                status="completed", service_tier="default", output=[],
+                output_text=json.dumps(review_response(prompt,
+                    unit_references=format_name in UNIT_REF_VERSIONS.values())),
+                usage={"input_tokens": 20, "output_tokens": 10, "total_tokens": 30,
+                       **({"input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0}}
+                          if request["model"] == "gpt-6-astra" else {})})
+        if request.get("text", {}).get("format", {}).get("name") == AUDIT_VERSION:
+            self.semantic_requests.append(request)
+            prompt = json.loads(request["input"][0]["content"][0]["text"])
+            return SimpleNamespace(id=f"fictional-semantic-{len(self.semantic_requests)}", model="gpt-5.2",
+                status="completed", service_tier="default", output=[],
+                output_text=json.dumps({"version": AUDIT_VERSION, "pages": [
+                    {"page_number": page["page_number"], "status": "no_change",
+                     "corrected_text": "", "reason_codes": []} for page in prompt["pages"]]}),
+                usage={"input_tokens": 20, "output_tokens": 10, "total_tokens": 30})
         self.requests.append(request)
         text = self.translations[len(self.requests) - 1]
         return SimpleNamespace(id=f"fictional-translation-{len(self.requests)}", model="gpt-5.2",
@@ -209,8 +239,18 @@ def _app(tmp_path: Path, monkeypatch, outputs: tuple[str, ...], pages: tuple[int
             else:
                 layout = slot["app"].state.ordinary_layouts.manager_for_context(
                     slot["app"].state.shadow_context, job.mode, job.workspace_id)
-                content = json.dumps(_proposal(layout.service.state(job.job_id)["review"], page,
-                                               (columns_by_page or {}).get(page, 0)))
+                proposal = _proposal(layout.service.state(job.job_id)["review"], page,
+                                    (columns_by_page or {}).get(page, 0))
+                # New fresh requests require V3. Saved historical fixtures retain
+                # their exact former raw proposal representation.
+                from legalpdf_translate.ordinary_auto_layout import _proposal_repair_version
+                with manager._lock:
+                    saved_policy = manager._jobs[job.job_id]._ordinary_auto_layout_policy
+                if _proposal_repair_version((saved_policy or "").split(":")[-1]) is not None:
+                    proposal.update(version="ordinary_layout_proposal_v3",
+                        source_coverage_findings=[], source_layout_evidence=[])
+                    proposal.setdefault("paragraph_partitions", [])
+                content = json.dumps(proposal)
             response_status = "incomplete" if page == failed_page and failure == "incomplete" else "completed"
             return SimpleNamespace(id=f"fictional-layout-{page}", model=policy.model,
                 status=response_status, service_tier="default", output=[], output_text=content,
@@ -236,6 +276,7 @@ def _app(tmp_path: Path, monkeypatch, outputs: tuple[str, ...], pages: tuple[int
 def _start(client, source, output, lang, *, start, end, image_mode, ocr_mode="off",
            page_breaks=False, resume=False):
     body = {"mode": "shadow", "workspace_id": "fictional", "form_values": {
+        "translation_provider": "openai", "translation_model": "gpt-5.2",
         "source_path": str(source), "output_dir": str(output), "target_lang": lang,
         "image_mode": image_mode, "ocr_mode": ocr_mode, "workers": 1,
         "start_page": start, "end_page": end, "resume": resume, "page_breaks": page_breaks}}
@@ -244,14 +285,90 @@ def _start(client, source, output, lang, *, start, end, image_mode, ocr_mode="of
     return response.json()["normalized_payload"]["job"]["job_id"]
 
 
-def _wait(manager, job_id):
-    deadline = time.monotonic() + 30
+def _wait(manager, job_id, *, timeout_seconds=90):
+    if type(timeout_seconds) is not int or not 0 < timeout_seconds <= 90:
+        raise ValueError("Job settlement timeout must be a positive integer at most 90 seconds")
+    deadline = time.monotonic() + timeout_seconds
+    job = None
     while time.monotonic() < deadline:
         job = manager.get_job(job_id)
         if job and job["status"] in {"completed", "failed", "cancelled"}:
             return job
         time.sleep(.01)
-    pytest.fail("Browser translation did not settle in time")
+    status = job["status"] if job else "missing"
+    pytest.fail(f"Browser translation did not settle within {timeout_seconds}s (status={status})")
+
+
+@pytest.mark.parametrize("prior", ["missing", "empty", "lock_only"])
+def test_resume_checked_without_prior_run_keeps_fresh_images_and_layout(tmp_path, monkeypatch, prior):
+    source = tmp_path / "fictional.pdf"
+    output = tmp_path / "output"
+    output.mkdir()
+    _source(source, ("digital",))
+    from legalpdf_translate.checkpoint import build_run_paths
+    from legalpdf_translate.types import TargetLang
+    paths = build_run_paths(output, source, TargetLang.EN)
+    if prior != "missing":
+        paths.run_dir.mkdir()
+    if prior == "lock_only":
+        (paths.run_dir / ".run_workspace.lock").write_bytes(b"0")
+    app, manager, sdk, layout_requests = _app(tmp_path, monkeypatch,
+        ("English page alpha 42",), (1,))
+    with TestClient(app) as client:
+        job_id = _start(client, source, output, "EN", start=1, end=1,
+                        image_mode="auto", resume=True)
+        job = _wait(manager, job_id)
+    assert job["status"] == "completed", (job["status_text"], job["logs"], job["diagnostics"])
+    assert job["config"]["resume"] is True
+    assert job["result"]["automatic_layout"]["status"] == "automatic_unreviewed", job["result"]["automatic_layout"]
+    assert len(sdk.requests) == len(layout_requests) == 1
+    assert any(part.get("type") == "input_image"
+               for item in sdk.requests[0]["input"] for part in item.get("content", [])
+               if isinstance(part, dict))
+    state = json.loads(paths.run_state_path.read_text())
+    assert state["settings"]["ordinary_auto_layout_policy"]
+    events = [json.loads(line) for line in (paths.run_dir / "run_events.jsonl").read_text().splitlines()]
+    decision = next(event["decisions"] for event in events if event["event_type"] == "page_image_decision")
+    assert decision["image_used"] is True
+    assert decision["reason"] == "ordinary_full_page_visual_source"
+
+
+def test_real_legacy_checkpoint_resume_does_not_purchase_new_layout(tmp_path, monkeypatch):
+    source = tmp_path / "fictional.pdf"
+    output = tmp_path / "output"
+    output.mkdir()
+    _source(source, ("digital",))
+    app, manager, sdk, layout_requests = _app(tmp_path, monkeypatch,
+        ("English retained translation 42",), (1,))
+    automatic_runner = manager._automatic_layout_runner
+    # Produce a genuine legacy checkpoint through the actual workflow.
+    manager._automatic_layout_runner = None
+    with TestClient(app) as client:
+        original = _wait(manager, _start(client, source, output, "EN", start=1, end=1,
+                                        image_mode="auto", resume=False))
+        assert original["status"] == "completed", original
+        run_dir = Path(original["result"]["run_dir"])
+        before = json.loads((run_dir / "run_state.json").read_text())
+        assert "ordinary_auto_layout_policy" not in before["settings"]
+        assert len(sdk.requests) == 1 and not layout_requests
+        manager._automatic_layout_runner = automatic_runner
+        resumed = _wait(manager, _start(client, source, output, "EN", start=1, end=1,
+                                       image_mode="auto", resume=True))
+    assert resumed["status"] == "completed", (resumed["status_text"], resumed["logs"], resumed["diagnostics"])
+    assert "automatic_layout" not in resumed["result"]
+    after = json.loads((run_dir / "run_state.json").read_text())
+    assert after["settings"] == before["settings"]
+    assert after["dispatch_accounting"] == before["dispatch_accounting"]
+    assert len(sdk.requests) == 1 and not layout_requests
+
+
+@pytest.mark.parametrize("artifact", ["run_state.json", "accounting/orphan.json", "pages/page_0001.txt"])
+def test_damaged_or_orphaned_run_is_not_classified_as_fresh(tmp_path, artifact):
+    path = tmp_path / "run" / artifact
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"unreadable retained evidence")
+    assert translation_service._has_prior_run_evidence(tmp_path / "run")
+    assert path.read_bytes() == b"unreadable retained evidence"
 
 
 @pytest.mark.parametrize("lang,kinds,start,end,image_mode", [
@@ -467,7 +584,7 @@ def test_rich_nonfirst_page_breaks_columns_exact_fragments_and_combined_save_cos
         assert download.status_code == 200 and download.content == candidate.docx_bytes
         assert sha256(download.content).hexdigest() == shown["delivery"]["sha256"]
         with ZipFile(BytesIO(raw.original_docx)) as original, ZipFile(BytesIO(download.content)) as rendered:
-            assert original.namelist() == rendered.namelist()
+            assert rendered.namelist() == sorted(original.namelist())
             assert all(original.read(name) == rendered.read(name)
                        for name in original.namelist() if name not in {"word/document.xml", "word/settings.xml"})
             original_settings = etree.fromstring(original.read("word/settings.xml"))

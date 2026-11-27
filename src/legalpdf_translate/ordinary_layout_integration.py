@@ -56,6 +56,7 @@ class BrowserOrdinaryLayouts:
                     output_review_guard=lambda job_id, artifact_id, generation, baseline_id: verify_open_review_copy(
                         self._managers[key], job_id, artifact_id, generation, baseline_id))
                 self._managers[key] = manager
+                manager._completed_rebuild_accounting = accounting
             return self._managers[key]
 
     def authorize(self, manager, job_id, data):
@@ -122,6 +123,8 @@ def delivery_job_snapshot(manager, job, *, mutation=False, baseline_id=None,
     if isinstance(automatic, dict) and automatic.get("recovery_predecessor"):
         from .ordinary_auto_layout import verified_recovery_layout_costs
         costs = verified_recovery_layout_costs(manager, job, costs)
+    from .ordinary_auto_layout import verified_completed_rebuild_layout_costs
+    costs = verified_completed_rebuild_layout_costs(manager, job, costs)
     snapshot["layout_costs"] = costs
     if costs["operations"]:
         original_cost = seed.get("estimated_api_cost")

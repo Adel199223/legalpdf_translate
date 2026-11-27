@@ -1,0 +1,31 @@
+{
+  "tree": "ROOT",
+  "worktree": "C:\\Users\\FA507\\.codex\\worktrees\\autonomous-draft-parity\\legalpdf_translate",
+  "snapshot_utc": "2026-10-21T12:49:34.252850+00:00",
+  "files": [
+    {
+      "origin": "APP_KNOWLEDGE.md",
+      "archived_path": "docs/assistant/history/2026-10-21_cache_front_doors/APP_KNOWLEDGE.md",
+      "sha256": "dbda094edd546935d9960cecfb4cfe6479ae82db524f91183fcb4a76c29799d5",
+      "bytes": 103903
+    },
+    {
+      "origin": "docs/assistant/APP_KNOWLEDGE.md",
+      "archived_path": "docs/assistant/history/2026-10-21_cache_front_doors/APP_KNOWLEDGE_BRIDGE.md",
+      "sha256": "54ad2aec47e38ad6e1efe3f341404650b293b9428cc1ec525242f8e4a3afaf1c",
+      "bytes": 5367
+    },
+    {
+      "origin": "docs/assistant/HANDOFF.md",
+      "archived_path": "docs/assistant/history/2026-10-21_cache_front_doors/HANDOFF.md",
+      "sha256": "961b63ecda5db0c99f3b2917ff0b6c6d89ad5604457bf936eb342ee543b4425d",
+      "bytes": 109260
+    },
+    {
+      "origin": "docs/assistant/VALIDATION.md",
+      "archived_path": "docs/assistant/history/2026-10-21_cache_front_doors/VALIDATION.md",
+      "sha256": "645d995587eb3471e358b3142622adae6861a20bcf241d84ae4924e50a82cc24",
+      "bytes": 164154
+    }
+  ]
+}

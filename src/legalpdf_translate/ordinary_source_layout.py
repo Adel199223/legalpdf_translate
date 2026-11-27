@@ -2,6 +2,7 @@
 from copy import deepcopy
 from io import BytesIO
 import re
+import unicodedata
 from zipfile import ZipFile, ZIP_DEFLATED, ZipInfo
 from lxml import etree
 from . import saved_docx_layout as model
@@ -12,6 +13,426 @@ R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 CT = "{http://schemas.openxmlformats.org/package/2006/content-types}"
 NS = {"w": W[1:-1]}
+CLOCK_DIRECTION_V1 = 'clock_h_colon_ltr_v1'
+INLINE_FOLIO_DIRECTION_V1 = 'source_bound_folio_separator_ltr_v1'
+INLINE_FOLIO_DIRECTION_V2 = 'source_bound_contact_folio_separator_ltr_v2'
+INLINE_FOLIO_DIRECTION_V3 = 'source_bound_contact_folio_overlap_ltr_v3'
+MIXED_COVERAGE = 'source_mixed_folio_coverage_v1'
+_FOLIO_NUMBER = r'\u200e?[0-9\u0660-\u0669\u06f0-\u06f9]{1,4}\u200e?'
+_INLINE_FRACTION = re.compile(_FOLIO_NUMBER + r' */ *' + _FOLIO_NUMBER)
+_CLOCK = re.compile(r'\u200e?[0-9]{2}\u200e?:(?:\u200e?[0-9]{2}\u200e?:)?\u200e?[0-9]{2}h\u200e?')
+_CLOCK_LEFT = set('([{«“"\'،؛')
+_CLOCK_RIGHT = set(')]}»”"\'.,;!?،؛؟')
+
+
+def _clock_space(char):
+    return char.isspace() and unicodedata.category(char) not in {'Cc', 'Cf'}
+
+
+def _clock_matches(text):
+    """Recognition only; original marks, characters and offsets are never replaced."""
+    for match in _CLOCK.finditer(text):
+        start, end = match.span()
+        if start and not (_clock_space(text[start - 1]) or text[start - 1] in _CLOCK_LEFT):
+            continue
+        tail = end
+        while tail < len(text) and text[tail] in _CLOCK_RIGHT:
+            tail += 1
+        if tail < len(text) and not _clock_space(text[tail]):
+            continue
+        numbers = match.group().replace('\u200e', '')[:-1].split(':')
+        if int(numbers[0]) > 23 or any(int(value) > 59 for value in numbers[1:]):
+            continue
+        yield start, end
+
+
+def _clock_run_inventory(paragraph, row):
+    """Decline hidden structure; return exact direct-run character ownership."""
+    if (row.get('has_field') or row.get('has_numbering') or row.get('has_page_break')
+            or 'numPr' in row.get('ppr_xml', '') or any(t['kind'] != 't' for t in row['tokens'])
+            or any(child.tag not in {W+'pPr', W+'r'} for child in paragraph)):
+        return None
+    props = paragraph.findall(W+'pPr')
+    if len(props) != 1 or props[0].find(W+'numPr') is not None or props[0].find(W+'sectPr') is not None:
+        return None
+    bidi = props[0].findall(W+'bidi')
+    if len(bidi) != 1 or bidi[0].get(W+'val') not in {'1', 'true', 'on'}:
+        return None
+    runs = paragraph.findall(W+'r')
+    offsets, text, offset = [], '', 0
+    for index, run in enumerate(runs):
+        if (any(child.tag not in {W+'rPr', W+'t'} for child in run)
+                or len(run.findall(W+'rPr')) > 1):
+            return None
+        value = ''.join(t.text or '' for t in run.findall(W+'t'))
+        offsets.append((index, offset, offset + len(value), run, value))
+        text += value
+        offset += len(value)
+    if (text != ''.join(t['text'] for t in row['tokens'])
+            or any(unicodedata.category(char) in {'Cc', 'Cf'} and char != '\u200e' for char in text)):
+        return None
+    return text, offsets
+
+
+def _clock_rtl(run):
+    props = run.findall(W+'rPr')
+    if len(props) != 1:
+        return None
+    values = props[0].findall(W+'rtl')
+    if (len(values) != 1 or set(values[0].attrib) != {W+'val'} or len(values[0])
+            or values[0].get(W+'val') not in {'0', '1'}):
+        return None
+    return values[0]
+
+
+def _clock_colons(text, offsets, start, end):
+    """Every colon is whole-run; digits and h must already be explicit LTR."""
+    colons = []
+    for index, left, right, run, value in offsets:
+        if right <= start or left >= end:
+            continue
+        direction = _clock_rtl(run)
+        part = text[max(left, start):min(right, end)]
+        if any(char in '0123456789h' for char in part) and (direction is None or direction.get(W+'val') != '0'):
+            return None
+        for position in range(max(left, start), min(right, end)):
+            if text[position] == ':':
+                if value != ':' or right != left + 1 or direction is None:
+                    return None
+                colons.append((index, position, direction))
+    return colons
+
+
+def _apply_clock_direction(nodes, mapped, rows, owners, decisions, plan, target_lang, selected_pages):
+    plan.update(clock_direction_version=CLOCK_DIRECTION_V1, clock_ltr_spans=[])
+    if target_lang != 'AR':
+        return
+    excluded = {p['paragraph_id'] for p in decisions.get('paragraph_partitions', [])}
+    excluded.update(p['paragraph_ids'][0] for p in plan['decorative_rules'])
+    ownership = {}
+    for page, ids in owners.items():
+        for pid in ids:
+            ownership.setdefault(pid, []).append(page)
+    owner = {pid: pages[0] for pid, pages in ownership.items() if len(pages) == 1 and pages[0] in selected_pages}
+    for identifier, row in rows.items():
+        if (identifier not in owner or identifier in excluded or mapped[identifier].get('parts')
+                or mapped[identifier].get('part_uri', 'word/document.xml') != 'word/document.xml'):
+            continue
+        inventory = _clock_run_inventory(nodes[identifier], row)
+        if inventory is None:
+            continue
+        text, offsets = inventory
+        for start, end in _clock_matches(text):
+            colons = _clock_colons(text, offsets, start, end)
+            if colons is None:
+                continue
+            changed = [(index, position, node) for index, position, node in colons if node.get(W+'val') == '1']
+            if not changed:
+                continue
+            plan['clock_ltr_spans'].append({'paragraph_id':identifier, 'source_page_number':owner[identifier],
+                'start':start, 'end':end, 'clock_text_sha256':model._sha(text[start:end].encode('utf-8')),
+                'colon_runs':[{'run_index':index, 'character_offset':position, 'before_rtl':1, 'after_rtl':0}
+                              for index, position, _ in changed]})
+            for _, _, node in changed:
+                node.set(W+'val', '0')
+
+
+def _checked_clock_plan(plan, expected_mode, rows, owners, selected_pages):
+    keys = {'clock_direction_version', 'clock_ltr_spans'}
+    if expected_mode is None:
+        if keys.intersection(plan): model._fail('source_clock_direction_version')
+        return {}
+    if (expected_mode != CLOCK_DIRECTION_V1 or plan.get('clock_direction_version') != expected_mode
+            or type(plan.get('clock_ltr_spans')) is not list):
+        model._fail('source_clock_direction_version')
+    by_id, previous = {}, (-1, -1)
+    order = {pid:index for index,pid in enumerate(rows)}
+    for span in plan['clock_ltr_spans']:
+        if (type(span) is not dict or set(span) != {'paragraph_id','source_page_number','start','end','clock_text_sha256','colon_runs'}
+                or type(span['paragraph_id']) is not str or span['paragraph_id'] not in rows
+                or type(span['source_page_number']) is not int
+                or span['source_page_number'] not in selected_pages
+                or [page for page,ids in owners.items() if span['paragraph_id'] in ids] != [span['source_page_number']]
+                or type(span['start']) is not int or type(span['end']) is not int
+                or not 0 <= span['start'] < span['end'] <= len(rows[span['paragraph_id']]['text'])
+                or type(span['colon_runs']) is not list or not span['colon_runs']):
+            model._fail('source_clock_direction_delta')
+        key = (order[span['paragraph_id']], span['start'])
+        if key <= previous: model._fail('source_clock_direction_delta')
+        previous = key
+        by_id.setdefault(span['paragraph_id'], []).append(span)
+    return by_id
+
+
+def _verified_clock_copy(actual, baseline, row, spans):
+    """Prove listed actual attributes, undo only them, then compare complete XML."""
+    restored = deepcopy(actual)
+    if not spans:
+        return restored
+    inventory = _clock_run_inventory(baseline, row)
+    actual_inventory = _clock_run_inventory(restored, row)
+    if inventory is None or actual_inventory is None:
+        model._fail('source_clock_direction_delta')
+    text, offsets = inventory
+    matches = set(_clock_matches(text))
+    used, previous_end = set(), -1
+    for span in spans:
+        start, end = span['start'], span['end']
+        if ((start, end) not in matches or start < previous_end
+                or span['clock_text_sha256'] != model._sha(text[start:end].encode('utf-8'))):
+            model._fail('source_clock_direction_delta')
+        previous_end = end
+        colon_inventory = _clock_colons(text, offsets, start, end)
+        if colon_inventory is None: model._fail('source_clock_direction_delta')
+        expected = [(index, position) for index, position, node in colon_inventory if node.get(W+'val') == '1']
+        declared = []
+        for change in span['colon_runs']:
+            if (type(change) is not dict or set(change) != {'run_index','character_offset','before_rtl','after_rtl'}
+                    or any(type(change[k]) is not int for k in change)
+                    or change['before_rtl'] != 1 or change['after_rtl'] != 0):
+                model._fail('source_clock_direction_delta')
+            key = (change['run_index'], change['character_offset'])
+            if key in used or key not in expected: model._fail('source_clock_direction_delta')
+            used.add(key);declared.append(key)
+            index, position = key
+            actual_run = actual_inventory[1][index]
+            direction = _clock_rtl(actual_run[3])
+            if actual_run[1] != position or actual_run[4] != ':' or direction is None or direction.get(W+'val') != '0':
+                model._fail('source_clock_direction_delta')
+            direction.set(W+'val', '1')
+        if not expected or declared != expected: model._fail('source_clock_direction_delta')
+    if model._c14n(restored) != model._c14n(baseline): model._fail('source_clock_direction_delta')
+    return restored
+
+def _inline_folio_run_inventory(paragraph, row):
+    """Direct plain runs, with only the exact represented terminal page break."""
+    tokens = row['tokens']
+    terminal_break = bool(tokens and tokens[-1]['kind'] == 'page_break')
+    content = tokens[:-1] if terminal_break else tokens
+    if (row.get('has_field') or row.get('has_numbering')
+            or bool(row.get('has_page_break')) != terminal_break
+            or 'numPr' in row.get('ppr_xml', '') or not content
+            or any(t['kind'] != 't' for t in content)
+            or any(child.tag not in {W+'pPr', W+'r'} for child in paragraph)):
+        return None
+    props = paragraph.findall(W+'pPr')
+    if len(props) != 1 or props[0].find(W+'numPr') is not None or props[0].find(W+'sectPr') is not None:
+        return None
+    bidi = props[0].findall(W+'bidi')
+    if len(bidi) != 1 or bidi[0].get(W+'val') not in {'1', 'true', 'on'}:
+        return None
+    runs = paragraph.findall(W+'r')
+    offsets, text, offset, breaks = [], '', 0, 0
+    for index, run in enumerate(runs):
+        if len(run.findall(W+'rPr')) > 1 or run.text:
+            return None
+        rpr = run.find(W+'rPr')
+        if rpr is not None and any(node.tag in {W+'vanish', W+'webHidden', W+'specVanish', W+'rPrChange'} for node in rpr.iter()):
+            return None
+        for child in run:
+            if child.tag in {W+'rPr', W+'t'}:
+                if child.tag == W+'t' and len(child):
+                    return None
+                continue
+            if (child.tag != W+'br' or not terminal_break or index != len(runs)-1
+                    or child is not run[-1] or dict(child.attrib) != {W+'type':'page'}
+                    or len(child) or child.text):
+                return None
+            breaks += 1
+        value = ''.join(t.text or '' for t in run.findall(W+'t'))
+        offsets.append((index, offset, offset+len(value), run, value))
+        text += value
+        offset += len(value)
+    if (breaks != int(terminal_break) or text != ''.join(t['text'] for t in content)
+            or row['text'] != text + ('\f' if terminal_break else '')
+            or any(unicodedata.category(char) in {'Cc', 'Cf'} and char != '\u200e' for char in text)):
+        return None
+    return text, offsets
+
+
+def _inline_folio_separator(text, offsets, source_span):
+    start, end = source_span['start'], source_span['end']
+    if (not 0 <= start < end <= len(text) or _INLINE_FRACTION.fullmatch(text[start:end]) is None
+            or re.fullmatch(r'\u200e? *', text[end:]) is None
+            or start >= 2 and text[start-2:start] == '\u200e\u200e'
+            or model._sha(text[start:end].encode()) != source_span['literal_sha256']):
+        return None
+    separators = []
+    for index, left, right, run, value in offsets:
+        if right <= start or left >= end:
+            continue
+        direction = _clock_rtl(run)
+        part = text[max(left,start):min(right,end)]
+        if any(char.isdecimal() for char in part) and (direction is None or direction.get(W+'val') != '0'):
+            return None
+        if '/' in part:
+            if re.fullmatch(r' */ *', value) is None or direction is None:
+                return None
+            separators.append((index,left,right,direction))
+    return separators[0] if len(separators) == 1 else None
+
+
+def _inline_folio_expected(nodes, mapped, snapshot, pages, decisions, context, *, accepted_footers=(), evidence=None, mixed=()):
+    """Recompute source qualification and the only allowed baseline run delta."""
+    from .ordinary_source_folio_proof import direction_target_spans
+    qualified = direction_target_spans(snapshot, pages, decisions, context, accepted_footers=accepted_footers)
+    if snapshot['target_lang'] != 'AR':
+        return []
+    owners = {}
+    for page, ids in context['page_groups']:
+        for identifier in ids:
+            owners.setdefault(identifier, []).append(page)
+    by_id = {span['paragraph_id']:span for span in qualified}
+    by_id.update({span['paragraph_id']:span for span in mixed})
+    result = []
+    for row in snapshot['paragraphs']:
+        identifier = row['id']
+        span = by_id.get(identifier)
+        node = nodes[identifier]
+        if (span is None or owners.get(identifier) != [span['page_number']]
+                or mapped[identifier].get('parts')
+                or mapped[identifier].get('part_uri','word/document.xml') != 'word/document.xml'
+                or node.getparent() is None or node.getparent().tag != W+'body'):
+            continue
+        inventory = _inline_folio_run_inventory(node,row)
+        if inventory is None:
+            continue
+        separator = _inline_folio_separator(*inventory,span)
+        if separator is None or separator[3].get(W+'val') != '1':
+            continue
+        index,left,right,_ = separator
+        record = {'paragraph_id':identifier,'source_page_number':span['page_number'],
+            'start':span['start'],'end':span['end'],'literal_sha256':span['literal_sha256'],
+            'separator_runs':[{'run_index':index,'start':left,'end':right,'before_rtl':1,'after_rtl':0}]}
+        if 'footer_association' in span:
+            matches = [p for p in evidence['pages'] if p['page_number'] == span['page_number']]
+            signature = matches[0].get('retained_terminal_associations', {}).get('canonical_proposal_sha256') if len(matches)==1 else None
+            if type(signature) is not str or not re.fullmatch(r'[a-f0-9]{64}', signature):
+                model._fail('source_inline_folio_direction_delta')
+            record.update(footer_association=span['footer_association'], canonical_proposal_sha256=signature)
+        result.append(record)
+    return result
+
+
+def _valid_mixed_spans(nodes, mapped, snapshot, pages, decisions, context, plan, evidence):
+    from .ordinary_source_folio_proof import contact_overlap_spans
+    from .ordinary_terminal_closing_v5 import association_context
+    associations=association_context(snapshot,decisions,context,evidence,plan["source_footers"])
+    for group in plan["source_footers"]:
+        n=group["source_page_number"]
+        source=next(p for p in evidence["pages"] if p["page_number"]==n)
+        binding=source.get("retained_terminal_associations",{})
+        canonical,response=binding.get("canonical_proposal_sha256"),source.get("response_sha256")
+        if all(isinstance(v,str) and re.fullmatch(r"[0-9a-f]{64}",v) for v in (canonical,response)):
+            associations.append({"source_page_number":n,"accepted_footer":{k:deepcopy(group[k]) for k in
+                ("kind","paragraph_ids","bbox")},"canonical_proposal_sha256":canonical,"response_sha256":response})
+    rows={r["id"]:r for r in snapshot["paragraphs"]}
+    result=[]
+    for span in contact_overlap_spans(snapshot,pages,decisions,context,associations):
+        ident=span["paragraph_id"];node=nodes[ident]
+        if (snapshot["target_lang"]!="AR" or mapped[ident].get("parts") or node.getparent() is None
+                or node.getparent().tag!=W+"body" or mapped[ident].get("part_uri","word/document.xml")!="word/document.xml"):
+            continue
+        runs=_inline_folio_run_inventory(node,rows[ident])
+        separator=_inline_folio_separator(*runs,span) if runs else None
+        if separator and separator[3].get(W+"val") in ("0","1"):
+            result.append(span)
+    return result
+
+
+def _suppress_mixed_footer(members,base,snapshot,coverage,plan):
+    """Only suppress a single completely app-owned PAGE story after complete evidence."""
+    if not coverage or plan["source_footers"]:
+        return members
+    from .ordinary_presentation import suppress_footer
+    projected,removed=suppress_footer(members,base.docx_bytes,snapshot["target_lang"],True)
+    # A custom or second footer story must keep its original presentation.
+    footer_parts={n for n in members if re.fullmatch(r"word/footer[0-9]+\.xml",n)}
+    if len(removed)==1 and set(removed)==footer_parts:
+        plan["suppressed_generated_footer_parts"]=list(removed)
+        return projected
+    return members
+
+
+def _apply_inline_folio_direction(nodes, mapped, snapshot, pages, decisions, context, plan, mode, evidence, *, mixed=()):
+    footers = plan['source_footers'] if mode in (INLINE_FOLIO_DIRECTION_V2,INLINE_FOLIO_DIRECTION_V3) else ()
+    spans = _inline_folio_expected(nodes,mapped,snapshot,pages,decisions,context,accepted_footers=footers,evidence=evidence,mixed=mixed)
+    plan.update(inline_folio_direction_version=mode,inline_folio_ltr_spans=spans)
+    for span in spans:
+        run = nodes[span['paragraph_id']].findall(W+'r')[span['separator_runs'][0]['run_index']]
+        _clock_rtl(run).set(W+'val','0')
+
+
+def _checked_inline_folio_plan(plan, expected_mode, rows, owners, selected_pages):
+    keys = {'inline_folio_direction_version','inline_folio_ltr_spans'}
+    if expected_mode is None:
+        if keys.intersection(plan):model._fail('source_inline_folio_direction_version')
+        return {}
+    if (expected_mode not in {INLINE_FOLIO_DIRECTION_V1, INLINE_FOLIO_DIRECTION_V2, INLINE_FOLIO_DIRECTION_V3} or plan.get('inline_folio_direction_version') != expected_mode
+            or type(plan.get('inline_folio_ltr_spans')) is not list):
+        model._fail('source_inline_folio_direction_version')
+    order = {identifier:index for index,identifier in enumerate(rows)}
+    by_id, previous = {}, (-1,-1)
+    for span in plan['inline_folio_ltr_spans']:
+        fields = {'paragraph_id','source_page_number','start','end','literal_sha256','separator_runs'}
+        if expected_mode in (INLINE_FOLIO_DIRECTION_V2,INLINE_FOLIO_DIRECTION_V3) and type(span) is dict and 'footer_association' in span:
+            fields |= {'footer_association','canonical_proposal_sha256'}
+            association = span['footer_association']
+            if (type(association) is not dict
+                    or set(association) != {'kind','source_page_number','paragraph_ids','bbox'}
+                    or association['kind'] != 'source_footer' or association['source_page_number'] != span.get('source_page_number')
+                    or type(association['paragraph_ids']) is not list
+                    or association['paragraph_ids'].count(span.get('paragraph_id')) != 1
+                    or type(span.get('canonical_proposal_sha256')) is not str
+                    or re.fullmatch(r'[a-f0-9]{64}', span['canonical_proposal_sha256']) is None):
+                model._fail('source_inline_folio_direction_delta')
+        if (type(span) is not dict or set(span) != fields
+                or type(span['paragraph_id']) is not str or span['paragraph_id'] not in rows
+                or type(span['source_page_number']) is not int or span['source_page_number'] not in selected_pages
+                or [page for page,ids in owners.items() if span['paragraph_id'] in ids] != [span['source_page_number']]
+                or type(span['start']) is not int or type(span['end']) is not int
+                or not 0 <= span['start'] < span['end'] <= len(rows[span['paragraph_id']]['text'])
+                or type(span['literal_sha256']) is not str or re.fullmatch(r'[a-f0-9]{64}',span['literal_sha256']) is None
+                or type(span['separator_runs']) is not list or len(span['separator_runs']) != 1):
+            model._fail('source_inline_folio_direction_delta')
+        key = (order[span['paragraph_id']],span['start'])
+        if key <= previous:model._fail('source_inline_folio_direction_delta')
+        previous = key
+        change = span['separator_runs'][0]
+        if (type(change) is not dict or set(change) != {'run_index','start','end','before_rtl','after_rtl'}
+                or any(type(change[k]) is not int for k in change)
+                or change['run_index'] < 0 or not 0 <= change['start'] < change['end']
+                or change['before_rtl'] != 1 or change['after_rtl'] != 0):
+            model._fail('source_inline_folio_direction_delta')
+        by_id.setdefault(span['paragraph_id'],[]).append(span)
+    return by_id
+
+
+def _verified_inline_folio_copy(actual, baseline, row, spans):
+    """Undo only enumerated separator attributes; caller composes clock undo."""
+    restored = deepcopy(actual)
+    if not spans:
+        return restored
+    inventory = _inline_folio_run_inventory(baseline,row)
+    actual_inventory = _inline_folio_run_inventory(restored,row)
+    if inventory is None or actual_inventory is None:
+        model._fail('source_inline_folio_direction_delta')
+    for span in spans:
+        separator = _inline_folio_separator(*inventory,span)
+        if separator is None or separator[3].get(W+'val') != '1':
+            model._fail('source_inline_folio_direction_delta')
+        index,left,right,_ = separator
+        if span['separator_runs'] != [{'run_index':index,'start':left,'end':right,'before_rtl':1,'after_rtl':0}]:
+            model._fail('source_inline_folio_direction_delta')
+        if index >= len(actual_inventory[1]):model._fail('source_inline_folio_direction_delta')
+        actual_run = actual_inventory[1][index]
+        direction = _clock_rtl(actual_run[3])
+        if (actual_run[1:3] != (left,right) or actual_run[4] != inventory[1][index][4]
+                or direction is None or direction.get(W+'val') != '0'):
+            model._fail('source_inline_folio_direction_delta')
+        direction.set(W+'val','1')
+    return restored
+
 
 def _xml(raw):
     return model._xml(raw)
@@ -19,10 +440,16 @@ def _xml(raw):
 def _bytes(root):
     return etree.tostring(root,xml_declaration=True,encoding="UTF-8",standalone=True)
 
-def _folio_ltr_span(paragraph, *, legacy_wrapper=False):
+def _folio_ltr_span(paragraph, *, legacy_wrapper=False, controlled_numeric=False):
     """One closed Arabic folio expression; no text or font substitutions."""
     text=''.join(n.text or '' for n in paragraph.iter(W+'t'))
-    match=re.fullmatch(r'(?:الصفحة|صفحة)\s+([0-9\u0660-\u0669\u06f0-\u06f9]{1,4}(?:\s*/\s*[0-9\u0660-\u0669\u06f0-\u06f9]{1,4})?)\s*',text)
+    if controlled_numeric:
+        # The primary writer wraps protected numbers with LRM. Accept only
+        # those marks at numeric boundaries; retain their exact text/offsets.
+        number=r'\u200e?[0-9\u0660-\u0669\u06f0-\u06f9]{1,4}\u200e?'
+        match=re.fullmatch(r'(?:الصفحة|صفحة)\s+('+number+r'(?:[ \t]*[/／][ \t]*'+number+r')?)[ \t]*',text)
+    else:
+        match=re.fullmatch(r'(?:الصفحة|صفحة)\s+([0-9\u0660-\u0669\u06f0-\u06f9]{1,4}(?:\s*/\s*[0-9\u0660-\u0669\u06f0-\u06f9]{1,4})?)\s*',text)
     runs=paragraph.findall(W+'r')
     if match is None or any(child.tag not in {W+'pPr',W+'r'} for child in paragraph):return None
     if any(any(child.tag not in {W+'rPr',W+'t'} for child in run) for run in runs):return None
@@ -70,18 +497,85 @@ def _top(node,body):
         if node is None:model._fail("source_layout_body_ownership")
     return node
 
-def transform(base, snapshot, pages, decisions, context, evidence, folio_direction_mode='numeric_run_ltr_v2'):
+def _retained_associations(snapshot,pages,decisions,owners,page):
+    """Requalify positive response-bound hints against current immutable ownership."""
+    from .ordinary_layout_contracts import (retained_terminal_association,
+        RETAINED_TERMINAL_ASSOCIATIONS_V1,PROPOSAL_VERSION_V3,_ids)
+    container=page.get('retained_terminal_associations')
+    if (type(container) is not dict or set(container)!={'version','canonical_proposal_sha256','associations','review_required'}
+            or container['version']!=RETAINED_TERMINAL_ASSOCIATIONS_V1 or container['review_required'] is not True
+            or type(container['canonical_proposal_sha256']) is not str
+            or re.fullmatch(r'[a-f0-9]{64}',container['canonical_proposal_sha256']) is None
+            or type(container['associations']) is not list or len(container['associations'])>1):
+        model._fail('source_closing_retained_association')
+    number=page['page_number'];ids=owners[number]
+    frame=next((p for p in pages if p['page_number']==number),None)
+    if frame is None:model._fail('source_closing_retained_association')
+    choices={p['paragraph_id']:p for p in decisions['paragraphs']};rows=[]
+    for identifier in ids:
+        choice=deepcopy(choices[identifier]);regions=choice.pop('regions');choice.pop('unmapped_reason',None)
+        if len(regions)==1 and regions[0]['page_number']==number:
+            choice['bbox']=[v/(frame['width_px'] if i%2==0 else frame['height_px'])
+                            for i,v in enumerate(regions[0]['bbox_px'])]
+        else:choice['bbox']=None
+        rows.append(choice)
+    bands=[]
+    for band in decisions['bands']:
+        owned=_ids(band)
+        if set(owned).intersection(ids):
+            if not set(owned)<=set(ids):model._fail('source_closing_retained_association')
+            bands.append(deepcopy(band))
+    hints=[record.get('original_hint') if type(record) is dict else None for record in container['associations']]
+    proposal={'version':PROPOSAL_VERSION_V3,'page_number':number,'paragraphs':rows,'bands':bands,
+        'paragraph_partitions':decisions.get('paragraph_partitions',[]),'source_coverage_findings':[],
+        'source_layout_evidence':hints}
+    checked=[]
+    for record,hint in zip(container['associations'],hints):
+        result=retained_terminal_association(snapshot,proposal,ids,hint,
+            proposal_sha256=container['canonical_proposal_sha256'])
+        if result is None or result!=record:model._fail('source_closing_retained_association')
+        if any(set(record['paragraph_ids']).intersection(item['paragraph_ids']) for item in page.get('layout',[])):
+            model._fail('source_closing_retained_association')
+        checked.append(result)
+    return checked
+
+
+def _labeled_folio_module(mode):
+    from . import ordinary_labeled_folio_direction as v1
+    if mode is None or mode == v1.VERSION:
+        return v1
+    from . import ordinary_labeled_folio_direction_v2 as v2
+    if mode == v2.VERSION:
+        return v2
+    model._fail('source_labeled_folio_direction_version')
+
+
+def transform(base, snapshot, pages, decisions, context, evidence, folio_direction_mode='numeric_run_ltr_v2', clock_direction_mode=None, inline_folio_direction_mode=None, footer_placement_mode=None, source_spacing_mode=None, closing_group_mode=None, in_flow_folio_direction_mode=None, labeled_folio_direction_mode=None):
     """No side effects; only explicitly qualified decorative/footer rows may change."""
     from .saved_docx_layout_writer import SavedDocxLayoutArtifact
     from .ordinary_layout_contracts import proposal_source_evidence, PROPOSAL_VERSION_V3
-    if folio_direction_mode not in {'legacy_none','direction_wrapper_v1','numeric_run_ltr_v2'}:model._fail('source_folio_direction_version')
+    if folio_direction_mode not in {'legacy_none','direction_wrapper_v1','numeric_run_ltr_v2','numeric_run_ltr_v3','numeric_run_ltr_v4'}:model._fail('source_folio_direction_version')
+    from . import ordinary_in_flow_folio_bridges as in_flow
+    labeled=_labeled_folio_module(labeled_folio_direction_mode)
+    if (labeled_folio_direction_mode not in {None, labeled.VERSION}
+            or labeled_folio_direction_mode is not None and (folio_direction_mode != 'numeric_run_ltr_v4' or in_flow_folio_direction_mode != in_flow.VERSION)):
+        model._fail('source_labeled_folio_direction_version')
+    if (in_flow_folio_direction_mode not in {None, in_flow.VERSION}
+            or in_flow_folio_direction_mode is not None and folio_direction_mode != 'numeric_run_ltr_v4'):
+        model._fail('source_in_flow_folio_direction_version')
+    if clock_direction_mode not in {None, CLOCK_DIRECTION_V1}:model._fail('source_clock_direction_version')
+    if inline_folio_direction_mode not in {None, INLINE_FOLIO_DIRECTION_V1, INLINE_FOLIO_DIRECTION_V2, INLINE_FOLIO_DIRECTION_V3}:model._fail('source_inline_folio_direction_version')
+    from .ordinary_terminal_source_layout import FOOTER_VERSION, SPACING_VERSION
+    if footer_placement_mode not in {None, FOOTER_VERSION}:model._fail('source_footer_placement_version')
+    if source_spacing_mode not in {None, SPACING_VERSION} or (source_spacing_mode is not None and footer_placement_mode is None):model._fail('source_spacing_version')
+    if closing_group_mode not in {None, 'bounded_terminal_signature_context_v1', 'bounded_terminal_signature_context_v2', 'bounded_terminal_signature_context_v3', 'bounded_terminal_signature_context_v4', 'bounded_terminal_signature_context_v5'} or closing_group_mode is not None and footer_placement_mode is None:model._fail('source_closing_group_version')
     if base.source_map.get("writer_version")!="saved_docx_layout_writer_ordinary_presentation_v6":model._fail("source_layout_base_version")
     if type(evidence) is not dict or evidence.get("version")!="ordinary_source_evidence_v1" or type(evidence.get("pages")) is not list:model._fail("source_layout_evidence_invalid")
     # Revalidate the evidence against the trusted snapshot and current decisions.
     owners={page:list(ids) for page,ids in context["page_groups"]}
     rows={p["id"]:p for p in snapshot["paragraphs"]}
     choices={p["paragraph_id"]:p for p in decisions["paragraphs"]}
-    layout=[];seen=set()
+    layout=[];seen=set();retained=[]
     for page in evidence["pages"]:
         number=page.get("page_number")
         if number not in owners or number in seen:model._fail("source_layout_evidence_page")
@@ -91,6 +585,8 @@ def transform(base, snapshot, pages, decisions, context, evidence, folio_directi
         proposal={"version":PROPOSAL_VERSION_V3,"page_number":number,"paragraphs":[choices[i] for i in ids],"bands":decisions["bands"],"paragraph_partitions":decisions.get("paragraph_partitions",[]),"source_coverage_findings":[],"source_layout_evidence":page.get("layout",[])}
         checked=proposal_source_evidence(snapshot,view,proposal)
         layout.extend({**item,"source_page_number":number} for item in checked["layout"])
+        if closing_group_mode in {'bounded_terminal_signature_context_v3','bounded_terminal_signature_context_v4','bounded_terminal_signature_context_v5'}:
+            retained.extend(_retained_associations(snapshot,pages,decisions,owners,page))
     members,_=model._package(base.docx_bytes)
     members=dict(members);root=_xml(members["word/document.xml"]);body=root.find(W+"body")
     mapped={p["paragraph_id"]:p for p in base.source_map["paragraphs"]}
@@ -98,8 +594,13 @@ def transform(base, snapshot, pages, decisions, context, evidence, folio_directi
     part_nodes={i:[_node_at(root,p["location"]) for p in row.get("parts",[])] for i,row in mapped.items()}
     structural=[_node_at(root,path) for path in base.source_map["structural_paragraphs"]]
     plan={"version":"ordinary_source_layout_plan_v1","evidence_sha256":model._sha(model._canonical(evidence)),"decorative_rules":[],"source_footers":[],"qualifications":[],"footer_placement":"source_footer_on_first_output_page_of_source_section"}
+    if closing_group_mode in {'bounded_terminal_signature_context_v3','bounded_terminal_signature_context_v4','bounded_terminal_signature_context_v5'}:plan['retained_terminal_associations']=retained
     if folio_direction_mode!='legacy_none':plan['folio_ltr_spans']=[]
-    if folio_direction_mode=='numeric_run_ltr_v2':plan['folio_direction_version']=folio_direction_mode
+    if folio_direction_mode in {'numeric_run_ltr_v2','numeric_run_ltr_v3','numeric_run_ltr_v4'}:plan['folio_direction_version']=folio_direction_mode
+    if folio_direction_mode=='numeric_run_ltr_v4':plan['folio_bridge_direction_spans']=[]
+    labeled_promoted={}
+    if labeled_folio_direction_mode is not None:
+        plan[labeled.KEY],plan[labeled.LEDGER]=labeled.VERSION,[]
     frames={p["page_number"]:p for p in pages}
     for item in layout:
         if item["kind"]!="decorative_rule":continue
@@ -169,12 +670,26 @@ def transform(base, snapshot, pages, decisions, context, evidence, folio_directi
                 for identifier in item["paragraph_ids"]:
                     node=nodes[identifier]
                     if node.getparent() is not body:model._fail("source_footer_not_plain_body")
+                    before_break_removal=deepcopy(node) if folio_direction_mode=='numeric_run_ltr_v4' else None
                     for br in list(node.iter(W+"br")):
                         if br.get(W+"type")!="page":model._fail("source_footer_control")
                         br.getparent().remove(br)
                     if folio_direction_mode!='legacy_none' and snapshot['target_lang']=='AR' and choices[identifier]['role']=='source_folio':
-                        span=_folio_ltr_span(node,legacy_wrapper=folio_direction_mode=='direction_wrapper_v1')
+                        span=_folio_ltr_span(node,legacy_wrapper=folio_direction_mode=='direction_wrapper_v1',
+                            controlled_numeric=folio_direction_mode in {'numeric_run_ltr_v3','numeric_run_ltr_v4'})
                         if span is not None:plan['folio_ltr_spans'].append({'paragraph_id':identifier,**span})
+                        elif folio_direction_mode=='numeric_run_ltr_v4' and not mapped[identifier].get('parts'):
+                            from . import ordinary_folio_bridges_v4 as bridges
+                            bridge=bridges.derive(node,before_break_removal,rows[identifier])
+                            if bridge is not None:
+                                bridges.apply(node,bridge)
+                                plan[bridges.LEDGER].append({'paragraph_id':identifier,'source_page_number':page,**bridge})
+                        if (labeled_folio_direction_mode is not None and identifier not in labeled.occupied(plan)
+                                and not mapped[identifier].get('parts')
+                                and [p for p,ids in owners.items() if identifier in ids]==[page]):
+                            core=labeled.derive(node,before_break_removal,rows[identifier])
+                            if core is not None:
+                                labeled_promoted[identifier]=labeled.record(identifier,page,'promoted_footer',item,evidence,core)
                     body.remove(node);footer.append(node)
                 name=f"word/footer{next_part}.xml";next_part+=1;first_id=add_footer(name,footer)
                 sec=deepcopy(section)
@@ -197,6 +712,48 @@ def transform(base, snapshot, pages, decisions, context, evidence, folio_directi
             if any(node.get(W+"type")=="page" for node in root.iter(W+"br")):
                 model._fail("source_section_unowned_page_break")
             members["word/_rels/document.xml.rels"]=_bytes(rels);members["[Content_Types].xml"]=_bytes(types)
+    if footer_placement_mode is not None:
+        from .ordinary_terminal_source_layout import apply
+        apply(root,nodes,mapped,plan,owners,choices,members,rows,source_spacing_mode)
+    if closing_group_mode is not None:
+        from .ordinary_terminal_closing_group import apply as closing_apply
+        closing_context=None
+        if closing_group_mode in {'bounded_terminal_signature_context_v3','bounded_terminal_signature_context_v4','bounded_terminal_signature_context_v5'}:
+            from .ordinary_terminal_closing_v3 import baseline_context
+            closing_context=baseline_context(base,snapshot,pages,decisions,context)
+        local_kwargs={}
+        if closing_group_mode=='bounded_terminal_signature_context_v5':
+            from .ordinary_terminal_closing_v5 import association_context
+            local_kwargs['local_footer_context']=association_context(snapshot,decisions,context,evidence,plan['source_footers'])
+        closing_apply(root,nodes,mapped,rows,choices,owners,plan,members,version=closing_group_mode,base_context=closing_context,**local_kwargs)
+    if clock_direction_mode is not None:
+        _apply_clock_direction(nodes, mapped, rows, owners, decisions, plan, snapshot['target_lang'], context['selected_pages'])
+    mixed=[]
+    if inline_folio_direction_mode==INLINE_FOLIO_DIRECTION_V3:
+        from .ordinary_source_folio_proof import complete_mixed_coverage
+        mixed=_valid_mixed_spans(nodes,mapped,snapshot,pages,decisions,context,plan,evidence)
+        coverage=complete_mixed_coverage(snapshot,pages,decisions,context,mixed)
+        plan[MIXED_COVERAGE]=coverage
+        members=_suppress_mixed_footer(members,base,snapshot,coverage,plan)
+    if inline_folio_direction_mode is not None:
+        _apply_inline_folio_direction(nodes,mapped,snapshot,pages,decisions,context,plan,inline_folio_direction_mode,evidence,mixed=mixed)
+    if in_flow_folio_direction_mode is not None:
+        in_flow.apply(nodes,mapped,rows,choices,owners,context['selected_pages'],layout,evidence,plan,snapshot['target_lang'])
+    if labeled_folio_direction_mode is not None:
+        records=[r for i,r in labeled_promoted.items() if i not in labeled.occupied(plan)]
+        records.extend(labeled.retained(nodes,mapped,rows,choices,owners,context['selected_pages'],layout,evidence,plan,snapshot['target_lang']))
+        order={i:n for n,i in enumerate(rows)}
+        records.sort(key=lambda r:order[r['paragraph_id']])
+        plan[labeled.LEDGER]=records
+        for record in records:
+            node=nodes[record['paragraph_id']]
+            labeled.apply(node,record)
+            # The same proof also supports a real promoted footer story; the
+            # fresh terminal placement normally returns its owner to body flow.
+            story=node.getroottree().getroot()
+            if story.tag==W+'ftr':
+                footer=next(f for f in plan['source_footers'] if record['paragraph_id'] in f['paragraph_ids'])
+                members[footer['part_uri']]=_bytes(story)
     members["word/document.xml"]=_bytes(root)
     raw=_pack(members);mapping=deepcopy(base.source_map)
     mapping.update(writer_version=VERSION,docx_sha256=model._sha(raw),base_source_map=deepcopy(base.source_map),source_layout_plan=plan,source_layout_plan_sha256=model._sha(model._canonical(plan)),exact_text_preserved=not bool(plan["decorative_rules"]),exact_meaningful_text_preserved=True)
@@ -206,8 +763,10 @@ def transform(base, snapshot, pages, decisions, context, evidence, folio_directi
         else:
             row.update(part_uri="word/document.xml",location=root.getroottree().getpath(nodes[identifier]))
             for part,node in zip(row.get("parts",[]),part_nodes[identifier]):part["location"]=root.getroottree().getpath(node)
+        if footer_placement_mode is not None:
+            for part,node in zip(row.get("parts",[]),part_nodes[identifier]):part["location"]=root.getroottree().getpath(node)
     mapping["structural_paragraphs"]=[root.getroottree().getpath(n) for n in structural if n.getroottree().getroot() is root]
-    if plan['source_footers']:
+    if plan['source_footers'] and footer_placement_mode is None:
         mapping['logical_order_preserved']=False
         mapping['original_order_preserved']=False
         mapping['owned_parent_sequence_preserved']=True
@@ -222,11 +781,37 @@ def transform(base, snapshot, pages, decisions, context, evidence, folio_directi
     return SavedDocxLayoutArtifact(raw,mapping)
 
 
-def verify(actual, base, snapshot, pages, decisions, context, evidence):
+def verify(actual, base, snapshot, pages, decisions, context, evidence, *, expected_folio_direction=None, expected_clock_direction=None, expected_inline_folio_direction=None, expected_footer_placement=None, expected_source_spacing=None, expected_closing_group=None, expected_in_flow_folio_direction=None, expected_labeled_folio_direction=None):
     """Reconstruct the closed recipe, then independently inventory actual owned stories."""
     saved_plan=actual.source_map.get('source_layout_plan',{})
+    if saved_plan.get('source_footer_placement_version')!=expected_footer_placement or saved_plan.get('source_spacing_version')!=expected_source_spacing:model._fail('source_terminal_policy_version')
+    if saved_plan.get('source_closing_group_version')!=expected_closing_group:model._fail('source_closing_group_version')
     mode=saved_plan.get('folio_direction_version','direction_wrapper_v1' if 'folio_ltr_spans' in saved_plan else 'legacy_none')
-    expected=transform(base,snapshot,pages,decisions,context,evidence,mode)
+    if (expected_folio_direction is not None and mode != expected_folio_direction
+            or mode in {'numeric_run_ltr_v3','numeric_run_ltr_v4'} and expected_folio_direction != mode):
+        model._fail('source_folio_direction_version')
+    clock_rows={r['id']:r for r in snapshot['paragraphs']}
+    clock_owners={page:list(ids) for page,ids in context['page_groups']}
+    bridge_choices={p['paragraph_id']:p for p in decisions['paragraphs']}
+    clock_plan=_checked_clock_plan(saved_plan,expected_clock_direction,clock_rows,clock_owners,context['selected_pages'])
+    inline_plan=_checked_inline_folio_plan(saved_plan,expected_inline_folio_direction,clock_rows,clock_owners,context['selected_pages'])
+    from . import ordinary_folio_bridges_v4 as bridges
+    bridge_plan=bridges.checked_plan(saved_plan,mode,clock_rows,clock_owners,context['selected_pages'])
+    from . import ordinary_in_flow_folio_bridges as in_flow
+    in_flow_plan=in_flow.checked_plan(saved_plan,expected_in_flow_folio_direction,clock_rows,clock_owners,context['selected_pages'])
+    labeled=_labeled_folio_module(expected_labeled_folio_direction)
+    labeled_plan=labeled.checked_plan(saved_plan,expected_labeled_folio_direction,clock_rows,clock_owners,context['selected_pages'])
+    expected=transform(base,snapshot,pages,decisions,context,evidence,mode,expected_clock_direction,expected_inline_folio_direction,expected_footer_placement,expected_source_spacing,expected_closing_group,expected_in_flow_folio_direction,expected_labeled_folio_direction)
+    if (expected_labeled_folio_direction is not None
+            and model._canonical(saved_plan[labeled.LEDGER]) != model._canonical(expected.source_map['source_layout_plan'][labeled.LEDGER])):
+        model._fail('source_labeled_folio_direction_delta')
+    if (expected_in_flow_folio_direction is not None
+            and model._canonical(saved_plan[in_flow.LEDGER]) != model._canonical(expected.source_map['source_layout_plan'][in_flow.LEDGER])):
+        model._fail('source_in_flow_folio_direction_delta')
+    if expected_closing_group in {'bounded_terminal_signature_context_v4','bounded_terminal_signature_context_v5'}:
+        for key in ('source_closing_groups','source_closing_pagination_additions','source_closing_structural_additions')+ (('local_source_footer_associations',) if expected_closing_group=='bounded_terminal_signature_context_v5' else ()):
+            if model._canonical(saved_plan.get(key))!=model._canonical(expected.source_map['source_layout_plan'][key]):
+                model._fail('source_closing_group_delta')
     if actual.source_map!=expected.source_map:model._fail("source_layout_map_changed")
     actual_parts,_=model._package(actual.docx_bytes);expected_parts,_=model._package(expected.docx_bytes)
     if actual_parts!=expected_parts:model._fail("source_layout_package_changed")
@@ -241,7 +826,30 @@ def verify(actual, base, snapshot, pages, decisions, context, evidence):
     if any(actual_parts[name]!=base_parts[name] for name in base_parts if name not in permitted):model._fail('source_layout_unaffected_part')
     actual_doc=_xml(actual_parts['word/document.xml']);base_doc=_xml(base_parts['word/document.xml'])
     base_owned={row['paragraph_id']:row for row in base.source_map['paragraphs']}
+    if expected_inline_folio_direction==INLINE_FOLIO_DIRECTION_V3:
+        if (MIXED_COVERAGE not in plan or plan[MIXED_COVERAGE]!=expected.source_map["source_layout_plan"][MIXED_COVERAGE]
+                or plan.get("suppressed_generated_footer_parts")!=expected.source_map["source_layout_plan"].get("suppressed_generated_footer_parts")):
+            model._fail("source_mixed_folio_coverage")
+        if plan[MIXED_COVERAGE] and not plan["source_footers"]:
+            projection=_suppress_mixed_footer(base_parts,base,snapshot,plan[MIXED_COVERAGE],deepcopy(plan))
+            if any(actual_parts[n]!=projection[n] for n in plan.get("suppressed_generated_footer_parts",[])):
+                model._fail("source_mixed_folio_generated_footer")
+    elif MIXED_COVERAGE in plan:
+        model._fail("source_mixed_folio_coverage")
+    if expected_inline_folio_direction is not None:
+        base_nodes={identifier:_node_at(base_doc,row['location']) for identifier,row in base_owned.items()}
+        actual_owned={row['paragraph_id']:row for row in actual.source_map['paragraphs']}
+        footers = expected.source_map['source_layout_plan']['source_footers'] if expected_inline_folio_direction in (INLINE_FOLIO_DIRECTION_V2,INLINE_FOLIO_DIRECTION_V3) else ()
+        prior_mixed=(_valid_mixed_spans(base_nodes,actual_owned,snapshot,pages,decisions,context,
+                                expected.source_map["source_layout_plan"],evidence)
+                     if expected_inline_folio_direction==INLINE_FOLIO_DIRECTION_V3 else [])
+        independently_qualified=_inline_folio_expected(base_nodes,actual_owned,snapshot,pages,decisions,context,
+                                                       accepted_footers=footers,evidence=evidence,mixed=prior_mixed)
+        if saved_plan['inline_folio_ltr_spans'] != independently_qualified:model._fail('source_inline_folio_direction_delta')
     if plan['source_footers']:
+        if expected_footer_placement is not None:
+            from .ordinary_terminal_source_layout import verify_terminal_order
+            verify_terminal_order(actual_doc,actual.source_map,clock_owners,plan)
         rels=_xml(actual_parts['word/_rels/document.xml.rels']);target={r.get('Id'):'word/'+r.get('Target','') for r in rels}
         sections=list(actual_doc.iter(W+'sectPr'))
         if len(sections)!=len(context['selected_pages']):model._fail('source_section_count')
@@ -254,13 +862,38 @@ def verify(actual, base, snapshot, pages, decisions, context, evidence):
             if len(references)!=3 or {r.get(W+'type') for r in references}!={'first','default','even'}:model._fail('source_section_footer_references')
             for reference in references:
                 part=target.get(reference.get(R+'id'))
-                if part!=(item['part_uri'] if reference.get(W+'type')=='first' else plan['empty_continuation_footer_part']):model._fail('source_section_footer_references')
+                if part!=(item['part_uri'] if reference.get(W+'type')=='first' and expected_footer_placement is None else plan['empty_continuation_footer_part']):model._fail('source_section_footer_references')
         empty=_xml(actual_parts[plan['empty_continuation_footer_part']])
         if len(empty)!=1 or empty[0].tag!=W+'p' or list(empty[0].findall(W+'r')) or list(empty.iter(W+'t')) or list(empty.iter(W+'instrText')):model._fail('source_section_continuation_footer')
         from .ordinary_presentation import suppress_footer
         expected_suppressed,_=suppress_footer(base_parts,base.docx_bytes,snapshot['target_lang'],True)
         for name in plan.get('suppressed_generated_footer_parts',[]):
             if actual_parts[name]!=expected_suppressed[name]:model._fail('source_section_generated_footer_delta')
+    if expected_closing_group is not None:
+        from .ordinary_terminal_closing_group import verify as closing_verify
+        closing_context=None
+        pre_closing_context=None
+        if expected_closing_group in {'bounded_terminal_signature_context_v4','bounded_terminal_signature_context_v5'}:
+            from .ordinary_terminal_closing_v3 import baseline_context
+            from .ordinary_terminal_closing_v4 import artifact_context
+            before_closing=transform(base,snapshot,pages,decisions,context,evidence,mode,
+                expected_clock_direction,expected_inline_folio_direction,expected_footer_placement,expected_source_spacing,None,
+                expected_in_flow_folio_direction,expected_labeled_folio_direction)
+            closing_context=baseline_context(before_closing,snapshot,pages,decisions,context)
+            pre_closing_context=artifact_context(before_closing)
+        if expected_closing_group=='bounded_terminal_signature_context_v3':
+            from .ordinary_terminal_closing_v3 import baseline_context
+            # Reconstruct the trusted pre-closing artifact, without stripping flags.
+            before_closing=transform(base,snapshot,pages,decisions,context,evidence,mode,
+                expected_clock_direction,expected_inline_folio_direction,expected_footer_placement,expected_source_spacing,None)
+            closing_context=baseline_context(before_closing,snapshot,pages,decisions,context)
+        local_kwargs={}
+        if expected_closing_group=='bounded_terminal_signature_context_v5':
+            from .ordinary_terminal_closing_v5 import association_context
+            local_kwargs['local_footer_context']=association_context(snapshot,decisions,context,evidence,before_closing.source_map['source_layout_plan']['source_footers'])
+        closing_verify(actual_doc,actual.source_map,clock_rows,{p['paragraph_id']:p for p in decisions['paragraphs']},clock_owners,plan,actual_parts,
+            {i:_node_at(base_doc,row['location']) for i,row in base_owned.items()},base_context=closing_context,
+            **({'pre_closing_context':pre_closing_context} if expected_closing_group in {'bounded_terminal_signature_context_v4','bounded_terminal_signature_context_v5'} else {}),**local_kwargs)
     mapping=actual.source_map;rules={r["paragraph_ids"][0]:r for r in mapping["source_layout_plan"]["decorative_rules"]}
     rows={r["id"]:r for r in snapshot["paragraphs"]};seen=set()
     for owned in mapping["paragraphs"]:
@@ -290,13 +923,17 @@ def verify(actual, base, snapshot, pages, decisions, context, evidence):
                 if model._c14n(child)!=model._c14n(baseline):model._fail('source_partition_controls_changed')
         else:
             baseline=deepcopy(_node_at(base_doc,base_owned[identifier]['location']))
-            if owned['part_uri']!='word/document.xml':
+            bridge_record=None
+            terminal_footer=expected_footer_placement is not None and any(identifier in item['paragraph_ids'] for item in plan['source_footers'])
+            if owned['part_uri']!='word/document.xml' or terminal_footer:
+                before_break_removal=deepcopy(baseline) if mode==bridges.VERSION else None
                 for br in list(baseline.iter(W+'br')):
                     if br.get(W+'type')!='page':model._fail('source_footer_control')
                     br.getparent().remove(br)
                 span=next((item for item in plan.get('folio_ltr_spans',[]) if item['paragraph_id']==identifier),None)
                 if span is not None:
-                    expected_span=_folio_ltr_span(baseline,legacy_wrapper=mode=='direction_wrapper_v1')
+                    expected_span=_folio_ltr_span(baseline,legacy_wrapper=mode=='direction_wrapper_v1',
+                        controlled_numeric=mode in {'numeric_run_ltr_v3','numeric_run_ltr_v4'})
                     if expected_span!={k:span[k] for k in ('start','end','literal')}:model._fail('source_folio_direction_delta')
                     if mode=='direction_wrapper_v1':
                         directions=node.findall(W+'dir')
@@ -313,10 +950,53 @@ def verify(actual, base, snapshot, pages, decisions, context, evidence):
                             offset=end
                         if ''.join(n.text or '' for run in numeric for n in run.iter(W+'t'))!=span['literal']:model._fail('source_folio_direction_delta')
                     if not numeric or any(run.find(W+'rPr/'+W+'rtl') is None or run.find(W+'rPr/'+W+'rtl').get(W+'val')!='0' for run in numeric):model._fail('source_folio_direction_delta')
-            if model._c14n(node)!=model._c14n(baseline):model._fail('source_layout_run_semantics_changed')
+                if mode==bridges.VERSION:
+                    bridge_record=bridge_plan.pop(identifier,None)
+                    expected_bridge=(bridges.derive(baseline,before_break_removal,rows[identifier])
+                        if span is None and snapshot['target_lang']=='AR' and bridge_choices[identifier]['role']=='source_folio'
+                        and not base_owned[identifier].get('parts') else None)
+                    if expected_bridge is not None:
+                        source_pages=[page for page,ids in clock_owners.items() if identifier in ids]
+                        if len(source_pages)!=1:model._fail('source_folio_bridge_direction_delta')
+                        expected_bridge={'paragraph_id':identifier,'source_page_number':source_pages[0],**expected_bridge}
+                    if bridge_record!=expected_bridge:model._fail('source_folio_bridge_direction_delta')
+            labeled_baseline=deepcopy(baseline) if expected_labeled_folio_direction is not None else None
+            if expected_footer_placement is not None:
+                from .ordinary_terminal_source_layout import expected_presentation
+                baseline=expected_presentation(baseline,identifier,plan)
+            if expected_closing_group is not None:
+                from .ordinary_terminal_closing_group import expected_presentation as closing_presentation
+                baseline=closing_presentation(baseline,identifier,plan)
+            comparison=node
+            labeled_record=labeled_plan.pop(identifier,None)
+            if labeled_record is not None:
+                if labeled_record['scope']=='promoted_footer':
+                    expected_span=labeled.derive(labeled_baseline,before_break_removal,rows[identifier])
+                else:
+                    expected_span=labeled.span(baseline,rows[identifier])
+                if expected_span is None or model._canonical(expected_span)!=model._canonical({k:labeled_record[k] for k in labeled._CORE}):
+                    model._fail('source_labeled_folio_direction_delta')
+                comparison=labeled.verified_copy(comparison,baseline,labeled_record)
+            in_flow_record=in_flow_plan.pop(identifier,None)
+            if in_flow_record is not None:
+                expected_span=in_flow.bridge_span(baseline,rows[identifier])
+                if expected_span is None or expected_span!={k:in_flow_record[k] for k in ('start','end','literal_sha256','bridge_runs')}:
+                    model._fail('source_in_flow_folio_direction_delta')
+                comparison=in_flow.verified_copy(comparison,baseline,in_flow_record)
+            if owned['part_uri']=='word/document.xml':
+                comparison=_verified_inline_folio_copy(comparison,baseline,rows[identifier],inline_plan.pop(identifier,[]))
+                comparison=_verified_clock_copy(comparison,baseline,rows[identifier],clock_plan.pop(identifier,[]))
+            if bridge_record is not None:
+                comparison=bridges.verified_copy(comparison,baseline,bridge_record)
+            if model._c14n(comparison)!=model._c14n(baseline):model._fail('source_layout_run_semantics_changed')
             original="".join(t["text"] for t in rows[identifier]["tokens"] if t["kind"]=="t")
             if visible!=original:model._fail("source_layout_meaningful_text_changed")
     if seen!=set(rows):model._fail("source_layout_coverage_changed")
+    if clock_plan:model._fail('source_clock_direction_delta')
+    if inline_plan:model._fail('source_inline_folio_direction_delta')
+    if bridge_plan:model._fail('source_folio_bridge_direction_delta')
+    if in_flow_plan:model._fail('source_in_flow_folio_direction_delta')
+    if labeled_plan:model._fail('source_labeled_folio_direction_delta')
 
 
 def owned_story_count_descriptor(source_map):

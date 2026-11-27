@@ -1,9 +1,12 @@
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 import json
+import os
+from types import SimpleNamespace
 
 import pytest
 
+from legalpdf_translate import budget_reservations as reservations
 from legalpdf_translate.budget_reservations import BudgetError, ReservationBudget
 
 
@@ -101,3 +104,93 @@ def test_missing_existing_ledger_and_zero_cap_fail_closed(tmp_path):
     budget = ledger(tmp_path, "0")
     with pytest.raises(BudgetError, match="Insufficient"):
         budget.reserve("first", "0.001", {})
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows destination sharing")
+@pytest.mark.parametrize("release", [True, False])
+def test_open_journal_retries_only_its_fsynced_temporary(tmp_path, monkeypatch, release):
+    path = tmp_path / "dispatch_accounting.json"
+    old, new = {"calls": ["start"]}, {"calls": ["start", "finish"]}
+    reservations.atomic_json(path, old)
+    before = path.read_bytes()
+    replace, fsync = os.replace, os.fsync
+    attempts, flushed = [], []
+    with path.open("rb") as reader:
+        def observed_replace(src, dest):
+            attempts.append((src, dest, src.read_bytes()))
+            try:
+                return replace(src, dest)
+            except PermissionError as exc:
+                assert exc.winerror in (5, 32, 33)
+                assert path.read_bytes() == before
+                if release:
+                    reader.close()
+                raise
+        def observed_fsync(fd):
+            flushed.append(fd)
+            return fsync(fd)
+        monkeypatch.setattr(reservations.os, "replace", observed_replace)
+        monkeypatch.setattr(reservations.os, "fsync", observed_fsync)
+        if release:
+            reservations.atomic_json(path, new)
+            assert json.loads(path.read_bytes()) == new
+            assert len(attempts) == 2
+        else:
+            with pytest.raises(PermissionError):
+                reservations.atomic_json(path, new)
+            assert path.read_bytes() == before
+            assert len(attempts) == 7
+    assert len(set(attempts)) == 1 and len(flushed) == 1
+    assert not list(tmp_path.glob(".accounting-*.tmp"))
+
+
+@pytest.mark.parametrize("platform,code,attempts", [
+    ("nt", 5, 2), ("nt", 32, 2), ("nt", 33, 2),
+    ("nt", 2, 1), ("nt", 112, 1), ("nt", None, 1), ("posix", 32, 1),
+])
+def test_other_errors_and_platforms_do_not_retry_replace(tmp_path, monkeypatch, platform, code, attempts):
+    path = tmp_path / "budget.json"
+    reservations.atomic_json(path, {"before": True})
+    before = path.read_bytes()
+    seen = []
+    def replace(src, dest):
+        seen.append((src, dest))
+        if len(seen) == 1:
+            error = PermissionError("injected final publish failure")
+            error.winerror = code
+            raise error
+        os.replace(src, dest)
+    monkeypatch.setattr(reservations, "os", SimpleNamespace(name=platform, fsync=os.fsync, replace=replace))
+    if attempts == 1:
+        with pytest.raises(PermissionError):
+            reservations.atomic_json(path, {"after": True})
+        assert path.read_bytes() == before
+    else:
+        reservations.atomic_json(path, {"after": True})
+        assert json.loads(path.read_bytes()) == {"after": True}
+    assert len(seen) == attempts and len(set(seen)) == 1
+    assert not list(tmp_path.glob(".accounting-*.tmp"))
+
+
+@pytest.mark.parametrize("failure", ["serialization", "fsync"])
+def test_failed_staging_does_not_publish_or_retry(tmp_path, monkeypatch, failure):
+    path = tmp_path / "budget.json"
+    reservations.atomic_json(path, {"before": True})
+    before = path.read_bytes()
+    def no_publish(*_args):
+        pytest.fail("a staged failure must never reach replace")
+    monkeypatch.setattr(reservations.os, "replace", no_publish)
+    payload = {"after": True}
+    if failure == "serialization":
+        payload["nonfinite"] = float("nan")
+        error = ValueError
+    else:
+        def fail_fsync(_fd):
+            exc = OSError("simulated flush failure")
+            exc.winerror = 32
+            raise exc
+        monkeypatch.setattr(reservations.os, "fsync", fail_fsync)
+        error = OSError
+    with pytest.raises(error):
+        reservations.atomic_json(path, payload)
+    assert path.read_bytes() == before and not list(tmp_path.glob(".accounting-*.tmp"))

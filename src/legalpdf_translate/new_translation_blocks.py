@@ -13,12 +13,13 @@ import time
 import unicodedata
 from types import SimpleNamespace
 
-from .config import OPENAI_MODEL
+from .config import GEMINI_MODEL, OPENAI_MODEL
 from .document_structure import (PageStructure, SOURCE_STRUCTURE_VERSION, STRUCTURE_VERSION, classify_document_boundaries,
     apply_reviewed_document_boundary,
     rebind_page_structure, structure_from_ordered, structure_from_text)
 from .formatting_support import digest_text, fingerprint, flatten_blocks, confirmed_source_continuation
 from .openai_client import ApiCallError, is_openai_auth_failure, transport_failure_diagnostic
+from .provider_client import is_provider_auth_failure
 from .output_normalize import normalize_output_text_with_stats
 from .pdf_text_order import NATIVE_EXTRACTION_VERSION
 from .source_document import source_page_dimensions, source_page_identity
@@ -224,7 +225,7 @@ def _source_table_person_names(source: PageStructure) -> dict[str, str]:
 
 class NewTranslationBlocks:
     def __init__(self, workflow, config, selected_pages, *, source_hash, context_hash):
-        self.model = getattr(workflow, "_translation_model", OPENAI_MODEL)
+        self.model = getattr(workflow, "_translation_model", GEMINI_MODEL)
         self.workflow, self.config = workflow, config
         self.acceptance = getattr(workflow, "_acceptance_continuation", None)
         self.ordinary_review = getattr(workflow, "_reviewed_source_context", None)
@@ -591,8 +592,12 @@ class NewTranslationBlocks:
                 "effort": getattr(exc, "effort", "") or effort, "protocol": PROTOCOL_VERSION,
                 "response_id": getattr(exc, "response_id", None), "status": getattr(exc, "response_status", "unknown"),
                 "attempt_usage": getattr(exc, "attempt_usage", [])})
-            error = "authentication_failure" if is_openai_auth_failure(exception_class=exc.exception_class,
-                            status_code=exc.status_code) else "runtime_failure"
+            error = "authentication_failure" if is_provider_auth_failure(
+                getattr(self.config, "translation_provider", None),
+                exception_class=exc.exception_class,
+                status_code=exc.status_code,
+                message=str(exc),
+            ) else "runtime_failure"
             return outcome(PageStatus.FAILED, "cancelled" if self.workflow._cancel_event.is_set() else error)
         except SourceReadinessError as exc:
             metadata.update(validator_defect_reason=str(exc), source_review_required=True,

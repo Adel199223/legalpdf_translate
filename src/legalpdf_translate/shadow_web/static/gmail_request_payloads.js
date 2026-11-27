@@ -22,7 +22,21 @@ export function buildGmailLoadMessageRequestPayload({
   subject = "",
   accountEmail = "",
   sourceGmailUrl = "",
+  currentMessageContext = null,
 } = {}) {
+  if (currentMessageContext !== null) {
+    const context = objectOrEmpty(currentMessageContext);
+    const sameMessage = String(messageId).trim() !== ""
+      && String(messageId).trim() === String(context.message_id || "").trim()
+      && String(threadId).trim() !== ""
+      && String(threadId).trim() === String(context.thread_id || "").trim()
+      && String(accountEmail).trim().toLowerCase() === String(context.account_email || "").trim().toLowerCase();
+    // A diagnostic URL is not provenance for manually edited message IDs.
+    sourceGmailUrl = sameMessage ? stringOrEmpty(context.source_gmail_url) : "";
+    if (!sameMessage && String(subject).trim() === String(context.subject || "").trim()) {
+      subject = "";
+    }
+  }
   return {
     message_context: {
       message_id: stringOrEmpty(messageId),

@@ -1,3 +1,5 @@
+import { gmailLoadFailureMessage } from "./gmail_load_failure.js";
+
 function normalizeGmailStage(value) {
   const normalized = String(value || "").trim();
   const allowed = new Set([
@@ -137,8 +139,7 @@ export function buildGmailPanelStatusPresentation({
   const showLoadFailure = loadResult?.ok === false && !hasActiveSession;
 
   if (showLoadFailure) {
-    gmailMessage = String(loadResult.status_message || "").trim()
-      || "Gmail message could not be loaded. Open Advanced message details to review the message and try again.";
+    gmailMessage = gmailLoadFailureMessage(loadResult);
   } else if (!hasLoadResult && !hasActiveSession && recoveredAction?.visible) {
     gmailMessage = "A previous Gmail result is still available here, but this page is waiting for a new Gmail message.";
   } else if (stageUsesStageDescription(stage)) {

@@ -584,18 +584,91 @@ def _independent_paragraph_check(original, actual, original_row, choice, context
         model._fail("output_unauthorized_heading_properties")
 
 
+def _source_clock_mode(context, *, require_review=False):
+    if context is None or "clock_direction_version" not in context:
+        return None
+    if (require_review or "source_evidence" not in context
+            or context["clock_direction_version"] != "clock_h_colon_ltr_v1"):
+        model._fail("source_clock_direction_version")
+    return context["clock_direction_version"]
+
+
+def _source_inline_folio_mode(context, *, require_review=False):
+    key = "source_folio_inline_direction_version"
+    if context is None:
+        return None
+    from .ordinary_source_folio_proof import CONTACT_KEY, KEY
+    from .ordinary_source_layout import INLINE_FOLIO_DIRECTION_V1, INLINE_FOLIO_DIRECTION_V2, INLINE_FOLIO_DIRECTION_V3
+    if ((CONTACT_KEY in context) != (context.get(key) == INLINE_FOLIO_DIRECTION_V3)
+            or CONTACT_KEY in context and (type(context[CONTACT_KEY]) is not dict
+                or set(context[CONTACT_KEY])!={"contacts","visible_folios"}
+                or any(type(v) is not dict for v in context[CONTACT_KEY].values()))):
+        model._fail("source_inline_folio_direction_version")
+    if key not in context:
+        return None
+    if (require_review or "source_evidence" not in context or KEY not in context
+            or context[key] not in (INLINE_FOLIO_DIRECTION_V1, INLINE_FOLIO_DIRECTION_V2, INLINE_FOLIO_DIRECTION_V3)):
+        model._fail("source_inline_folio_direction_version")
+    return context[key]
+
+
+def _source_in_flow_folio_mode(context, *, require_review=False):
+    from .ordinary_in_flow_folio_bridges import KEY, VERSION
+    if context is None or KEY not in context:
+        return None
+    if (require_review or "source_evidence" not in context or context[KEY] != VERSION
+            or context.get("source_folio_direction_version") != "numeric_run_ltr_v4"):
+        model._fail("source_in_flow_folio_direction_version")
+    return context[KEY]
+
+
+def _source_labeled_folio_mode(context, *, require_review=False):
+    from .ordinary_labeled_folio_direction import KEY, VERSION
+    from .ordinary_labeled_folio_direction_v2 import VERSION as VERSION_V2
+    if context is None or KEY not in context:
+        return None
+    if (require_review or "source_evidence" not in context or context[KEY] not in {VERSION, VERSION_V2}
+            or context.get("source_folio_direction_version") != "numeric_run_ltr_v4"
+            or _source_in_flow_folio_mode(context) is None):
+        model._fail("source_labeled_folio_direction_version")
+    return context[KEY]
+
+
 def validate_built_docx(docx_bytes: bytes, source_map: dict, *, original_docx: bytes,
                         snapshot: dict, pages: list, decisions: dict,
                         require_review: bool = True, ordinary_context: dict | None = None) -> None:
     """Reparse independently, check ownership/content, then exact approved scaffold."""
+    clock_mode = _source_clock_mode(ordinary_context, require_review=require_review)
+    inline_mode = _source_inline_folio_mode(ordinary_context, require_review=require_review)
+    in_flow_mode = _source_in_flow_folio_mode(ordinary_context, require_review=require_review)
+    labeled_mode = _source_labeled_folio_mode(ordinary_context, require_review=require_review)
     if source_map.get("writer_version") == "saved_docx_layout_writer_source_layout_v7":
         if require_review or ordinary_context is None or "source_evidence" not in ordinary_context:
             model._fail("ordinary_writer_context_required")
         from .ordinary_source_layout import verify
-        base_context = {k:v for k,v in ordinary_context.items() if k != "source_evidence"}
+        mode = ordinary_context.get("source_folio_direction_version")
+        if mode not in {None, "numeric_run_ltr_v3", "numeric_run_ltr_v4"}:
+            model._fail("source_folio_direction_version")
+        base_context = {k:v for k,v in ordinary_context.items()
+                        if k not in {"source_native_folio_contact_v1", "source_evidence", "source_folio_direction_version", "clock_direction_version", "source_folio_inline_direction_version", "source_footer_placement_version", "source_spacing_version", "source_closing_group_version", "source_in_flow_folio_direction_version", "source_labeled_folio_direction_version"}}
         base = build_unreviewed_docx(original_docx,snapshot,pages,decisions,ordinary_context=base_context)
-        verify(SavedDocxLayoutArtifact(docx_bytes,source_map),base,snapshot,pages,decisions,base_context,ordinary_context["source_evidence"])
+        if "source_native_folio_contact_v1" in ordinary_context:
+            base_context = {**base_context, "source_native_folio_contact_v1": ordinary_context["source_native_folio_contact_v1"]}
+        verify(SavedDocxLayoutArtifact(docx_bytes,source_map),base,snapshot,pages,decisions,base_context,
+               ordinary_context["source_evidence"], expected_folio_direction=mode, expected_clock_direction=clock_mode,
+               expected_inline_folio_direction=inline_mode,
+               expected_footer_placement=ordinary_context.get("source_footer_placement_version"),
+               expected_source_spacing=ordinary_context.get("source_spacing_version"),
+               expected_closing_group=ordinary_context.get("source_closing_group_version"),
+               expected_in_flow_folio_direction=in_flow_mode, expected_labeled_folio_direction=labeled_mode)
         return
+
+    if inline_mode is not None:
+        model._fail("source_inline_folio_direction_version")
+    if in_flow_mode is not None:
+        model._fail("source_in_flow_folio_direction_version")
+    if labeled_mode is not None:
+        model._fail("source_labeled_folio_direction_version")
 
     actual_snapshot = model.inspect_docx(original_docx, snapshot["target_lang"])
     if actual_snapshot != snapshot:
@@ -785,12 +858,30 @@ def build_docx(docx_bytes: bytes, snapshot: dict, pages: list, decisions: dict) 
 def build_unreviewed_docx(docx_bytes: bytes, snapshot: dict, pages: list,
                           decisions: dict, *, ordinary_context: dict | None = None) -> SavedDocxLayoutArtifact:
     """Build the same editable layout with explicit unreviewed provenance."""
+    clock_mode = _source_clock_mode(ordinary_context)
+    inline_mode = _source_inline_folio_mode(ordinary_context)
+    in_flow_mode = _source_in_flow_folio_mode(ordinary_context)
+    labeled_mode = _source_labeled_folio_mode(ordinary_context)
     if ordinary_context is not None and "source_evidence" in ordinary_context:
         from .ordinary_source_layout import transform,verify
-        base_context = {k:v for k,v in ordinary_context.items() if k != "source_evidence"}
+        mode = ordinary_context.get("source_folio_direction_version")
+        if mode not in {None, "numeric_run_ltr_v3", "numeric_run_ltr_v4"}:
+            model._fail("source_folio_direction_version")
+        base_context = {k:v for k,v in ordinary_context.items()
+                        if k not in {"source_native_folio_contact_v1", "source_evidence", "source_folio_direction_version", "clock_direction_version", "source_folio_inline_direction_version", "source_footer_placement_version", "source_spacing_version", "source_closing_group_version", "source_in_flow_folio_direction_version", "source_labeled_folio_direction_version"}}
         base = build_unreviewed_docx(docx_bytes,snapshot,pages,decisions,ordinary_context=base_context)
-        artifact = transform(base,snapshot,pages,decisions,base_context,ordinary_context["source_evidence"])
-        verify(artifact,base,snapshot,pages,decisions,base_context,ordinary_context["source_evidence"])
+        if "source_native_folio_contact_v1" in ordinary_context:
+            base_context = {**base_context, "source_native_folio_contact_v1": ordinary_context["source_native_folio_contact_v1"]}
+        artifact = transform(base,snapshot,pages,decisions,base_context,ordinary_context["source_evidence"],
+                             mode or "numeric_run_ltr_v2", clock_mode, inline_mode,
+                             ordinary_context.get("source_footer_placement_version"), ordinary_context.get("source_spacing_version"), ordinary_context.get("source_closing_group_version"), in_flow_mode, labeled_mode)
+        verify(artifact,base,snapshot,pages,decisions,base_context,ordinary_context["source_evidence"],
+               expected_folio_direction=mode, expected_clock_direction=clock_mode,
+               expected_inline_folio_direction=inline_mode,
+               expected_footer_placement=ordinary_context.get("source_footer_placement_version"),
+               expected_source_spacing=ordinary_context.get("source_spacing_version"),
+               expected_closing_group=ordinary_context.get("source_closing_group_version"),
+               expected_in_flow_folio_direction=in_flow_mode, expected_labeled_folio_direction=labeled_mode)
         return artifact
 
     try:

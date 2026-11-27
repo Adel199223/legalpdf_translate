@@ -18,16 +18,29 @@ export function mountTextCorrection({root,getScope,getJob,request=fetchJson,onAp
   const button=(parent,text,fn,disabled=false)=>{const b=el("button",text);b.type="button";b.disabled=disabled||busy;const bound=key();b.addEventListener("click",()=>{if(!disposed&&key()===bound)return run(fn);});parent.append(b);return b;};
   async function run(fn) {if(busy||disposed)return;const token=epoch;busy=true;error="";render(true);try{await fn();}catch(e){
     const code=e?.payload?.diagnostics?.error||e.message||"correction_failed";
-    if(token!==epoch||disposed)return;error=/word_text_changes_pending/.test(code)
+    if(token!==epoch||disposed)return;error=code==="ordinary_layout_workspace_busy"
+      ?"Another document review operation is still running. Close text correction and try again in a moment. Your current delivery and Word edits are preserved."
+      :/word_text_changes_pending/.test(code)
       ?"Your Word text changes are preserved. Choose Review text changes saved in Word to compare and approve them."
       :/duplicate_change/.test(code)?"A change for this paragraph is already pending. Review or clear the pending changes before editing it again."
       :/structure_unsupported|unsupported_content|paragraph_controls/.test(code)
-      ?"Your Word file is preserved. Its structure cannot be imported safely; enter the corrections in this editor instead."
+      ?"Your current delivery and Word edits are preserved. Keep paragraph controls and page breaks unchanged, and use an editable paragraph for wording corrections."
       :/stale|changed|conflict/.test(code)?"The selected document changed. Refresh the correction and compare the current copy before approving."
       :/frozen/.test(code)?"This delivery is already locked for confirmation. Its files are preserved."
       :"The correction could not be completed. Your current delivery and Word edits are preserved.";
   }finally{if(token===epoch&&!disposed){busy=false;render(true);}}}
-  async function read(){view=await call("/text-corrections");page=page&&view.source_pages.includes(page)?page:view.source_pages[0];}
+  async function read({retryBusy=false}={}){
+    const token=epoch;
+    for(let attempt=0;;attempt++){
+      try{view=await call("/text-corrections");break;}
+      catch(e){
+        if(!retryBusy||attempt>=2||e?.payload?.diagnostics?.error!=="ordinary_layout_workspace_busy")throw e;
+        await new Promise(resolve=>globalThis.setTimeout(resolve,150*(attempt+1)));
+        if(disposed||token!==epoch||key()!==owner)throw new Error("correction_scope_changed");
+      }
+    }
+    page=page&&view.source_pages.includes(page)?page:view.source_pages[0];
+  }
   function check(parent,text,change){const label=el("label"),input=el("input");input.type="checkbox";input.disabled=busy;input.addEventListener("change",()=>change(input.checked));label.append(input,el("span",text));parent.append(label);return input;}
   function source(parent){
     const label=el("label","Source page "),select=el("select");
@@ -52,7 +65,7 @@ export function mountTextCorrection({root,getScope,getJob,request=fetchJson,onAp
     root.replaceChildren();root.hidden=!eligible;
     if(root.hidden)return;
     root.append(el("h3","Review and correct translated text"),el("p","Compare the translation with its source. Corrections use no additional API calls and become delivery text only after you approve the changes."));
-    button(root,open?"Close text correction":"Correct translated text",async()=>{open=!open;if(open)await read();});
+    button(root,open?"Close text correction":"Correct translated text",async()=>{open=!open;if(open)await read({retryBusy:true});});
     if(error){const n=el("p",error);n.setAttribute("role","alert");root.append(n);}
     if(!open||!view)return;
     button(root,"Refresh correction",async()=>{await read();draft=null;actions=[];});

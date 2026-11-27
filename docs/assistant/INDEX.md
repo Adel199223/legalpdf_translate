@@ -12,7 +12,9 @@
 
 ## Use when you need governance rules
 - `agent.md`: operational runbook.
-- `AGENTS.md`: quick guardrails / compatibility entrypoint.
+- `AGENTS.md`: quick guardrails / compatibility entrypoint (auto-loaded by Antigravity).
+- `.agents/skills/`: Antigravity workspace skills wrapping canonical validation, shadow browser review, Word visual/quality review, and commit/publish workflows.
+- `docs/assistant/CODEX_ENVIRONMENT.md`: Antigravity and Codex environment/MCP posture notes (filename retained for harness validation).
 - `docs/assistant/HANDOFF.md`: compact current handoff, verified canonical build/publication status, qualified acceptance and explicitly deferred global activation decisions.
 - `docs/assistant/VALIDATION.md`: exact validation commands, CI expectations, known Dart fallback semantics, and merge-stop rules.
 - `docs/assistant/GMAIL_LIVE_TESTING.md`: canonical-main-only live Gmail extension retest guide and listener diagnostics.
@@ -58,6 +60,7 @@
 - `docs/assistant/workflows/ROADMAP_WORKFLOW.md`
 - `docs/assistant/workflows/HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md`
 - `docs/assistant/workflows/HARNESS_ISOLATION_AND_DIAGNOSTICS_WORKFLOW.md`
+- `docs/assistant/workflows/TERMINAL_RECOVERY_WORKFLOW.md`
 - `docs/assistant/workflows/FEATURE_WORKFLOW.md` (compat shim)
 - `docs/assistant/workflows/DATA_WORKFLOW.md` (compat shim)
 

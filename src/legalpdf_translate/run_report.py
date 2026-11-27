@@ -30,6 +30,7 @@ _FORBIDDEN_EVENT_KEYS = {
     "authorization",
     "api_key",
     "openai_api_key",
+    "gemini_api_key",
     "ocr_api_key",
 }
 

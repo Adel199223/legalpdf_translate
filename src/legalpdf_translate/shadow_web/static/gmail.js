@@ -1,4 +1,5 @@
 import { fetchJson } from "./api.js";
+import { gmailFailedLoadPayload } from "./gmail_load_failure.js";
 import { applyActionFailureFeedbackToUi } from "./action_feedback_presentation.js";
 import { appState, setActiveView } from "./state.js";
 import {
@@ -223,6 +224,7 @@ const gmailState = {
   batchFinalizePreflightInFlight: false,
   batchFinalizeResult: null,
   batchFinalizeDrawerSource: "active",
+  stageActionInFlight: false,
   browserPdfState: new Map(),
   stage: "idle",
   refreshInFlight: false,
@@ -523,6 +525,7 @@ function currentGmailStage() {
   return deriveGmailStage({
     loadResult: gmailState.loadResult,
     activeSession: gmailState.activeSession,
+    suggestedTranslationLaunch: gmailState.suggestedTranslationLaunch,
     reviewDrawerOpen: gmailState.reviewDrawerOpen,
     translationUi: translationUiSnapshot(),
     interpretationUi: interpretationUiSnapshot(),
@@ -576,7 +579,14 @@ function loadSuggestedTranslationLaunch({ closeCompletionDrawer = false } = {}) 
   return true;
 }
 
-function applyGmailStageActionPlan(plan) {
+async function applyGmailStageActionPlan(plan) {
+  if (plan.restoreTranslationJob) {
+    const launch = gmailState.suggestedTranslationLaunch;
+    if (!gmailState.hooks.restoreGmailTranslationJob) throw new Error("Translation recovery is unavailable.");
+    await gmailState.hooks.restoreGmailTranslationJob(launch, {
+      isCurrent: () => gmailState.suggestedTranslationLaunch === launch,
+    });
+  }
   if (plan.applyTranslationLaunch && gmailState.suggestedTranslationLaunch) {
     gmailState.hooks.applyTranslationLaunch?.(gmailState.suggestedTranslationLaunch);
   }
@@ -597,9 +607,9 @@ function applyGmailStageActionPlan(plan) {
   }
   if (plan.openBatchFinalizeDrawer) {
     if (plan.batchFinalizeSource === "restored") {
-      openBatchFinalizeDrawer({ source: "restored" });
+      await openBatchFinalizeDrawer({ source: "restored" });
     } else {
-      openBatchFinalizeDrawer();
+      await openBatchFinalizeDrawer();
     }
   }
   if (plan.openReviewDrawer) {
@@ -607,13 +617,36 @@ function applyGmailStageActionPlan(plan) {
   }
 }
 
-function runStageAction(action) {
+async function runStageAction(action, triggerId) {
+  const stageButtonIds = ["gmail-resume-step", "gmail-workspace-strip-action", "gmail-load-translation-launch"];
+  const trigger = stageButtonIds.includes(triggerId) ? qs(triggerId) : null;
+  if (!trigger || trigger.disabled || gmailState.stageActionInFlight) {
+    return;
+  }
+  // A completed batch has no launch control. Its disabled state must not veto
+  // another available action, or be cleared when the busy presentation ends.
+  const buttonIds = stageButtonIds.filter((id) => qs(id) && !qs(id).disabled);
   const plan = buildGmailStageActionPlan({
     action,
     suggestedTranslationLaunch: gmailState.suggestedTranslationLaunch,
     interpretationSeed: gmailState.interpretationSeed,
   });
-  applyGmailStageActionPlan(plan);
+  gmailState.stageActionInFlight = true;
+  try {
+    await runGmailAction({
+      buttonIds,
+      guardIds: [triggerId],
+      busyLabel: "Opening...",
+      action: () => applyGmailStageActionPlan(plan),
+      failureFeedback: {
+        panelSlot: "gmail-session",
+        diagnosticsSlot: "gmail-session",
+        fallback: "The retained Gmail translation could not be opened.",
+      },
+    });
+  } finally {
+    gmailState.stageActionInFlight = false;
+  }
 }
 
 async function runRedoCurrentTranslation() {
@@ -751,7 +784,10 @@ function forgetConsumedReviewEvent() {
 
 function applyBootstrapDefaults(data) {
   const presentation = buildGmailContextDefaultsPresentation({
-    defaults: data?.defaults,
+    defaults: {
+      ...data?.defaults,
+      message_context: deriveGmailBootstrapMessageContext({ bootstrap: data }),
+    },
   });
   renderGmailContextDefaultsInto({
     messageId: qs("gmail-message-id"),
@@ -1002,7 +1038,7 @@ function openBatchFinalizeDrawer({ source = "active" } = {}) {
     updateGmailFinalizationReportActionState();
     return;
   }
-  void refreshBatchFinalizePreflight({ forceRefresh: false }).catch((error) => {
+  return refreshBatchFinalizePreflight({ forceRefresh: false }).catch((error) => {
     applyActionFailureFeedback(error, {
       panelSlot: "gmail-batch-finalize",
       diagnosticsSlot: "gmail-batch-finalize",
@@ -1479,6 +1515,10 @@ function applyGmailReviewLoadResetState(reviewLoadState = {}) {
   gmailState.batchFinalizeDrawerSource = reviewLoadState.batchFinalizeDrawerSource;
   gmailState.batchFinalizeResult = reviewLoadState.batchFinalizeResult;
   gmailState.lastFinalizationReportPayload = reviewLoadState.lastFinalizationReportPayload;
+  if (gmailState.loadResult?.ok && gmailState.loadResult?.message && qs("gmail-subject")) {
+    qs("gmail-subject").value = gmailState.loadResult.message.subject || "";
+  }
+  updateReturnToGmailAction();
 }
 
 export function renderGmailBootstrap(payload) {
@@ -1575,7 +1615,14 @@ async function loadMessage() {
       subject: fieldValue("gmail-subject"),
       accountEmail: fieldValue("gmail-account-email"),
       sourceGmailUrl: currentSourceGmailUrl(),
+      currentMessageContext: bootstrapMessageContext(),
     })),
+  }).catch((error) => {
+    const failedPayload = gmailFailedLoadPayload(error);
+    if (!failedPayload) {
+      throw error;
+    }
+    return failedPayload;
   });
   const reviewLoadState = buildGmailReviewLoadResetState({ payload });
   applyGmailReviewLoadResetState(reviewLoadState);
@@ -2440,7 +2487,7 @@ export function initializeGmailUi(hooks) {
   });
 
   qs("gmail-resume-step")?.addEventListener("click", (event) => {
-    runStageAction(event.currentTarget?.dataset.gmailAction || "");
+    runStageAction(event.currentTarget?.dataset.gmailAction || "", event.currentTarget?.id);
   });
 
   qs("gmail-redo-current")?.addEventListener("click", async () => {
@@ -2469,9 +2516,10 @@ export function initializeGmailUi(hooks) {
     });
   });
 
-  qs("gmail-load-translation-launch")?.addEventListener("click", () => {
+  qs("gmail-load-translation-launch")?.addEventListener("click", (event) => {
     if (gmailState.suggestedTranslationLaunch) {
-      runStageAction("resume-translation-running");
+      runStageAction(currentGmailStage() === "translation_prepared"
+        ? "resume-translation-prepared" : "resume-translation-running", event.currentTarget?.id);
     }
   });
 
@@ -2587,8 +2635,8 @@ export function initializeGmailUi(hooks) {
     });
   });
 
-  qs("gmail-workspace-strip-action")?.addEventListener("click", () => {
-    runStageAction(qs("gmail-workspace-strip-action")?.dataset.gmailStripAction || "open-intake");
+  qs("gmail-workspace-strip-action")?.addEventListener("click", (event) => {
+    runStageAction(event.currentTarget?.dataset.gmailStripAction || "open-intake", event.currentTarget?.id);
   });
   qs("gmail-open-full-workspace")?.addEventListener("click", () => {
     setActiveView("new-job");

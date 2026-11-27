@@ -19,6 +19,10 @@ from tests.test_ordinary_auto_layout_workflow import _app, _source, _start, _wai
 
 @pytest.mark.parametrize('resume,cancel,select_raw,second,old_error', [(False,False,False,False,'page_break_requires_flow'),(True,False,False,False,'page_break_requires_flow'),(False,True,False,False,'page_break_requires_flow'),(True,False,True,False,'page_break_requires_flow'),(False,False,False,True,'page_break_requires_flow'),(True,False,False,True,'page_break_requires_flow'),pytest.param(False,False,False,False,'invalid_proposal_decisions',id='retained-invalid-decisions')])
 def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path, monkeypatch, resume, cancel,select_raw,second,old_error):
+    from legalpdf_translate import ordinary_auto_layout as automatic
+    # This branch exercises the saved pre-reproposal manual recovery contract.
+    monkeypatch.setattr(automatic, "frozen_automatic_layout_policy",
+        automatic._protected_folio_bridges_v10_policy)
     source,output=tmp_path/'source.pdf',tmp_path/'output'
     output.mkdir(); _source(source,('digital',)*7)
     pages=(3,4,5,6,7)
@@ -54,9 +58,9 @@ def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path
                 max_transport_retries=0,pre_call_jitter_seconds=0)
         manager.provider_factory=provider
         normalize=manager_module.normalize_proposals
-        def previous_break_guard(snapshot,view,proposals):
+        def previous_break_guard(snapshot,view,proposals,**kwargs):
             if proposals[0]['page_number']==4: fail(old_error)
-            return normalize(snapshot,view,proposals)
+            return normalize(snapshot,view,proposals,**kwargs)
         with monkeypatch.context() as old:
             old.setattr(manager_module,'normalize_proposals',previous_break_guard)
             original=_start(client,source,output,'EN',start=3,end=7,image_mode='off',page_breaks=True)
@@ -103,9 +107,9 @@ def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path
             return
         assert len(translation_sdk.requests)==5
         if second:
-            def previous_order_guard(snapshot,view,proposals):
+            def previous_order_guard(snapshot,view,proposals,**kwargs):
                 if proposals[0]['page_number']==5: fail('proposal_coverage')
-                return normalize(snapshot,view,proposals)
+                return normalize(snapshot,view,proposals,**kwargs)
             with monkeypatch.context() as old:
                 old.setattr(manager_module,'normalize_proposals',previous_order_guard)
                 assert client.post(f'/api/translation/jobs/{job_id}/layout/recover'+scope).status_code==200
@@ -136,7 +140,8 @@ def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path
             assert sent==[3,4,5]
             assert all(p.read_bytes()==data for p,data in protected.items())
             return
-        result=_wait(jobs,job_id)
+        # Retained validation plus the verified writer exceeded 30s in Full02.
+        result=_wait(jobs,job_id,timeout_seconds=90)
         assert result['result']['automatic_layout']['status']=='automatic_unreviewed',result['result']['automatic_layout']
         assert sent==[3,4,5,6,7] and len(translation_sdk.requests)==5
         folder=root/'recoveries'/('layout_revalidation_v1' if second else 'layout_direct_revalidation_v1')
@@ -198,6 +203,9 @@ def test_direct_failed_layout_reuses_two_responses_with_one_predecessor(tmp_path
 def test_completed_historical_capacity_lineage_precedes_new_direct_eligibility(tmp_path,monkeypatch,original_tokens):
     from datetime import date
     from legalpdf_translate import ordinary_auto_layout as automatic
+    # Keep both 8k and 32k initial histories outside the newer repair lineage.
+    monkeypatch.setattr(automatic, "frozen_automatic_layout_policy",
+        automatic._protected_folio_bridges_v10_policy)
     from legalpdf_translate import ordinary_layout_accounting as accounting
     from legalpdf_translate.accounting_policy import OrdinaryAccountingPolicy
     from legalpdf_translate.ordinary_layout_contracts import LayoutSuggestionPolicy
@@ -210,7 +218,7 @@ def test_completed_historical_capacity_lineage_precedes_new_direct_eligibility(t
     with TestClient(app) as client:
         with monkeypatch.context() as old:
             normalize=manager_module.normalize_proposals
-            old.setattr(manager_module,'normalize_proposals',lambda *args: fail('page_break_requires_flow'))
+            old.setattr(manager_module,'normalize_proposals',lambda *args,**kwargs: fail('page_break_requires_flow'))
             if original_tokens==8000:
                 args=accounting.layout_accounting_policy().accounting_arguments(today=date(2026,10,9))
                 args['dispatch_limits']['openai:layout_suggestion:gpt-5.2']['max_output_tokens']=8000
@@ -224,7 +232,8 @@ def test_completed_historical_capacity_lineage_precedes_new_direct_eligibility(t
                 existing.suggestion_policy=lambda job: LayoutSuggestionPolicy(
                     'gpt-5.2','.812','1.624',max_output_tokens=8000,timeout_seconds=240.0)
             original=_start(client,source,output,'EN',start=1,end=2,image_mode='off',page_breaks=True)
-            first=_wait(jobs,original)
+            # Historical-policy setup exceeded 30s before its expected fallback.
+            first=_wait(jobs,original,timeout_seconds=90)
         assert first['result']['automatic_layout']['status']=='raw_fallback'
         assert len(requests)==1 and requests[0]['max_output_tokens']==original_tokens,first['result']['automatic_layout']
         run=Path(first['result']['run_dir']); root=run/'ordinary_auto_layout'

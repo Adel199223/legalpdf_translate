@@ -10,9 +10,11 @@ from typing import Callable
 
 from . import saved_docx_layout_service as storage
 from .openai_client import OpenAIResponsesClient
+from .provider_client import client_provider, is_translation_client
 from .ordinary_layout_contracts import (LayoutSuggestionPolicy, OrdinaryLayoutJob, OrdinaryLayoutError,
-    MAX_RESPONSE_BYTES, PROPOSAL_VERSION_V3, decode, digest, encode, fail, generation, identifier,
-    job_identity, nonce, normalize_proposals, page_ids, proposal_schema, proposal_source_evidence)
+    VERSION, MAX_RESPONSE_BYTES, PROPOSAL_VERSION_V3, BAND_NORMALIZATION_V1, BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8, decode, digest, encode, fail, generation, identifier,
+    job_identity, nonce, normalize_proposals, page_ids, proposal_schema, proposal_source_evidence,
+    EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2, EMPHASIS_NORMALIZATION_V3)
 from .ordinary_layout_service import OrdinaryLayoutService, _directories, _read, _write, public
 from .saved_docx_layout import inspect_docx, SavedDocxLayoutError
 from .usage_accounting import DispatchAccounting, accounting_context, _ceiling_for
@@ -68,6 +70,39 @@ source_footer only for the complete terminal source-page footer/folio at the bot
 all supplied paragraph IDs/text/decisions; these evidence arrays do not authorize text insertion.
 If uncertain leave evidence empty and preserve flow for explicit operator source comparison.
 """
+
+
+INSTRUCTIONS_SOURCE_ALIGNMENT_V1 = INSTRUCTIONS + """
+SOURCE ALIGNMENT AND GROUNDING: First associate each translated paragraph with the corresponding
+source text in the full image. The optional native_source_line_map is untrusted advisory PDF
+text and normalized font-metric boxes for the whole source page. It is not a visible-transcription
+proof, target assignment, paragraph boundary map or guaranteed reading order. Resolve disagreements
+against the source image. Never treat its entries or source wraps as paragraph boundaries; retain
+all existing paragraph-partition restrictions. An unavailable map leaves the full image authoritative.
+Choose alignment from the associated source text lines, not the location of a surrounding box.
+A multiline paragraph is centered only when its lines share a common horizontal center,
+INCLUDING its short last line. A short last line aligned to the same leading edge as the preceding
+lines supports leading-edge/justified body treatment, not centering. Ordinary body prose normally
+uses left or justified alignment for English/French and right or justified alignment for Arabic,
+unless the associated source lines genuinely show centered treatment. A first-line indent is
+separate from alignment; neither it nor a short wrapped line proves centering. Preserve deliberately
+centered headings, decorative rules, dates, closing notes and signature blocks where source-supported.
+Do not rewrite text, change associations or invent schema fields to express indentation.
+DECORATIVE_RULE CONSTRAINTS: This optional hint requires exactly one complete plain-flow body
+paragraph whose stripped text matches [_─━—–-]{3,}: at least three characters, all from that exact
+horizontal-stroke set. Its normalized source bbox height must be at most 0.03. It must have no
+fields, numbering, partitions, columns, panels, tabs, breaks or other controls. Asterisks (including
+***), dots and ornaments remain literal ordinary paragraph text with source-supported alignment;
+do not emit decorative_rule hints for them. Signature/fill-in blanks are not decorative rules.
+If these constraints are not met, omit the hint; never change text, roles or boxes to satisfy them.
+"""
+
+def instructions_for_render_policy(render_fingerprint=None):
+    """Select new guidance only for its exact saved automatic-layout recipe."""
+    from .ordinary_auto_layout import _source_alignment_v20_policy
+    if render_fingerprint == _source_alignment_v20_policy().split(":", 1)[1]:
+        return INSTRUCTIONS_SOURCE_ALIGNMENT_V1
+    return INSTRUCTIONS
 
 
 JobResolver = Callable[[str], OrdinaryLayoutJob]
@@ -151,26 +186,128 @@ class OrdinaryLayoutManager:
 
     @public
     def suggest(self, job_id, expected_generation, operation_nonce, page_numbers, *, expected_baseline_id,
-                external_cancel_requested=None, retained_proposals=None):
+                external_cancel_requested=None, retained_proposals=None,
+                band_normalization_version=BAND_NORMALIZATION_V1, retained_only=False,
+                emphasis_normalization_version=EMPHASIS_NORMALIZATION_V1,
+                retained_source_job=None, retained_identity_sha256=None, retained_policy=None,
+                retained_accounting_factory=None, retained_preflight=None, proposal_repair_policy=None,
+                proposal_render_policy_fingerprint=None):
+        # Server-only recipe. Browser/API callers retain historical V1 defaults.
+        if type(retained_only) is not bool:
+            fail("retained_proposal_invalid", 409)
+        if proposal_repair_policy is not None:
+            from .ordinary_layout_reproposal import POLICY, POLICY_V2
+            if proposal_repair_policy not in (POLICY, POLICY_V2) or retained_only or retained_proposals:
+                fail("proposal_repair_policy_changed", 409)
+        if proposal_render_policy_fingerprint is not None:
+            from .ordinary_layout_reproposal import automatic_policy
+            automatic_policy(proposal_repair_policy, proposal_render_policy_fingerprint)
+        if emphasis_normalization_version not in {None, EMPHASIS_NORMALIZATION_V1, EMPHASIS_NORMALIZATION_V2, EMPHASIS_NORMALIZATION_V3}:
+            fail("invalid_emphasis_normalization_version")
+        if band_normalization_version not in {BAND_NORMALIZATION_V1, BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8}:
+            fail("invalid_metadata_band_normalization_version")
         nonce(operation_nonce); nonce(expected_baseline_id); generation(expected_generation)
         if (type(page_numbers) is not list or not page_numbers or any(type(n) is not int for n in page_numbers)
                 or sorted(set(page_numbers)) != page_numbers or not all(1 <= n <= 100 for n in page_numbers)):
             fail("invalid_page_selection")
         # Recovery is read-only, even if the old job retired or its policy expired.
         try:
-            return self.service.suggestion(job_id, operation_nonce, expected_baseline_id=expected_baseline_id,
+            prior = self.service.suggestion(job_id, operation_nonce, expected_baseline_id=expected_baseline_id,
                 expected_generation=expected_generation, page_numbers=page_numbers)
+            if not retained_only or prior.get("status") not in {"pending_or_interrupted","applied_unreviewed"}:
+                return prior
         except (OrdinaryLayoutError, storage.SavedDocxLayoutServiceError) as exc:
             if getattr(exc, "status", None) != 404:
                 raise
-        job = self._job(job_id)
+        if retained_only:
+            # This capability is server-only. Resolve the current wrapper and
+            # compare every native baseline field before restoring its old ID.
+            from dataclasses import replace
+            current_job = self._job(retained_source_job.job_id) if type(retained_source_job) is OrdinaryLayoutJob else None
+            if (current_job != retained_source_job or type(retained_identity_sha256) is not str
+                    or re.fullmatch(r"[a-f0-9]{64}", retained_identity_sha256) is None
+                    or type(retained_policy) is not LayoutSuggestionPolicy
+                    or not callable(retained_accounting_factory) or not callable(retained_preflight)):
+                fail("retained_proposal_invalid", 409)
+            verified_origins = retained_preflight()
+            with self.service.scope(job_id) as scoped:
+                _, manifest = self.service._baseline(scoped)
+            binding = dict(current_job.binding); binding["job_id"] = job_id
+            job = replace(current_job, job_id=job_id, binding=binding)
+            if job_identity(job, self.mode, self.workspace_id) != manifest["identity"]:
+                fail("retained_proposal_invalid", 409)
+        else:
+            job = self._job(job_id)
         state = self.service.assert_current(job)
         if state["baseline_id"] != expected_baseline_id:
             fail("baseline_stale", 409)
         if not set(page_numbers) <= set(job.selected_pages):
             fail("invalid_page_selection")
-        policy = self._policy(job)
+        policy = retained_policy if retained_only else self._policy(job)
+        private_policy = policy.public()
+        if proposal_repair_policy is not None:
+            private_policy["proposal_repair_policy"] = proposal_repair_policy
+        if proposal_render_policy_fingerprint is not None:
+            from .ordinary_layout_reproposal import RENDER_KEY
+            private_policy[RENDER_KEY] = proposal_render_policy_fingerprint
+        if emphasis_normalization_version in {EMPHASIS_NORMALIZATION_V2, EMPHASIS_NORMALIZATION_V3}:
+            private_policy["emphasis_normalization_version"] = emphasis_normalization_version
+        if retained_only:
+            private_policy.update(retained_only=True, missing_pages=[], max_new_calls=0,
+                completed_rebuild_identity_sha256=retained_identity_sha256)
+        if band_normalization_version in {BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8}:
+            private_policy["band_normalization_version"] = band_normalization_version
+        if proposal_repair_policy is not None:
+            from .ordinary_layout_reproposal import expected_policy
+            if private_policy != expected_policy(
+                len(page_numbers),
+                proposal_repair_policy,
+                proposal_render_policy_fingerprint,
+                model=policy.model,
+                page_ceiling=policy.max_page_cost_usd,
+                effort=policy.effort,
+            ):
+                fail("proposal_repair_policy_changed", 409)
         view = state["review"]
+        if retained_only and view["generation"] == expected_generation + 1:
+            from .ordinary_auto_layout import _recover_settled_result, _inline_folio_direction_policy
+            if type(retained_proposals) is not dict or set(retained_proposals) != set(page_numbers):
+                fail("retained_proposal_missing", 409)
+            if verified_origins != {str(p): r.get("origin") for p, r in retained_proposals.items() if type(r) is dict}:
+                fail("retained_proposal_invalid", 409)
+            operation = self.service.root / job_id / "baselines" / expected_baseline_id / "suggestions" / operation_nonce
+            expected_intent={"version":VERSION,"operation_nonce":operation_nonce,"baseline_id":expected_baseline_id,
+                "review_id":view["review_id"],"identity":manifest["identity"],"request":{
+                    "expected_generation":expected_generation,"page_numbers":page_numbers,"policy":private_policy}}
+            if (_read(operation / "intent.json") != expected_intent
+                    or not (operation / "accounting" / "dispatch_accounting.json").is_file()):
+                fail("retained_proposal_invalid", 409)
+            if ({p.name for p in operation.glob("page-*.response.json")} != {f"page-{p:04d}.response.json" for p in page_numbers}
+                    or {p.name for p in operation.glob("page-*.retained.json")} != {f"page-{p:04d}.retained.json" for p in page_numbers}):
+                fail("retained_proposal_invalid",409)
+            for page, retained in retained_proposals.items():
+                if (storage._read(operation / f"page-{page:04d}.response.json", MAX_RESPONSE_BYTES) != retained["raw"]
+                        or _read(operation / f"page-{page:04d}.retained.json") != retained["origin"]):
+                    fail("retained_proposal_invalid", 409)
+            accountant = retained_accounting_factory(job, operation_nonce, operation, policy)
+            if not isinstance(accountant, DispatchAccounting):
+                fail("durable_accounting_required", 503)
+            summary = accountant.summary()
+            if (summary.get("provider_dispatch_count") != 0 or summary.get("attempt_count") != 0
+                    or summary.get("cost_usd") is None or Decimal(str(summary["cost_usd"])) != 0):
+                fail("retained_proposal_invalid", 409)
+            summary_path = operation / "accounting_summary.json"
+            if summary_path.exists() and _read(summary_path) != summary:
+                fail("retained_proposal_invalid", 409)
+            if not summary_path.exists():
+                _write(summary_path, summary)
+            pointer = {"origin_job_id": job_id, "baseline_id": expected_baseline_id,
+                "operation_nonce": operation_nonce, "initial_generation": expected_generation,
+                "review_id": view["review_id"],
+                "retained_pages": {str(p): r["origin"] for p, r in (retained_proposals or {}).items()}}
+            _recover_settled_result(self, pointer, page_numbers,
+                policy_fingerprint=_inline_folio_direction_policy().split(":", 1)[1])
+            return self.service.suggestion(job_id, operation_nonce)
         if view["generation"] != expected_generation:
             fail("generation_conflict", 409)
         ids_by_page = {page: page_ids(view, page) for page in page_numbers}
@@ -179,39 +316,125 @@ class OrdinaryLayoutManager:
         retained_proposals = retained_proposals or {}
         if type(retained_proposals) is not dict or not set(retained_proposals) <= set(page_numbers):
             fail("retained_proposal_invalid", 409)
+        if retained_only and set(retained_proposals) != set(page_numbers):
+            fail("retained_proposal_missing", 409)
+        if retained_only and verified_origins != {str(p): r.get("origin") for p, r in retained_proposals.items() if type(r) is dict}:
+            fail("retained_proposal_invalid", 409)
         for page, retained in retained_proposals.items():
             if type(retained) is not dict or set(retained) != {"raw", "origin"} or type(retained["raw"]) is not bytes:
+                fail("retained_proposal_invalid", 409)
+            from .ordinary_auto_layout import _proposal_repair_version
+            if (type(retained["origin"]) is dict
+                    and _proposal_repair_version(retained["origin"].get("original_policy_fingerprint")) is not None):
+                fail("automatic_recovery_unsupported_policy", 409)
+            if retained_only and digest(retained["raw"]) != retained["origin"].get("response_sha256"):
                 fail("retained_proposal_invalid", 409)
             proposal = decode(retained["raw"])
             if type(proposal) is not dict or proposal.get("page_number") != page:
                 fail("retained_proposal_invalid", 409)
-            normalize_proposals(inspect_docx(job.reviewed_docx, job.target_lang), view, [proposal])
-        if Decimal(policy.max_page_cost_usd) * len(page_numbers) > Decimal(policy.max_operation_cost_usd):
+            normalize_proposals(inspect_docx(job.reviewed_docx, job.target_lang), view, [proposal],
+                                band_normalization_version=band_normalization_version,
+                                emphasis_normalization_version=emphasis_normalization_version)
+        if proposal_repair_policy is not None:
+            from .ordinary_layout_reproposal import extra_calls as repair_extra_calls
+            extra_calls = repair_extra_calls(len(page_numbers), proposal_repair_policy)
+        else:
+            extra_calls = 0
+        if Decimal(policy.max_page_cost_usd) * (len(page_numbers) + extra_calls) > Decimal(policy.max_operation_cost_usd):
             fail("operation_cost_limit", 409)
         operation, intent, fresh = self.service.begin_suggestion(job_id, expected_generation, operation_nonce,
-            page_numbers, policy.public(), expected_baseline_id=expected_baseline_id)
-        if not fresh:
+            page_numbers, private_policy, expected_baseline_id=expected_baseline_id)
+        if not fresh and not retained_only:
             return self.service.suggestion(job_id, operation_nonce)
-        _write(operation / "proposal_initial_view.json", {"review_id": view["review_id"], "generation": expected_generation, "view": view})
+        initial_record = {"review_id": view["review_id"], "generation": expected_generation, "view": view,
+            **({"emphasis_normalization_version":emphasis_normalization_version} if emphasis_normalization_version in {EMPHASIS_NORMALIZATION_V2, EMPHASIS_NORMALIZATION_V3} else {}),
+            **({"band_normalization_version": band_normalization_version} if band_normalization_version in {BAND_NORMALIZATION_V2, BAND_NORMALIZATION_V3, BAND_NORMALIZATION_V4, BAND_NORMALIZATION_V5, BAND_NORMALIZATION_V6, BAND_NORMALIZATION_V7, BAND_NORMALIZATION_V8} else {})}
+        if (operation / "proposal_initial_view.json").exists():
+            if _read(operation / "proposal_initial_view.json") != initial_record:
+                fail("retained_proposal_invalid", 409)
+        else:
+            _write(operation / "proposal_initial_view.json", initial_record)
         accountant = None
+        def save_local(path, value):
+            if retained_only and path.exists():
+                if _read(path) != value:
+                    fail("retained_proposal_invalid", 409)
+            else:
+                _write(path, value)
         proposals = []
         result = {"operation_nonce": operation_nonce, "baseline_id": expected_baseline_id,
                   "generation": expected_generation, "status": "failed", "completed_pages": [], "retry_dispatch_allowed": False}
         try:
-            accountant = self.accounting_factory(job, operation_nonce, operation, policy)
+            if retained_only:
+                retained_preflight()
+                journal_path = operation / "accounting" / "dispatch_accounting.json"
+                prior_artifacts = (list(operation.glob("page-*.response.json")) + list(operation.glob("page-*.retained.json"))
+                    + [p for p in (operation / "source_evidence.json", operation / "proposed_decisions.json", operation / "accounting_summary.json") if p.exists()])
+                if prior_artifacts and not journal_path.is_file():
+                    fail("retained_proposal_invalid", 409)
+                if journal_path.is_file() and decode(storage._read(journal_path, 8 * 1024 * 1024)).get("events") != []:
+                    fail("retained_proposal_invalid", 409)
+                expected_raw={f"page-{p:04d}.response.json" for p in page_numbers}
+                expected_origin={f"page-{p:04d}.retained.json" for p in page_numbers}
+                if ({p.name for p in operation.glob("page-*.response.json")} - expected_raw
+                        or {p.name for p in operation.glob("page-*.retained.json")} - expected_origin):
+                    fail("retained_proposal_invalid", 409)
+                for page,retained in retained_proposals.items():
+                    raw_path=operation/f"page-{page:04d}.response.json"
+                    origin_path=operation/f"page-{page:04d}.retained.json"
+                    if (raw_path.exists() and storage._read(raw_path,MAX_RESPONSE_BYTES)!=retained["raw"]
+                            or origin_path.exists() and _read(origin_path)!=retained["origin"]):
+                        fail("retained_proposal_invalid",409)
+            accountant = (retained_accounting_factory(job, operation_nonce, operation, policy)
+                if retained_only else self.accounting_factory(job, operation_nonce, operation, policy))
             if (not isinstance(accountant, DispatchAccounting) or not accountant.hard_budget
                     or accountant.budget_context is None):
                 fail("durable_accounting_required", 503)
-            limits = accountant.request_limits("openai", "layout_suggestion", policy.model)
-            ceiling = _ceiling_for(pricing_snapshot=accountant.pricing_snapshot, provider="openai", model=policy.model,
+            layout_provider = "gemini" if str(policy.model).startswith("gemini-") else "openai"
+            limits = accountant.request_limits(layout_provider, "layout_suggestion", policy.model)
+            ceiling = _ceiling_for(pricing_snapshot=accountant.pricing_snapshot, provider=layout_provider, model=policy.model,
                                    bounds=limits, hard=True)
             if ceiling is None or ceiling > Decimal(policy.max_page_cost_usd):
                 fail("paid_policy_bound_mismatch", 409)
-            client = self.provider_factory(job, policy)
-            if (not isinstance(client, OpenAIResponsesClient) or client.model != policy.model
-                    or client._max_transport_retries != 0):
+            client = None if retained_only else self.provider_factory(job, policy)
+            if not retained_only and (
+                not is_translation_client(client)
+                or client_provider(client) != layout_provider
+                or client.model != policy.model
+                or client._max_transport_retries != 0
+            ):
                 fail("bounded_provider_required", 503)
             started = time.monotonic()
+            attempt_store = None
+            if proposal_repair_policy is not None:
+                from .ordinary_layout_reproposal import AttemptStore, automatic_policy
+                from .saved_docx_layout import validate_decisions
+                snapshot = inspect_docx(job.reviewed_docx, job.target_lang)
+                validate_decisions(snapshot, view["pages"], view["decisions"])
+                attempt_identity = {**job_identity(job, self.mode, self.workspace_id),
+                    "operation_nonce": operation_nonce, "baseline_id": expected_baseline_id,
+                    "initial_generation": expected_generation,
+                    "policy_fingerprint": automatic_policy(proposal_repair_policy, proposal_render_policy_fingerprint).split(":", 1)[1],
+                    "page_groups": [[p, list(job.page_groups[p])] for p in page_numbers]}
+                attempt_store = AttemptStore(operation, view=view, snapshot=snapshot,
+                    identity=attempt_identity, policy=private_policy, source_pdf=job.source_pdf)
+
+                def recheck():
+                    if external_cancel_requested and external_cancel_requested(job_id):
+                        self.service.cancel_suggestion(job_id, operation_nonce, expected_generation,
+                            expected_baseline_id=expected_baseline_id)
+                    if self.service.cancellation_requested(job_id, operation_nonce):
+                        fail("automatic_layout_cancelled", 409)
+                    current_job = self._job(job_id)
+                    if job_identity(current_job, self.mode, self.workspace_id) != job_identity(job, self.mode, self.workspace_id):
+                        fail("baseline_stale", 409)
+                    current = self.service.assert_current(current_job)
+                    if current["baseline_id"] != expected_baseline_id or current["review"] != view:
+                        fail("baseline_stale", 409)
+                    if current["frozen"]:
+                        fail("delivery_frozen", 409)
+                    if time.monotonic() - started > (len(page_numbers) + extra_calls) * policy.timeout_seconds + 30:
+                        fail("operation_deadline", 409)
             for page in page_numbers:
                 if external_cancel_requested and external_cancel_requested(job_id):
                     self.service.cancel_suggestion(job_id, operation_nonce, expected_generation,
@@ -220,21 +443,35 @@ class OrdinaryLayoutManager:
                     break
                 if page in retained_proposals:
                     retained = retained_proposals[page]
-                    storage._atomic(operation / f"page-{page:04d}.response.json", retained["raw"])
-                    _write(operation / f"page-{page:04d}.retained.json", retained["origin"])
+                    raw_path, origin_path = operation / f"page-{page:04d}.response.json", operation / f"page-{page:04d}.retained.json"
+                    if retained_only and raw_path.exists() and storage._read(raw_path, MAX_RESPONSE_BYTES) != retained["raw"]:
+                        fail("retained_proposal_invalid", 409)
+                    if retained_only and origin_path.exists() and _read(origin_path) != retained["origin"]:
+                        fail("retained_proposal_invalid", 409)
+                    if not retained_only or not raw_path.exists():
+                        storage._atomic(raw_path, retained["raw"])
+                    if not retained_only or not origin_path.exists():
+                        _write(origin_path, retained["origin"])
                     proposals.append(decode(retained["raw"]))
                     result["completed_pages"].append(page)
                     continue
+                if retained_only:
+                    fail("retained_proposal_missing", 409)
                 current = self.service.assert_current(self._job(job_id))
                 if current["baseline_id"] != expected_baseline_id:
                     fail("baseline_stale", 409)
                 if current["frozen"]:
                     fail("delivery_frozen", 409)
-                if time.monotonic() - started > len(page_numbers) * policy.timeout_seconds + 30:
+                if time.monotonic() - started > (len(page_numbers) + extra_calls) * policy.timeout_seconds + 30:
                     fail("operation_deadline", 409)
                 ids = ids_by_page[page]
                 rows = [r for r in view["paragraphs"] if r["id"] in ids]
                 image = self.service.saved.image(view["review_id"], page)
+                if attempt_store is not None:
+                    proposal = attempt_store.run_page(page, image, client, accountant, recheck)
+                    proposals.append(proposal)
+                    result["completed_pages"].append(page)
+                    continue
                 prompt = encode({"version": PROPOSAL_VERSION_V3, "page_number": page, "target_lang": job.target_lang,
                                  "paragraphs": rows}).decode("utf-8")
                 if external_cancel_requested and external_cancel_requested(job_id):
@@ -255,26 +492,43 @@ class OrdinaryLayoutManager:
                 if type(proposal) is not dict or proposal.get("page_number") != page:
                     fail("invalid_proposal_page")
                 snapshot = inspect_docx(job.reviewed_docx, job.target_lang)
-                normalize_proposals(snapshot, view, [proposal])
+                normalize_proposals(snapshot, view, [proposal], band_normalization_version=band_normalization_version,
+                    emphasis_normalization_version=emphasis_normalization_version)
                 proposals.append(proposal)
                 result["completed_pages"].append(page)
             cancelled = self.service.cancellation_requested(job_id, operation_nonce)
-            current = self.service.assert_current(self._job(job_id))
+            current = self.service.assert_current(job if retained_only else self._job(job_id))
             if current["baseline_id"] != expected_baseline_id:
                 fail("baseline_stale", 409)
             if current["frozen"]:
                 fail("delivery_frozen", 409)
             if proposals:
-                decisions = normalize_proposals(inspect_docx(job.reviewed_docx, job.target_lang), view, proposals)
-                source_evidence = [proposal_source_evidence(inspect_docx(job.reviewed_docx, job.target_lang), view, p) for p in proposals]
+                if attempt_store is not None:
+                    from .ordinary_layout_reproposal import operation_witness
+                    witness, selected, _ = operation_witness(operation, snapshot=snapshot,
+                        frames=view["pages"], source_pdf=job.source_pdf, page_groups=job.page_groups,
+                        selected_pages=page_numbers, expected_identity=attempt_identity, seal=True)
+                    if [row[2] for row in selected] != proposals:
+                        fail("proposal_repair_selection_changed", 409)
+                    result["proposal_repair_ledger_sha256"] = digest(encode(witness))
+                decisions = normalize_proposals(inspect_docx(job.reviewed_docx, job.target_lang), view, proposals,
+                                                band_normalization_version=band_normalization_version,
+                                                emphasis_normalization_version=emphasis_normalization_version)
+                source_evidence = [proposal_source_evidence(inspect_docx(job.reviewed_docx, job.target_lang), view, p,
+                    band_normalization_version=band_normalization_version,
+                    emphasis_normalization_version=emphasis_normalization_version) for p in proposals]
                 for item, proposal in zip(source_evidence, proposals):
                     item["response_sha256"] = digest(storage._read(operation / f"page-{proposal['page_number']:04d}.response.json", MAX_RESPONSE_BYTES))
-                _write(operation / "source_evidence.json", {"version": "ordinary_source_evidence_v1", "pages": source_evidence})
+                save_local(operation / "source_evidence.json", {"version": "ordinary_source_evidence_v1", "pages": source_evidence})
                 result["source_coverage_findings"] = [f for page in source_evidence for f in page["findings"]]
                 result["source_layout_evidence_sha256"] = digest(encode(source_evidence))
                 from .ordinary_layout_contracts import source_evidence_review_fields
                 result.update(source_evidence_review_fields(source_evidence))
-                _write(operation / "proposed_decisions.json", decisions)
+                save_local(operation / "proposed_decisions.json", decisions)
+                if retained_only:
+                    # The empty native ledger settles before generation changes;
+                    # a crash immediately after apply remains locally resumable.
+                    save_local(operation / "accounting_summary.json", accountant.summary())
                 saved = self.service.apply_suggestion(job_id, operation_nonce, expected_generation, decisions,
                     baseline_id=expected_baseline_id)
                 result.update(status="applied_unreviewed", generation=saved["generation"], applied_unreviewed=True)
@@ -295,7 +549,7 @@ class OrdinaryLayoutManager:
             if isinstance(accountant, DispatchAccounting):
                 try:
                     summary = accountant.summary()
-                    _write(operation / "accounting_summary.json", summary)
+                    save_local(operation / "accounting_summary.json", summary)
                     result["accounting"] = {k: summary.get(k) for k in ("cost_usd", "known_cost_usd", "unknown_cost_count", "complete")}
                     result["accounting"]["complete"] = summary.get("cost_usd") is not None
                 except Exception:

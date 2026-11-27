@@ -59,7 +59,7 @@ def offline(tmp_path, monkeypatch):
     class VerifiedDate(date):
         @classmethod
         def today(cls):
-            return cls(2026, 10, 9)
+            return cls(2026, 10, 15)
     monkeypatch.setattr(policy_module, "date", VerifiedDate)
     assert Path(workflow_module.__file__).resolve().is_relative_to(Path(__file__).resolve().parents[1] / "src")
     def forbidden(*args, **kwargs):
@@ -103,7 +103,7 @@ def offline(tmp_path, monkeypatch):
     out = tmp_path / "outputs"
     out.mkdir()
     settings = tmp_path / "settings.json"
-    settings.write_text("{}", encoding="utf-8")
+    settings.write_text('{"translation_provider":"openai"}', encoding="utf-8")
     calls, workflows = [], []
     provider = OfflineProvider(calls)
     real_workflow = workflow_module.TranslationWorkflow
@@ -111,7 +111,7 @@ def offline(tmp_path, monkeypatch):
     class InjectedWorkflow(real_workflow):
         def __init__(self, **kwargs):
             kwargs["client"] = provider
-            kwargs.setdefault("gui_settings", {})
+            kwargs["gui_settings"] = {"translation_provider": "openai", **dict(kwargs.get("gui_settings") or {})}
             kwargs["environment_loader"] = lambda: None
             kwargs["ocr_engine_factory"] = forbidden
             super().__init__(**kwargs)
@@ -143,7 +143,7 @@ def assert_completed(fixture, structured):
     # Actual caller defaults must wire the shared immutable accounting policy;
     # this fixture substitutes provider/environment only, never accounting_factory.
     assert workflow._accounting_factory is None
-    assert workflow._dispatch_accounting.pricing_snapshot.snapshot_id == "openai_public_standard_2026_10_09"
+    assert workflow._dispatch_accounting.pricing_snapshot.snapshot_id == "openai_public_standard_2026_10_15"
     assert workflow._dispatch_accounting.request_limits("openai", "translation", "gpt-5.2")["billing_scope"] == "openai_public_api"
     state = load_run_state(workflow._last_paths.run_state_path)
     assert state.run_status == "completed", state.to_dict()
@@ -229,6 +229,7 @@ def test_actual_cli_and_queue_share_policy_and_existing_flags(offline, monkeypat
 def test_actual_qt_workers_share_policy_without_showing_ui(offline, monkeypatch, structured, queue, tmp_path):
     from legalpdf_translate.qt_gui import worker as qt_worker
     policy(monkeypatch, structured)
+    monkeypatch.setattr(qt_worker, "load_gui_settings", lambda: {"translation_provider": "openai"})
     monkeypatch.setattr(qt_worker, "TranslationWorkflow", offline.workflow_class)
     monkeypatch.setattr(qt_worker, "OpenAIResponsesClient", lambda **kwargs: offline.provider)
     if queue:

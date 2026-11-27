@@ -81,6 +81,9 @@ def build_quality_risk_summary(
     page_rows: Sequence[tuple[int, Mapping[str, Any]]],
     *,
     target_lang: str | None = None,
+    decisions_advisory_enabled: bool = False,
+    decisions_sdk_client: Any = None,
+    decisions_accountant: Any = None,
 ) -> dict[str, Any]:
     """Return overall and per-page risk signals for run summary payloads."""
     if not page_rows:
@@ -263,8 +266,27 @@ def build_quality_risk_summary(
     )
     overall = min(1.0, (0.50 * worst) + (0.30 * top_avg) + (0.20 * mean_score))
 
-    return {
+    summary: dict[str, Any] = {
         "quality_risk_score": round(overall, 4),
         "review_queue_count": int(len(review_queue)),
         "review_queue": review_queue,
     }
+    if decisions_advisory_enabled:
+        from ..gemini_decisions import evaluate_visual_qa_advisory
+
+        summary["decisions_advisory"] = evaluate_visual_qa_advisory(
+            qa_summary={
+                "target_lang": str(target_lang or ""),
+                "page_count": len(page_rows),
+                "quality_risk_score": summary["quality_risk_score"],
+                "review_queue_count": summary["review_queue_count"],
+                "flagged_pages": [
+                    {"page_number": item["page_number"], "reasons": item["reasons"][:6]}
+                    for item in review_queue[:10]
+                ],
+            },
+            enabled=True,
+            sdk_client=decisions_sdk_client,
+            accountant=decisions_accountant,
+        )
+    return summary

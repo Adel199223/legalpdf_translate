@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha1, sha256
 import json
@@ -1631,6 +1631,36 @@ class GmailBrowserSessionManager:
         workspace = self._workspace(runtime_mode=runtime_mode, workspace_id=workspace_id)
         next_event_id = max(0, int(workspace.review_event_id)) + 1
         current_handoff_context = dict(workspace.current_handoff_context)
+        if result.ok and result.message is not None:
+            def fetched_identity(context):
+                payload = _serialize_inbound_context(context)
+                return (payload.get("message_id"), payload.get("thread_id"),
+                        _clean_text(payload.get("account_email")).casefold())
+
+            incoming_identity = fetched_identity(result.intake_context)
+            canonical_context = replace(
+                result.intake_context,
+                message_id=result.message.message_id,
+                thread_id=result.message.thread_id,
+                subject=result.message.subject,
+                account_email=result.message.account_email or result.account_email or result.intake_context.account_email,
+            )
+            canonical_identity = fetched_identity(canonical_context)
+            if incoming_identity != canonical_identity:
+                # Fetch metadata cannot relabel another account's browser URL
+                # or handoff. Clear the fallback context as well as the live one.
+                canonical_context = replace(canonical_context, source_gmail_url=None, handoff_session_id=None)
+                current_handoff_context = {}
+            result.intake_context = canonical_context
+            if fetched_identity(current_handoff_context) == canonical_identity:
+                current_handoff_context.update(
+                    message_id=result.intake_context.message_id,
+                    thread_id=result.intake_context.thread_id,
+                    subject=result.intake_context.subject,
+                    account_email=result.intake_context.account_email or "",
+                )
+            else:
+                current_handoff_context = {}
         workspace.cleanup()
         workspace.loaded_result = result
         workspace.allow_report_restore = True

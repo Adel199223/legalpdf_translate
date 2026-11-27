@@ -255,7 +255,7 @@ def capture_lazy_client(monkeypatch):
 def test_reviewed_job_actual_lazy_client_keeps_saved_transport_policy(tmp_path, monkeypatch):
     c = bridge_case(tmp_path, monkeypatch)
     settings = json.loads(c.settings.read_text(encoding="utf-8"))
-    settings.update(perf_max_transport_retries=2, perf_backoff_cap_seconds=3.5)
+    settings.update(translation_provider='openai', perf_max_transport_retries=2, perf_backoff_cap_seconds=3.5)
     c.settings.write_text(json.dumps(settings), encoding="utf-8")
     revision = submit(c)
     targets = capture_jobs(monkeypatch)

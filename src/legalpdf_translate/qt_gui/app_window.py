@@ -67,7 +67,13 @@ from legalpdf_translate.checkpoint import (
     parse_ocr_engine_policy,
     parse_ocr_mode,
 )
-from legalpdf_translate.config import OPENAI_MODEL
+from legalpdf_translate.config import (
+    DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+    DEFAULT_TRANSLATION_PROVIDER,
+    GEMINI_MODEL,
+    OPENAI_MODEL,
+)
+from legalpdf_translate.gemini_client import run_gemini_auth_test
 from legalpdf_translate.gmail_draft import (
     GMAIL_DRAFTS_URL,
     assess_gmail_draft_prereqs,
@@ -120,6 +126,10 @@ from legalpdf_translate.output_paths import (
     build_output_paths,
     require_writable_output_dir,
     require_writable_output_dir_text,
+)
+from legalpdf_translate.provider_client import (
+    default_translation_model,
+    normalize_translation_provider,
 )
 from legalpdf_translate.source_document import (
     SOURCE_FILE_DIALOG_FILTER,
@@ -176,6 +186,7 @@ from legalpdf_translate.run_report import build_run_report_markdown
 from legalpdf_translate.secrets_store import (
     delete_openai_key,
     delete_ocr_key,
+    get_gemini_key,
     get_openai_key,
     get_ocr_key,
 )
@@ -2339,6 +2350,23 @@ class QtMainWindow(QMainWindow):
     def _test_api_keys(self) -> None:
         lines: list[str] = []
         try:
+            gemini_key = get_gemini_key()
+        except RuntimeError as exc:
+            QMessageBox.critical(self, "API Key Test", str(exc))
+            return
+        if not gemini_key:
+            lines.append("Gemini: missing key")
+        else:
+            gemini_result = run_gemini_auth_test(
+                api_key=gemini_key,
+                model=str(self._defaults.get("translation_model", "") or "").strip() or GEMINI_MODEL,
+            )
+            if gemini_result.ok:
+                lines.append(f"Gemini: PASS ({gemini_result.latency_ms} ms)")
+            else:
+                lines.append(f"Gemini: FAIL ({gemini_result.message})")
+
+        try:
             openai_key = get_openai_key()
         except RuntimeError as exc:
             QMessageBox.critical(self, "API Key Test", str(exc))
@@ -2369,7 +2397,7 @@ class QtMainWindow(QMainWindow):
             lines.append("OCR API: missing key")
         else:
             provider = normalize_ocr_api_provider(
-                self._defaults.get("ocr_api_provider", self._defaults.get("ocr_api_provider_default", "openai"))
+                self._defaults.get("ocr_api_provider", self._defaults.get("ocr_api_provider_default", "gemini"))
             )
             started = time.perf_counter()
             try:
@@ -4789,6 +4817,25 @@ class QtMainWindow(QMainWindow):
             if advisor_override_ocr in {"off", "auto", "always"}:
                 selected_ocr_mode = str(advisor_override_ocr)
 
+        translation_provider = normalize_translation_provider(
+            self._defaults.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
+        )
+        translation_model = (
+            str(self._defaults.get("translation_model", "") or "").strip()
+            or default_translation_model(translation_provider)
+        )
+        helper_thinking_level = (
+            str(
+                self._defaults.get("helper_thinking_level", DEFAULT_GEMINI_HELPER_THINKING_LEVEL)
+                or DEFAULT_GEMINI_HELPER_THINKING_LEVEL
+            )
+            .strip()
+            .lower()
+        )
+        gemini_decisions_advisory = bool(
+            self._defaults.get("gemini_decisions_advisory_enabled", False)
+        )
+
         return RunConfig(
             pdf_path=pdf,
             output_dir=outdir,
@@ -4798,6 +4845,10 @@ class QtMainWindow(QMainWindow):
             effort=parse_effort(self.effort_combo.currentText()),
             effort_policy=parse_effort_policy(self.effort_policy_combo.currentText()),
             allow_xhigh_escalation=bool(self._defaults.get("allow_xhigh_escalation", False)),
+            translation_provider=translation_provider,
+            translation_model=translation_model,
+            helper_thinking_level=helper_thinking_level,
+            gemini_decisions_advisory_enabled=gemini_decisions_advisory,
             image_mode=parse_image_mode(selected_image_mode),
             start_page=start_page,
             end_page=opt_int(self.end_edit.text(), "End page"),
@@ -4809,7 +4860,7 @@ class QtMainWindow(QMainWindow):
             ocr_mode=parse_ocr_mode(selected_ocr_mode),
             ocr_engine=parse_ocr_engine_policy(self.ocr_engine_combo.currentText()),
             ocr_api_provider=normalize_ocr_api_provider(
-                self._defaults.get("ocr_api_provider", self._defaults.get("ocr_api_provider_default", "openai"))
+                self._defaults.get("ocr_api_provider", self._defaults.get("ocr_api_provider_default", "gemini"))
             ),
             ocr_api_base_url=str(self._defaults.get("ocr_api_base_url", "") or "") or None,
             ocr_api_model=str(self._defaults.get("ocr_api_model", "") or "") or None,
@@ -4818,13 +4869,13 @@ class QtMainWindow(QMainWindow):
                     "ocr_api_key_env_name",
                     default_ocr_api_env_name(
                         normalize_ocr_api_provider(
-                            self._defaults.get("ocr_api_provider", self._defaults.get("ocr_api_provider_default", "openai"))
+                            self._defaults.get("ocr_api_provider", self._defaults.get("ocr_api_provider_default", "gemini"))
                         )
                     ),
                 )
                 or default_ocr_api_env_name(
                     normalize_ocr_api_provider(
-                        self._defaults.get("ocr_api_provider", self._defaults.get("ocr_api_provider_default", "openai"))
+                        self._defaults.get("ocr_api_provider", self._defaults.get("ocr_api_provider_default", "gemini"))
                     )
                 )
             ),

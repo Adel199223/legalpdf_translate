@@ -46,7 +46,7 @@ def test_explicit_declaration_preserves_identity_and_only_adds_blank_signature(t
     assert "Morada: Rua Exemplo 1" in texts
     assert "O Pagamento deverá ser efetuado para o seguinte IBAN: TEST-IBAN" in texts
     assert "Este serviço inclui a taxa IVA de 23% e não tem retenção de IRS." in texts
-    assert "O documento traduzido contém 1501 palavras." in texts
+    assert "Total de palavras traduzidas: 1501." in texts
     assert not Document(path).inline_shapes
 
 

@@ -27,7 +27,7 @@ def offline(monkeypatch):
     class ReferenceDate(date):
         @classmethod
         def today(cls):
-            return cls(2026, 10, 9)
+            return cls(2026, 10, 15)
 
     monkeypatch.setattr(policy_module, "date", ReferenceDate)
     monkeypatch.delenv("LEGALPDF_TRANSLATION_PROTOCOL", raising=False)
@@ -66,8 +66,9 @@ def install_sdk(monkeypatch, *, missing_usage=False):
 def start_and_wait(manager, directory, *, settings_payload=None):
     directory.mkdir()
     config = config_for(directory)
+    payload = settings_payload if settings_payload is not None else {"translation_provider": "openai"}
     settings = directory / "settings.json"
-    settings.write_text(json.dumps(settings_payload or {}), encoding="utf-8")
+    settings.write_text(json.dumps(payload), encoding="utf-8")
     job = manager.start_translate(runtime_mode="shadow", workspace_id=directory.name,
         settings_path=settings, form_values={
             "source_path": str(config.pdf_path), "output_dir": str(config.output_dir),
@@ -79,7 +80,7 @@ def start_and_wait(manager, directory, *, settings_payload=None):
         time.sleep(0.01)
         job = manager.get_job(job["job_id"])
     assert job["status"] in {"completed", "failed"}, job
-    assert json.loads(settings.read_text(encoding="utf-8")) == (settings_payload or {})
+    assert json.loads(settings.read_text(encoding="utf-8")) == payload
     return job
 
 
@@ -94,7 +95,7 @@ def test_browser_job_preserves_explicit_zero_transport_retries(tmp_path, monkeyp
 
     monkeypatch.setattr(service, "OpenAIResponsesClient", client)
     job = start_and_wait(service.TranslationJobManager(), tmp_path / "zero-retry",
-                         settings_payload={"perf_max_transport_retries": 0})
+                         settings_payload={"translation_provider": "openai", "perf_max_transport_retries": 0})
     assert job["status"] == "completed", job
     assert created and created[0]["max_transport_retries"] == 0
     assert len(sdk.requests) == 1

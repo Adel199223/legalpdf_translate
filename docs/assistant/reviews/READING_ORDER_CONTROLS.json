@@ -1,0 +1,238 @@
+{
+  "panel": {
+    "meaning": "Three case-office tasks. Each numbered heading owns only its own following instructions, read the task groups 1, 2, 3.",
+    "boxes": [
+      [
+        36,
+        100,
+        281,
+        443
+      ],
+      [
+        309,
+        100,
+        570,
+        235
+      ],
+      [
+        309,
+        275,
+        570,
+        443
+      ]
+    ],
+    "lines": [
+      [
+        55,
+        134,
+        "01 Intake"
+      ],
+      [
+        55,
+        180,
+        "Receive exhibits"
+      ],
+      [
+        55,
+        260,
+        "Record meeting"
+      ],
+      [
+        334,
+        139,
+        "02 Review"
+      ],
+      [
+        334,
+        199,
+        "Compare copies"
+      ],
+      [
+        334,
+        307,
+        "03 Release"
+      ],
+      [
+        334,
+        347,
+        "Check seals"
+      ],
+      [
+        334,
+        392,
+        "File closure"
+      ]
+    ],
+    "paint": [
+      6,
+      1,
+      4,
+      0,
+      5,
+      7,
+      3,
+      2
+    ],
+    "intended_groups": [
+      [
+        1,
+        2,
+        3
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        6,
+        7,
+        8
+      ]
+    ],
+    "positive_pairs": [
+      [
+        1,
+        2
+      ],
+      [
+        1,
+        3
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        6,
+        7
+      ],
+      [
+        6,
+        8
+      ]
+    ],
+    "reading_order": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ]
+  },
+  "rows": {
+    "meaning": "A law office assignment register. Left column names legal tasks, right column names their corresponding owners on the same row. Vertical neighbors are different assignments.",
+    "boxes": [
+      [
+        36,
+        100,
+        275,
+        435
+      ],
+      [
+        315,
+        100,
+        569,
+        435
+      ]
+    ],
+    "lines": [
+      [
+        51,
+        143,
+        "Task (match across each row)"
+      ],
+      [
+        328,
+        143,
+        "Owner for corresponding task"
+      ],
+      [
+        51,
+        205,
+        "Inspect deed"
+      ],
+      [
+        328,
+        205,
+        "Clerk"
+      ],
+      [
+        51,
+        275,
+        "Prepare reply"
+      ],
+      [
+        328,
+        275,
+        "Counsel"
+      ],
+      [
+        51,
+        345,
+        "File motion"
+      ],
+      [
+        328,
+        345,
+        "Assistant"
+      ]
+    ],
+    "paint": [
+      6,
+      0,
+      3,
+      4,
+      7,
+      2,
+      5,
+      1
+    ],
+    "intended_groups": [
+      [
+        1,
+        2
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        5,
+        6
+      ],
+      [
+        7,
+        8
+      ]
+    ],
+    "positive_pairs": [
+      [
+        3,
+        4
+      ],
+      [
+        5,
+        6
+      ],
+      [
+        7,
+        8
+      ]
+    ],
+    "reading_order": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "safe_alternative": "abstain if the intended row pairing cannot be supported"
+  },
+  "scoring": "For an ordered list, test same-group pairs and compare flat order. For an abstention record no asserted errors and no positive recoveries. A grid label alone cannot assert exact pairs; independently check cell row/column mapping if available. Report co-containment separately from inferred semantic ownership. Do not tune."
+}

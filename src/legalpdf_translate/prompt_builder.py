@@ -61,7 +61,10 @@ def build_ar_token_retry_prompt(
     violation_kind: str | None = None,
     defect_reason: str | None = None,
     token_details: Mapping[str, Any] | None = None,
+    literal_wrapper_policy: str | None = None,
 ) -> str:
+    if literal_wrapper_policy not in (None, "lossless_source_components_v1", "lossless_source_components_v2", "lossless_source_components_v3"):
+        raise ValueError("Unsupported primary literal wrapper policy.")
     tokens = [token for token in expected_tokens if isinstance(token, str) and token != ""]
     token_lines = [f"{index}. [[{token}]]" for index, token in enumerate(tokens, start=1)]
     header = (
@@ -73,6 +76,11 @@ def build_ar_token_retry_prompt(
         "No Latin letters or digits may appear outside protected tokens. "
         "All non-token text must be Arabic."
     )
+    if literal_wrapper_policy in ("lossless_source_components_v1", "lossless_source_components_v2", "lossless_source_components_v3"):
+        header = header.replace(
+            "Regroup wrappers only for numeric components whose exact boundaries are established by the supplied source; preserve the complete visible numeric expression. Do not split or regroup names, addresses or other literal spans.",
+            "Regroup wrappers only when exact component boundaries are established by the supplied source. For source-proven postal or address blocks, wrap the required components separately while preserving the complete prior visible sequence character-for-character, including every separator, street prefix and residual character. Keep residual Latin letters or digits protected. Do not duplicate the original fused token merely to repeat its components. Never remove, reorder, edit or translate visible literal content. Keep ambiguous or unwitnessed literal spans unchanged.",
+        )
     defect_hint = ""
     if violation_kind == "latin_or_digits_outside_wrapped_tokens":
         defect_hint = (

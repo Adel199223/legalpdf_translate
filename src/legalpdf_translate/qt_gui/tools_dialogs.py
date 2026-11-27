@@ -324,13 +324,18 @@ class _GlossaryBuilderWorker(QObject):
                 self.progress.emit(95, "Running lemma normalization...")
                 try:
                     from legalpdf_translate.lemma_normalizer import LemmaCache, batch_normalize_lemmas
-                    from legalpdf_translate.openai_client import OpenAIResponsesClient as _LemmaClient
+                    from legalpdf_translate.provider_client import create_translation_client as _create_lemma_client
+                    from legalpdf_translate.user_settings import load_gui_settings as _load_lemma_settings
 
                     pkg_tf: dict[str, int] = stats.get("term_tf", {})
                     terms_to_normalize = [t for t, tf in pkg_tf.items() if int(tf) >= 2]
                     if terms_to_normalize:
                         _cache = LemmaCache(cache_path=app_data_dir() / "lemma_cache.json")
-                        _client = _LemmaClient()
+                        _settings = _load_lemma_settings()
+                        _client = _create_lemma_client(
+                            provider=_settings.get("translation_provider", "gemini"),
+                            model=_settings.get("translation_model"),
+                        )
                         lemma_result = batch_normalize_lemmas(
                             terms_to_normalize,
                             client=_client,

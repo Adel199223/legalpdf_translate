@@ -6,6 +6,7 @@ from typing import Protocol
 
 SERVICE = "LegalPDFTranslate"
 USER_OPENAI = "openai_api_key"
+USER_GEMINI = "gemini_api_key"
 USER_OCR = "ocr_api_key"
 _UNAVAILABLE_MESSAGE = "Secure credential storage is unavailable on this system."
 
@@ -82,6 +83,18 @@ def set_openai_key(key: str, *, backend: KeyringBackend | None = None) -> None:
 
 def delete_openai_key(*, backend: KeyringBackend | None = None) -> None:
     _delete_key(USER_OPENAI, backend=backend)
+
+
+def get_gemini_key(*, backend: KeyringBackend | None = None) -> str | None:
+    return _get_key(USER_GEMINI, backend=backend)
+
+
+def set_gemini_key(key: str, *, backend: KeyringBackend | None = None) -> None:
+    _set_key(USER_GEMINI, key, backend=backend)
+
+
+def delete_gemini_key(*, backend: KeyringBackend | None = None) -> None:
+    _delete_key(USER_GEMINI, backend=backend)
 
 
 def get_ocr_key(*, backend: KeyringBackend | None = None) -> str | None:

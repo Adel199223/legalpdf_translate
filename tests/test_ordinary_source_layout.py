@@ -29,6 +29,113 @@ def fixture(lang='EN',custom=False):
 def build(args):return writer.build_unreviewed_docx(*args[:4],ordinary_context=args[4])
 def verify(artifact,args):writer.validate_built_docx(artifact.docx_bytes,artifact.source_map,original_docx=args[0],snapshot=args[1],pages=args[2],decisions=args[3],require_review=False,ordinary_context=args[4])
 
+
+@pytest.mark.parametrize('lang',['EN','AR'])
+def test_terminal_flow_oversized_body_keeps_folio_after_all_source_text(lang):
+    args=multipage_fixture(lang,long_body=True)
+    historical=build(args)
+    args[4]['source_footer_placement_version']='terminal_body_flow_v1'
+    args[4]['source_spacing_version']='baseline_metadata_heading_spacing_v1'
+    artifact=build(args);verify(artifact,args)
+    plan=artifact.source_map['source_layout_plan']
+    assert plan['footer_placement']=='terminal_body_flow_v1'
+    with ZipFile(BytesIO(artifact.docx_bytes)) as z:
+        doc=etree.fromstring(z.read('word/document.xml'))
+        text=[''.join(n.text or '' for n in p.iter(model.W+'t')) for p in doc.iter(model.W+'p')]
+        owned=[''.join(t['text'] for t in p['tokens'] if t['kind']=='t') for p in args[1]['paragraphs']]
+        assert [v for v in text if v]==[v for v in owned if v]
+        assert len(list(doc.iter(model.W+'sectPr')))==2
+        for item in plan['source_footers']:
+            assert not list(etree.fromstring(z.read(item['part_uri'])).iter(model.W+'t'))
+    assert all(r['part_uri']=='word/document.xml' for r in artifact.source_map['paragraphs'])
+    assert artifact.docx_bytes!=historical.docx_bytes
+    del args[4]['source_footer_placement_version'];del args[4]['source_spacing_version']
+    assert build(args)==historical
+
+
+def test_terminal_metadata_spacing_reduces_only_roles_preserves_body_and_historical():
+    args=fixture();args[3]['paragraphs'][0].update(role='institution',space_before_pt=14,space_after_pt=14)
+    args[3]['paragraphs'][1].update(space_before_pt=16,space_after_pt=16)
+    prior=build(args)
+    args[4].update(source_footer_placement_version='terminal_body_flow_v1',source_spacing_version='baseline_metadata_heading_spacing_v1')
+    current=build(args);verify(current,args)
+    changes=current.source_map['source_layout_plan']['baseline_spacing_changes']
+    assert {x['paragraph_id'] for x in changes}=={args[1]['paragraphs'][0]['id']}
+    assert all(x['new_twips']<x['old_twips'] for x in changes)
+    with ZipFile(BytesIO(prior.docx_bytes)) as a,ZipFile(BytesIO(current.docx_bytes)) as b:
+        assert a.read('word/styles.xml')==b.read('word/styles.xml')
+
+
+def test_terminal_recipe_cannot_be_relabelled_as_historical():
+    args=fixture();args[4]['source_footer_placement_version']='terminal_body_flow_v1'
+    artifact=build(args)
+    del args[4]['source_footer_placement_version']
+    with pytest.raises(ValueError,match='source_terminal_policy_version'):verify(artifact,args)
+
+
+def test_terminal_spacing_resolves_original_inheritance_and_declines_auto_spacing():
+    from legalpdf_translate.ordinary_terminal_source_layout import _baseline_spacing
+    args=fixture();members,_=model._package(args[0]);row=deepcopy(args[1]['paragraphs'][0])
+    row['ppr_xml']='<w:pPr xmlns:w="'+model.W[1:-1]+'"><w:pStyle w:val="LegalPDFBody"/><w:spacing w:before="200" w:after="160"/></w:pPr>'
+    assert _baseline_spacing(row,members)=={'before':200,'after':160}
+    row['ppr_xml']=row['ppr_xml'].replace('w:before="200"','w:beforeAutospacing="1"')
+    assert _baseline_spacing(row,members) is None
+
+
+def test_table_membership_never_authorizes_body_or_list_spacing_reduction():
+    from legalpdf_translate.ordinary_terminal_source_layout import apply, SPACING_VERSION
+    args=fixture();members,_=model._package(args[0])
+    root=etree.Element(model.W+'document');body=etree.SubElement(root,model.W+'body')
+    table=etree.SubElement(body,model.W+'tbl');cell=etree.SubElement(etree.SubElement(table,model.W+'tr'),model.W+'tc')
+    nodes={};mapped={};rows={};choices={}
+    for index,role in enumerate(('body','list','institution'),1):
+        identifier=f'p{index:06d}';node=etree.SubElement(cell,model.W+'p')
+        etree.SubElement(etree.SubElement(node,model.W+'pPr'),model.W+'spacing').set(model.W+'before','320')
+        etree.SubElement(etree.SubElement(node,model.W+'r'),model.W+'t').text='Fictional narrative or metadata'
+        nodes[identifier]=node;mapped[identifier]={'part_uri':'word/document.xml'}
+        rows[identifier]={**args[1]['paragraphs'][0],'id':identifier};choices[identifier]={'role':role}
+    original=[etree.tostring(nodes[x]) for x in list(nodes)[:2]]
+    plan={'source_footers':[]};apply(root,nodes,mapped,plan,{},choices,dict(members),rows,SPACING_VERSION)
+    assert [etree.tostring(nodes[x]) for x in list(nodes)[:2]]==original
+    assert {x['paragraph_id'] for x in plan['baseline_spacing_changes']}=={'p000003'}
+
+
+def test_terminal_policy_changes_only_new_fresh_recipe_and_rejects_forged_keys():
+    from legalpdf_translate import ordinary_auto_layout as auto
+    from legalpdf_translate.ordinary_auto_layout_artifacts import _terminal_source_layout_context
+    current=auto.frozen_automatic_layout_policy();historical=auto._complete_lrm_emphasis_policy()
+    assert current!=historical
+    assert auto._emphasis_normalization_version(historical.split(':')[1])=='ordinary_optional_emphasis_normalization_v2'
+    assert auto._band_normalization_version(historical.split(':')[1])=='ordinary_metadata_band_normalization_v5'
+    assert _terminal_source_layout_context({'policy_fingerprint':historical.split(':')[1],'source_evidence':{}})=={}
+    evidence={'policy_fingerprint':current.split(':')[1],'source_evidence':{},**auto._terminal_source_layout_versions(current.split(':')[1])}
+    assert _terminal_source_layout_context(evidence)==auto._terminal_source_layout_versions(current.split(':')[1])
+    for key in ('source_footer_placement_version','source_spacing_version'):
+        bad=deepcopy(evidence);del bad[key]
+        with pytest.raises(ValueError):_terminal_source_layout_context(bad)
+    with pytest.raises(ValueError):_terminal_source_layout_context({**evidence,'policy_fingerprint':historical.split(':')[1]})
+
+
+def test_independent_terminal_order_rejects_self_consistent_bad_transform(monkeypatch):
+    from legalpdf_translate import ordinary_source_layout as layer
+    args=fixture();args[4]['source_footer_placement_version']='terminal_body_flow_v1'
+    artifact=build(args);mapping=deepcopy(artifact.source_map)
+    members,_=model._package(artifact.docx_bytes);members=dict(members)
+    root=layer._xml(members['word/document.xml']);body=root.find(model.W+'body')
+    nodes={r['paragraph_id']:layer._node_at(root,r['location']) for r in mapping['paragraphs']}
+    footer_ids=mapping['source_layout_plan']['source_footers'][0]['paragraph_ids']
+    last_body=nodes[args[1]['paragraphs'][-3]['id']]
+    for identifier in footer_ids:
+        node=nodes[identifier];body.remove(node);body.insert(body.index(last_body),node)
+    for row in mapping['paragraphs']:row['location']=root.getroottree().getpath(nodes[row['paragraph_id']])
+    members['word/document.xml']=layer._bytes(root);raw=layer._pack(members);mapping['docx_sha256']=model._sha(raw)
+    bad=writer.SavedDocxLayoutArtifact(raw,mapping)
+    context={k:v for k,v in args[4].items() if k not in {'source_evidence','source_footer_placement_version'}}
+    base=writer.build_unreviewed_docx(*args[:4],ordinary_context=context)
+    monkeypatch.setattr(layer,'transform',lambda *a,**kw:bad)
+    with pytest.raises(ValueError,match='source_terminal_footer_order'):
+        layer.verify(bad,base,*args[1:4],context,args[4]['source_evidence'],expected_footer_placement='terminal_body_flow_v1')
+
 def test_arabic_source_folio_numeric_expression_is_contiguous_ltr():
     args=multipage_fixture('AR');artifact=build(args);verify(artifact,args)
     with ZipFile(BytesIO(artifact.docx_bytes)) as archive:
@@ -245,3 +352,18 @@ def test_partition_children_preserve_exact_text_with_source_footer_sections():
         root=etree.fromstring(z.read(row['part_uri']))
         text=''.join(''.join(n.text or '' for n in root.xpath(part['location'],namespaces={'w':model.W[1:-1]})[0].iter(model.W+'t')) for part in row['parts'])
         assert text=='Body obligation.'
+
+
+def test_terminal_later_source_partition_paths_follow_inserted_source_footer_group():
+    args=multipage_fixture();args[3]['version']=model.PARTITION_DECISIONS_VERSION
+    identifier=args[1]['paragraphs'][3]['id']
+    args[3]['paragraph_partitions']=[{'paragraph_id':identifier,'offsets':[11]}]
+    args[4].update(source_footer_placement_version='terminal_body_flow_v1',source_spacing_version='baseline_metadata_heading_spacing_v1')
+    artifact=build(args);verify(artifact,args)
+    row=next(r for r in artifact.source_map['paragraphs'] if r['paragraph_id']==identifier)
+    assert len(row['parts'])==2
+    with ZipFile(BytesIO(artifact.docx_bytes)) as z:
+        root=etree.fromstring(z.read('word/document.xml'))
+        children=[root.xpath(p['location'],namespaces={'w':model.W[1:-1]})[0] for p in row['parts']]
+        assert ''.join(n.text or '' for p in children for n in p.iter(model.W+'t'))==args[1]['paragraphs'][3]['text']
+    assert not any(c['paragraph_id']==identifier for c in artifact.source_map['source_layout_plan']['baseline_spacing_changes'])

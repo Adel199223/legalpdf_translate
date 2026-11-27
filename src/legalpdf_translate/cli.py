@@ -16,19 +16,24 @@ from .checkpoint import (
     parse_ocr_engine_policy,
     parse_ocr_mode,
 )
+from .config import DEFAULT_TRANSLATION_PROVIDER
 from .output_paths import require_writable_output_dir_text
 from .ocr_engine import default_ocr_api_env_name, normalize_ocr_api_provider
+from .provider_client import default_translation_model, normalize_translation_provider
 from .queue_runner import queue_result_from_run_summary, run_queue_manifest
 from .review_export import export_review_queue
 from .secrets_store import (
+    delete_gemini_key,
     delete_openai_key,
     delete_ocr_key,
+    get_gemini_key,
     get_openai_key,
     get_ocr_key,
+    set_gemini_key,
     set_openai_key,
     set_ocr_key,
 )
-from .types import BudgetExceedPolicy, RunConfig, TargetLang
+from .types import BudgetExceedPolicy, RunConfig, TargetLang, TranslationApiProvider
 from .user_settings import load_gui_settings
 from .workflow import TranslationWorkflow
 
@@ -53,6 +58,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pdf", help="Path to input PDF or image file.")
     parser.add_argument("--lang", type=_parse_lang, help="Target language: EN|FR|AR.")
     parser.add_argument("--outdir", help="Output folder path.")
+    parser.add_argument(
+        "--provider",
+        default=None,
+        choices=["gemini", "openai"],
+        help="Translation API provider (default: saved setting or gemini).",
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="Optional translation model ID override (default: provider default).",
+    )
+    parser.add_argument(
+        "--helper-thinking-level",
+        default=None,
+        choices=["low", "medium", "high", "xhigh"],
+        help="Gemini thinking level for lightweight helper calls (default: high).",
+    )
+    parser.add_argument(
+        "--gemini-decisions-advisory",
+        default=None,
+        help="Enable opt-in advisory Gemini Decisions QA triage: true|false.",
+    )
     parser.add_argument("--effort", default="high", choices=["high", "xhigh"], help="Reasoning effort.")
     parser.add_argument(
         "--effort-policy",
@@ -137,6 +164,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ocr-api-base-url", default="", help="Optional OCR API base URL.")
     parser.add_argument("--ocr-api-model", default="", help="Optional OCR API model.")
     parser.add_argument("--ocr-api-key-env", default="", help="Environment variable for OCR API key.")
+    parser.add_argument("--set-gemini-key", action="store_true", help="Store Gemini API key securely.")
+    parser.add_argument("--clear-gemini-key", action="store_true", help="Delete stored Gemini API key.")
     parser.add_argument("--set-openai-key", action="store_true", help="Store OpenAI API key securely.")
     parser.add_argument("--clear-openai-key", action="store_true", help="Delete stored OpenAI API key.")
     parser.add_argument("--set-ocr-key", action="store_true", help="Store OCR API key securely.")
@@ -146,6 +175,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def _handle_key_commands(args: argparse.Namespace) -> int | None:
     requested = [
+        bool(args.set_gemini_key),
+        bool(args.clear_gemini_key),
         bool(args.set_openai_key),
         bool(args.clear_openai_key),
         bool(args.set_ocr_key),
@@ -158,6 +189,21 @@ def _handle_key_commands(args: argparse.Namespace) -> int | None:
         return 1
 
     try:
+        if args.set_gemini_key:
+            key_value = getpass.getpass("Enter Gemini API key: ").strip()
+            if not key_value:
+                print(f"[{_timestamp()}] Key command error: key cannot be empty.", file=sys.stderr)
+                return 1
+            set_gemini_key(key_value)
+            if not get_gemini_key():
+                print(f"[{_timestamp()}] Key command error: failed to verify saved key.", file=sys.stderr)
+                return 1
+            print(f"[{_timestamp()}] Gemini API key saved.")
+            return 0
+        if args.clear_gemini_key:
+            delete_gemini_key()
+            print(f"[{_timestamp()}] Gemini API key cleared.")
+            return 0
         if args.set_openai_key:
             key_value = getpass.getpass("Enter OpenAI API key: ").strip()
             if not key_value:
@@ -237,7 +283,26 @@ def _build_run_config_from_args(
     if budget_cap_usd is not None and float(budget_cap_usd) < 0.0:
         raise ValueError("--budget-cap-usd must be >= 0 when provided.")
     cost_profile_id = (args.cost_profile_id or "").strip() or "default_local"
-    ocr_provider = normalize_ocr_api_provider(settings.get("ocr_api_provider", settings.get("ocr_api_provider_default", "openai")))
+    ocr_provider = normalize_ocr_api_provider(settings.get("ocr_api_provider", settings.get("ocr_api_provider_default", "gemini")))
+    translation_provider = normalize_translation_provider(
+        args.provider if getattr(args, "provider", None) is not None else settings.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
+    )
+    translation_model = (
+        (getattr(args, "model", "") or "").strip()
+        or str(settings.get("translation_model", "") or "").strip()
+        or default_translation_model(translation_provider)
+    )
+    helper_thinking_level = str(
+        getattr(args, "helper_thinking_level", None)
+        or settings.get("helper_thinking_level", "high")
+        or "high"
+    ).strip().lower()
+    decisions_raw = getattr(args, "gemini_decisions_advisory", None)
+    decisions_advisory = (
+        bool_from_text(decisions_raw)
+        if decisions_raw is not None
+        else bool(settings.get("gemini_decisions_advisory_enabled", False))
+    )
     return RunConfig(
         pdf_path=Path(pdf_arg).resolve(),
         output_dir=outdir_abs,
@@ -245,6 +310,10 @@ def _build_run_config_from_args(
         effort=parse_effort(args.effort),
         effort_policy=effort_policy,
         allow_xhigh_escalation=bool_from_text(args.allow_xhigh_escalation),
+        translation_provider=translation_provider,
+        translation_model=translation_model,
+        helper_thinking_level=helper_thinking_level,
+        gemini_decisions_advisory_enabled=decisions_advisory,
         image_mode=parse_image_mode(args.images),
         max_pages=args.max_pages,
         workers=_clamp_workers(int(args.workers)),

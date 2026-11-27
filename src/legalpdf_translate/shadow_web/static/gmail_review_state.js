@@ -7,6 +7,7 @@ import {
   gmailAttachmentId,
   normalizeGmailAttachmentList,
 } from "./gmail_attachment_metadata.js";
+import { matchesGmailTranslation } from "./gmail_translation_recovery.js";
 
 export { deriveGmailAttachmentKindLabel } from "./gmail_attachment_kind.js";
 export {
@@ -85,28 +86,12 @@ function translationJobMatchesCurrentAttachment(job, attachmentContext) {
   if (!job || typeof job !== "object" || !attachmentContext) {
     return false;
   }
-  const jobContext = normalizeGmailBatchContext(job.config?.gmail_batch_context);
-  if (jobContext && attachmentContext.attachment_id && jobContext.attachment_id === attachmentContext.attachment_id) {
-    return true;
-  }
-  if (
-    jobContext
-    && attachmentContext.message_id
-    && attachmentContext.thread_id
-    && attachmentContext.selected_attachment_filename
-    && jobContext.message_id === attachmentContext.message_id
-    && jobContext.thread_id === attachmentContext.thread_id
-    && jobContext.selected_attachment_filename === attachmentContext.selected_attachment_filename
-    && Number(jobContext.selected_start_page || 0) === Number(attachmentContext.selected_start_page || 0)
-  ) {
-    return true;
-  }
-  const sourcePath = String(job.config?.source_path || "").trim();
-  return Boolean(
-    attachmentContext.source_path
-    && sourcePath
-    && sourcePath === attachmentContext.source_path
-  );
+  return matchesGmailTranslation(job, {
+    source_path: attachmentContext.source_path,
+    target_lang: attachmentContext.selected_target_lang,
+    start_page: attachmentContext.selected_start_page,
+    gmail_batch_context: attachmentContext,
+  });
 }
 
 function findMatchingTranslationJob(translationUi, attachmentContext) {
@@ -117,6 +102,7 @@ function findMatchingTranslationJob(translationUi, attachmentContext) {
 export function deriveGmailStage({
   loadResult,
   activeSession,
+  suggestedTranslationLaunch = null,
   reviewDrawerOpen = false,
   translationUi = {},
   interpretationUi = {},
@@ -128,6 +114,8 @@ export function deriveGmailStage({
     }
     const attachmentContext = currentTranslationAttachmentContext(activeSession);
     const matchingJob = attachmentContext ? findMatchingTranslationJob(translationUi, attachmentContext) : null;
+    const currentMatches = !attachmentContext || Boolean(matchingJob
+      && matchingJob.job_id === translationUi.currentJobId);
     const currentJobStatus = String(translationUi.currentJobStatus || "").trim();
     const currentJobKind = String(translationUi.currentJobKind || "").trim();
     const hasSaveSeed = Boolean(translationUi.currentJobHasSaveSeed);
@@ -136,19 +124,19 @@ export function deriveGmailStage({
     const matchingJobHasSaveSeed = Boolean(matchingJob?.has_save_seed);
     const preparedLaunchMatchesCurrentAttachment = Boolean(
       attachmentContext
-      && translationUi.hasPreparedLaunch
-      && translationJobMatchesCurrentAttachment({
+      && ((suggestedTranslationLaunch && translationJobMatchesCurrentAttachment({config: suggestedTranslationLaunch}, attachmentContext))
+      || (translationUi.hasPreparedLaunch && translationJobMatchesCurrentAttachment({
         config: {
           source_path: String(translationUi.preparedLaunchSourcePath || "").trim(),
           gmail_batch_context: normalizeGmailBatchContext(translationUi.currentGmailBatchContext),
         },
-      }, attachmentContext)
+      }, attachmentContext)))
     );
     if (
-      translationUi.currentJobRecoveryRequired
+      (currentMatches && (translationUi.currentJobRecoveryRequired
       || currentJobStatus === "failed"
       || currentJobStatus === "cancelled"
-      || (currentJobKind === "rebuild" && !hasSaveSeed)
+      || (currentJobKind === "rebuild" && !hasSaveSeed)))
       || matchingJobStatus === "failed"
       || matchingJobStatus === "cancelled"
       || (matchingJobKind === "rebuild" && !matchingJobHasSaveSeed)
@@ -156,9 +144,9 @@ export function deriveGmailStage({
       return "translation_recovery";
     }
     if (
-      translationUi.completionDrawerOpen
+      (currentMatches && (translationUi.completionDrawerOpen
       || translationUi.hasCompletionSurface
-      || currentJobStatus === "completed"
+      || currentJobStatus === "completed"))
       || matchingJobStatus === "completed"
     ) {
       return "translation_save";
@@ -416,10 +404,16 @@ export function buildGmailReviewLoadResetState({ payload = null } = {}) {
   const normalizedPayload = payload?.normalized_payload && typeof payload.normalized_payload === "object"
     ? payload.normalized_payload
     : {};
+  const messageContext = normalizedPayload.load_result?.intake_context || {};
   return {
     bootstrapPatch: {
       review_event_id: normalizedPayload.review_event_id,
       message_signature: normalizedPayload.message_signature,
+      current_handoff_context: messageContext,
+      handoff_session_id: messageContext.handoff_session_id || "",
+      pending_intake_context: {},
+      pending_status: "",
+      pending_review_open: false,
     },
     browserPdfState: new Map(),
     loadResult: normalizedPayload.load_result || null,

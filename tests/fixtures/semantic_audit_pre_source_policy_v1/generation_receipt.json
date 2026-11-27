@@ -1,0 +1,13 @@
+{
+  "generator_engine_sha256": "63fb69b524c538cf9a60d45e7cfa6dcda68761d205fe590502334a43aaf2abdd",
+  "binding_sha256": "d99ad105b099af1b7b9b463b46cb6574f185bd3503b11e894f21916d7b532fe0",
+  "provider_calls": 0,
+  "fixture_files": {
+    "inputs.json": "09d986e519cf82b382241b56c044f1300ead1e73486b682d33dde91b9fddbc46",
+    "evidence\\intent.json": "d99ad105b099af1b7b9b463b46cb6574f185bd3503b11e894f21916d7b532fe0",
+    "evidence\\manifest.json": "504d8e5bb15887bf2e2bc135f687b85063487496824052089cc650e47b71a5fb",
+    "evidence\\page_0001.txt": "e23ea3dae752fab391a661a20d29422c313d73c7696d64e38e4cc49cdc61e635",
+    "evidence\\raw_receipt.json": "b1859add1360ff569e24e23e4ada962d195301d5d792ec63152e45b0c8936350",
+    "evidence\\raw_response.json": "ddf62c9eadc5bea2411923288b791d60afd9a6909a7ba8c66d5196a6f82f57b5"
+  }
+}

@@ -84,7 +84,7 @@ def test_formatting_does_not_promote_translation_or_ocr_defaults():
     assert config_module.DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS == 480
     assert config_module.DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS == 720
     assert ocr_module.OPENAI_OCR_DEFAULT_MODEL == "gpt-4o-mini"
-    assert ocr_module.GEMINI_OCR_DEFAULT_MODEL == "gemini-3.1-flash-lite-preview"
+    assert ocr_module.GEMINI_OCR_DEFAULT_MODEL == "gemini-4-neon"
     assert RunConfig.__dataclass_fields__["effort_policy"].default == EffortPolicy.ADAPTIVE
     assert RunConfig.__dataclass_fields__["allow_xhigh_escalation"].default is False
     assert "model_policy" not in inspect.signature(workflow_module.TranslationWorkflow).parameters

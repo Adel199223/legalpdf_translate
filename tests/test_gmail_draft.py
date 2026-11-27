@@ -40,7 +40,7 @@ def _write_docx(path: Path, *paragraphs: str) -> None:
 def test_build_honorarios_gmail_subject_uses_case_number() -> None:
     assert (
         build_honorarios_gmail_subject("109/26.0PBBJA")
-        == "Traduções e requerimento de honorários - Processo 109/26.0PBBJA"
+        == "Tradução e requerimento de honorários - Processo 109/26.0PBBJA"
     )
 
 
@@ -54,7 +54,7 @@ def test_build_manual_interpretation_honorarios_gmail_subject_uses_case_number()
 def test_build_honorarios_gmail_body_includes_phone_when_present() -> None:
     profile = _profile(phone_number="+351912345678")
 
-    body = build_honorarios_gmail_body(profile)
+    body = build_honorarios_gmail_body(profile, translation_count=1)
 
     assert body.endswith(f"Atenciosamente,\n{profile.document_name}\n+351912345678\n")
 
@@ -62,7 +62,7 @@ def test_build_honorarios_gmail_body_includes_phone_when_present() -> None:
 def test_build_honorarios_gmail_body_omits_phone_when_blank() -> None:
     profile = _profile(phone_number="")
 
-    body = build_honorarios_gmail_body(profile)
+    body = build_honorarios_gmail_body(profile, translation_count=1)
 
     assert body.endswith(f"Atenciosamente,\n{profile.document_name}\n")
     assert "+351" not in body
@@ -87,8 +87,14 @@ def test_build_honorarios_gmail_request_uses_exact_body_and_attachments(tmp_path
 
     assert request.account_email == "adel.belghali@gmail.com"
     assert request.to_email == "beja.judicial@tribunais.org.pt"
-    assert request.subject == "Traduções e requerimento de honorários - Processo 109/26.0PBBJA"
-    assert request.body == build_honorarios_gmail_body(profile)
+    assert request.subject == "Tradução e requerimento de honorários - Processo 109/26.0PBBJA"
+    assert request.body == (
+        "Bom dia,\n\n"
+        "Envio em anexo a tradução solicitada e o requerimento de honorários.\n\n"
+        "Estou à disposição para quaisquer esclarecimentos adicionais que se façam necessários.\n\n"
+        f"Atenciosamente,\n{profile.document_name}\n+351912345678\n"
+    )
+    assert request.reply_to_message_id is None
     assert request.attachments == (translated.resolve(), honorarios.resolve())
 
 
@@ -127,14 +133,24 @@ def test_build_honorarios_gmail_request_requires_pdf_attachment(tmp_path: Path) 
         )
 
 
-def test_build_gmail_batch_reply_request_reuses_subject_reply_id_and_all_attachments(tmp_path: Path) -> None:
-    translated_one = tmp_path / "translated-1.docx"
-    translated_two = tmp_path / "translated-2.docx"
+@pytest.mark.parametrize(
+    ("translation_count", "expected_opening"),
+    [
+        (1, "Envio em anexo a tradução solicitada e o requerimento de honorários."),
+        (2, "Envio em anexo as traduções solicitadas e o requerimento de honorários."),
+        (3, "Envio em anexo as traduções solicitadas e o requerimento de honorários."),
+    ],
+)
+@pytest.mark.parametrize("phone_number", ["", "+351912345678"])
+def test_build_gmail_batch_reply_request_reuses_subject_reply_id_and_all_attachments(
+    tmp_path: Path, translation_count: int, expected_opening: str, phone_number: str
+) -> None:
+    translations = tuple(tmp_path / f"translated-{index}.docx" for index in range(translation_count))
     honorarios = tmp_path / "honorarios.pdf"
-    translated_one.write_bytes(b"a")
-    translated_two.write_bytes(b"b")
+    for translation in translations:
+        translation.write_bytes(b"a")
     honorarios.write_bytes(b"c")
-    profile = _profile(phone_number="+351912345678")
+    profile = _profile(phone_number=phone_number)
 
     request = build_gmail_batch_reply_request(
         gog_path=tmp_path / "gog.exe",
@@ -142,19 +158,22 @@ def test_build_gmail_batch_reply_request_reuses_subject_reply_id_and_all_attachm
         to_email="beja.judicial@tribunais.org.pt",
         subject="Original Gmail subject",
         reply_to_message_id="msg-123",
-        translated_docxs=(translated_one, translated_two),
+        translated_docxs=translations,
         honorarios_pdf=honorarios,
         profile=profile,
     )
 
     assert request.subject == "Original Gmail subject"
     assert request.reply_to_message_id == "msg-123"
-    assert request.body == build_honorarios_gmail_body(profile)
-    assert request.attachments == (
-        translated_one.resolve(),
-        translated_two.resolve(),
-        honorarios.resolve(),
+    expected_signature = f"Atenciosamente,\n{profile.document_name}\n"
+    if phone_number:
+        expected_signature += f"{phone_number}\n"
+    assert request.body == (
+        f"Bom dia,\n\n{expected_opening}\n\n"
+        "Estou à disposição para quaisquer esclarecimentos adicionais que se façam necessários.\n\n"
+        + expected_signature
     )
+    assert request.attachments == tuple(path.resolve() for path in translations) + (honorarios.resolve(),)
 
 
 def test_build_interpretation_gmail_reply_request_attaches_only_honorarios(tmp_path: Path) -> None:
@@ -175,6 +194,9 @@ def test_build_interpretation_gmail_reply_request_attaches_only_honorarios(tmp_p
     assert request.subject == "Original Gmail subject"
     assert request.reply_to_message_id == "msg-123"
     assert request.body == build_interpretation_honorarios_gmail_body(profile)
+    assert request.body.split("\n\n")[1] == (
+        "Segue em anexo o requerimento de honorários referente ao serviço de interpretação."
+    )
     assert request.attachments == (honorarios.resolve(),)
     assert "notificação" not in request.body.casefold()
 
@@ -209,6 +231,9 @@ def test_build_manual_interpretation_gmail_request_uses_pdf_only(tmp_path: Path)
     assert request.subject == "Requerimento de honorários - Processo 109/26.0PBBJA"
     assert request.reply_to_message_id is None
     assert request.body == build_interpretation_honorarios_gmail_body(profile)
+    assert request.body.split("\n\n")[1] == (
+        "Segue em anexo o requerimento de honorários referente ao serviço de interpretação."
+    )
     assert request.attachments == (honorarios.resolve(),)
 
 
@@ -268,7 +293,7 @@ def test_validate_translated_docx_artifacts_rejects_honorarios_like_translation(
     _write_docx(
         translated,
         "Venho por este meio requerer o pagamento dos honorários devidos.",
-        "O documento traduzido contém 264 palavras.",
+        "Total de palavras traduzidas: 264.",
         "O Pagamento deverá ser efetuado para o seguinte IBAN: PT50003506490000832760029",
     )
     honorarios.write_bytes(b"%PDF-1.7")
@@ -397,7 +422,9 @@ def test_create_gmail_draft_via_gog_builds_expected_command(monkeypatch, tmp_pat
     assert "--to" in cmd
     assert "--subject" in cmd
     assert cmd.count("--attach") == 2
-    assert captured["body"] == build_honorarios_gmail_body(_profile(phone_number="+351912345678"))
+    assert captured["body"] == build_honorarios_gmail_body(
+        _profile(phone_number="+351912345678"), translation_count=1
+    )
 
 
 def test_create_gmail_draft_via_gog_includes_reply_to_message_id(monkeypatch, tmp_path: Path) -> None:

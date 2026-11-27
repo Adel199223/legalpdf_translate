@@ -22,7 +22,7 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
   if (!root) return null;
   const doc = root.ownerDocument || document;
   let controller, editor = null, editorKey = "", panelOpen = false, selectedPages = new Set(), outputChecks = new Set(),
-    lastOwner = "", lastSelection = "", localError = "", localStatus = "", refreshingEditor = false, disposed = false, nativeOpening = false, editorReadOnly = false;
+    lastOwner = "", lastSelection = "", lastOutputReview = "", localError = "", localStatus = "", refreshingEditor = false, disposed = false, nativeOpening = false, editorReadOnly = false;
   const el = (tag, text, cls) => {const n = doc.createElement(tag); if (text != null) n.textContent = String(text); if (cls) n.className = cls; return n;};
   const header = el("div"), actions = el("div"), editorRoot = el("section"), outputs = el("div");
   editorRoot.setAttribute("aria-label", "This translation's source layout review");
@@ -170,7 +170,7 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
     const state=controller.snapshot(), job=getJob();
     correction.render();
     const owner=`${state.scope.runtimeMode}:${state.scope.workspaceId}:${state.scope.jobId}`;
-    if(owner!==lastOwner){lastOwner=owner;editor?.dispose();editor=null;editorKey="";panelOpen=false;selectedPages=new Set();outputChecks=new Set();lastSelection="";localError="";localStatus="";nativeOpening=false;editorRoot.replaceChildren();}
+    if(owner!==lastOwner){lastOwner=owner;editor?.dispose();editor=null;editorKey="";panelOpen=false;selectedPages=new Set();outputChecks=new Set();lastSelection="";lastOutputReview="";localError="";localStatus="";nativeOpening=false;editorRoot.replaceChildren();}
     root.hidden=!(job?.status==="completed"&&job.job_kind==="translate"&&job.result?.save_seed);
     root.classList?.toggle("hidden",root.hidden);
     header.replaceChildren();
@@ -208,8 +208,14 @@ export function mountOrdinaryLayoutReview({root, getScope, getJob, contentReview
     },state.busy||contentReviewBlocked());
     if(view?.stale&&!view.frozen)button(header,"Use the latest saved Word changes",async()=>{await controller.prepare();},state.busy||Boolean(state.pending)||editorBusy());
     mountEditor(state);renderActions();
-    const selection=controller.canUseDelivery()?`${owner}:${view.delivery.selection_id}`:"";
-    if(selection&&selection!==lastSelection){lastSelection=selection;onDeliveryChange(view.delivery,view);}
+    const selection=!state.busy&&!state.pending&&state.verified&&view?.delivery&&!view.stale&&!view.delivery.stale
+      ?`${owner}:${view.baseline_id}:${view.delivery_generation}:${view.delivery.selection_id}`:"";
+    const outputReview=Boolean(view?.delivery?.output_review_required||view?.text_correction?.output_review_required);
+    if(selection&&(selection!==lastSelection||outputReview!==lastOutputReview)){
+      const selectionChanged=selection!==lastSelection;
+      lastSelection=selection;lastOutputReview=outputReview;
+      onDeliveryChange(view.delivery,view,{selectionChanged});
+    }
   }
   controller=createOrdinaryLayoutController({getScope:scope,request,onChange:render});render();
   function update(job=getJob()) {if(disposed)return;controller.sync(); if(job?.ordinary_layout)controller.receive(job.ordinary_layout);else render();}

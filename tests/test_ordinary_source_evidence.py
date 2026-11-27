@@ -41,9 +41,11 @@ def test_decorative_rule_requires_whole_plain_source_rule():
     s,v,p=fixture();s['paragraphs'][0]['tokens']=[{'kind':'t','text':'____'}]
     p['source_layout_evidence']=[{'kind':'decorative_rule','paragraph_ids':['p000001'],'bbox':[.1,.4,.9,.41]}]
     assert proposal_source_evidence(s,v,p)['layout']==p['source_layout_evidence']
-    for mutation in ['mixed','signature','height','panel','numbering','control']:
+    for mutation in ['mixed','asterisks','dots','signature','height','panel','numbering','control']:
         ss,vv,pp=deepcopy((s,v,p))
         if mutation=='mixed':ss['paragraphs'][0]['tokens'][0]['text']='name ____'
+        elif mutation=='asterisks':ss['paragraphs'][0]['tokens'][0]['text']='***'
+        elif mutation=='dots':ss['paragraphs'][0]['tokens'][0]['text']='...'
         elif mutation=='signature':pp['paragraphs'][0]['role']='signature'
         elif mutation=='height':pp['source_layout_evidence'][0]['bbox'][3]=.5
         elif mutation=='panel':pp['bands'][0]['groups'][0]['panel']=True
@@ -121,7 +123,8 @@ def test_v3_automatic_finish_uses_initial_ownership_for_uncertain_boxes(tmp_path
             before=_read(operation/'result.json')
             (operation/'result.json').unlink()
             (operation/'source_evidence.json').unlink()
-        _recover_settled_result(layout,pointer,[1])
+        _recover_settled_result(layout,pointer,[1],
+            policy_fingerprint=_read_record(pointer_path.parent/'intent.json')['policy_fingerprint'])
         with layout.service.scope(pointer['origin_job_id']) as folder:
             assert _read(operation/'result.json')==before
         assert len(sdk.requests)==len(requests)==1

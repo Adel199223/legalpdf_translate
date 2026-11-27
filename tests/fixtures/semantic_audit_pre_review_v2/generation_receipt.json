@@ -1,0 +1,13 @@
+{
+  "generator_engine_sha256": "38a614689e30d0f23016b0b4c55011c6cb8f6bed43555c7dcbaeac6489b952de",
+  "binding_sha256": "4aa7fa10279f23771bc89668cc673dfd34de531360d5b7e89296496e22a902f2",
+  "provider_calls": 0,
+  "fixture_files": {
+    "inputs.json": "3a32e540359bae878047f242b84ec2da2eb9f5dcbe0251719ec5db938ee78f7e",
+    "evidence/intent.json": "4aa7fa10279f23771bc89668cc673dfd34de531360d5b7e89296496e22a902f2",
+    "evidence/manifest.json": "719f12ef462a1c0df0ca270d07322d04bf9047da40755657dd8ce5b1247e4fdb",
+    "evidence/page_0001.txt": "e23ea3dae752fab391a661a20d29422c313d73c7696d64e38e4cc49cdc61e635",
+    "evidence/raw_receipt.json": "5192dcea71e7cfcd2dd5e62ea80697d50562bb1883bc0ba34421c47417ee9d5c",
+    "evidence/raw_response.json": "bc21234fc1e1fb1c4ce50ff5caf1b08b17e476ec911b23d453f39308149b5a26"
+  }
+}

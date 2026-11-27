@@ -750,6 +750,26 @@
                   </summary>
                   <div class="shell-collapsible-body form-grid compact-grid">
                     <div class="field">
+                      <label for="settings-translation-provider">Translation provider</label>
+                      <select id="settings-translation-provider">
+                        <option value="gemini">Gemini (gemini-4-neon)</option>
+                        <option value="openai">OpenAI (gpt-5.2)</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="settings-translation-model">Translation model</label>
+                      <input id="settings-translation-model" type="text" placeholder="gemini-4-neon">
+                    </div>
+                    <div class="field">
+                      <label for="settings-helper-thinking-level">Helper thinking level (OCR / metadata)</label>
+                      <select id="settings-helper-thinking-level">
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                        <option value="xhigh">Extra high</option>
+                      </select>
+                    </div>
+                    <div class="field">
                       <label for="settings-default-lang">Default language</label>
                       <select id="settings-default-lang">
                         <option value="EN">English (EN)</option>
@@ -800,6 +820,9 @@
                     </div>
                     <div class="field checkbox-field">
                       <label><input id="settings-allow-xhigh" type="checkbox"> Allow extra-high effort when needed</label>
+                    </div>
+                    <div class="field checkbox-field">
+                      <label><input id="settings-gemini-decisions-advisory" type="checkbox"> Enable advisory Gemini Decisions QA triage (opt-in)</label>
                     </div>
                   </div>
                 </details>
@@ -883,14 +906,23 @@
                   <div class="shell-collapsible-body form-grid compact-grid">
                     <div class="field field-wide">
                       <label for="settings-translation-key-input">Translation provider key (write-only)</label>
-                      <input id="settings-translation-key-input" type="password" autocomplete="off" placeholder="Paste a new OpenAI API key to save securely">
-                      <p class="field-hint">Save a translation key here without showing the stored value later.</p>
+                      <input id="settings-translation-key-input" type="password" autocomplete="off" placeholder="Paste a new API key for the active translation provider">
+                      <p class="field-hint">Save a key for the active translation provider here without showing the stored value later.</p>
                       <p class="field-hint" id="settings-translation-key-state">Browser credential status appears here after refresh.</p>
                     </div>
                     <div class="form-actions field-wide">
                       <button type="button" id="settings-save-translation-key">Save translation key</button>
                       <button type="button" id="settings-clear-translation-key">Clear stored translation key</button>
                       <button type="button" id="settings-test-translation">Test translation provider</button>
+                    </div>
+                    <div class="field field-wide">
+                      <label for="settings-gemini-key-input">Gemini API key (write-only)</label>
+                      <input id="settings-gemini-key-input" type="password" autocomplete="off" placeholder="Paste a Gemini API key to save securely">
+                      <p class="field-hint" id="settings-gemini-key-state">Gemini credential status appears here after refresh.</p>
+                    </div>
+                    <div class="form-actions field-wide">
+                      <button type="button" id="settings-save-gemini-key">Save Gemini key</button>
+                      <button type="button" id="settings-clear-gemini-key">Clear stored Gemini key</button>
                     </div>
                     <div class="field field-wide">
                       <label for="settings-ocr-key-input">OCR key (write-only)</label>
@@ -1775,11 +1807,13 @@
                     </div>
                     <div class="field">
                       <label for="translation-api-cost">API Cost (USD)</label>
-                      <input id="translation-api-cost" type="number" min="0" step="any">
+                      <input id="translation-api-cost" type="number" min="0" step="any" aria-describedby="translation-api-cost-note">
+                      <p class="field-hint" id="translation-api-cost-note">You can adjust this case's recorded cost.</p>
                     </div>
                     <div class="field">
                       <label for="translation-estimated-api-cost">Estimated API Cost (USD)</label>
-                      <input id="translation-estimated-api-cost" type="number" min="0" step="any">
+                      <input id="translation-estimated-api-cost" type="number" min="0" step="any" aria-describedby="translation-estimated-api-cost-note">
+                      <p class="field-hint" id="translation-estimated-api-cost-note">You can adjust this case's recorded cost.</p>
                     </div>
                     <div class="field">
                       <label for="translation-profit">Historical profit (unverified)</label>

@@ -46,10 +46,24 @@ from .checkpoint import (
     sha256_of_text,
 )
 from .config import (
+    DEFAULT_TRANSLATION_PROVIDER,
     DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
     DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+    GEMINI_MODEL,
     OPENAI_MODEL,
     load_environment,
+)
+from .gemini_client import GeminiInteractionsClient
+from .provider_client import (
+    TranslationClient,
+    client_provider,
+    create_translation_client,
+    default_translation_model,
+    is_provider_auth_failure,
+    is_translation_client,
+    normalize_translation_provider,
+    provider_display_name,
+    run_provider_auth_test,
 )
 from .config import IMAGE_MAX_DATA_URL_BYTES_AR, IMAGE_MAX_DATA_URL_BYTES_ENFR
 from .cost_guardrails import (
@@ -61,6 +75,7 @@ from .cost_guardrails import (
     resolve_pricing,
 )
 from .docx_writer import assemble_docx
+from .workflow_semantic_audit import SemanticIntegrationError
 from .glossary import (
     cap_entries_for_prompt,
     GlossaryEntry,
@@ -92,6 +107,7 @@ from .openai_client import (
     resolve_openai_key_with_source,
     run_translation_auth_test,
 )
+from .gemini_client import GeminiInteractionsClient
 from .output_paths import require_writable_output_dir
 from .page_selection import resolve_page_selection
 from .pt_legal_glossary_aliases import build_priority_pt_legal_alias_entries
@@ -116,7 +132,7 @@ from .types import (
     TargetLang,
 )
 from .user_settings import load_gui_settings
-from .translation_policy import resolve_translation_protocol
+from .translation_policy import GEMINI_STRUCTURAL_PROTOCOL, resolve_translation_protocol
 from .workflow_components.contracts import (
     OutputEvaluation,
     SummarySignalInputs,
@@ -658,6 +674,7 @@ class TranslationWorkflow:
         if ordinary_auto_layout_policy is not None and (requested != "legacy_text_v1" or reviewed_source_context is not None):
             raise ValueError("Ordinary automatic layout requires an ordinary legacy translation run.")
         self._ordinary_auto_layout_policy = ordinary_auto_layout_policy
+        self._ordinary_acronym_sources = ()
         self._reviewed_source_context = reviewed_source_context
         self._gui_settings = None if gui_settings is None else deepcopy(dict(gui_settings))
         self._effective_gui_settings: dict[str, Any] = {}
@@ -666,6 +683,7 @@ class TranslationWorkflow:
         from .accounting_policy import OrdinaryAccountingPolicy, ordinary_accounting_policy
         if accounting_policy is not None and not isinstance(accounting_policy, OrdinaryAccountingPolicy):
             raise TypeError("accounting_policy must be an immutable OrdinaryAccountingPolicy.")
+        self._accounting_policy_explicit = accounting_policy is not None
         self._accounting_policy = accounting_policy or ordinary_accounting_policy()
         self._acceptance_continuation = acceptance_continuation
         self._environment_loader = environment_loader
@@ -675,8 +693,18 @@ class TranslationWorkflow:
         self._configured_translation_protocol = requested
         self._translation_protocol = requested
         self._structured_run = None
+        self._last_structural_advisory: dict[str, Any] | None = None
         self._provided_client = client
-        self._translation_model = client.model if isinstance(client, OpenAIResponsesClient) else OPENAI_MODEL
+        self._translation_provider = (
+            client_provider(client)
+            if is_translation_client(client)
+            else DEFAULT_TRANSLATION_PROVIDER
+        )
+        self._translation_model = (
+            client.model
+            if is_translation_client(client)
+            else default_translation_model(self._translation_provider)
+        )
         self._log_callback = log_callback
         self._progress_callback = progress_callback
         self._cancel_event = threading.Event()
@@ -791,6 +819,34 @@ class TranslationWorkflow:
             else None
         )
         gui_settings = load_gui_settings() if self._gui_settings is None else deepcopy(self._gui_settings)
+        if is_translation_client(self._provided_client):
+            self._translation_provider = client_provider(self._provided_client)
+            self._translation_model = self._provided_client.model
+        elif self._provided_client is not None:
+            self._translation_provider = client_provider(self._provided_client)
+            self._translation_model = str(
+                getattr(self._provided_client, "model", "") or default_translation_model(self._translation_provider)
+            )
+        elif config.translation_provider is not None:
+            self._translation_provider = normalize_translation_provider(config.translation_provider).value
+            self._translation_model = (
+                (config.translation_model or "").strip()
+                or str(gui_settings.get("translation_model", "") or "").strip()
+                or default_translation_model(self._translation_provider)
+            )
+        else:
+            raw_provider = gui_settings.get("translation_provider")
+            if raw_provider:
+                self._translation_provider = normalize_translation_provider(raw_provider).value
+            elif self._accounting_policy_explicit and self._gui_settings is not None:
+                self._translation_provider = "openai"
+            else:
+                self._translation_provider = DEFAULT_TRANSLATION_PROVIDER
+            self._translation_model = (
+                (config.translation_model or "").strip()
+                or str(gui_settings.get("translation_model", "") or "").strip()
+                or default_translation_model(self._translation_provider)
+            )
         self._hydrate_request_settings(config=config, gui_settings=gui_settings)
         self._last_config = config
         self._diagnostics_admin_mode = bool(config.diagnostics_admin_mode)
@@ -832,6 +888,20 @@ class TranslationWorkflow:
                 and existing_state.settings.get("ordinary_source_review") != ordinary_source_identity):
             from .ordinary_reviewed_source import OrdinaryReviewedSourceError
             raise OrdinaryReviewedSourceError("ordinary_source_review_resume_context_changed")
+        if (
+            self._explicit_translation_protocol is None
+            and "LEGALPDF_TRANSLATION_PROTOCOL" not in os.environ
+            and self._reviewed_source_context is None
+            and self._acceptance_continuation is None
+            and self._ordinary_auto_layout_policy is None
+        ):
+            if config.resume and existing_state is not None:
+                saved_proto = str(existing_state.settings.get("translation_protocol") or "legacy_text_v1")
+                if saved_proto == GEMINI_STRUCTURAL_PROTOCOL:
+                    self._translation_protocol = GEMINI_STRUCTURAL_PROTOCOL
+            elif self._translation_provider == "gemini":
+                if self._provided_client is None or isinstance(self._provided_client, GeminiInteractionsClient):
+                    self._translation_protocol = GEMINI_STRUCTURAL_PROTOCOL
         if self._translation_protocol == "legal_blocks_v2":
             from .new_translation_blocks import NewTranslationBlocks
             self._structured_run = NewTranslationBlocks(self, config, selected_pages,
@@ -888,6 +958,7 @@ class TranslationWorkflow:
             existing_state=existing_state,
             pdf_fingerprint=pdf_fingerprint,
             context_hash=context_hash,
+            context_text=context_text,
             total_pages=total_pages,
             selected_pages=selected_pages,
             selection_start_page=selection_start_page,
@@ -903,6 +974,9 @@ class TranslationWorkflow:
         run_state.finished_at = None
         save_run_state_atomic(paths.run_state_path, run_state)
         self._last_state = run_state
+
+        from .checkpoint import ordinary_semantic_audit_recipe
+        semantic_recipe = ordinary_semantic_audit_recipe(run_state.settings)
         self._record_event(
             event_type="run_state_ready",
             stage="checkpoint",
@@ -922,8 +996,13 @@ class TranslationWorkflow:
                 self._prompt_glossaries_by_lang.get(config.target_lang.value, [])
             )
 
-        instructions = (self._structured_run.instructions if self._structured_run is not None
-                        else load_system_instructions(config.target_lang))
+        if self._structured_run is not None:
+            instructions = self._structured_run.instructions
+        elif self._translation_protocol == GEMINI_STRUCTURAL_PROTOCOL:
+            from .gemini_structural_schema import build_structural_system_instructions
+            instructions = build_structural_system_instructions(config.target_lang)
+        else:
+            instructions = load_system_instructions(config.target_lang)
         self._system_instructions_text = instructions
 
         if self._diagnostics_admin_mode:
@@ -968,26 +1047,49 @@ class TranslationWorkflow:
                                          else gui_settings.get("perf_max_transport_retries", 4)),
             "backoff_cap_seconds": float(gui_settings.get("perf_backoff_cap_seconds", 12.0) or 12.0),
         } if self._reviewed_source_context is not None else {})
+        if semantic_recipe is not None and provided_client is None:
+            ordinary_client_options["model"] = semantic_recipe["model"]
 
-        def _get_thread_client() -> OpenAIResponsesClient | Any:
+        def _build_default_client():
+            timeout_val = max(
+                self._translation_timeout_text_seconds,
+                self._translation_timeout_image_seconds,
+            )
+            if self._translation_provider == "gemini":
+                gemini_options = dict(ordinary_client_options)
+                gemini_options.setdefault("model", self._translation_model)
+                return GeminiInteractionsClient(
+                    request_timeout_seconds=timeout_val,
+                    logger=self._log,
+                    **gemini_options,
+                )
+            return OpenAIResponsesClient(
+                request_timeout_seconds=timeout_val,
+                logger=self._log,
+                **ordinary_client_options,
+            )
+
+        def _get_thread_client() -> Any:
             cached = getattr(thread_local, "client", None)
-            if isinstance(cached, OpenAIResponsesClient):
+            if is_translation_client(cached):
                 return cached
-            if provided_client is not None and not isinstance(provided_client, OpenAIResponsesClient):
+            if provided_client is not None and not is_translation_client(provided_client):
                 return provided_client
-            if isinstance(provided_client, OpenAIResponsesClient):
+            if is_translation_client(provided_client):
                 client_instance = provided_client.clone(logger=self._log)
             else:
-                client_instance = OpenAIResponsesClient(
-                    request_timeout_seconds=max(
-                        self._translation_timeout_text_seconds,
-                        self._translation_timeout_image_seconds,
-                    ),
-                    logger=self._log,
-                    **ordinary_client_options,
-                )
+                client_instance = _build_default_client()
             thread_local.client = client_instance
             return client_instance
+
+        def _get_semantic_client():
+            client = _get_thread_client()
+            if semantic_recipe is not None and "semantic_review_model_policy" in semantic_recipe:
+                from .semantic_review_model_policy import effective_model
+                if not is_translation_client(client):
+                    raise SemanticIntegrationError("dedicated_review_client_required")
+                return client.for_semantic_review(model=effective_model(semantic_recipe))
+            return client
 
         pending_pages: list[int] = []
         for page_number in selected_pages:
@@ -1011,6 +1113,11 @@ class TranslationWorkflow:
             selected_pages=selected_pages,
             selected_pages_count=selection_page_count,
         )
+        if semantic_recipe is not None and "semantic_review_model_policy" in semantic_recipe:
+            self._budget_pre_run_packet.update(estimated_cost_usd=None, estimation_status="unavailable",
+                estimation_reason="semantic_review_not_forecast",
+                pricing_explanation="The primary-only forecast excludes three-stage semantic review. "
+                    "Native dispatch accounting measures the full bill.")
         self._cost_estimation_status = str(self._budget_pre_run_packet.get("estimation_status", "unavailable") or "unavailable")
         pre_run_estimated_cost = self._budget_pre_run_packet.get("estimated_cost_usd")
         if isinstance(pre_run_estimated_cost, (int, float)):
@@ -1102,15 +1209,11 @@ class TranslationWorkflow:
             if provided_client is None:
                 # Resolve once; worker clones must not re-read ambient credentials.
                 try:
-                    provided_client = OpenAIResponsesClient(
-                        request_timeout_seconds=max(self._translation_timeout_text_seconds,
-                                                    self._translation_timeout_image_seconds),
-                        logger=self._log,
-                        **ordinary_client_options,
-                    )
+                    provided_client = _build_default_client()
                 except ValueError:
+                    provider_label = provider_display_name(self._translation_provider)
                     auth_result = TranslationAuthTestResult(ok=False, status="missing",
-                        message="OpenAI translation credentials are not configured.", credential_source=None)
+                        message=f"{provider_label} translation credentials are not configured.", credential_source=None)
             if provided_client is not None and hasattr(provided_client, "local_credential_preflight"):
                 maybe_result = provided_client.local_credential_preflight()
                 if isinstance(maybe_result, TranslationAuthTestResult):
@@ -1121,7 +1224,8 @@ class TranslationWorkflow:
             if auth_result is not None and not auth_result.ok and auth_result.status in {"missing", "unauthorized"}:
                 authentication_failure = True
                 failure_context = _translation_auth_failure_context_from_result(auth_result)
-                halt_reason = "OpenAI translation authentication failed before page processing."
+                provider_label = provider_display_name(self._translation_provider)
+                halt_reason = f"{provider_label} translation authentication failed before page processing."
                 self._log(
                     "translate_auth_preflight "
                     f"status={auth_result.status} "
@@ -1395,20 +1499,63 @@ class TranslationWorkflow:
         if (failed_page is None and not self._cancel_event.is_set() and run_state.failed_count == 0
                 and completed_pages == selection_page_count):
             try:
+                from .workflow_semantic_audit import select_pages
+                assembly_pages, _audit = select_pages(state=run_state, config=config,
+                    run_dir=paths.run_dir, pages_dir=paths.pages_dir,
+                    client=_get_semantic_client() if semantic_recipe is not None else None,
+                    accountant=self._dispatch_accounting, cancel_check=self._cancel_event.is_set)
+            except Exception as exc:  # Preserve the semantic stage separately from DOCX failure.
+                error = exc if isinstance(exc, SemanticIntegrationError) else SemanticIntegrationError("operation_failed")
+                return self._semantic_failure_summary(config, paths, run_state, error)
+            if self._cancel_event.is_set():
+                return self._semantic_failure_summary(config, paths, run_state, SemanticIntegrationError("cancelled"))
+            try:
                 docx_started = time.perf_counter()
                 _docx_stats: dict[str, int] = {}
-                _layout_preparation = self._prepare_docx_layout(config, paths.pages_dir, paths.frozen_outdir,
-                                                               cancelled=self._cancel_event.is_set)
-                output_docx = assemble_docx(
-                    paths.pages_dir,
-                    paths.final_docx_path,
-                    lang=config.target_lang,
-                    page_breaks=config.page_breaks,
-                    strip_bidi_controls=config.strip_bidi_controls,
-                    stats=_docx_stats,
-                    **self._structured_assembly_options(run_state, paths.pages_dir),
+                from .gemini_structural_runner import (
+                    assemble_structural_output,
+                    load_structural_bundles,
+                    structural_pages_available,
+                    summarize_structural_run,
                 )
-                self._record_docx_layout_review(output_docx, paths.pages_dir, run_state, _layout_preparation)
+                if self._translation_protocol == GEMINI_STRUCTURAL_PROTOCOL and structural_pages_available(
+                    paths.pages_dir, selected_pages
+                ):
+                    output_docx = assemble_structural_output(
+                        run_dir=paths.run_dir,
+                        pages_dir=paths.pages_dir,
+                        output_path=paths.final_docx_path,
+                        page_numbers=selected_pages,
+                        lang=config.target_lang,
+                        page_breaks=config.page_breaks,
+                        strip_bidi_controls=config.strip_bidi_controls,
+                        stats=_docx_stats,
+                    )
+                    if config.gemini_decisions_advisory_enabled:
+                        from .gemini_decisions import evaluate_structural_parity_advisory
+                        bundles = load_structural_bundles(
+                            run_dir=paths.run_dir,
+                            pages_dir=paths.pages_dir,
+                            page_numbers=selected_pages,
+                        )
+                        self._last_structural_advisory = evaluate_structural_parity_advisory(
+                            structural_summary=summarize_structural_run(bundles),
+                            enabled=True,
+                            accountant=self._dispatch_accounting,
+                        )
+                else:
+                    _layout_preparation = self._prepare_docx_layout(config, assembly_pages, paths.frozen_outdir,
+                                                                   cancelled=self._cancel_event.is_set)
+                    output_docx = assemble_docx(
+                        assembly_pages,
+                        paths.final_docx_path,
+                        lang=config.target_lang,
+                        page_breaks=config.page_breaks,
+                        strip_bidi_controls=config.strip_bidi_controls,
+                        stats=_docx_stats,
+                        **self._structured_assembly_options(run_state, assembly_pages),
+                    )
+                    self._record_docx_layout_review(output_docx, assembly_pages, run_state, _layout_preparation)
                 self._run_stage_timings_ms["docx_rebuild"] = round((time.perf_counter() - docx_started) * 1000.0, 3)
                 if self._diagnostics_admin_mode:
                     from .translation_diagnostics import emit_docx_write_event
@@ -1676,6 +1823,9 @@ class TranslationWorkflow:
             current_ocr_mode=config.ocr_mode.value,
             current_image_mode=config.image_mode.value,
             source="analyze_report",
+            decisions_advisory_enabled=bool(
+                config.gemini_decisions_advisory_enabled and self._translation_provider == "gemini"
+            ),
         )
         payload = {
             "run_id": paths.run_started_at,
@@ -1699,6 +1849,8 @@ class TranslationWorkflow:
             "advisor_track": str(advisor_recommendation.get("advisor_track", "enfr") or "enfr"),
             "pages": rows,
         }
+        if "decisions_advisory" in advisor_recommendation:
+            payload["decisions_advisory"] = advisor_recommendation["decisions_advisory"]
         analyze_report_path = paths.run_dir / "analyze_report.json"
         tmp_path = analyze_report_path.with_suffix(".tmp")
         tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1775,10 +1927,15 @@ class TranslationWorkflow:
     def rebuild_docx(self, config: RunConfig, *, formatting_revision_id: str | None = None,
                      formatting_review_profile: str = "strict_ai_test_v1") -> Path:
         config = self._normalize_config(config)
-        self._validate_config(config)
+        self._validate_config(replace(config, context_file=None, glossary_file=None))
         if formatting_revision_id is None and formatting_review_profile != "strict_ai_test_v1":
             raise ValueError("An explicit formatting revision is required for the selected review profile.")
         with self._run_workspace_scope(config, reviewed=formatting_revision_id is not None) as (_, state):
+            from .checkpoint import ordinary_semantic_audit_recipe
+            recipe = ordinary_semantic_audit_recipe(state.settings) if state is not None else None
+            # A v2/v3 rebuild uses immutable run-owned guidance, never today's files.
+            if recipe is None or recipe["version"] == "ordinary_semantic_audit_v1":
+                self._validate_config(config)
             return self._rebuild_docx_locked(config, retained_state=state,
                 formatting_revision_id=formatting_revision_id, formatting_review_profile=formatting_review_profile)
 
@@ -1826,7 +1983,11 @@ class TranslationWorkflow:
 
         page_files = sorted(pages_dir.glob("page_*.txt"))
         if not page_files:
-            raise ValueError(f"No completed page files found for rebuild: {pages_dir}")
+            from . import primary_literal_markup as markup
+            retained_primary = (markup.load_context(state=run_state, run_dir=run_dir)
+                if run_state is not None else None)
+            if retained_primary is None:
+                raise ValueError(f"No completed page files found for rebuild: {pages_dir}")
 
         assembly_options = {}
         if run_state is not None and run_state.protocol_identity:
@@ -1871,6 +2032,9 @@ class TranslationWorkflow:
 
     @staticmethod
     def _require_rebuild_checkpoint(pages_dir: Path, state: RunState | None) -> None:
+        if state is None and any((pages_dir.parent / name).exists()
+                                 for name in ("semantic_source", "semantic_audit", "primary_markup")):
+            raise SemanticIntegrationError("recipe_missing")
         has_commits = any(pages_dir.glob("page_*.commit.json"))
         has_sidecars = (any(pages_dir.glob("page_*.source_structure.json"))
                         or any(pages_dir.glob("page_*.structure.json")))
@@ -1891,6 +2055,26 @@ class TranslationWorkflow:
         completed = list_completed_pages(self._last_state)
         if not completed:
             return None
+        from .gemini_structural_runner import assemble_structural_output, structural_pages_available
+        if structural_pages_available(self._last_paths.pages_dir, completed):
+            return assemble_structural_output(
+                run_dir=self._last_paths.run_dir,
+                pages_dir=self._last_paths.pages_dir,
+                output_path=self._last_paths.partial_docx_path,
+                page_numbers=completed,
+                lang=self._last_config.target_lang,
+                page_breaks=self._last_config.page_breaks,
+                strip_bidi_controls=self._last_config.strip_bidi_controls,
+            )
+        from .checkpoint import ordinary_semantic_audit_recipe
+        if ordinary_semantic_audit_recipe(self._last_state.settings) is not None:
+            # An explicit primary partial is diagnostic evidence, never an
+            # accepted substitute for the missing/failed final audit selection.
+            self._log("Unapproved primary partial: whole-document semantic audit has not accepted this output.")
+            return assemble_docx(self._last_paths.pages_dir, self._last_paths.partial_docx_path,
+                lang=self._last_config.target_lang, page_breaks=self._last_config.page_breaks,
+                strip_bidi_controls=self._last_config.strip_bidi_controls,
+                page_numbers=completed, partial_output=True)
         layout_preparation = self._prepare_docx_layout(
             self._last_config, self._last_paths.pages_dir, self._last_paths.frozen_outdir,
             cancelled=self._cancel_event.is_set,
@@ -1914,6 +2098,10 @@ class TranslationWorkflow:
             assembly_options: dict, formatting_revision_id: str | None = None,
             formatting_review_profile: str = "strict_ai_test_v1") -> tuple[Path, dict]:
         """Common offline assembly seam; caller holds the run workspace lock."""
+        if run_state is not None:
+            from .workflow_semantic_audit import select_pages
+            pages_dir, _audit = select_pages(state=run_state, config=config,
+                run_dir=run_dir, pages_dir=pages_dir)
         reviewed = None
         declined = ()
         if formatting_revision_id is not None:
@@ -1933,8 +2121,24 @@ class TranslationWorkflow:
         recipe = primary_assembly_recipe(run_state.settings) if run_state is not None else None
         if recipe is not None:
             completed = list_completed_pages(run_state)
-            assembly_options = {**assembly_options, "terminal_folio_policy": recipe["version"],
+            assembly_options = {**assembly_options, **self._primary_folio_options(run_state, config),
                 "page_numbers": completed, "partial_output": len(completed) < run_state.selection_page_count}
+        from .gemini_structural_runner import assemble_structural_output, structural_pages_available
+        target_pages = list(assembly_options.get("page_numbers") or sorted(
+            int(p.stem.split("_")[1]) for p in pages_dir.glob("page_*.txt")
+            if re.fullmatch(r"page_[0-9]{4,}\.txt", p.name)
+        ))
+        if structural_pages_available(pages_dir, target_pages):
+            output = assemble_structural_output(
+                run_dir=run_dir,
+                pages_dir=pages_dir,
+                output_path=output_path,
+                page_numbers=target_pages,
+                lang=config.target_lang,
+                page_breaks=config.page_breaks,
+                strip_bidi_controls=config.strip_bidi_controls,
+            )
+            return output, (run_state.pages if run_state is not None else {})
         preparation = self._prepare_docx_layout(config, pages_dir, output_dir)
         output = assemble_docx(pages_dir, output_path, lang=config.target_lang,
             page_breaks=config.page_breaks, strip_bidi_controls=config.strip_bidi_controls,
@@ -1947,7 +2151,8 @@ class TranslationWorkflow:
         from .checkpoint import primary_assembly_recipe
         completed = list_completed_pages(state)
         recipe = primary_assembly_recipe(state.settings)
-        folio_options = ({"terminal_folio_policy": recipe["version"], "page_numbers": completed, "partial_output": partial}
+        folio_options = ({**self._primary_folio_options(state, getattr(self, "_last_config", None)),
+                          "page_numbers": completed, "partial_output": partial}
             if recipe is not None else {})
         if not state.protocol_identity:
             return folio_options
@@ -1956,6 +2161,22 @@ class TranslationWorkflow:
             validate_structured_page(pages_dir, number, protocol_identity=state.protocol_identity,
                                      expected_commit=state.pages[str(number)].get("structured_commit"))
         return {**folio_options, "page_numbers": completed, "partial_output": partial, "derive_source_continuations": True}
+
+    @staticmethod
+    def _primary_folio_options(state: RunState, config: RunConfig | None) -> dict:
+        from .checkpoint import primary_assembly_recipe
+        recipe = primary_assembly_recipe(state.settings)
+        if recipe is None:
+            return {}
+        options = {"terminal_folio_policy": recipe["version"]}
+        if recipe["version"] in {"terminal_source_bound_folio_v3", "terminal_source_bound_folio_v4"}:
+            if config is None:
+                raise ValueError("Saved primary folio source is unavailable.")
+            source = config.pdf_path.read_bytes()
+            if sha256_of_bytes(source) != state.pdf_fingerprint:
+                raise ValueError("Saved primary folio source changed.")
+            options.update(terminal_folio_source_pdf=source, terminal_folio_source_sha256=state.pdf_fingerprint)
+        return options
 
     def _prepare_docx_layout(
         self, config: RunConfig, pages_dir: Path, output_dir: Path,
@@ -2054,12 +2275,27 @@ class TranslationWorkflow:
                     if request_reason == "required"
                     else local_only_ocr_engine_config_from_run_config(config)
                 )
+                from .checkpoint import ordinary_semantic_audit_recipe
+                saved = ordinary_semantic_audit_recipe(self._last_state.settings) if self._last_state is not None else None
+                strict_ocr = saved.get("ocr_text_transport_policy") if saved and request_reason == "required" else None
+                if strict_ocr is not None:
+                    from .ocr_text_transport import GEMINI_POLICY, POLICY, SUPPORTED_POLICIES, OcrTextTransportError
+                    expected_ocr_policy = (
+                        GEMINI_POLICY
+                        if config.ocr_api_provider.value == "gemini"
+                        else POLICY
+                    )
+                    if strict_ocr not in SUPPORTED_POLICIES or strict_ocr != expected_ocr_policy:
+                        raise OcrTextTransportError("unsupported_configuration")
+                    engine_config.text_transport_policy = strict_ocr
                 try:
                     factory = self._ocr_engine_factory if self._ocr_engine_factory is not None else build_ocr_engine
                     engine = factory(engine_config)
                     configured = True
                     self._ocr_provider_configured = True
                 except Exception:
+                    if strict_ocr is not None:
+                        raise OcrTextTransportError("engine_construction_failed") from None
                     engine = None
                     configured = False
                 if request_reason == "required":
@@ -2169,8 +2405,23 @@ class TranslationWorkflow:
                 page_number=page_number, total_pages=total_pages, context_text=context_text,
                 started=started_monotonic)
         extract_started = time.perf_counter()
+        from .checkpoint import ordinary_semantic_audit_recipe
+        saved_audit = ordinary_semantic_audit_recipe(self._last_state.settings) if self._last_state is not None else None
+        source_field_options = ({"source_field_policy": saved_audit["source_field_policy"]}
+            if saved_audit is not None and saved_audit["version"] in {"ordinary_semantic_audit_v2", "ordinary_semantic_audit_v3"} else {})
+        extraction_options = dict(source_field_options)
+        page_evidence_policy = saved_audit.get("primary_page_evidence_policy") if saved_audit else None
+        if page_evidence_policy is not None:
+            extraction_options["primary_page_evidence_policy"] = page_evidence_policy
+        if saved_audit is not None and saved_audit["version"] == "ordinary_semantic_audit_v3" and "source_question_row_policy" in saved_audit:
+            extraction_options["source_question_row_policy"] = saved_audit["source_question_row_policy"]
+        primary_literal_options = ({"literal_wrapper_policy": saved_audit["primary_literal_packaging_version"]}
+            if saved_audit is not None and saved_audit["version"] == "ordinary_semantic_audit_v3"
+                and "primary_literal_packaging_version" in saved_audit else {})
+        inline_join_options = ({"source_inline_address_join_policy": saved_audit["source_inline_address_join_policy"]}
+            if saved_audit is not None and "source_inline_address_join_policy" in saved_audit else {})
         ordered = (self._structured_run.ordered_pages[page_number] if self._structured_run is not None
-                   else extract_ordered_page_text(config.pdf_path, page_number - 1))
+                   else extract_ordered_page_text(config.pdf_path, page_number - 1, **extraction_options))
         extract_seconds = time.perf_counter() - extract_started
         extracted_text = ordered.text
         extraction_quality = classify_extracted_text_quality(extracted_text)
@@ -2198,6 +2449,14 @@ class TranslationWorkflow:
                 ocr_request_reason = "helpful"
         if integrity_assessment.suspect and config.ocr_mode != OcrMode.OFF:
             ocr_request_reason = "required"
+        if (
+            self._translation_protocol == GEMINI_STRUCTURAL_PROTOCOL
+            and config.image_mode != ImageMode.OFF
+            and config.ocr_mode != OcrMode.ALWAYS
+            and ocr_request_reason == "required"
+        ):
+            # Multimodal structural pages attach high-res page images directly; avoid slow/blocked API OCR verbatim calls.
+            ocr_request_reason = "helpful"
 
         page_metadata: dict[str, object] = {
             "started_at_iso": started_at_iso,
@@ -2326,8 +2585,16 @@ class TranslationWorkflow:
         if ocr_requested and ocr_engine is not None:
             ocr_attempted = True
             ocr_started = time.perf_counter()
+            def acquire_ocr(operation, *args, **kwargs):
+                if saved_audit and saved_audit.get("ocr_text_transport_policy"):
+                    from .ocr_text_transport import scope
+                    visual_options = ({"visual_source_policy": saved_audit["ocr_visual_source_policy"],
+                                       "pdf_path": config.pdf_path} if "ocr_visual_source_policy" in saved_audit else {})
+                    with scope(paths.run_dir, page_number, self._last_state.pdf_fingerprint, **visual_options):
+                        return operation(*args, **kwargs)
+                return operation(*args, **kwargs)
             if crop_recovery_path and integrity_assessment.crop_rect is not None:
-                ocr_result = ocr_pdf_page_crop_text(
+                ocr_result = acquire_ocr(ocr_pdf_page_crop_text,
                     config.pdf_path,
                     page_number,
                     integrity_assessment.crop_rect,
@@ -2345,7 +2612,7 @@ class TranslationWorkflow:
                     force_visual_grounding = True
                     ocr_result.failed_reason = ocr_result.failed_reason or "crop_merge_rejected"
             else:
-                ocr_result = ocr_pdf_page_text(
+                ocr_result = acquire_ocr(ocr_pdf_page_text,
                     config.pdf_path,
                     page_number,
                     mode=OcrMode.ALWAYS,
@@ -2444,6 +2711,12 @@ class TranslationWorkflow:
             },
         )
 
+        from . import ordinary_ocr_visual_source as visual_source
+        source_witness = None
+        if (saved_audit and visual_source.KEY in saved_audit and ocr_used_for_source
+                and ocr_result.engine == "api" and merged_visual_source_text is None):
+            source_text, source_witness = visual_source.acquire(config.pdf_path, page_number, source_text,
+                self._last_state.pdf_fingerprint, paths.run_dir, policy=saved_audit[visual_source.KEY])
         glossary_source_text = source_text
         _diag_pkg_token_count = 0
         if self._glossary_diagnostics is not None:
@@ -2452,9 +2725,20 @@ class TranslationWorkflow:
                 source_text=glossary_source_text,
                 doc_id=str(config.pdf_path.stem),
             )
+        from . import ordinary_source_acronyms as acronyms
+        acronym_rows = ()
+        applicable_terminology = []
+        glossary_block = None
         expected_ar_tokens: list[str] | None = None
         if config.target_lang == TargetLang.AR and self._structured_run is None:
-            source_text = pretokenize_arabic_source(source_text)
+            source_text = pretokenize_arabic_source(visual_source.prepared_source(source_text, source_witness), **source_field_options)
+            if page_evidence_policy == acronyms.POLICY:
+                glossary_block = self._append_glossary_prompt("", config.target_lang, source_text=glossary_source_text,
+                    page_index=page_number, audit_terminology=applicable_terminology)
+                if not ocr_used_for_source and not integrity_assessment.suspect:
+                    acronym_rows = acronyms.page_acronyms(glossary_source_text, self._ordinary_acronym_sources,
+                                                         page_number, applicable_terminology)
+                    source_text = acronyms.wrap_acronyms(source_text, acronym_rows)
             all_tokens = extract_locked_tokens(source_text)
             expected_ar_tokens = [token for token in all_tokens if not is_portuguese_month_date_token(token)]
             page_metadata["ar_locked_tokens_expected"] = int(len(expected_ar_tokens))
@@ -2488,7 +2772,11 @@ class TranslationWorkflow:
         short_or_failed = ordered.extraction_failed or len(effective_image_text.strip()) < 20
         ordinary_visual_source = bool(self._ordinary_auto_layout_policy and self._structured_run is None)
         image_detail = "low"
-        if (ordinary_visual_source and image_used) or (short_or_failed and config.image_mode in (ImageMode.AUTO, ImageMode.ALWAYS)):
+        if (
+            (self._translation_protocol == GEMINI_STRUCTURAL_PROTOCOL and image_used)
+            or (ordinary_visual_source and image_used)
+            or (short_or_failed and config.image_mode in (ImageMode.AUTO, ImageMode.ALWAYS))
+        ):
             image_detail = "high"
 
         image_data_url = None
@@ -2577,6 +2865,28 @@ class TranslationWorkflow:
                 source_unusable=(not self._is_usable_source_text(source_text)
                     or (force_visual_grounding and merged_visual_source_text is None)
                     or (ocr_required and not ocr_used_for_source)))
+        if self._translation_protocol == GEMINI_STRUCTURAL_PROTOCOL:
+            from .gemini_structural_runner import execute_structural_page
+            return execute_structural_page(
+                self,
+                client=client,
+                config=config,
+                paths=paths,
+                page_number=page_number,
+                total_pages=total_pages,
+                source_text=source_text,
+                glossary_source_text=glossary_source_text,
+                context_text=context_text,
+                image_data_url=image_data_url,
+                image_detail=image_detail,
+                attempt1_effort=attempt1_effort,
+                page_metadata=page_metadata,
+                usage_payload=usage_payload,
+                started_monotonic=started_monotonic,
+                page_request_started=page_request_started,
+                request_timeout_budget_seconds=request_timeout_budget_seconds,
+                expected_ar_tokens=expected_ar_tokens,
+            )
 
         ocr_reason = ocr_result.failed_reason or "none"
         self._log(
@@ -2601,9 +2911,31 @@ class TranslationWorkflow:
                 "is an aid and may omit visible text. Include each passage once, preserve verbatim identifiers, "
                 "and do not infer illegible content.\n<<<END VISUAL SOURCE GUIDANCE>>>"
             )
-        prompt_text = self._append_glossary_prompt(
-            prompt_text, config.target_lang, source_text=glossary_source_text, page_index=page_number,
-        )
+            if page_evidence_policy is not None:
+                from .ordinary_primary_page_evidence import primary_visual_guidance
+
+                prompt_text += "\n" + primary_visual_guidance(
+                    config.pdf_path, page_number, sorted(map(int, self._last_state.pages)), glossary_source_text,
+                )
+        if glossary_block is None:
+            prompt_text = self._append_glossary_prompt(prompt_text, config.target_lang,
+                source_text=glossary_source_text, page_index=page_number, audit_terminology=applicable_terminology)
+        else:
+            prompt_text += glossary_block + acronyms.guidance(acronym_rows)
+        prompt_text += visual_source.guidance(source_witness)
+        from . import ordinary_source_postal_band as postal_band
+        postal_rows = []
+        postal_direct = source_route == "direct_text" and not ocr_used_for_source and merged_visual_source_text is None
+        if saved_audit and postal_band.KEY in saved_audit and postal_direct:
+            postal_rows = postal_band.captured_rows(self._last_state, page_number, source_text, expected_ar_tokens or [])
+        from .workflow_semantic_audit import capture_source
+        page_metadata.update(capture_source(state=self._last_state, run_dir=paths.run_dir,
+            page_number=page_number, source_text=source_text, original_source_text=glossary_source_text,
+            expected_ar_tokens=expected_ar_tokens, image_data_url=image_data_url,
+            applicable_terminology=applicable_terminology, acronym_rows=acronym_rows, postal_rows=postal_rows, postal_direct=postal_direct,
+            text_transport_evidence=ocr_result.text_transport_evidence,
+            api_ocr_used=bool(ocr_used_for_source and ocr_result.engine == "api"),
+            merged_ocr_source=merged_visual_source_text is not None, source_witness=source_witness))
         prompt_text = self._append_prompt_addendum(prompt_text, config.target_lang)
         page_metadata["prompt_build_ms"] = round((time.perf_counter() - _prompt_build_t0) * 1000.0, 3)
 
@@ -2840,7 +3172,12 @@ class TranslationWorkflow:
             _finalize_page_metadata()
             failure_error = (
                 "authentication_failure"
-                if is_openai_auth_failure(exception_class=exc.exception_class, status_code=exc.status_code)
+                if is_provider_auth_failure(
+                    self._translation_provider,
+                    exception_class=exc.exception_class,
+                    status_code=exc.status_code,
+                    message=str(exc),
+                )
                 else "runtime_failure"
             )
             return _PageOutcome(
@@ -2876,12 +3213,32 @@ class TranslationWorkflow:
                 "effort_used": attempt1_effort.value,
             },
         )
-        initial_eval = self._evaluate_output(
-            initial.raw_output,
-            config.target_lang,
-            expected_ar_tokens=expected_ar_tokens,
-            ar_source_text=source_text,
-        )
+        from . import primary_literal_markup as markup
+        markup_state, markup_initial, markup_groups = None, None, []
+        if saved_audit is not None and markup.KEY in saved_audit:
+            # The page's capture was persisted before dispatch. Its checkpoint
+            # metadata is committed by the ordinary outcome, not by this worker.
+            markup_state = deepcopy(self._last_state)
+            markup_state.pages[str(page_number)].update(page_metadata)
+            markup_initial, initial_eval, markup_groups = markup.evaluate_initial(
+                initial.raw_output, source_text, expected_ar_tokens or [], page_number, saved_audit, acronym_rows=acronym_rows, source_witness=source_witness, postal_rows=postal_rows)
+            markup.retain_initial(state=markup_state, run_dir=paths.run_dir, page=page_number,
+                recipe=saved_audit, raw=initial.raw_output, response_id=initial.response_id,
+                initial=markup_initial, result=initial_eval, groups=markup_groups)
+        else:
+            initial_eval = self._evaluate_output(
+                initial.raw_output,
+                config.target_lang,
+                expected_ar_tokens=expected_ar_tokens,
+                ar_source_text=source_text,
+                **source_field_options,
+                **inline_join_options,
+                **primary_literal_options,
+            )
+        from .failed_output_evidence import retain_failed_output
+        retain_failed_output(paths.run_dir, keep_intermediates=config.keep_intermediates,
+            page=page_number, attempt=1, raw_output=initial.raw_output,
+            evaluation=initial_eval, expected_tokens=expected_ar_tokens)
         _record_ar_eval_diagnostics(initial_eval, attempt=1)
         _apply_evaluation_metadata(initial_eval)
         if initial_eval.ok and initial_eval.normalized_text is not None:
@@ -2903,6 +3260,10 @@ class TranslationWorkflow:
             if self._diagnostics_admin_mode:
                 emit_validation_summary_event(self._event_collector, page_index=page_number, checks=_qc)
             output_path = paths.pages_dir / f"page_{page_number:04d}.txt"
+            if markup_state is not None:
+                page_metadata[markup.PAGE_HASH] = markup.retain_selection(state=markup_state,
+                    run_dir=paths.run_dir, page=page_number, recipe=saved_audit, origin="initial",
+                    raw=initial.raw_output, response_id=initial.response_id, normalized=initial_eval.normalized_text)
             output_path.write_text(initial_eval.normalized_text, encoding="utf-8")
             _finalize_page_metadata()
             return _PageOutcome(
@@ -2928,6 +3289,7 @@ class TranslationWorkflow:
                 violation_kind=initial_eval.ar_violation_kind,
                 defect_reason=initial_eval.defect_reason,
                 token_details=initial_eval.ar_token_details,
+                **primary_literal_options,
             )
             if initial_eval.ar_violation_kind == "latin_or_digits_outside_wrapped_tokens":
                 page_metadata["retry_prompt_type"] = "ar_wrap_correction"
@@ -2939,6 +3301,8 @@ class TranslationWorkflow:
         else:
             retry_prompt = build_retry_prompt(config.target_lang, initial.raw_output)
             page_metadata["retry_prompt_type"] = "formatting"
+        retry_prompt += acronyms.guidance(acronym_rows) + visual_source.guidance(source_witness)
+        retry_prompt += postal_band.guidance(postal_rows)
         retry_effort = self._resolve_retry_effort(
             config=config,
             retry_reason=retry_reason,
@@ -3061,7 +3425,12 @@ class TranslationWorkflow:
             _finalize_page_metadata()
             failure_error = (
                 "authentication_failure"
-                if is_openai_auth_failure(exception_class=exc.exception_class, status_code=exc.status_code)
+                if is_provider_auth_failure(
+                    self._translation_provider,
+                    exception_class=exc.exception_class,
+                    status_code=exc.status_code,
+                    message=str(exc),
+                )
                 else "runtime_failure"
             )
             return _PageOutcome(
@@ -3102,13 +3471,28 @@ class TranslationWorkflow:
                 "effort_used": retry_effort.value,
             },
         )
-        retry_eval = self._evaluate_output(
-            retry.raw_output,
-            config.target_lang,
-            expected_ar_tokens=expected_ar_tokens,
-            ar_source_text=source_text,
-            primary_normalized_text=initial_eval.normalized_text,
-        )
+        if markup_state is not None:
+            try:
+                retry_eval = markup.evaluate_compliance(retry.raw_output, initial_eval, markup_initial,
+                    markup_groups, source_text, expected_ar_tokens or [], saved_audit, acronym_rows=acronym_rows, source_witness=source_witness, postal_rows=postal_rows)
+            except markup.PrimaryMarkupError as exc:
+                retry_eval = OutputEvaluation(ok=False, normalized_text=None,
+                    defect_reason=exc.code, validator_failed=True)
+        else:
+            retry_eval = self._evaluate_output(
+                retry.raw_output,
+                config.target_lang,
+                expected_ar_tokens=expected_ar_tokens,
+                ar_source_text=source_text,
+                primary_normalized_text=initial_eval.normalized_text,
+                **source_field_options,
+                **inline_join_options,
+                **(primary_literal_options if primary_literal_options.get("literal_wrapper_policy") in ("lossless_source_components_v2", "lossless_source_components_v3") else {}),
+            )
+        retain_failed_output(paths.run_dir, keep_intermediates=config.keep_intermediates,
+            page=page_number, attempt=2, raw_output=retry.raw_output,
+            evaluation=retry_eval, expected_tokens=expected_ar_tokens,
+            primary_normalized_text=initial_eval.normalized_text)
         _record_ar_eval_diagnostics(retry_eval, attempt=2)
         _apply_evaluation_metadata(retry_eval)
         if retry_eval.ok and retry_eval.normalized_text is not None:
@@ -3130,6 +3514,10 @@ class TranslationWorkflow:
             if self._diagnostics_admin_mode:
                 emit_validation_summary_event(self._event_collector, page_index=page_number, checks=_qc)
             output_path = paths.pages_dir / f"page_{page_number:04d}.txt"
+            if markup_state is not None:
+                page_metadata[markup.PAGE_HASH] = markup.retain_selection(state=markup_state,
+                    run_dir=paths.run_dir, page=page_number, recipe=saved_audit, origin="compliance",
+                    raw=retry.raw_output, response_id=retry.response_id, normalized=retry_eval.normalized_text)
             output_path.write_text(retry_eval.normalized_text, encoding="utf-8")
             _finalize_page_metadata()
             return _PageOutcome(
@@ -3162,6 +3550,7 @@ class TranslationWorkflow:
 
     def _append_glossary_prompt(
         self, prompt_text: str, lang: TargetLang, *, source_text: str, page_index: int | None = None,
+        audit_terminology: list | None = None,
     ) -> str:
         entries = self._prompt_glossaries_by_lang.get(lang.value, [])
         priority_entries = [
@@ -3235,6 +3624,12 @@ class TranslationWorkflow:
         )
         if glossary_block == "":
             return prompt_text
+        if audit_terminology is not None:
+            from .pt_legal_glossary_aliases import source_matches_glossary_entry
+            audit_terminology.extend({"source_text": entry.source_text,
+                "preferred_translation": entry.preferred_translation, "match_mode": entry.match_mode,
+                "source_lang": entry.source_lang, "tier": int(entry.tier)} for entry in capped_entries
+                if source_matches_glossary_entry(source_text, entry))
         return f"{prompt_text}\n{glossary_block}"
 
     def _append_prompt_addendum(self, prompt_text: str, lang: TargetLang) -> str:
@@ -3258,13 +3653,22 @@ class TranslationWorkflow:
         expected_ar_tokens: list[str] | None = None,
         ar_source_text: str | None = None,
         primary_normalized_text: str | None = None,
+        source_field_policy: str | None = None,
+        literal_wrapper_policy: str | None = None,
+        source_inline_address_join_policy: str | None = None,
     ) -> OutputEvaluation:
+        options = {"source_field_policy": source_field_policy} if source_field_policy is not None else {}
+        if literal_wrapper_policy is not None:
+            options["literal_wrapper_policy"] = literal_wrapper_policy
+        if source_inline_address_join_policy is not None:
+            options["source_inline_address_join_policy"] = source_inline_address_join_policy
         return evaluate_workflow_output(
             raw_output,
             lang,
             expected_ar_tokens=expected_ar_tokens,
             ar_source_text=ar_source_text,
             primary_normalized_text=primary_normalized_text,
+            **options,
         )
 
     def _accumulate_usage_totals(self, page_metadata: dict[str, object], usage: dict[str, Any]) -> None:
@@ -3296,6 +3700,13 @@ class TranslationWorkflow:
             self._structured_run.check_source()
         from .usage_accounting import DispatchAccounting
 
+        from .checkpoint import ordinary_semantic_audit_recipe
+        from .semantic_review_model_policy import identity_fields
+        saved_semantic = ordinary_semantic_audit_recipe(run_state.settings)
+        semantic_identity = identity_fields(saved_semantic) if saved_semantic is not None else {}
+        if (semantic_identity and config.budget_cap_usd is not None
+                and config.budget_on_exceed == BudgetExceedPolicy.BLOCK):
+            raise ValueError("Dedicated semantic review has no verified strict BLOCK reservation envelope.")
         reference = run_state.dispatch_accounting
         if not isinstance(reference, dict):
             raise ValueError("Invalid saved dispatch accounting identity; preserve this run for recovery.")
@@ -3324,6 +3735,7 @@ class TranslationWorkflow:
                     "protocol_identity": dict(run_state.protocol_identity),
                     "selection": [run_state.selection_start_page, run_state.selection_end_page],
                     "run_started_at": run_state.run_started_at}
+        identity.update(semantic_identity)
         arguments = dict(run_dir=journal_dir, run_identity=identity,
                          historical_incomplete=bool(reference.get("historical_incomplete", False)))
         if self._accounting_factory is not None:
@@ -3334,8 +3746,15 @@ class TranslationWorkflow:
                 from .budget_reservations import ReservationBudget
                 budget = ReservationBudget(journal_dir / "budget.json", cap_usd=str(config.budget_cap_usd),
                                            identity=identity, create=not bool(run_state.dispatch_accounting))
+            accounting_policy = self._accounting_policy
+            if not self._accounting_policy_explicit and self._translation_provider == "gemini":
+                from .accounting_policy import gemini_accounting_policy
+                accounting_policy = gemini_accounting_policy()
+            if semantic_identity:
+                from .accounting_policy import with_semantic_review_policy
+                accounting_policy = with_semantic_review_policy(accounting_policy, semantic_identity["semantic_review_model_policy"])
             accountant = DispatchAccounting(**arguments, budget_context=budget,
-                                            **self._accounting_policy.accounting_arguments())
+                                            **accounting_policy.accounting_arguments())
         if config.budget_cap_usd is not None and config.budget_on_exceed == BudgetExceedPolicy.BLOCK:
             from .budget_reservations import money
             bound_budget = getattr(accountant, "budget_context", None)
@@ -3421,6 +3840,17 @@ class TranslationWorkflow:
         total_output_tokens = sum(int(page.get("output_tokens", 0) or 0) for _, page in page_rows)
         total_reasoning_tokens = sum(int(page.get("reasoning_tokens", 0) or 0) for _, page in page_rows)
         total_tokens = sum(int(page.get("total_tokens", 0) or 0) for _, page in page_rows)
+        from .checkpoint import ordinary_semantic_audit_recipe
+        semantic_rollup = None
+        if ordinary_semantic_audit_recipe(run_state.settings) is not None:
+            from .workflow_semantic_audit import dispatch_rollup
+            semantic_rollup = dispatch_rollup(state=run_state, run_dir=paths.run_dir,
+                                            accountant=self._dispatch_accounting)
+            audit_tokens = semantic_rollup["totals"]
+            total_input_tokens += audit_tokens["input_tokens"]
+            total_output_tokens += audit_tokens["output_tokens"]
+            total_reasoning_tokens += audit_tokens["reasoning_tokens"]
+            total_tokens += audit_tokens["total_tokens"]
 
         pages_with_images = sum(1 for _, page in page_rows if bool(page.get("image_used", False)))
         pages_with_retries = sum(1 for _, page in page_rows if bool(page.get("retry_used", False)))
@@ -3572,7 +4002,15 @@ class TranslationWorkflow:
             total_output_tokens=total_output_tokens,
             total_reasoning_tokens=total_reasoning_tokens,
         )
-        quality_risk_payload = build_quality_risk_summary(page_rows, target_lang=config.target_lang.value)
+        decisions_opt_in = bool(
+            config.gemini_decisions_advisory_enabled and self._translation_provider == "gemini"
+        )
+        quality_risk_payload = build_quality_risk_summary(
+            page_rows,
+            target_lang=config.target_lang.value,
+            decisions_advisory_enabled=decisions_opt_in,
+            decisions_accountant=self._dispatch_accounting,
+        )
         advisor_rows = [page for _, page in page_rows]
         advisor_recommendation = build_ocr_image_advisor(
             rows=advisor_rows,
@@ -3580,6 +4018,8 @@ class TranslationWorkflow:
             current_ocr_mode=config.ocr_mode.value,
             current_image_mode=config.image_mode.value,
             source="run_summary",
+            decisions_advisory_enabled=decisions_opt_in,
+            decisions_accountant=self._dispatch_accounting,
         )
         advisor_recommendation_applied = (
             self._advisor_recommendation_applied
@@ -3742,6 +4182,11 @@ class TranslationWorkflow:
             "quality_risk_score": quality_risk_payload.get("quality_risk_score", 0.0),
             "review_queue_count": quality_risk_payload.get("review_queue_count", 0),
             "review_queue": quality_risk_payload.get("review_queue", []),
+            **(
+                {"decisions_advisory": quality_risk_payload["decisions_advisory"]}
+                if "decisions_advisory" in quality_risk_payload
+                else {}
+            ),
         }
         if dispatch_summary is not None:
             payload["dispatch_accounting"] = dispatch_summary
@@ -3769,6 +4214,8 @@ class TranslationWorkflow:
             }
         if self._diagnostics_admin_mode:
             api_calls_total = sum(int(page.get("api_calls_count", 0) or 0) for _, page in page_rows)
+            if semantic_rollup is not None:
+                api_calls_total += semantic_rollup["provider_dispatch_count"]
             backoff_wait_seconds_total = sum(
                 float(page.get("backoff_wait_seconds_total", 0.0) or 0.0) for _, page in page_rows
             )
@@ -3839,6 +4286,18 @@ class TranslationWorkflow:
                 "events_path": str(paths.run_dir / "run_events.jsonl"),
                 "page_rollups": page_rollups,
             }
+        if semantic_rollup is not None:
+            payload["ordinary_semantic_audit"] = {
+                "recipe": ordinary_semantic_audit_recipe(run_state.settings),
+                "manifest_path": str(paths.run_dir / "semantic_audit" / "manifest.json"),
+                "accounting": semantic_rollup, "human_review_completed": False,
+                "visual_coverage": "text_only_configured_image_off"
+                    if config.image_mode == ImageMode.OFF else "source_image_available",
+            }
+        from .checkpoint import ordinary_semantic_audit_qualification
+        semantic_qualification = ordinary_semantic_audit_qualification(run_state.settings)
+        if semantic_qualification is not None:
+            payload["ordinary_semantic_audit"] = {**semantic_qualification, "human_review_completed": False}
         currency = os.getenv("LEGALPDF_COST_CURRENCY", "").strip()
         if currency:
             payload["cost_currency"] = currency.upper()
@@ -3868,6 +4327,13 @@ class TranslationWorkflow:
             return ReasoningEffort.XHIGH
 
         # Adaptive policy.
+        if self._translation_protocol == GEMINI_STRUCTURAL_PROTOCOL:
+            return (
+                ReasoningEffort.HIGH
+                if config.target_lang in (TargetLang.EN, TargetLang.FR)
+                or config.effort not in (ReasoningEffort.HIGH, ReasoningEffort.XHIGH)
+                else config.effort
+            )
         if config.target_lang in (TargetLang.EN, TargetLang.FR):
             if (
                 config.allow_xhigh_escalation
@@ -4133,6 +4599,8 @@ class TranslationWorkflow:
             return False, "image_mode_off"
         if config.image_mode == ImageMode.ALWAYS:
             return True, "image_mode_always"
+        if self._translation_protocol == GEMINI_STRUCTURAL_PROTOCOL and config.image_mode != ImageMode.OFF:
+            return True, "structural_full_page_visual"
         if self._ordinary_auto_layout_policy and self._structured_run is None:
             return True, "ordinary_full_page_visual_source"
 
@@ -4221,6 +4689,12 @@ class TranslationWorkflow:
             page_path = pages_dir / f"page_{page_number:04d}.txt"
             if not page_path.exists():
                 missing_pages.append(page_number)
+        if missing_pages:
+            from . import primary_literal_markup as markup
+            retained_primary = markup.load_context(state=state, run_dir=run_dir, completed_only=True)
+            if retained_primary is not None:
+                markup.local_selection(state=state, run_dir=run_dir)
+                missing_pages = [page for page in missing_pages if page not in retained_primary.primary]
         return sorted(missing_pages)
 
     def _resolve_paths_for_run(self, config: RunConfig) -> tuple[RunPaths, RunState | None]:
@@ -4231,6 +4705,10 @@ class TranslationWorkflow:
             gmail_batch_context=config.gmail_batch_context,
         )
         existing = load_run_state(paths.run_state_path)
+        semantic_evidence = any((paths.run_dir / name).exists()
+                                for name in ("semantic_source", "semantic_audit", "primary_markup"))
+        if semantic_evidence and (existing is None or not config.resume):
+            raise SemanticIntegrationError("preserve_existing_evidence")
         accounting_dir = paths.run_dir / "accounting"
         protected_accounting = bool(config.resume and (
             (existing is not None and existing.dispatch_accounting)
@@ -4241,13 +4719,24 @@ class TranslationWorkflow:
             raise ValueError("Accounting evidence lacks its saved identity; explicit recovery is required.")
         if config.resume and existing is not None and self._explicit_translation_protocol is None:
             # An environment opt-in affects fresh runs, not saved protocol identity.
-            self._translation_protocol = existing.protocol_identity.get("protocol", "legacy_text_v1")
+            saved_setting_proto = str(existing.settings.get("translation_protocol") or "").strip()
+            self._translation_protocol = existing.protocol_identity.get(
+                "protocol", saved_setting_proto or "legacy_text_v1"
+            )
         if config.resume and existing is not None:
             recorded_auto = existing.settings.get("ordinary_auto_layout_policy")
             if self._ordinary_auto_layout_policy is not None and self._ordinary_auto_layout_policy != recorded_auto:
                 raise ValueError("Ordinary automatic layout policy changed on resume.")
             self._ordinary_auto_layout_policy = recorded_auto
-        if self._translation_protocol not in {"legacy_text_v1", "legal_blocks_v2"}:
+            from .checkpoint import ordinary_semantic_audit_recipe
+            saved_semantic = ordinary_semantic_audit_recipe(existing.settings)
+            if saved_semantic is not None:
+                if self._provided_client is not None and self._translation_model != saved_semantic["model"]:
+                    raise SemanticIntegrationError("model_changed")
+                self._translation_model = saved_semantic["model"]
+            from .workflow_semantic_audit import validate_retained_source_pins
+            validate_retained_source_pins(state=existing, run_dir=paths.run_dir)
+        if self._translation_protocol not in {"legacy_text_v1", "legal_blocks_v2", GEMINI_STRUCTURAL_PROTOCOL}:
             raise ValueError("Checkpoint translation protocol is not supported.")
         has_structured_files = paths.pages_dir.exists() and (
             any(paths.pages_dir.glob("page_*.commit.json")) or
@@ -4342,6 +4831,7 @@ class TranslationWorkflow:
         existing_state: RunState | None,
         pdf_fingerprint: str,
         context_hash: str,
+        context_text: str | None,
         total_pages: int,
         selected_pages: list[int],
         selection_start_page: int,
@@ -4349,6 +4839,7 @@ class TranslationWorkflow:
         selection_page_count: int,
         max_pages_effective: int,
     ) -> RunState:
+        self._ordinary_acronym_sources = ()
         existing = existing_state
         if existing is None:
             existing = load_run_state(paths.run_state_path)
@@ -4392,8 +4883,19 @@ class TranslationWorkflow:
                     if self._reviewed_source_context is not None else None),
                 ordinary_auto_layout_policy=self._ordinary_auto_layout_policy,
                 primary_recipe=existing.settings.get("primary_assembly_recipe"),
+                semantic_recipe=existing.settings.get("ordinary_semantic_audit_recipe"),
+                semantic_qualification=existing.settings.get("ordinary_semantic_audit_qualification"),
+                translation_protocol=self._translation_protocol,
             )
             if mismatch_reason is None:
+                from .workflow_semantic_audit import validate_context
+                from . import ordinary_source_acronyms as acronyms
+                saved = existing.settings.get("ordinary_semantic_audit_recipe") or {}
+                if saved.get("primary_page_evidence_policy") == acronyms.POLICY:
+                    self._ordinary_acronym_sources = acronyms.read_selection(config.pdf_path, selected_pages,
+                                                                            expected_sha256=pdf_fingerprint)
+                validate_context(state=existing, run_dir=paths.run_dir,
+                    context_text=context_text, context_hash=context_hash)
                 existing.frozen_outdir_abs = str(paths.frozen_outdir)
                 existing.run_dir_abs = str(paths.run_dir)
                 existing.run_started_at = paths.run_started_at
@@ -4422,8 +4924,37 @@ class TranslationWorkflow:
         if self._structured_run is None:
             clear_run_dirs(paths)
         from .ordinary_auto_layout import frozen_automatic_layout_policy
-        primary_recipe = ({"version": "terminal_labeled_folio_v2", "ordinary_auto_layout_policy": self._ordinary_auto_layout_policy}
+        primary_recipe = ({"version": "terminal_source_bound_folio_v4", "ordinary_auto_layout_policy": self._ordinary_auto_layout_policy}
             if self._ordinary_auto_layout_policy == frozen_automatic_layout_policy() else None)
+        from .workflow_semantic_audit import fresh_recipe
+        semantic_eligible = (config.target_lang == TargetLang.AR and self._structured_run is None
+                and self._ordinary_auto_layout_policy == frozen_automatic_layout_policy())
+        semantic_recipe = (fresh_recipe(config, self._translation_model, self._ordinary_auto_layout_policy,
+            context_text=context_text, context_hash=context_hash)
+            if semantic_eligible and len(selected_pages) <= 12 else None)
+        if (semantic_recipe and semantic_recipe.get("primary_page_evidence_policy") == "source_page_occurrences_v1"
+                and "primary_literal_markup_policy" in semantic_recipe):
+            from . import ordinary_source_acronyms as acronyms
+            selection = acronyms.read_selection(config.pdf_path, selected_pages)
+            for number, text in selection:
+                terms = []
+                self._append_glossary_prompt("", config.target_lang, source_text=text, audit_terminology=terms)
+                if acronyms.page_acronyms(text, selection, number, terms):
+                    semantic_recipe["primary_page_evidence_policy"] = acronyms.POLICY
+                    self._ordinary_acronym_sources = selection
+                    break
+        if semantic_recipe and {"primary_literal_markup_policy", "ocr_text_transport_policy"} <= semantic_recipe.keys():
+            from . import ordinary_ocr_visual_source as visual_source
+            if visual_source.selection_qualifies(config, selected_pages):
+                semantic_recipe[visual_source.KEY] = visual_source.FRESH_POLICY
+        if (semantic_recipe and "primary_literal_markup_policy" in semantic_recipe and config.image_mode.value != "off"
+                and config.ocr_mode.value != "always"):
+            from . import ordinary_source_postal_band as postal_band
+            if postal_band.read_selection(config.pdf_path, selected_pages, pdf_fingerprint):
+                semantic_recipe[postal_band.KEY] = postal_band.POLICY
+        semantic_qualification = ({"version": "ordinary_semantic_audit_v1", "audit_not_run": "selected_page_limit",
+            "selected_pages": list(selected_pages), "page_limit": 12}
+            if semantic_eligible and len(selected_pages) > 12 else None)
         state = new_run_state(
             config=config,
             paths=paths,
@@ -4436,9 +4967,39 @@ class TranslationWorkflow:
                 if self._reviewed_source_context is not None else None),
             ordinary_auto_layout_policy=self._ordinary_auto_layout_policy,
             primary_recipe=primary_recipe,
+            semantic_recipe=semantic_recipe,
+            semantic_qualification=semantic_qualification,
+            translation_protocol=self._translation_protocol,
         )
+        from .workflow_semantic_audit import capture_context
+        capture_context(state=state, run_dir=paths.run_dir, context_text=context_text, context_hash=context_hash)
         save_run_state_atomic(paths.run_state_path, state)
         return state
+
+    def _semantic_failure_summary(self, config, paths, state, error):
+        """A failed audit never becomes a layout or DOCX-success observation."""
+        cancelled = self._cancel_event.is_set()
+        public_error = "cancelled" if cancelled else error.code
+        state.run_status = "cancelled" if cancelled else "semantic_audit_failed"
+        state.halt_reason = "cancelled_by_user" if cancelled else error.code
+        state.finished_at = self._utc_now()
+        state.final_docx_path_abs = None
+        state.failure_context = {"scope": "semantic_audit", "error": public_error,
+                                 "audit_error": error.code,
+                                 "message": "Whole-document semantic review is required."}
+        save_run_state_atomic(paths.run_state_path, state)
+        partial = None
+        if state.done_count:
+            try:
+                partial = self._export_partial_docx_locked()
+            except Exception:
+                self._log("Unapproved primary partial unavailable; preserved page evidence requires review.")
+        summary = self._write_run_summary(config=config, paths=paths, run_state=state)
+        self._log(public_error)
+        self._record_event(event_type="run_cancelled" if cancelled else "run_failed", stage="semantic_audit", error=public_error)
+        return RunSummary(success=False, exit_code=2, output_docx=None, partial_docx=partial,
+            run_dir=paths.run_dir, completed_pages=state.done_count, failed_page=None,
+            error=public_error, run_summary_path=summary)
 
     def _normalize_config(self, config: RunConfig) -> RunConfig:
         # Normalization is read-only: a structured checkpoint may still reject
@@ -4465,6 +5026,10 @@ class TranslationWorkflow:
             effort=config.effort,
             effort_policy=config.effort_policy,
             allow_xhigh_escalation=config.allow_xhigh_escalation,
+            translation_provider=config.translation_provider,
+            translation_model=config.translation_model,
+            helper_thinking_level=config.helper_thinking_level,
+            gemini_decisions_advisory_enabled=bool(config.gemini_decisions_advisory_enabled),
             image_mode=config.image_mode,
             start_page=config.start_page,
             end_page=config.end_page,

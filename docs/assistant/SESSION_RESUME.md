@@ -1,5 +1,17 @@
 # SESSION_RESUME
 
+## Completed structure improvement and local installation — November 8
+
+Read [HANDOFF](HANDOFF.md), then the [completed translation-structure plan](exec_plans/completed/2026-11-08_translation_structure.md). The user approved applying the validated update locally. Canonical main now contains V20 source-line alignment (`1405ccba` product), with passing startup and data-preservation checks. All paid trials and validation runs have ended; usage-attributed cost is USD4.65596565 of the USD30.54 authorization. The remaining allowance is not a mandate to dispatch. Historical installation/funding instructions below are evidence only. Remote publication and live Gmail remain outside this completed scope. The roadmap stays dormant.
+
+## Current provisional installation — October 22
+
+Read [HANDOFF](HANDOFF.md), then the [provisional installation plan](exec_plans/completed/2026-10-22_provisional_main_update.md). The user explicitly authorized applying offline-tested fixes to main without API spending. The bounded provisional installation passed normal startup and preservation checks. It is separate from the paused0/3 fresh-autonomy goal; current HANDOFF and the private terminal receipt own final installed/runtime identities. Existing older completion and shutdown instructions below are historical; do not replay their operations. The roadmap remains dormant.
+
+## Completed scoped work — October 15–17 order rerun
+
+Read [HANDOFF.md](HANDOFF.md) and the [completed order plan](exec_plans/completed/2026-10-15_order_end_to_end_rerun.md). Actual generation-2 native/content/review/download/Save/fee/unsent-draft and final preservation checks passed, retaining manual corrections and failure qualifications. All nine bounded plans are completed; the roadmap remains dormant. Installed product/frontend commit is D (`29d07bc15d2034a55d0fcfaba78d584fb38a3179`); later documentation commits may advance Git HEAD while the preserved same backend process retains cached C identity; the installation/UI receipt explains that distinction. No app/provider/Save/draft work remains to replay. Private `order_rerun_20261015_01/final_closeout_01/receipt.json` owns the final local documentation commit and shutdown state. Functional work is complete and its app actions are consumed. Shutdown is requested only if that receipt records an actual operating-system request; physical power-off is not observed. Sending, remote publication and hosted CI are not claimed.
+
 ## October 11 Arabic abbreviated page-label repair
 
 The later same-document test exposed one remaining numbering defect: a source label such as `ص. 1` was retained alongside the generated Word counter. The focused v2 primary-assembly recipe recognizes that explicit abbreviation only on complete, unstructured pages with matching page numbers. Original text remains intact. Historical v1 and absent recipes retain their saved behavior, including Resume across pricing changes; V6/V7 layout writers are unchanged.

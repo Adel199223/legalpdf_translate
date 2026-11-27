@@ -48,14 +48,22 @@ from .ocr_engine import (
     normalize_ocr_api_provider,
     resolve_ocr_api_key,
 )
+from .config import DEFAULT_TRANSLATION_PROVIDER, GEMINI_MODEL
+from .gemini_client import GeminiInteractionsClient
 from .openai_client import OpenAIResponsesClient, resolve_openai_key_with_source
+from .provider_client import (
+    default_translation_model,
+    normalize_translation_provider,
+    provider_display_name,
+    resolve_translation_key_with_source,
+)
 from .output_paths import require_writable_output_dir
 from .pricing import translation_fee_eur
 from .review_export import export_review_queue
 from .run_report import build_run_report_markdown
 from .run_workspace_lock import RunWorkspaceBusy
 from .source_document import get_source_page_count, is_pdf_source, is_supported_source_file
-from .types import AnalyzeSummary, OcrMode, RunConfig, RunSummary, TargetLang
+from .types import AnalyzeSummary, OcrApiProvider, OcrMode, RunConfig, RunSummary, TargetLang
 from .user_settings import (
     load_gui_settings_from_path,
     load_joblog_settings_from_path,
@@ -342,7 +350,7 @@ def _translation_raw_values(form_values: Mapping[str, Any], *, seed: JobLogSeed)
 def build_translation_capability_flags(*, settings_path: Path) -> dict[str, Any]:
     gui_settings = load_gui_settings_from_path(settings_path)
     provider = normalize_ocr_api_provider(
-        gui_settings.get("ocr_api_provider", gui_settings.get("ocr_api_provider_default", "openai"))
+        gui_settings.get("ocr_api_provider", gui_settings.get("ocr_api_provider_default", "gemini"))
     )
     ocr_env_name = str(
         gui_settings.get("ocr_api_key_env_name")
@@ -364,7 +372,18 @@ def build_translation_capability_flags(*, settings_path: Path) -> dict[str, Any]
         api_key_env_name=ocr_env_name,
         api_timeout_seconds=float(gui_settings.get("ocr_api_timeout_seconds", 60.0) or 60.0),
     )
-    translation_key, translation_source = resolve_openai_key_with_source()
+    translation_provider = normalize_translation_provider(
+        gui_settings.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
+    )
+    translation_model = (
+        str(gui_settings.get("translation_model", "") or "").strip()
+        or default_translation_model(translation_provider)
+    )
+    allow_ocr_fallback = translation_provider == normalize_translation_provider("gemini") and provider == OcrApiProvider.GEMINI
+    translation_key, translation_source = resolve_translation_key_with_source(
+        translation_provider,
+        allow_gemini_ocr_fallback=allow_ocr_fallback,
+    )
     translation_source_payload = (
         translation_source.to_payload() if translation_source is not None else {"kind": "missing", "name": ""}
     )
@@ -379,6 +398,8 @@ def build_translation_capability_flags(*, settings_path: Path) -> dict[str, Any]
             "default_env_name": ocr_env_name,
         },
         "translation": {
+            "provider": translation_provider.value,
+            "model": translation_model,
             "status": "ready" if translation_key is not None else "needs_auth",
             "credentials_configured": translation_key is not None,
             "credential_source": translation_source_payload,
@@ -405,16 +426,30 @@ def build_translation_capability_flags(*, settings_path: Path) -> dict[str, Any]
 def build_translation_defaults(*, settings_path: Path, outputs_dir: Path) -> dict[str, Any]:
     gui_settings = load_gui_settings_from_path(settings_path)
     provider = normalize_ocr_api_provider(
-        gui_settings.get("ocr_api_provider", gui_settings.get("ocr_api_provider_default", "openai"))
+        gui_settings.get("ocr_api_provider", gui_settings.get("ocr_api_provider_default", "gemini"))
+    )
+    translation_provider = normalize_translation_provider(
+        gui_settings.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
+    )
+    translation_model = (
+        str(gui_settings.get("translation_model", "") or "").strip()
+        or default_translation_model(translation_provider)
     )
     return {
         "source_path": "",
         "uploaded_source_path": "",
         "output_dir": _default_output_dir_text(gui_settings, outputs_dir),
         "target_lang": str(gui_settings.get("last_lang", gui_settings.get("default_lang", "EN")) or "EN").strip().upper(),
-        "effort": str(gui_settings.get("effort", "high") or "high").strip().lower(),
+        "translation_provider": translation_provider.value,
+        "translation_model": translation_model,
+        "helper_thinking_level": str(gui_settings.get("helper_thinking_level", "high") or "high").strip().lower(),
+        "gemini_decisions_advisory_enabled": _coerce_bool(
+            gui_settings.get("gemini_decisions_advisory_enabled"),
+            False,
+        ),
+        "effort": str(gui_settings.get("effort", "xhigh") or "xhigh").strip().lower(),
         "effort_policy": str(
-            gui_settings.get("effort_policy", gui_settings.get("default_effort_policy", "adaptive")) or "adaptive"
+            gui_settings.get("effort_policy", gui_settings.get("default_effort_policy", "fixed_xhigh")) or "fixed_xhigh"
         ).strip().lower(),
         "image_mode": str(gui_settings.get("image_mode", gui_settings.get("default_images_mode", "off")) or "off").strip().lower(),
         "ocr_mode": str(gui_settings.get("ocr_mode", gui_settings.get("ocr_mode_default", "auto")) or "auto").strip().lower(),
@@ -432,7 +467,7 @@ def build_translation_defaults(*, settings_path: Path, outputs_dir: Path) -> dic
         "context_file": "",
         "context_text": "",
         "glossary_file": _normalize_optional_path(gui_settings.get("glossary_file_path")),
-        "allow_xhigh_escalation": _coerce_bool(gui_settings.get("allow_xhigh_escalation"), False),
+        "allow_xhigh_escalation": _coerce_bool(gui_settings.get("allow_xhigh_escalation"), True),
         "diagnostics_admin_mode": _coerce_bool(gui_settings.get("diagnostics_admin_mode"), True),
         "diagnostics_include_sanitized_snippets": _coerce_bool(
             gui_settings.get("diagnostics_include_sanitized_snippets"),
@@ -499,7 +534,21 @@ def _build_config_from_form(
     glossary_file = Path(glossary_file_text).expanduser().resolve() if glossary_file_text else None
 
     provider = normalize_ocr_api_provider(
-        defaults.get("ocr_api_provider", defaults.get("ocr_api_provider_default", "openai"))
+        defaults.get("ocr_api_provider", defaults.get("ocr_api_provider_default", "gemini"))
+    )
+    translation_provider = normalize_translation_provider(
+        form_values.get("translation_provider", defaults.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER))
+    )
+    translation_model = (
+        str(form_values.get("translation_model", defaults.get("translation_model", "")) or "").strip()
+        or default_translation_model(translation_provider)
+    )
+    helper_thinking_level = str(
+        form_values.get("helper_thinking_level", defaults.get("helper_thinking_level", "high")) or "high"
+    ).strip().lower()
+    gemini_decisions_advisory = _coerce_bool(
+        form_values.get("gemini_decisions_advisory_enabled", defaults.get("gemini_decisions_advisory_enabled")),
+        False,
     )
     ocr_api_key_env_name = str(
         defaults.get("ocr_api_key_env_name")
@@ -525,20 +574,24 @@ def _build_config_from_form(
         pdf_path=source,
         output_dir=output_dir,
         target_lang=TargetLang(target_lang_text),
-        effort=parse_effort(str(form_values.get("effort", defaults.get("effort", "high")) or "high")),
+        effort=parse_effort(str(form_values.get("effort", defaults.get("effort", "xhigh")) or "xhigh")),
         effort_policy=parse_effort_policy(
             str(
                 form_values.get(
                     "effort_policy",
-                    defaults.get("effort_policy", defaults.get("default_effort_policy", "adaptive")),
+                    defaults.get("effort_policy", defaults.get("default_effort_policy", "fixed_xhigh")),
                 )
-                or "adaptive"
+                or "fixed_xhigh"
             )
         ),
         allow_xhigh_escalation=_coerce_bool(
             form_values.get("allow_xhigh_escalation", defaults.get("allow_xhigh_escalation")),
-            False,
+            True,
         ),
+        translation_provider=translation_provider,
+        translation_model=translation_model,
+        helper_thinking_level=helper_thinking_level,
+        gemini_decisions_advisory_enabled=gemini_decisions_advisory,
         image_mode=parse_image_mode(
             str(form_values.get("image_mode", image_mode_default) or "off")
         ),
@@ -788,6 +841,12 @@ def _serialize_run_config(config: RunConfig) -> dict[str, Any]:
         "source_path": str(config.pdf_path.expanduser().resolve()),
         "output_dir": str(config.output_dir.expanduser().resolve()),
         "target_lang": config.target_lang.value,
+        "translation_provider": (
+            config.translation_provider.value
+            if config.translation_provider is not None
+            else None
+        ),
+        "translation_model": str(config.translation_model) if config.translation_model else None,
         "effort": config.effort.value,
         "effort_policy": config.effort_policy.value,
         "allow_xhigh_escalation": bool(config.allow_xhigh_escalation),
@@ -813,6 +872,18 @@ def _serialize_run_config(config: RunConfig) -> dict[str, Any]:
             else None
         ),
     }
+
+
+def _has_prior_run_evidence(run_dir: Path) -> bool:
+    """Resume preferences alone do not turn an empty folder into a saved run.
+
+    Retain even unreadable checkpoints and orphaned accounting/page artifacts as
+    prior evidence. The workflow owns their validation and pinned recipe recovery.
+    A workspace lock by itself contains no run state.
+    """
+    return run_dir.exists() and any(
+        item.name != ".run_workspace.lock" for item in run_dir.iterdir()
+    )
 
 
 def build_translation_bootstrap(
@@ -1296,6 +1367,7 @@ class TranslationJobManager:
         self._automatic_layout_runner = automatic_layout_runner
         self._automatic_layout_cancel = None
         self._automatic_layout_recovery_runner = None
+        self._automatic_layout_rebuild_runner = None
 
     def set_automatic_layout_runner(self, runner: Callable[[str, str], Mapping[str, Any]]) -> None:
         """Attach the browser-owned runner before jobs start; tests may inject a bounded fake."""
@@ -1321,6 +1393,12 @@ class TranslationJobManager:
             job = self._jobs.get(job_id)
             return bool(job and job._automatic_layout_recovery_active)
 
+    def set_automatic_layout_rebuild_runner(self, runner) -> None:
+        """Server-only completed renderer migration; HTTP contracts are unchanged."""
+        if not callable(runner) or self._automatic_layout_rebuild_runner is not None:
+            raise ValueError("ordinary_auto_layout_rebuild_runner_unavailable")
+        self._automatic_layout_rebuild_runner = runner
+
     def automatic_layout_cancel_requested(self, job_id: str) -> bool:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -1336,6 +1414,7 @@ class TranslationJobManager:
             return True
 
     def _job_actions(self, job: _ManagedTranslationJob) -> dict[str, bool]:
+        from .ordinary_auto_layout import supports_manual_layout_recovery
         status = job.status
         return {
             "cancel": (job.job_kind == "translate" and status in {"queued", "running", "cancel_requested"}
@@ -1344,6 +1423,7 @@ class TranslationJobManager:
             "resume": job.job_kind == "translate" and status in {"failed", "cancelled"},
             "recover_layout": (job.job_kind == "translate" and status == "completed"
                 and bool(job._config and job._ordinary_auto_layout_policy and job._ordinary_baseline)
+                and supports_manual_layout_recovery(job._ordinary_auto_layout_policy)
                 and isinstance(job.result_payload.get("automatic_layout"), dict)
                 and job.result_payload["automatic_layout"].get("status") == "raw_fallback"
                 and self._automatic_layout_recovery_runner is not None),
@@ -1363,9 +1443,14 @@ class TranslationJobManager:
         diagnostics = dict(job.diagnostics_payload)
         if self._job_actions(job).get("recover_layout"):
             try:
-                from .ordinary_layout_accounting import verified_page_ceiling
+                from .ordinary_layout_accounting import (
+                    verified_page_ceiling,
+                    verified_page_ceiling_for_provider,
+                )
+                job_provider = str((job.config_payload or {}).get("translation_provider") or DEFAULT_TRANSLATION_PROVIDER).strip().lower()
+                ceiling = verified_page_ceiling() if job_provider == "openai" else verified_page_ceiling_for_provider(job_provider)
                 diagnostics["layout_recovery_quote"] = {"available": True,
-                    "max_page_cost_usd": str(verified_page_ceiling()), "currency": "USD",
+                    "max_page_cost_usd": str(ceiling), "currency": "USD",
                     "paid_operation": True, "prior_charges_retained": True}
             except Exception:
                 diagnostics["layout_recovery_quote"] = {"available": False,
@@ -1672,6 +1757,9 @@ class TranslationJobManager:
         from .saved_docx_layout_service import _read as bounded_read
         if job._ordinary_baseline or job._config is None:
             return
+        from .primary_literal_markup import expected_admission
+        markup_expected = expected_admission(state=getattr(job._workflow, "_last_state", None),
+            run_dir=Path(job.result_payload["run_dir"]), config=job._config)
         # Formatting is a post-translation state: the public completed-job
         # accessor deliberately rejects it, while the raw seed is already
         # durable and must be captured before automatic layout can replace it.
@@ -1683,6 +1771,8 @@ class TranslationJobManager:
         if not is_pdf_source(source):
             return
         if job._ordinary_auto_layout_policy and self._reuse_proven_ordinary_baseline(job, output, source):
+            if markup_expected is not None:
+                job._ordinary_baseline["primary_markup_admission"] = markup_expected
             return
         raw = bounded_read(output, 32 * 1024 * 1024)
         source_raw = bounded_read(source, 64 * 1024 * 1024)
@@ -1720,6 +1810,8 @@ class TranslationJobManager:
             "output_path": str(output), "selected_pages": pages, "mapping": mapping,
             "mapping_sha256": hashlib.sha256(mapping_raw).hexdigest() if mapping_raw else "",
             "mapping_path": str(map_copy)}
+        if markup_expected is not None:
+            job._ordinary_baseline["primary_markup_admission"] = markup_expected
 
     def trusted_ordinary_layout_job(self, job_id: str, *, runtime_mode: str, workspace_id: str):
         """Resolve bytes and source associations exclusively from the owned completed job."""
@@ -1736,6 +1828,26 @@ class TranslationJobManager:
             seed = deepcopy(job.result_payload.get("save_seed", {}))
             run_id = str(seed.get("run_id") or Path(job.result_payload["run_dir"]).name)
             language = str(seed.get("target_lang") or job.config_payload["target_lang"])
+            owned_run_dir = str(job.result_payload["run_dir"])
+            owned_config = deepcopy(job.config_payload)
+            owned_execution_config = deepcopy(job._config)
+        from .primary_literal_markup import admit_owned_job
+        markup_admitted = admit_owned_job(run_dir=Path(owned_run_dir), source_pdf=Path(baseline["source_path"]),
+            selected_pages=tuple(baseline["selected_pages"]), target_lang=language,
+            writer_map=baseline["mapping"], expected=baseline.get("primary_markup_admission"),
+            config=owned_execution_config)
+        if markup_admitted:
+            # Admission validates a snapshot outside the lock. It cannot authorize a
+            # different job/baseline that replaced that snapshot while it replayed.
+            with self._lock:
+                current_job = self._jobs.get(job_id)
+                if (current_job is not job or job.runtime_mode != runtime_mode or job.workspace_id != workspace_id
+                        or job.status not in {"completed", "formatting"}
+                        or job._ordinary_baseline != baseline or job.config_payload != owned_config
+                    or job._config != owned_execution_config
+                        or str(job.result_payload.get("run_dir")) != owned_run_dir
+                        or job.result_payload.get("save_seed", {}) != seed):
+                    fail("job_unavailable", 409)
         source = bounded_read(Path(baseline["source_path"]), 64 * 1024 * 1024)
         original = bounded_read(Path(baseline["original_path"]), 32 * 1024 * 1024)
         reviewed = bounded_read(Path(baseline["output_path"]), 32 * 1024 * 1024)
@@ -1823,14 +1935,13 @@ class TranslationJobManager:
             if (job_kind not in {"translate", "rebuild"} or type(reviewed_source_context) is not OrdinaryReviewedSourceContext
                     or not callable(reviewed_source_loader)):
                 raise ValueError("ordinary_source_review_job_context_invalid")
-        reservation_key = _run_dir_key(
-            build_run_paths(
-                config.output_dir,
-                config.pdf_path,
-                config.target_lang,
-                gmail_batch_context=config.gmail_batch_context,
-            ).run_dir
-        )
+        reserved_run_dir = build_run_paths(
+            config.output_dir,
+            config.pdf_path,
+            config.target_lang,
+            gmail_batch_context=config.gmail_batch_context,
+        ).run_dir
+        reservation_key = _run_dir_key(reserved_run_dir)
         self._reserve(reservation_key)
         job_id = f"tx-{uuid.uuid4().hex[:12]}"
         created_at = _utc_now_iso()
@@ -1878,25 +1989,66 @@ class TranslationJobManager:
                     retries_setting = gui_settings.get("perf_max_transport_retries", 4)
                     max_retries = 4 if retries_setting is None else int(retries_setting)
                     backoff_cap = float(gui_settings.get("perf_backoff_cap_seconds", 12.0) or 12.0)
-                    client = None if selected_context is not None else OpenAIResponsesClient(
-                        max_transport_retries=max_retries,
-                        backoff_cap_seconds=backoff_cap,
-                        logger=lambda message: self._append_log(job_id, message),
+                    resolved_provider = normalize_translation_provider(
+                        config.translation_provider
+                        or gui_settings.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
                     )
+                    resolved_model = (
+                        (config.translation_model or "").strip()
+                        or str(gui_settings.get("translation_model", "") or "").strip()
+                        or default_translation_model(resolved_provider)
+                    )
+                    with self._lock:
+                        self._jobs[job_id].config_payload["translation_provider"] = resolved_provider.value
+                        self._jobs[job_id].config_payload["translation_model"] = resolved_model
+                    if selected_context is not None:
+                        client = None
+                    elif resolved_provider.value == "gemini":
+                        client = GeminiInteractionsClient(
+                            model=resolved_model,
+                            max_transport_retries=max_retries,
+                            backoff_cap_seconds=backoff_cap,
+                            logger=lambda message: self._append_log(job_id, message),
+                        )
+                    else:
+                        client = OpenAIResponsesClient(
+                            model=resolved_model,
+                            max_transport_retries=max_retries,
+                            backoff_cap_seconds=backoff_cap,
+                            logger=lambda message: self._append_log(job_id, message),
+                        )
                     from .workflow import TranslationWorkflow
 
-                    from .translation_policy import resolve_ordinary_auto_layout_policy, resolve_translation_protocol
+                    from .translation_policy import (
+                        DEFAULT_TRANSLATION_PROTOCOL,
+                        resolve_ordinary_auto_layout_policy,
+                        resolve_provider_translation_protocol,
+                    )
+                    effective_protocol = (
+                        None
+                        if selected_context is not None
+                        else resolve_provider_translation_protocol(provider=resolved_provider.value)
+                    )
                     auto_policy = resolve_ordinary_auto_layout_policy(
-                        protocol=resolve_translation_protocol(),
-                        fresh_browser_job=not config.resume and self._automatic_layout_runner is not None,
-                        reviewed_source=selected_context is not None)
+                        protocol=effective_protocol or DEFAULT_TRANSLATION_PROTOCOL,
+                        fresh_browser_job=self._automatic_layout_runner is not None and (
+                            not config.resume or not _has_prior_run_evidence(reserved_run_dir)),
+                        reviewed_source=selected_context is not None,
+                        translation_provider=resolved_provider.value)
                     if auto_policy and self._automatic_layout_runner is None:
                         raise ValueError("ordinary_auto_layout_runner_unavailable")
                     if auto_policy:
-                        from .ordinary_layout_accounting import verified_page_ceiling
+                        from .ordinary_layout_accounting import (
+                            verified_page_ceiling,
+                            verified_page_ceiling_for_provider,
+                        )
                         per_page = None
                         try:
-                            per_page = verified_page_ceiling()
+                            per_page = (
+                                verified_page_ceiling()
+                                if resolved_provider.value == "openai"
+                                else verified_page_ceiling_for_provider(resolved_provider.value)
+                            )
                             progress_text = ("Translating; automatic source layout follows "
                                 f"(up to USD{per_page} per selected page)")
                         except Exception:
@@ -1912,6 +2064,7 @@ class TranslationJobManager:
                         client=client,
                         log_callback=lambda message: self._append_log(job_id, message),
                         progress_callback=lambda idx, total, status: self._update_progress(job_id, idx, total, status),
+                        translation_protocol=effective_protocol,
                         gui_settings=gui_settings,
                         **self._workflow_accounting,
                         ordinary_auto_layout_policy=auto_policy,
@@ -1928,7 +2081,11 @@ class TranslationJobManager:
                             status_text = "Translation cancelled"
                         elif str(summary.error or "") == "authentication_failure":
                             status = "failed"
-                            status_text = "OpenAI authentication failed"
+                            provider_label = provider_display_name(
+                                config.translation_provider
+                                or gui_settings.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
+                            )
+                            status_text = f"{provider_label} authentication failed"
                         elif str(summary.error or "") == "source_unavailable":
                             status = "failed"
                             status_text = "Source text is unavailable. Enable page images or OCR, then retry."
@@ -2010,8 +2167,10 @@ class TranslationJobManager:
                     prior = deepcopy(parent.result_payload) if parent is not None else {}
                 prior_auto = prior.get("automatic_layout") if isinstance(prior, dict) else None
                 prior_policy = parent._ordinary_auto_layout_policy if parent is not None else None
-                if (self._automatic_layout_runner is not None and isinstance(prior_auto, dict)
-                        and prior_auto.get("status") == "automatic_unreviewed" and prior_policy):
+                prior_automatic = isinstance(prior_auto, dict) and prior_auto.get("status") == "automatic_unreviewed"
+                if (prior_policy and isinstance(prior.get("save_seed"), dict)
+                        and (self._automatic_layout_rebuild_runner is not None
+                             or self._automatic_layout_runner is not None and prior_automatic)):
                     seed = prior.get("save_seed")
                     if not isinstance(seed, dict) or str(prior.get("run_dir")) != str(run_dir):
                         raise ValueError("ordinary_auto_layout_rebuild_identity_changed")
@@ -2027,9 +2186,20 @@ class TranslationJobManager:
                     self._mark_finished(job_id=job_id, status="formatting",
                         status_text="Reusing source layout...", diagnostics={"kind": "rebuild"},
                         result=prior, artifacts=rebuilt_artifacts)
+                    with self._lock:
+                        self._jobs[job_id]._completed_accountant = parent._completed_accountant
                     try:
-                        self._finish_automatic_layout(job_id,
-                            self._automatic_layout_runner(job_id, prior_policy))
+                        rebuilt = (self._automatic_layout_rebuild_runner(job_id)
+                            if self._automatic_layout_rebuild_runner is not None else None)
+                        if rebuilt is None and prior_automatic:
+                            rebuilt = self._automatic_layout_runner(job_id, prior_policy)
+                        if rebuilt is None:
+                            self._mark_finished(job_id=job_id, status="completed", status_text="Rebuild complete",
+                                diagnostics={"kind": "rebuild"},
+                                result={"rebuild": {"docx_path": str(output_docx.expanduser().resolve()),
+                                    "run_dir": str(run_dir.expanduser().resolve())}}, artifacts=rebuilt_artifacts)
+                        else:
+                            self._finish_automatic_layout(job_id, rebuilt)
                     except Exception as exc:
                         code = getattr(exc, "code", "automatic_layout_unavailable")
                         if type(code) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,120}", code) is None:

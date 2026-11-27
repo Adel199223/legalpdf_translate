@@ -8,8 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from .config import (
+    DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+    DEFAULT_TRANSLATION_PROVIDER,
     DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
     DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
+    GEMINI_MODEL,
 )
 from .ocr_defaults import default_ocr_api_env_name
 from .glossary import (
@@ -35,7 +38,7 @@ from .pricing import DEFAULT_TRANSLATION_RATE, nonnegative_decimal
 
 APP_FOLDER_NAME = "LegalPDFTranslate"
 SETTINGS_FILENAME = "settings.json"
-SETTINGS_SCHEMA_VERSION = 9
+SETTINGS_SCHEMA_VERSION = 10
 DEFAULT_VOCAB_CASE_ENTITIES = [
     "Ministério Público",
     "Tribunal Judicial",
@@ -100,10 +103,10 @@ DEFAULT_JOBLOG_VISIBLE_COLUMNS = [
 DEFAULT_OCR_SETTINGS: dict[str, Any] = {
     "ocr_mode": "auto",
     "ocr_engine": "local_then_api",
-    "ocr_api_provider": "openai",
+    "ocr_api_provider": "gemini",
     "ocr_api_base_url": "",
     "ocr_api_model": "",
-    "ocr_api_key_env_name": default_ocr_api_env_name(OcrApiProvider.OPENAI),
+    "ocr_api_key_env_name": default_ocr_api_env_name(OcrApiProvider.GEMINI),
 }
 DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "settings_schema_version": SETTINGS_SCHEMA_VERSION,
@@ -111,10 +114,14 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "primary_profile_id": default_primary_profile().id,
     "ui_theme": "dark_futuristic",
     "ui_scale": 1.0,
+    "translation_provider": DEFAULT_TRANSLATION_PROVIDER,
+    "translation_model": GEMINI_MODEL,
+    "helper_thinking_level": DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+    "gemini_decisions_advisory_enabled": False,
     "default_lang": "EN",
-    "default_effort": "high",
-    "default_effort_policy": "adaptive",
-    "default_images_mode": "off",
+    "default_effort": "xhigh",
+    "default_effort_policy": "fixed_xhigh",
+    "default_images_mode": "auto",
     "default_workers": 3,
     "default_resume": True,
     "default_keep_intermediates": True,
@@ -142,14 +149,14 @@ DEFAULT_GLOBAL_SETTINGS: dict[str, Any] = {
     "study_glossary_default_coverage_percent": 80,
     "ocr_mode_default": "auto",
     "ocr_engine_default": "local_then_api",
-    "ocr_api_provider_default": "openai",
+    "ocr_api_provider_default": "gemini",
     "perf_max_transport_retries": 4,
     "perf_backoff_cap_seconds": 12.0,
     "perf_timeout_text_seconds": DEFAULT_TRANSLATION_TIMEOUT_TEXT_SECONDS,
     "perf_timeout_image_seconds": DEFAULT_TRANSLATION_TIMEOUT_IMAGE_SECONDS,
     "adaptive_effort_enabled": False,
     "adaptive_effort_xhigh_only_when_image_or_validator_fail": True,
-    "allow_xhigh_escalation": False,
+    "allow_xhigh_escalation": True,
     "diagnostics_show_cost_summary": True,
     "diagnostics_verbose_metadata_logs": False,
     "diagnostics_admin_mode": True,
@@ -172,6 +179,10 @@ ALLOWED_GUI_KEYS = {
     "primary_profile_id",
     "ui_theme",
     "ui_scale",
+    "translation_provider",
+    "translation_model",
+    "helper_thinking_level",
+    "gemini_decisions_advisory_enabled",
     "default_lang",
     "default_effort",
     "default_effort_policy",
@@ -204,6 +215,7 @@ ALLOWED_GUI_KEYS = {
     "study_glossary_default_coverage_percent",
     "ocr_mode_default",
     "ocr_engine_default",
+    "ocr_api_provider_default",
     "perf_max_transport_retries",
     "perf_backoff_cap_seconds",
     "perf_timeout_text_seconds",
@@ -270,8 +282,8 @@ DEFAULT_GUI_SETTINGS: dict[str, Any] = {
     **DEFAULT_GLOBAL_SETTINGS,
     "last_outdir": "",
     "last_lang": "EN",
-    "effort": "high",
-    "effort_policy": "adaptive",
+    "effort": "xhigh",
+    "effort_policy": "fixed_xhigh",
     "image_mode": "off",
     "resume": True,
     "keep_intermediates": True,
@@ -506,11 +518,20 @@ def _coerce_choice(value: object, *, default: str, allowed: set[str]) -> str:
     return default
 
 
+def _is_legacy_pre_gemini_settings(data: dict[str, Any], schema_version_raw: int) -> bool:
+    return (
+        "settings_schema_version" in data
+        and schema_version_raw < 10
+        and "translation_provider" not in data
+    )
+
+
 def _normalize_gui_settings(data: dict[str, Any]) -> dict[str, Any]:
     merged = dict(DEFAULT_GUI_SETTINGS)
     for key in ALLOWED_GUI_KEYS:
         if key in data:
             merged[key] = data[key]
+    settings_schema_version_raw = _coerce_int(data.get("settings_schema_version"), 0)
 
     # Backward-compatible migration from previously saved "last used" keys.
     if "default_lang" not in data and "last_lang" in data:
@@ -547,7 +568,25 @@ def _normalize_gui_settings(data: dict[str, Any]) -> dict[str, Any]:
 
     merged["last_outdir"] = str(merged.get("last_outdir", "") or "")
     merged["last_lang"] = str(merged.get("last_lang", "EN") or "EN")
-    merged["effort"] = str(merged.get("effort", "high") or "high")
+    merged["translation_provider"] = _coerce_choice(
+        merged.get("translation_provider"),
+        default=DEFAULT_TRANSLATION_PROVIDER,
+        allowed={"gemini", "openai"},
+    )
+    raw_translation_model = str(merged.get("translation_model", "") or "").strip()
+    if not raw_translation_model:
+        raw_translation_model = GEMINI_MODEL if merged["translation_provider"] == "gemini" else "gpt-5.2"
+    merged["translation_model"] = raw_translation_model
+    merged["helper_thinking_level"] = _coerce_choice(
+        merged.get("helper_thinking_level"),
+        default=DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+        allowed={"low", "medium", "high", "xhigh"},
+    )
+    merged["gemini_decisions_advisory_enabled"] = _coerce_bool(
+        merged.get("gemini_decisions_advisory_enabled"),
+        False,
+    )
+    merged["effort"] = str(merged.get("effort", "xhigh") or "xhigh")
     if "effort_policy" not in data:
         if "default_effort_policy" in data:
             merged["effort_policy"] = merged.get("default_effort_policy")
@@ -555,7 +594,7 @@ def _normalize_gui_settings(data: dict[str, Any]) -> dict[str, Any]:
             merged["effort_policy"] = "fixed_xhigh" if merged["effort"].strip().lower() == "xhigh" else "fixed_high"
     merged["effort_policy"] = _coerce_choice(
         merged.get("effort_policy"),
-        default="adaptive",
+        default="fixed_xhigh",
         allowed={"adaptive", "fixed_high", "fixed_xhigh"},
     )
     if (
@@ -565,7 +604,7 @@ def _normalize_gui_settings(data: dict[str, Any]) -> dict[str, Any]:
         merged["allow_xhigh_escalation"] = data.get("adaptive_effort_xhigh_only_when_image_or_validator_fail")
     merged["allow_xhigh_escalation"] = _coerce_bool(
         merged.get("allow_xhigh_escalation"),
-        bool(merged.get("adaptive_effort_xhigh_only_when_image_or_validator_fail", False)),
+        bool(merged.get("adaptive_effort_xhigh_only_when_image_or_validator_fail", True)),
     )
     merged["image_mode"] = _coerce_choice(
         merged.get("image_mode"),
@@ -591,7 +630,7 @@ def _normalize_gui_settings(data: dict[str, Any]) -> dict[str, Any]:
     )
     merged["ocr_api_provider"] = _coerce_choice(
         merged.get("ocr_api_provider"),
-        default="openai",
+        default="gemini",
         allowed={"openai", "gemini"},
     )
     merged["ocr_api_base_url"] = str(merged.get("ocr_api_base_url", "") or "")
@@ -639,10 +678,6 @@ def _normalize_gui_settings(data: dict[str, Any]) -> dict[str, Any]:
                 iva_text=first_profile.iva_text,
                 irs_text=first_profile.irs_text,
             )
-    settings_schema_version_raw = _coerce_int(
-        data.get("settings_schema_version"),
-        0,
-    )
     if settings_schema_version_raw < 9:
         normalized_profiles = [
             backfill_legacy_default_primary_profile_travel_fields(profile)
@@ -687,12 +722,12 @@ def _normalize_gui_settings(data: dict[str, Any]) -> dict[str, Any]:
         merged["default_lang"] = "EN"
     merged["default_effort"] = _coerce_choice(
         merged.get("default_effort"),
-        default="high",
+        default="xhigh",
         allowed={"high", "xhigh"},
     )
     merged["default_effort_policy"] = _coerce_choice(
         merged.get("default_effort_policy"),
-        default="adaptive",
+        default="fixed_xhigh",
         allowed={"adaptive", "fixed_high", "fixed_xhigh"},
     )
     merged["default_images_mode"] = _coerce_choice(
@@ -710,9 +745,30 @@ def _normalize_gui_settings(data: dict[str, Any]) -> dict[str, Any]:
     merged["default_outdir"] = str(merged.get("default_outdir", "") or "")
     merged["ocr_api_provider_default"] = _coerce_choice(
         merged.get("ocr_api_provider_default"),
-        default="openai",
+        default="gemini",
         allowed={"openai", "gemini"},
     )
+    if _is_legacy_pre_gemini_settings(data, settings_schema_version_raw):
+        merged["translation_provider"] = DEFAULT_TRANSLATION_PROVIDER
+        merged["translation_model"] = GEMINI_MODEL
+        if (
+            merged["ocr_api_provider"] == "openai"
+            and not merged["ocr_api_base_url"].strip()
+            and merged["ocr_api_model"].strip().lower() in {"", "gpt-4o-mini"}
+        ):
+            merged["ocr_api_provider"] = "gemini"
+            merged["ocr_api_provider_default"] = "gemini"
+            merged["ocr_api_model"] = ""
+            if merged["ocr_api_key_env_name"] in {"", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"}:
+                merged["ocr_api_key_env_name"] = default_ocr_api_env_name(OcrApiProvider.GEMINI)
+        if merged["ocr_api_provider_default"] == "openai":
+            merged["ocr_api_provider_default"] = "gemini"
+        if merged["default_effort"] == "high" and merged["default_effort_policy"] == "adaptive":
+            merged["default_effort"] = "xhigh"
+            merged["effort"] = "xhigh"
+            merged["default_effort_policy"] = "fixed_xhigh"
+            merged["effort_policy"] = "fixed_xhigh"
+            merged["allow_xhigh_escalation"] = True
     supported_langs = supported_target_langs()
     has_personal_scope = "personal_glossaries_by_lang" in data
     personal_source = (
@@ -1032,7 +1088,7 @@ def _normalize_joblog_settings(data: dict[str, Any]) -> dict[str, Any]:
     )
     merged["ocr_api_provider"] = _coerce_choice(
         merged.get("ocr_api_provider"),
-        default="openai",
+        default="gemini",
         allowed={"openai", "gemini"},
     )
     merged["ocr_api_base_url"] = str(merged.get("ocr_api_base_url", "") or "")
@@ -1048,6 +1104,17 @@ def _normalize_joblog_settings(data: dict[str, Any]) -> dict[str, Any]:
     if merged["ocr_api_provider"] == "gemini" and resolved_ocr_env == "":
         resolved_ocr_env = default_ocr_api_env_name(OcrApiProvider.GEMINI)
     merged["ocr_api_key_env_name"] = resolved_ocr_env
+    settings_schema_version_raw = _coerce_int(data.get("settings_schema_version"), 0)
+    if (
+        _is_legacy_pre_gemini_settings(data, settings_schema_version_raw)
+        and merged["ocr_api_provider"] == "openai"
+        and not merged["ocr_api_base_url"].strip()
+        and merged["ocr_api_model"].strip().lower() in {"", "gpt-4o-mini"}
+    ):
+        merged["ocr_api_provider"] = "gemini"
+        merged["ocr_api_model"] = ""
+        if merged["ocr_api_key_env_name"] in {"", "OPENAI_API_KEY", "DEEPSEEK_API_KEY"}:
+            merged["ocr_api_key_env_name"] = default_ocr_api_env_name(OcrApiProvider.GEMINI)
     if not merged["vocab_case_entities"]:
         merged["vocab_case_entities"] = list(merged["vocab_entities"])
     if not merged["vocab_service_entities"]:

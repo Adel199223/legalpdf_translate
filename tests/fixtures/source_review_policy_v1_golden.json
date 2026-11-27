@@ -1,0 +1,11 @@
+{
+  "module_sha256": "0d0d60fe005e0b0fc11eda06e9c3f56dc1d05b9b777976e8d4778ec5fcdf1327",
+  "descriptor": {
+    "policy": "source_commitment_visual_v1",
+    "stage_instruction_sha256": {
+      "source_inventory": "980c3c620c2e34542e60e042379b2297f72ce796487e40b32a906ebe0f2895be",
+      "correction": "45299646dfb357acfa374963fa1644eaff8969c19b13c29a0f634efb687d8fdc",
+      "verification": "d8dd93932ee3ccc11577bbc0eb664d46529443148268571634aa242c46779050"
+    }
+  }
+}

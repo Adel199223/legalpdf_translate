@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from .browser_esm_probe import run_browser_esm_json_probe
 
 
@@ -91,3 +95,65 @@ def test_translation_recovery_state_surfaces_failed_arabic_guidance() -> None:
     )
     assert results["rebuild"]["visible"] is False
     assert results["running"]["visible"] is False
+
+
+@pytest.mark.parametrize(
+    ("failure", "progress", "image_recommendation_expected"),
+    [
+        ({"page_number": 1, "request_type": "image_backed"}, {"real_page": 1, "image_used": True}, False),
+        ({"page_number": 1, "request_type": "image_backed"}, {}, False),
+        ({"page_number": 1}, {"real_page": 1, "image_used": True}, False),
+        ({"page_number": 1, "request_type": "text_only"}, {"real_page": 1, "image_used": False}, True),
+        ({"page_number": 1}, {}, True),
+        ({"request_type": "image_backed"}, {}, True),
+        ({"page_number": 2, "request_type": "image_backed"}, {"real_page": 2, "image_used": True}, True),
+        ({"page_number": 1, "request_type": "image_backed"}, {"real_page": 1, "image_used": False}, True),
+        ({"page_number": 1, "request_type": "text_only"}, {"real_page": 1, "image_used": True}, True),
+        ({"page_number": 2, "request_type": "image_backed"}, {"real_page": 1, "image_used": True}, True),
+        ({"page_number": 1}, {"real_page": 1, "image_used": "true"}, True),
+        ({"page_number": 1, "request_type": "image_backed"}, {"real_page": 2, "image_used": False}, False),
+    ],
+)
+def test_image_rerun_hint_uses_actual_failed_page_evidence(
+    failure: dict[str, object], progress: dict[str, object], image_recommendation_expected: bool,
+) -> None:
+    script = """
+const translation = await import(__TRANSLATION_MODULE_URL__);
+const presentation = await import(__PRESENTATION_MODULE_URL__);
+const job = {
+  job_kind: "translate", status: "failed",
+  config: { target_lang: "AR", ocr_mode: "auto", image_mode: "auto" },
+  progress: __PROGRESS__,
+  result: {
+    failed_page: 1, error: "compliance_failure", review_queue_count: 1,
+    failure_context: {
+      retry_reason: "ar_token_violation", validator_defect_reason: "Fictional token mismatch",
+      ar_token_details: { missing_token_samples: ["TOKEN_A"] }, ...__FAILURE__,
+    },
+    advisor_recommendation: { recommended_ocr_mode: "off", recommended_image_mode: "always" },
+  },
+};
+console.log(JSON.stringify({
+  recovery: translation.deriveTranslationRecoveryState(job),
+  card: presentation.buildTranslationResultCardPresentation({ job }),
+  ocr: translation.deriveTranslationRecoveryState({
+    ...job, config: { ...job.config, ocr_mode: "off" },
+    result: { ...job.result, advisor_recommendation: { ...job.result.advisor_recommendation, recommended_ocr_mode: "auto" } },
+  }),
+}));
+""".replace("__PROGRESS__", json.dumps(progress)).replace("__FAILURE__", json.dumps(failure))
+    results = run_browser_esm_json_probe(
+        script,
+        {"__TRANSLATION_MODULE_URL__": "translation.js", "__PRESENTATION_MODULE_URL__": "translation_result_presentation.js"},
+        timeout_seconds=20,
+    )
+    recovery = results["recovery"]
+    assert ("Images always" in recovery["advisorMessage"]) is image_recommendation_expected
+    assert any("Images always" in line for line in results["card"]["summaryLines"]) is image_recommendation_expected
+    assert recovery["visible"] is True
+    assert recovery["failurePage"] == 1
+    assert "Validator reason: Fictional token mismatch" in recovery["summaryLines"]
+    assert "Missing protected tokens after retry: TOKEN_A" in recovery["summaryLines"]
+    assert any("already used an image" in line for line in recovery["guidanceLines"]) is not image_recommendation_expected
+    assert "OCR auto" in results["ocr"]["advisorMessage"]
+    assert ("Images always" in results["ocr"]["advisorMessage"]) is image_recommendation_expected

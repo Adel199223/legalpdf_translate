@@ -120,6 +120,8 @@ from legalpdf_translate.power_tools_service import (
     run_settings_preflight,
     save_browser_settings,
     save_browser_ocr_key,
+    save_browser_gemini_key,
+    clear_browser_gemini_key,
     save_browser_translation_key,
     save_glossary_workspace,
 )
@@ -1578,14 +1580,14 @@ def create_shadow_app(
                 recovery=translation_jobs.automatic_layout_recovery_active(job_id))
 
         def _recover_automatic_ordinary_layout(job_id: str, old_policy: str):
-            from legalpdf_translate.ordinary_auto_layout import frozen_automatic_layout_policy, run_automatic_layout
+            from legalpdf_translate.ordinary_auto_layout import manual_automatic_layout_policy, run_automatic_layout
             job = translation_jobs.get_job(job_id)
             if not job:
                 raise ValueError("ordinary_auto_layout_job_unavailable")
             manager = ordinary_layouts.manager_for_context(
                 shadow_context, job["runtime_mode"], job["workspace_id"])
             return run_automatic_layout(manager, ordinary_layouts._accounting, job_id,
-                frozen_automatic_layout_policy(),
+                manual_automatic_layout_policy(),
                 cancel_requested=translation_jobs.automatic_layout_cancel_requested,
                 begin_publication=translation_jobs.begin_automatic_layout_publication,
                 recovery_old_policy=old_policy)
@@ -1593,6 +1595,18 @@ def create_shadow_app(
         translation_jobs.set_automatic_layout_runner(_run_automatic_ordinary_layout)
         translation_jobs.set_automatic_layout_cancel(_cancel_automatic_ordinary_layout)
         translation_jobs.set_automatic_layout_recovery_runner(_recover_automatic_ordinary_layout)
+
+        def _rebuild_automatic_ordinary_layout(job_id: str):
+            from legalpdf_translate.ordinary_auto_layout import run_completed_unreviewed_rebuild
+            job = translation_jobs.get_job(job_id)
+            if not job:
+                raise ValueError("ordinary_auto_layout_job_unavailable")
+            manager = ordinary_layouts.manager_for_context(shadow_context, job["runtime_mode"], job["workspace_id"])
+            return run_completed_unreviewed_rebuild(manager, ordinary_layouts._accounting, job_id,
+                cancel_requested=translation_jobs.automatic_layout_cancel_requested,
+                begin_publication=translation_jobs.begin_automatic_layout_publication)
+
+        translation_jobs.set_automatic_layout_rebuild_runner(_rebuild_automatic_ordinary_layout)
 
     @app.post("/api/translation/jobs/{job_id}/layout/budget")
     async def api_ordinary_layout_budget(request: Request, job_id: str):
@@ -2152,6 +2166,7 @@ def create_shadow_app(
             response = save_browser_translation_key(
                 settings_path=target.data_paths.settings_path,
                 key=payload.get("key") if isinstance(payload, dict) else "",
+                provider=payload.get("provider") if isinstance(payload, dict) else None,
             )
         except (ValueError, RuntimeError) as exc:
             return _validation_error_response(context, target, message=str(exc))
@@ -2167,7 +2182,43 @@ def create_shadow_app(
             workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
         )
         try:
-            response = clear_browser_translation_key(settings_path=target.data_paths.settings_path)
+            response = clear_browser_translation_key(
+                settings_path=target.data_paths.settings_path,
+                provider=payload.get("provider") if isinstance(payload, dict) else None,
+            )
+        except RuntimeError as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/gemini-key/save")
+    async def api_settings_gemini_key_save(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = save_browser_gemini_key(
+                settings_path=target.data_paths.settings_path,
+                key=payload.get("key") if isinstance(payload, dict) else "",
+            )
+        except (ValueError, RuntimeError) as exc:
+            return _validation_error_response(context, target, message=str(exc))
+        return JSONResponse(_merge_response(context, target, response))
+
+    @app.post("/api/settings/gemini-key/clear")
+    async def api_settings_gemini_key_clear(request: Request) -> JSONResponse:
+        context = _context(request)
+        payload = await _json_payload_or_empty(request)
+        target = _active_target(
+            request,
+            mode_override=payload.get("mode") if isinstance(payload, dict) else None,
+            workspace_override=payload.get("workspace_id") if isinstance(payload, dict) else None,
+        )
+        try:
+            response = clear_browser_gemini_key(settings_path=target.data_paths.settings_path)
         except RuntimeError as exc:
             return _validation_error_response(context, target, message=str(exc))
         return JSONResponse(_merge_response(context, target, response))

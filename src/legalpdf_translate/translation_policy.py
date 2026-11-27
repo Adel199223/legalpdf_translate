@@ -12,19 +12,42 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 DEFAULT_TRANSLATION_PROTOCOL = "legacy_text_v1"
-SUPPORTED_TRANSLATION_PROTOCOLS = frozenset({"legacy_text_v1", "legal_blocks_v2"})
+GEMINI_STRUCTURAL_PROTOCOL = "gemini_structural_v1"
+SUPPORTED_TRANSLATION_PROTOCOLS = frozenset({"legacy_text_v1", "legal_blocks_v2", "gemini_structural_v1"})
 ORDINARY_AUTO_LAYOUT_POLICY = "source_image_unreviewed_v1"
 
 
 def resolve_ordinary_auto_layout_policy(*, protocol: str, fresh_browser_job: bool,
-                                        reviewed_source: bool = False) -> str | None:
+                                        reviewed_source: bool = False,
+                                        translation_provider: str | None = None) -> str | None:
     """Freeze an internal formatting choice without changing translation transport."""
     if protocol not in SUPPORTED_TRANSLATION_PROTOCOLS:
         raise ValueError("Unsupported internal translation protocol.")
+    if protocol == GEMINI_STRUCTURAL_PROTOCOL:
+        return None
+    if str(translation_provider or "").strip().lower() == "gemini" and fresh_browser_job and not reviewed_source:
+        return None
     if fresh_browser_job and not reviewed_source and protocol == DEFAULT_TRANSLATION_PROTOCOL:
         from .ordinary_auto_layout import frozen_automatic_layout_policy
         return frozen_automatic_layout_policy()
     return None
+
+
+def resolve_provider_translation_protocol(
+    *,
+    provider: str | None,
+    explicit: str | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> str:
+    """Choose gemini_structural_v1 for Gemini runs unless overridden explicitly or by env."""
+    if explicit is not None:
+        return resolve_translation_protocol(explicit, environment=environment)
+    values = os.environ if environment is None else environment
+    if "LEGALPDF_TRANSLATION_PROTOCOL" in values:
+        return resolve_translation_protocol(None, environment=values)
+    if str(provider or "").strip().lower() == "gemini":
+        return GEMINI_STRUCTURAL_PROTOCOL
+    return DEFAULT_TRANSLATION_PROTOCOL
 
 
 def resolve_translation_protocol(

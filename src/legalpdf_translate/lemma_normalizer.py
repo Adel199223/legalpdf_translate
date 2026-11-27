@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from .openai_client import OpenAIResponsesClient
+from .provider_client import TranslationClient
 
 _BATCH_INSTRUCTIONS = (
     "You are a Portuguese morphological normalizer. "
@@ -113,7 +113,7 @@ class LemmaBatchResult:
 def _normalize_batch(
     terms: list[str],
     *,
-    client: OpenAIResponsesClient,
+    client: TranslationClient,
     effort: str,
 ) -> tuple[list[str], dict[str, int]]:
     """Send a single batch of terms to the API and return lemmas + usage.
@@ -144,7 +144,7 @@ def _normalize_batch(
 def batch_normalize_lemmas(
     terms: list[str],
     *,
-    client: OpenAIResponsesClient,
+    client: TranslationClient,
     effort: str = "medium",
     cache: LemmaCache,
     batch_size: int = 100,

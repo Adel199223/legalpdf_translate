@@ -194,7 +194,7 @@ export function createOrdinaryLayoutController({getScope, request = fetchJson,
       return null;
     } finally {if(token===epoch){state.cancelBusy=false;emit();}}
   }
-  function canUseDelivery() {return Boolean(!disposed && !state.busy && !state.pending && state.verified && state.view?.delivery && !state.view.stale && !state.view.delivery.stale);}
+  function canUseDelivery() {return Boolean(!disposed && !state.busy && !state.pending && state.verified && state.view?.delivery && !state.view.stale && !state.view.delivery.stale && !state.view.delivery.output_review_required && !state.view.text_correction?.output_review_required);}
   function deliveryGeneration() {return canUseDelivery() ? state.view.delivery_generation : null;}
   function receive(view) {
     sync(); if (disposed || !view || state.busy) return;

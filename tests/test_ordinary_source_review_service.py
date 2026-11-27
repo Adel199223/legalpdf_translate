@@ -21,7 +21,14 @@ from legalpdf_translate.ordinary_source_review_service import (
     OrdinarySourceReviewService, SourcePageDecision, SourceReviewAction, SourceReviewFinding,
     SourceReviewServiceError,
 )
-from legalpdf_translate.types import ImageMode, OcrMode, OcrEnginePolicy, RunConfig, TargetLang
+from legalpdf_translate.types import (
+    ImageMode,
+    OcrMode,
+    OcrEnginePolicy,
+    RunConfig,
+    TargetLang,
+    TranslationApiProvider,
+)
 from legalpdf_translate.workflow import TranslationWorkflow
 from tests.test_source_review_candidate import png
 
@@ -76,7 +83,8 @@ def config_case(tmp_path, *, count=1):
     output.mkdir()
     return RunConfig(source, output, TargetLang.EN, ocr_mode=OcrMode.AUTO,
         ocr_engine=OcrEnginePolicy.LOCAL_THEN_API, workers=1, resume=False,
-        image_mode=ImageMode.OFF, page_breaks=False)
+        image_mode=ImageMode.OFF, page_breaks=False,
+        translation_provider=TranslationApiProvider.OPENAI)
 
 
 def explicit_decision(page, *, complete=True):

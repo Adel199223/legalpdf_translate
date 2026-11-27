@@ -2,6 +2,7 @@ function emptyPlan() {
   return {
     activeView: "",
     applyTranslationLaunch: false,
+    restoreTranslationJob: false,
     applyInterpretationSeed: false,
     openInterpretationReviewDrawer: false,
     openTranslationCompletionDrawer: false,
@@ -16,11 +17,12 @@ function normalizeAction(value) {
   return String(value || "").trim();
 }
 
-function translationResumePlan({ suggestedTranslationLaunch, openTranslationCompletionDrawer = false } = {}) {
+function translationResumePlan({ suggestedTranslationLaunch, restoreTranslationJob = false, openTranslationCompletionDrawer = false } = {}) {
   return {
     ...emptyPlan(),
     activeView: "new-job",
-    applyTranslationLaunch: Boolean(suggestedTranslationLaunch),
+    applyTranslationLaunch: !restoreTranslationJob && Boolean(suggestedTranslationLaunch),
+    restoreTranslationJob,
     openTranslationCompletionDrawer: Boolean(openTranslationCompletionDrawer),
     closeSessionDrawer: true,
   };
@@ -44,12 +46,13 @@ export function buildGmailStageActionPlan({
 } = {}) {
   switch (normalizeAction(action)) {
     case "resume-translation-recovery":
-    case "resume-translation-prepared":
     case "resume-translation-running":
+      return translationResumePlan({ restoreTranslationJob: true });
+    case "resume-translation-prepared":
       return translationResumePlan({ suggestedTranslationLaunch });
     case "resume-translation-save":
       return translationResumePlan({
-        suggestedTranslationLaunch,
+        restoreTranslationJob: true,
         openTranslationCompletionDrawer: true,
       });
     case "resume-translation-finalize":

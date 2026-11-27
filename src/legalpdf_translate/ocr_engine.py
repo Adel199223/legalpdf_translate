@@ -18,16 +18,23 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from google import genai
 from openai import OpenAI
 
-from .config import DEFAULT_OCR_API_TIMEOUT_SECONDS
+from .config import DEFAULT_OCR_API_TIMEOUT_SECONDS, DEFAULT_GEMINI_HELPER_THINKING_LEVEL
+from .gemini_client import (
+    _accounted_gemini_interaction_create,
+    _build_gemini_page_request,
+    _extract_gemini_output_text,
+    normalize_gemini_thinking_level,
+)
 from .ocr_defaults import (
     GEMINI_OCR_DEFAULT_ENV,
     OPENAI_OCR_DEFAULT_ENV,
     OPENAI_OCR_LEGACY_ENV,
     default_ocr_api_env_name,
 )
-from .secrets_store import get_ocr_key, get_openai_key
+from .secrets_store import get_gemini_key, get_ocr_key, get_openai_key
 from .openai_client import (
     _accounted_openai_create,
     _active_accountant,
@@ -46,8 +53,8 @@ _AR_TRACK_LANG_PACK = "ara+eng"
 _EARLY_ACCEPT_SCORE = 0.82
 _MIN_ACCEPTABLE_LOCAL_SCORE = 0.18
 OPENAI_OCR_DEFAULT_MODEL = "gpt-4o-mini"
-GEMINI_OCR_DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
-GEMINI_OCR_BENCHMARK_MODEL = "gemini-3-flash-preview"
+GEMINI_OCR_DEFAULT_MODEL = "gemini-4-neon"
+GEMINI_OCR_BENCHMARK_MODEL = "gemini-4-hydrogen"
 GEMINI_OCR_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 _GEMINI_TIMEOUT_SECONDS = 120
 GEMINI_MEDIA_RESOLUTION_PDF = "MEDIUM"
@@ -84,6 +91,7 @@ class OcrResult:
     structure: dict[str, Any] | None = None
     structure_metadata: dict[str, Any] | None = None
     local_evidence: LocalOcrEvidence | None = field(default=None, repr=False)
+    text_transport_evidence: dict[str, Any] | None = field(default=None, repr=False)
 
 
 class OCREngine(Protocol):
@@ -127,6 +135,8 @@ class OcrEngineConfig:
     api_model: str | None = None
     api_key_env_name: str = OPENAI_OCR_DEFAULT_ENV
     api_timeout_seconds: float = float(DEFAULT_OCR_API_TIMEOUT_SECONDS)
+    text_transport_policy: str | None = None
+    helper_thinking_level: str = DEFAULT_GEMINI_HELPER_THINKING_LEVEL
 
 
 def ocr_engine_config_from_run_config(config: RunConfig) -> OcrEngineConfig:
@@ -137,6 +147,10 @@ def ocr_engine_config_from_run_config(config: RunConfig) -> OcrEngineConfig:
         api_model=config.ocr_api_model,
         api_key_env_name=config.ocr_api_key_env_name,
         api_timeout_seconds=float(DEFAULT_OCR_API_TIMEOUT_SECONDS),
+        helper_thinking_level=normalize_gemini_thinking_level(
+            getattr(config, "helper_thinking_level", DEFAULT_GEMINI_HELPER_THINKING_LEVEL),
+            default=DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+        ),
     )
 
 
@@ -148,6 +162,10 @@ def local_only_ocr_engine_config_from_run_config(config: RunConfig) -> OcrEngine
         api_model=config.ocr_api_model,
         api_key_env_name=config.ocr_api_key_env_name,
         api_timeout_seconds=float(DEFAULT_OCR_API_TIMEOUT_SECONDS),
+        helper_thinking_level=normalize_gemini_thinking_level(
+            getattr(config, "helper_thinking_level", DEFAULT_GEMINI_HELPER_THINKING_LEVEL),
+            default=DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+        ),
     )
 
 
@@ -199,6 +217,13 @@ def resolve_ocr_api_key_source(
             shared_openai_key = None
         if shared_openai_key:
             return ("stored", "openai_api_key_fallback")
+    elif provider == OcrApiProvider.GEMINI:
+        try:
+            shared_gemini_key = get_gemini_key()
+        except RuntimeError:
+            shared_gemini_key = None
+        if shared_gemini_key:
+            return ("stored", "gemini_api_key_fallback")
     for env_name in candidate_ocr_api_env_names(config):
         from_env = os.getenv(env_name, "").strip()
         if from_env:
@@ -215,6 +240,11 @@ def resolve_ocr_api_key(config: OcrEngineConfig) -> str | None:
         if source_name == "openai_api_key_fallback":
             try:
                 return get_openai_key()
+            except RuntimeError:
+                return None
+        if source_name == "gemini_api_key_fallback":
+            try:
+                return get_gemini_key()
             except RuntimeError:
                 return None
         try:
@@ -603,6 +633,7 @@ class ApiOcrEngine:
         model: str,
         base_url: str | None = None,
         timeout_seconds: float = float(DEFAULT_OCR_API_TIMEOUT_SECONDS),
+        text_transport_policy: str | None = None,
     ) -> None:
         if not api_key.strip():
             raise ValueError("OCR API key is required for API OCR engine.")
@@ -616,6 +647,11 @@ class ApiOcrEngine:
         self._model = model.strip()
         self._timeout_seconds = max(0.1, float(timeout_seconds))
         self._dispatch_accounting = MemoryDispatchAccounting()
+        self._text_transport_policy = text_transport_policy
+        if text_transport_policy is not None:
+            from .ocr_text_transport import POLICY, OcrTextTransportError
+            if text_transport_policy != POLICY:
+                raise OcrTextTransportError("unsupported_policy")
 
     def ocr_image(
         self,
@@ -625,6 +661,20 @@ class ApiOcrEngine:
         source_type: Literal["pdf", "image"] = "pdf",
     ) -> OcrResult:
         _ = source_type
+        if self._text_transport_policy is not None:
+            from . import ocr_text_transport as transport
+            encoded = base64.b64encode(image_bytes).decode("ascii")
+            prompt = transport.INSTRUCTIONS + (f" Language hint: {lang_hint}." if lang_hint else "")
+            text, evidence = transport.acquire(client=self._client, fallback_accountant=self._dispatch_accounting,
+                image_bytes=image_bytes, request={"model": self._model, "input": [{"role": "user", "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": "data:image/png;base64,"+encoded, "detail": "high"}]}],
+                    "text": {"format": transport.response_format()}, "store": False, "timeout": self._timeout_seconds})
+            return OcrResult(text=text, engine="api", failed_reason=None, chars=len(text),
+                quality_score=_text_quality_score(text), selected_pass="api_single_pass",
+                attempts=[{"pass":"api_single_pass", "lang":_source_profile_from_hint(lang_hint), "psm":0,
+                    "status":"ok", "reason":"", "chars":len(text), "score":_text_quality_score(text)}],
+                text_transport_evidence=evidence)
         prompt = "Extract all visible text. Preserve line breaks. No commentary. Return plain text only."
         if lang_hint:
             prompt += f" Language hint: {lang_hint}."
@@ -732,6 +782,9 @@ def _gemini_post_json(
     return parsed
 
 
+_DEFAULT_GEMINI_POST_JSON = _gemini_post_json
+
+
 class GeminiRequestError(RuntimeError):
     def __init__(self, message: str, *, body: Any = None, status_code: int | None = None) -> None:
         super().__init__(message)
@@ -796,6 +849,9 @@ class GeminiApiOcrEngine:
         api_key: str,
         model: str,
         base_url: str | None = None,
+        timeout_seconds: float | None = None,
+        helper_thinking_level: str = DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+        text_transport_policy: str | None = None,
     ) -> None:
         if not api_key.strip():
             raise ValueError("OCR API key is required for Gemini OCR engine.")
@@ -804,7 +860,26 @@ class GeminiApiOcrEngine:
         self._api_key = api_key.strip()
         self._model = model.strip()
         self._base_url = (base_url or GEMINI_OCR_DEFAULT_BASE_URL).strip()
+        self._timeout_seconds = max(0.1, float(timeout_seconds or _GEMINI_TIMEOUT_SECONDS))
+        self._helper_thinking_level = normalize_gemini_thinking_level(
+            helper_thinking_level,
+            default=DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+        )
         self._dispatch_accounting = MemoryDispatchAccounting()
+        self._sdk_client: genai.Client | None = None
+        self._text_transport_policy = text_transport_policy
+        if text_transport_policy is not None:
+            from .ocr_text_transport import GEMINI_POLICY, OcrTextTransportError
+            if text_transport_policy != GEMINI_POLICY:
+                raise OcrTextTransportError("unsupported_policy")
+
+    def _get_sdk_client(self) -> genai.Client:
+        if self._sdk_client is None:
+            self._sdk_client = genai.Client(
+                api_key=self._api_key,
+                http_options={"retry_options": {"attempts": 1}},
+            )
+        return self._sdk_client
 
     def ocr_image(
         self,
@@ -813,43 +888,110 @@ class GeminiApiOcrEngine:
         *,
         source_type: Literal["pdf", "image"] = "pdf",
     ) -> OcrResult:
+        encoded = base64.b64encode(image_bytes).decode("ascii")
+        data_url = f"data:image/png;base64,{encoded}"
+        if self._text_transport_policy is not None:
+            from . import ocr_text_transport as transport
+            prompt_text = "Extract all visible source text." + (f" Language hint: {lang_hint}." if lang_hint else "")
+            request = _build_gemini_page_request(
+                instructions=transport.INSTRUCTIONS + (f" Language hint: {lang_hint}." if lang_hint else ""),
+                prompt_text=prompt_text,
+                effort=self._helper_thinking_level,
+                image_data_url=data_url,
+                response_format=transport.response_format(),
+                model=self._model,
+            )
+            request["timeout"] = self._timeout_seconds
+            text, evidence = transport.acquire(
+                client=self._get_sdk_client(),
+                fallback_accountant=self._dispatch_accounting,
+                image_bytes=image_bytes,
+                request=request,
+                policy=self._text_transport_policy,
+            )
+            score = _text_quality_score(text)
+            return OcrResult(
+                text=text,
+                engine="api",
+                failed_reason=None,
+                chars=len(text),
+                quality_score=score,
+                selected_pass="gemini_single_pass",
+                attempts=[
+                    {
+                        "pass": "gemini_single_pass",
+                        "lang": _source_profile_from_hint(lang_hint),
+                        "psm": 0,
+                        "status": "ok",
+                        "reason": "",
+                        "chars": len(text),
+                        "score": score,
+                    }
+                ],
+                text_transport_evidence=evidence,
+            )
+
         prompt = "Extract all visible text. Preserve line breaks. Return plain text only. No commentary."
         if lang_hint:
             prompt += f" Language hint: {lang_hint}."
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": prompt},
-                        {
-                            "inline_data": {
-                                "mime_type": "image/png",
-                                "data": base64.b64encode(image_bytes).decode("ascii"),
-                            }
-                        },
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "temperature": 0,
-                "mediaResolution": (
-                    GEMINI_MEDIA_RESOLUTION_IMAGE
-                    if source_type == "image"
-                    else GEMINI_MEDIA_RESOLUTION_PDF
-                ),
-            },
-        }
-        try:
-            parsed = _accounted_gemini_post_json(
-                accountant=self._dispatch_accounting, purpose="ocr",
-                api_key=self._api_key,
+        use_legacy_rest = (_gemini_post_json is not _DEFAULT_GEMINI_POST_JSON) or (
+            bool(self._base_url) and self._base_url.rstrip("/") != GEMINI_OCR_DEFAULT_BASE_URL.rstrip("/")
+        )
+        if use_legacy_rest:
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": prompt},
+                            {
+                                "inline_data": {
+                                    "mime_type": "image/png",
+                                    "data": encoded,
+                                }
+                            },
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0,
+                    "mediaResolution": (
+                        GEMINI_MEDIA_RESOLUTION_IMAGE
+                        if source_type == "image"
+                        else GEMINI_MEDIA_RESOLUTION_PDF
+                    ),
+                },
+            }
+            try:
+                parsed = _accounted_gemini_post_json(
+                    accountant=self._dispatch_accounting,
+                    purpose="ocr",
+                    api_key=self._api_key,
+                    model=self._model,
+                    base_url=self._base_url,
+                    payload=payload,
+                )
+                text = _gemini_extract_output_text(parsed)
+            except Exception as exc:  # noqa: BLE001
+                return OcrResult(text="", engine="api", failed_reason=f"api OCR request failed: {exc}", chars=0)
+        else:
+            request = _build_gemini_page_request(
+                instructions="Extract all visible text. Preserve line breaks. No commentary. Return plain text only.",
+                prompt_text=prompt,
+                effort=self._helper_thinking_level,
+                image_data_url=data_url,
                 model=self._model,
-                base_url=self._base_url,
-                payload=payload,
             )
-            text = _gemini_extract_output_text(parsed)
-        except Exception as exc:  # noqa: BLE001
-            return OcrResult(text="", engine="api", failed_reason=f"api OCR request failed: {exc}", chars=0)
+            request["timeout"] = self._timeout_seconds
+            try:
+                response = _accounted_gemini_interaction_create(
+                    client=self._get_sdk_client(),
+                    accountant=self._dispatch_accounting,
+                    purpose="ocr",
+                    **request,
+                )
+                text = _extract_gemini_output_text(response)
+            except Exception as exc:  # noqa: BLE001
+                return OcrResult(text="", engine="api", failed_reason=f"api OCR request failed: {exc}", chars=0)
 
         if not text:
             return OcrResult(text="", engine="api", failed_reason="api OCR returned empty output", chars=0)
@@ -933,18 +1075,41 @@ def test_ocr_provider_connection(config: OcrEngineConfig, *, api_key: str | None
     if not resolved_api_key:
         raise ValueError("OCR API key is not configured.")
     if provider == OcrApiProvider.GEMINI:
-        payload = {
-            "contents": [{"parts": [{"text": "Reply exactly with OK."}]}],
-            "generationConfig": {"temperature": 0},
-        }
-        parsed = _accounted_gemini_post_json(
-            accountant=_PROVIDER_TEST_ACCOUNTING, purpose="auth",
-            api_key=resolved_api_key,
-            model=model,
-            base_url=base_url,
-            payload=payload,
+        use_legacy_rest = (_gemini_post_json is not _DEFAULT_GEMINI_POST_JSON) or (
+            bool(base_url) and base_url.rstrip("/") != GEMINI_OCR_DEFAULT_BASE_URL.rstrip("/")
         )
-        if "OK" not in _gemini_extract_output_text(parsed):
+        if use_legacy_rest:
+            payload = {
+                "contents": [{"parts": [{"text": "Reply exactly with OK."}]}],
+                "generationConfig": {"temperature": 0},
+            }
+            parsed = _accounted_gemini_post_json(
+                accountant=_PROVIDER_TEST_ACCOUNTING, purpose="auth",
+                api_key=resolved_api_key,
+                model=model,
+                base_url=base_url,
+                payload=payload,
+            )
+            if "OK" not in _gemini_extract_output_text(parsed):
+                raise RuntimeError("gemini OCR provider test did not return OK")
+            return
+        client = genai.Client(
+            api_key=resolved_api_key,
+            http_options={"retry_options": {"attempts": 1}},
+        )
+        response = _accounted_gemini_interaction_create(
+            client=client,
+            accountant=_PROVIDER_TEST_ACCOUNTING,
+            purpose="auth",
+            model=model,
+            input="Reply exactly with OK.",
+            generation_config={
+                "thinking_level": normalize_gemini_thinking_level(config.helper_thinking_level, default="low"),
+                "max_output_tokens": 16,
+            },
+            store=False,
+        )
+        if "OK" not in _extract_gemini_output_text(response):
             raise RuntimeError("gemini OCR provider test did not return OK")
         return
 
@@ -966,6 +1131,12 @@ test_ocr_provider_connection.__test__ = False
 
 def build_ocr_engine(config: OcrEngineConfig) -> OCREngine:
     provider = normalize_ocr_api_provider(config.api_provider)
+    if config.text_transport_policy is not None:
+        from .ocr_text_transport import GEMINI_POLICY, POLICY, OcrTextTransportError
+        expected_policy = GEMINI_POLICY if provider == OcrApiProvider.GEMINI else POLICY
+        if (config.text_transport_policy != expected_policy
+                or config.policy == OcrEnginePolicy.LOCAL):
+            raise OcrTextTransportError("unsupported_configuration")
     if config.policy == OcrEnginePolicy.LOCAL:
         return LocalTesseractEngine(strict_unavailable=True)
 
@@ -979,12 +1150,16 @@ def build_ocr_engine(config: OcrEngineConfig) -> OCREngine:
                 api_key=api_key,
                 model=model,
                 base_url=(config.api_base_url or "").strip() or default_ocr_api_base_url(provider),
+                timeout_seconds=float(config.api_timeout_seconds or DEFAULT_OCR_API_TIMEOUT_SECONDS),
+                helper_thinking_level=config.helper_thinking_level,
+                text_transport_policy=config.text_transport_policy,
             )
         return ApiOcrEngine(
             api_key=api_key,
             model=model,
             base_url=config.api_base_url,
             timeout_seconds=float(config.api_timeout_seconds or DEFAULT_OCR_API_TIMEOUT_SECONDS),
+            **({"text_transport_policy": config.text_transport_policy} if config.text_transport_policy is not None else {}),
         )
 
     # local_then_api
@@ -998,6 +1173,9 @@ def build_ocr_engine(config: OcrEngineConfig) -> OCREngine:
                 api_key=api_key,
                 model=model,
                 base_url=(config.api_base_url or "").strip() or default_ocr_api_base_url(provider),
+                timeout_seconds=float(config.api_timeout_seconds or DEFAULT_OCR_API_TIMEOUT_SECONDS),
+                helper_thinking_level=config.helper_thinking_level,
+                text_transport_policy=config.text_transport_policy,
             )
         else:
             api_engine = ApiOcrEngine(
@@ -1005,5 +1183,6 @@ def build_ocr_engine(config: OcrEngineConfig) -> OCREngine:
                 model=model,
                 base_url=config.api_base_url,
                 timeout_seconds=float(config.api_timeout_seconds or DEFAULT_OCR_API_TIMEOUT_SECONDS),
+                **({"text_transport_policy": config.text_transport_policy} if config.text_transport_policy is not None else {}),
             )
     return LocalThenApiEngine(local_engine=local_engine, api_engine=api_engine)

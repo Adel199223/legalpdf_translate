@@ -35,9 +35,17 @@ from tests.test_ordinary_auto_layout_recovery import offline, _success_layout_pr
 from tests.test_ordinary_auto_layout_workflow import _app, _source, _start, _wait
 
 def test_terminal_folio_recipe_survives_catalog_resume(tmp_path, monkeypatch):
+    # This regression pins the historical primary-model review path while the
+    # separate fresh-model workflow tests exercise the native Astra client.
+    from legalpdf_translate import semantic_review_model_policy
+    monkeypatch.setattr(semantic_review_model_policy, "fresh_semantic_review_model_policy", lambda: None)
     source, output = tmp_path / "source.pdf", tmp_path / "output"
     output.mkdir()
     _source(source, ("digital",))
+    import fitz
+    with fitz.open(source) as document:
+        document[0].insert_text((260, 780), "Page 1", fontsize=9)
+        document.saveIncr()
     original_catalog = layout_accounting_module.layout_accounting_policy()
     args = original_catalog.accounting_arguments(today=date(2026, 10, 9))
     args["dispatch_limits"]["openai:layout_suggestion:gpt-5.2"]["max_output_tokens"] = 8000
@@ -46,10 +54,12 @@ def test_terminal_folio_recipe_survives_catalog_resume(tmp_path, monkeypatch):
     old_catalog = OrdinaryAccountingPolicy(old_catalog._pricing_json, old_catalog._limits_json,
         date(2026, 10, 9))
     app, jobs, translation_sdk, layout_requests = _app(tmp_path, monkeypatch,
-        ("نص عربي تجريبي\nص. 1",), (1,), failed_page=1, failure="incomplete")
+        ("نص عربي تجريبي\nص. \u2066[[1]]\u2069",), (1,), failed_page=1, failure="incomplete")
     scope = "?mode=shadow&workspace=fictional"
     with TestClient(app) as client:
         with monkeypatch.context() as old:
+            from legalpdf_translate import ordinary_auto_layout as automatic
+            old.setattr(automatic, "frozen_automatic_layout_policy", automatic._terminal_closing_group_policy)
             old.setattr(layout_accounting_module, "layout_accounting_policy", lambda: old_catalog)
             old.setattr(layout_accounting_module, "PAGE_CEILING", Decimal("0.812"))
             old.setattr(layout_accounting_module.OrdinaryLayoutAccounting, "policy",
@@ -68,6 +78,7 @@ def test_terminal_folio_recipe_survives_catalog_resume(tmp_path, monkeypatch):
                 assert not any(b"PAGE" in package.read(name) for name in package.namelist() if name.startswith("word/footer"))
 
         assert len(translation_sdk.requests) == len(layout_requests) == 1
+        assert len(translation_sdk.semantic_requests) == 3
         manager = app.state.ordinary_layouts.manager_for_context(
             app.state.shadow_context, "shadow", "fictional")
         manager.suggestion_policy = app.state.ordinary_layouts._accounting.policy

@@ -27,6 +27,16 @@ Expected persistence behavior:
 - Minimize/Close/Escape should preserve the selected attachment, start page, preview page, and show a restore chip.
 - Restore chips should bring back the existing Review or Preview state instead of resetting it.
 
+## Exact-message recovery and completed drafts
+
+When manually loading another message, verify message, thread and connected account together. A prior URL or subject is not evidence for the new message. Check current attachments before preparing. Failed browser safety inspection means the extension action was not accepted; manual intake is a separately qualified path.
+
+In builds containing the October 18 intake presentation repair, a failed manual message load shows **Needs attention** and keeps preparation unavailable. Expired or revoked authorization shows concise reconnect guidance. Reconnect the same configured account through the supported connection flow, then verify and load the exact message again; user sign-in/consent remains manual. Raw helper/transport responses remain technical evidence rather than the main status. A failed message load is not a prepared session or successful attachment review.
+
+If the app blocks, retain its job, failed responses and charges. Reviewed copies and an explicitly requested unsent reply may be completed independently, with exact recipient/thread and downloaded-attachment verification. Do not finalize a partial batch afterward merely to make the UI look complete: it can duplicate the existing draft. Record manual completion and retain its files before an approved runtime change.
+
+A partially confirmed/finalized batch cannot be made importable by clearing confirmation fields. Keep its durable row, reviewed files and private session evidence; distinguish retained evidence from an actively restored session. See the [recovery workflow](workflows/TERMINAL_RECOVERY_WORKFLOW.md). A final local-application receipt must verify the actual canonical build, owned listener, preserved saved rows/settings/selected bytes and only the eligible restored session. A scoped jobs list is not proof that no other workspace is active; combine it with the retained runtime/task ownership record. Archive completed manual-delivery evidence without recreating or finalizing that batch.
+
 ## Launch Canonical Main Runtime
 From the primary repo on `main`:
 
@@ -64,7 +74,7 @@ Before the click, verify the actual canonical build/served asset and check wheth
 7. Treat numeric mismatch warnings as a legal-review gate.
 8. Review generated DOCX/PDF files before sending any Gmail draft.
 
-Codex should click the extension or operate live Gmail only within explicit current user authorization. Existing authorization persists across interruption; an old failed or consumed extension operation must not be replayed merely to resume the task.
+Coding agents (Antigravity or any other agent) should click the extension, operate live Gmail via the built-in `browser` subagent / Playwright / Chrome DevTools, or call assistant-side Gmail plugins (such as Antigravity's `gmail` plugin) only within explicit current user authorization. Do not substitute an assistant Gmail plugin for the app's own Windows `gog` CLI helper when validating app Gmail intake or draft creation. Existing authorization persists across interruption; an old failed or consumed extension operation must not be replayed merely to resume the task.
 
 ## Scoped intake and preparation checks
 

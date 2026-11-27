@@ -68,7 +68,11 @@ def test_settled_invalid_hint_recovers_without_dispatch_and_reuses_warning(tmp_p
     from fastapi.testclient import TestClient
     from tests import test_ordinary_auto_layout_workflow as flow
     from legalpdf_translate import ordinary_layout_manager as module
+    from legalpdf_translate import ordinary_auto_layout as automatic
     from legalpdf_translate.ordinary_layout_contracts import PROPOSAL_VERSION_V3, fail
+    # These deliberate old-policy reconstruction checks need genuine V1 intent.
+    monkeypatch.setattr(automatic, 'frozen_automatic_layout_policy', automatic._inline_folio_direction_policy)
+    monkeypatch.setattr(automatic, 'manual_automatic_layout_policy', automatic._inline_folio_direction_policy)
     original = flow._proposal
     def proposal(view, page, columns=0):
         p = original(view, page, columns)
@@ -87,7 +91,7 @@ def test_settled_invalid_hint_recovers_without_dispatch_and_reuses_warning(tmp_p
     scope = '?mode=shadow&workspace=fictional'
     with TestClient(app) as client:
         with monkeypatch.context() as old:
-            old.setattr(module, 'normalize_proposals', lambda *args: fail('invalid_source_layout_evidence'))
+            old.setattr(module, 'normalize_proposals', lambda *args, **kwargs: fail('invalid_source_layout_evidence'))
             job_id = flow._start(client, source, output, 'EN', start=1, end=1, image_mode='off')
             first = flow._wait(jobs, job_id)
         assert first['result']['automatic_layout']['status'] == 'raw_fallback'
@@ -184,4 +188,83 @@ def test_settled_invalid_hint_recovers_without_dispatch_and_reuses_warning(tmp_p
         from decimal import Decimal
         assert Decimal(final['layout_costs']['known_cost_usd']) == Decimal(settled_cost)
         assert final['layout_costs']['complete'] is True
+        assert len(requests) == len(sdk.requests) == 1
+
+
+@pytest.mark.parametrize("hint_kind", ["decorative_rule", "source_footer"])
+def test_fresh_v2_optional_hint_recovery_binds_saved_capability_without_dispatch(tmp_path, monkeypatch, hint_kind):
+    from decimal import Decimal
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+    from tests import test_ordinary_auto_layout_workflow as flow
+    from legalpdf_translate import ordinary_layout_manager as module, ordinary_auto_layout as automatic
+    from legalpdf_translate.ordinary_layout_contracts import PROPOSAL_VERSION_V3, EMPHASIS_NORMALIZATION_V2, fail
+    # Preserve the concrete V8 initial and recovery recipe asserted below.
+    monkeypatch.setattr(automatic, 'frozen_automatic_layout_policy', automatic._in_body_terminal_closing_v8_policy)
+    monkeypatch.setattr(automatic, 'manual_automatic_layout_policy', automatic._in_body_terminal_closing_v8_policy)
+    from legalpdf_translate.ordinary_layout_service import _read
+    original = flow._proposal
+    def proposal(view, page, columns=0):
+        value = original(view, page, columns)
+        ids = [row['paragraph_id'] for row in value['paragraphs']]
+        value['paragraphs'][0].update(role='body', heading_level=0, heading_size_pt=None)
+        value.update(version=PROPOSAL_VERSION_V3, paragraph_partitions=[], source_coverage_findings=[],
+            source_layout_evidence=[{'kind': hint_kind,
+                'paragraph_ids': [ids[0] if hint_kind == 'decorative_rule' else ids[-1]],
+                'bbox': [.1, .4, .9, .41] if hint_kind == 'decorative_rule' else [.1, .9, .9, .98]}])
+        value['bands'] = [{'kind': 'columns', 'widths_pct': [50, 50], 'gutter_pt': 12, 'cells': [
+            {'groups': [{'paragraph_ids': [ids[0]], 'panel': False}]},
+            {'groups': [{'paragraph_ids': ids[1:], 'panel': False}]}]}]
+        return value
+    monkeypatch.setattr(flow, '_proposal', proposal)
+    source = tmp_path/'source.pdf'; flow._source(source, ('digital',))
+    output = tmp_path/'output'; output.mkdir()
+    app, jobs, sdk, requests = flow._app(tmp_path, monkeypatch, ('____\nA fictional body paragraph.',), (1,))
+    scope = '?mode=shadow&workspace=fictional'
+    expected_policy = automatic.frozen_automatic_layout_policy()
+    assert expected_policy == automatic._in_body_terminal_closing_v8_policy()
+    assert expected_policy != automatic._complete_lrm_emphasis_policy()
+    fingerprint = expected_policy.split(':', 1)[1]
+    with TestClient(app) as client:
+        with monkeypatch.context() as failed:
+            failed.setattr(module, 'normalize_proposals', lambda *args, **kwargs: fail('invalid_source_layout_evidence'))
+            job_id = flow._start(client, source, output, 'EN', start=1, end=1, image_mode='off')
+            first = flow._wait(jobs, job_id)
+        assert first['result']['automatic_layout']['status'] == 'raw_fallback'
+        assert len(requests) == len(sdk.requests) == 1
+        run = Path(first['result']['run_dir'])/'ordinary_auto_layout'
+        assert automatic._read_record(run/'intent.json')['policy_fingerprint'] == fingerprint
+        manager = app.state.ordinary_layouts.manager_for_context(app.state.shadow_context, 'shadow', 'fictional')
+        original_pointer = automatic._read_record(run/'operation.json')
+        original_operation = manager.service.root/job_id/'baselines'/original_pointer['baseline_id']/'suggestions'/original_pointer['operation_nonce']
+        original_response = (original_operation/'page-0001.response.json').read_bytes()
+        settled_cost = manager.layout_costs(job_id)['known_cost_usd']
+        provider = manager.provider_factory
+        def denied(*args):
+            result = provider(*args)
+            result._client.responses.create = lambda **kwargs: pytest.fail('fresh retained recovery dispatched a provider')
+            return result
+        manager.provider_factory = denied
+        assert client.post(f'/api/translation/jobs/{job_id}/layout/recover'+scope).status_code == 200
+        final = flow._wait(jobs, job_id)['result']['automatic_layout']
+        assert final['status'] == 'automatic_unreviewed', final
+        assert final['source_layout_review_required'] is True
+        assert len(final['source_layout_rejected_hints']) == 1
+        assert final['source_layout_rejected_hints'][0]['kind'] == hint_kind
+        child = run/'recoveries/layout_direct_revalidation_v1'
+        assert automatic._read_record(child/'intent.json')['policy_fingerprint'] == fingerprint
+        pointer = automatic._read_record(child/'operation.json')
+        operation = manager.service.root/pointer['origin_job_id']/'baselines'/pointer['baseline_id']/'suggestions'/pointer['operation_nonce']
+        assert _read(operation/'intent.json')['request']['policy']['emphasis_normalization_version'] == EMPHASIS_NORMALIZATION_V2
+        assert _read(operation/'proposal_initial_view.json')['emphasis_normalization_version'] == EMPHASIS_NORMALIZATION_V2
+        assert (original_operation/'page-0001.response.json').read_bytes() == original_response
+        assert (operation/'page-0001.response.json').read_bytes() == original_response
+        assert Decimal(final['layout_costs']['known_cost_usd']) == Decimal(settled_cost)
+        assert final['layout_costs']['complete'] is True
+        assert len(requests) == len(sdk.requests) == 1
+        assert client.post(f'/api/translation/jobs/{job_id}/layout/recover'+scope).status_code == 200
+        repeated = flow._wait(jobs, job_id)['result']['automatic_layout']
+        assert repeated['sha256'] == final['sha256']
+        assert repeated['layout_costs'] == final['layout_costs']
+        assert repeated['source_layout_rejected_hints'] == final['source_layout_rejected_hints']
         assert len(requests) == len(sdk.requests) == 1

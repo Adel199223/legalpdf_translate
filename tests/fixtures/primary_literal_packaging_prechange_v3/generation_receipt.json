@@ -1,0 +1,10 @@
+{
+  "generator_glue_sha256": "87f900b60c152333ac62ad50e4dc151c0e13cc5b2ba7de7addb20aa696476a67",
+  "fixture_files": {
+    "inputs.json": "b9c7a6e30858c1a8dbf841de5a441f58252adb95490c63254141cc52b4ec048d",
+    "semantic_context.json": "c45e76ebc31a21ccdf9cacc6541626c6496373a8c9c4c8e4fe6246ba53c302f6",
+    "source_page_0001.json": "dc8c0db60435de32c3c637ec9ac930aa0ade745107f3fec86ea6b27679ab3149"
+  },
+  "fictional_only": true,
+  "provider_calls": 0
+}

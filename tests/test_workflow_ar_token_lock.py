@@ -186,6 +186,12 @@ def test_ar_expected_token_mismatch_fails_after_retry(tmp_path: Path, monkeypatc
     assert summary.success is False
     assert summary.error == "compliance_failure"
 
+    retained_failures = sorted((summary.run_dir / "failed_output_evidence").glob("*.json"))
+    assert len(retained_failures) == 2
+    retained = [json.loads(path.read_text(encoding="utf-8")) for path in retained_failures]
+    assert all(item["raw_output"]["text"] == altered for item in retained)
+    assert [item["attempt"] for item in retained] == [1, 2]
+
     events = _event_rows(summary.run_dir / "run_events.jsonl")
     violations = [item for item in events if str(item.get("event_type", "")) == "ar_locked_token_violation"]
     assert violations

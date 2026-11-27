@@ -1,4 +1,5 @@
 import { fetchJson } from "./api.js";
+import { fetchGmailTranslationForRecovery } from "./gmail_translation_recovery.js";
 import { updateTranslationFinance } from "./translation_finance.js";
 import { mountSourceReview } from "./source_review_ui.js";
 import { mountFormattingReview } from "./formatting_review_ui.js";
@@ -89,6 +90,15 @@ let lastTranslationUiSnapshotKey = "";
 let sourceReviewUi = null;
 let formattingReviewUi = null;
 let ordinaryLayoutUi = null;
+let translationNavigationEpoch = 0;
+let arabicReviewOwner = "";
+const arabicReviewRefreshes = new Map();
+const translationCostFieldIds = ["translation-api-cost", "translation-estimated-api-cost"];
+let translationCostEdits = { owner: "", fields: new Set() };
+
+function translationRequestOwner() {
+  return JSON.stringify([appState.runtimeMode, appState.workspaceId, translationState.currentJobId, translationNavigationEpoch]);
+}
 
 function applyActionFailureFeedback(
   error,
@@ -227,7 +237,24 @@ function rememberRuntimeJob(job) {
   translationState.runtimeJobs = [summarized, ...remaining];
 }
 
+function selectedTranslationIdentity(view = translationState.currentJob?.ordinary_layout) {
+  return JSON.stringify([view?.baseline_id || "", view?.delivery_generation ?? "", view?.delivery?.selection_id || ""]);
+}
+
+function arabicReviewRequestOwner() {
+  return `${translationRequestOwner()}:${selectedTranslationIdentity()}`;
+}
+
+function currentTranslationOutputReviewRequired() {
+  const view = ordinaryLayoutUi?.controller.snapshot()?.view || translationState.currentJob?.ordinary_layout;
+  return Boolean(view?.delivery?.output_review_required || view?.text_correction?.output_review_required);
+}
+
 function currentArabicReviewState() {
+  if (currentCompletedTranslationJobRequiresArabicReview() && arabicReviewOwner !== arabicReviewRequestOwner()) {
+    return normalizeArabicReviewState({ required: true, resolved: false, status: "checking",
+      message: "Checking the Arabic review for the selected document before saving." });
+  }
   return normalizeArabicReviewState(translationState.arabicReview);
 }
 
@@ -688,6 +715,7 @@ function stopArabicReviewPolling() {
 }
 
 function setArabicReviewState(value, { forceNotify = false } = {}) {
+  arabicReviewOwner = arabicReviewRequestOwner();
   translationState.arabicReview = normalizeArabicReviewState(value);
   syncTranslationCompletionSurface();
   notifyTranslationUiStateChanged({ force: forceNotify });
@@ -695,7 +723,9 @@ function setArabicReviewState(value, { forceNotify = false } = {}) {
 
 function clearArabicReviewState({ forceNotify = false } = {}) {
   stopArabicReviewPolling();
-  setArabicReviewState(blankArabicReviewState(), { forceNotify });
+  setArabicReviewState(currentCompletedTranslationJobRequiresArabicReview()
+    ? {required:true,resolved:false,status:"checking",message:"The selected Arabic document review must be checked before saving."}
+    : blankArabicReviewState(), { forceNotify });
 }
 
 function sourceFileKey(file) {
@@ -1228,7 +1258,7 @@ export function getTranslationUiSnapshot() {
     ordinaryLayoutReady: !layoutState?.busy && !layoutState?.pending
       && (!layoutView || layoutView.status === "unprepared"
         || (layoutState?.verified === true && Boolean(layoutView.delivery)
-          && !layoutView.stale && !layoutView.delivery.stale)),
+          && !layoutView.stale && !layoutView.delivery.stale && !currentTranslationOutputReviewRequired())),
     hasCompletionSurface: hasTranslationCompletionSurface(),
     completionDrawerOpen: translationState.completionDrawerOpen,
     currentRowId: translationState.currentRowId || null,
@@ -1384,6 +1414,7 @@ function renderArabicReviewCard() {
 
 function syncTranslationCompletionSurface() {
   ordinaryLayoutUi?.update();
+  syncTranslationCostEdits();
   const available = hasTranslationCompletionSurface();
   const openButton = qs("translation-open-completion");
   const formShell = qs("translation-completion-form-shell");
@@ -1424,7 +1455,7 @@ function syncTranslationCompletionSurface() {
     saveTitle: presentation.saveTitle,
     saveStatus: countWarning || presentation.saveStatus,
     saveButtonLabel: presentation.saveButtonLabel,
-    saveDisabled: !hasSaveSurface || currentArabicReviewIsBlocking(),
+    saveDisabled: !hasSaveSurface || currentArabicReviewIsBlocking() || currentTranslationOutputReviewRequired(),
   });
   if (!translationState.currentJob) {
     renderTranslationJobActionControlsInto({
@@ -1506,7 +1537,7 @@ function translationStatusSummary(job) {
   return job.status_text || "Translation job is running.";
 }
 
-function applyTranslationSeed(seed, { rowId = null } = {}) {
+function applyTranslationSeed(seed, { rowId = null, preserveCostEdits = false } = {}) {
   dispatchNewJobTask("translation");
   const resolved = seed || blankSaveSeed();
   translationState.currentSeed = resolved;
@@ -1525,8 +1556,7 @@ function applyTranslationSeed(seed, { rowId = null } = {}) {
   setFieldValue("translation-rate-per-word", resolved.rate_per_word ?? "");
   setFieldValue("translation-expected-total", resolved.expected_total ?? "");
   setFieldValue("translation-amount-paid", resolved.amount_paid ?? "");
-  setFieldValue("translation-api-cost", resolved.api_cost ?? "");
-  setFieldValue("translation-estimated-api-cost", resolved.estimated_api_cost ?? "");
+  applyTranslationCosts(resolved, { reset: !preserveCostEdits });
   setFieldValue("translation-quality-risk-score", resolved.quality_risk_score ?? "");
   setFieldValue("translation-profit", resolved.profit ?? "");
   setFieldValue("translation-total-mode", rowId && !translationState.currentJobId ? "manual" : "auto");
@@ -1550,6 +1580,38 @@ function currentTranslationMetricsOwner() {
     view?.generation, view?.delivery_generation, view?.delivery?.selection_id]);
 }
 
+function syncTranslationCostEdits({ reset = false } = {}) {
+  const job = translationState.currentJob;
+  const view = job?.ordinary_layout;
+  // Saving a row does not change the owner of an active job's manual edits.
+  const owner = JSON.stringify([appState.runtimeMode, appState.workspaceId,
+    translationState.currentJobId || `row:${translationState.currentRowId || ""}`,
+    view?.baseline_id, view?.delivery_generation, view?.delivery?.selection_id]);
+  if (reset || translationCostEdits.owner !== owner) {
+    translationCostEdits = { owner, fields: new Set() };
+  }
+  const computed = Boolean(job?.layout_costs?.operations);
+  for (const id of translationCostFieldIds) {
+    const field = qs(id);
+    if (field) field.readOnly = computed;
+    const note = qs(`${id}-note`);
+    if (note) note.textContent = computed
+      ? "Computed from translation and layout usage."
+      : "You can adjust this case's recorded cost.";
+  }
+  return computed;
+}
+
+function applyTranslationCosts(seed, options = {}) {
+  const computed = syncTranslationCostEdits(options);
+  for (const [index, key] of ["api_cost", "estimated_api_cost"].entries()) {
+    const id = translationCostFieldIds[index];
+    if (computed || !translationCostEdits.fields.has(id)) {
+      setFieldValue(id, seed[key] ?? "");
+    }
+  }
+}
+
 async function refreshCurrentTranslationMetrics() {
   const owner = currentTranslationMetricsOwner();
   const jobId = translationState.currentJobId;
@@ -1569,12 +1631,14 @@ async function refreshCurrentTranslationMetrics() {
     return;
   }
   setFieldValue("translation-word-count", seed.word_count);
-  setFieldValue("translation-api-cost", seed.api_cost ?? "");
-  setFieldValue("translation-estimated-api-cost", seed.estimated_api_cost ?? "");
-  refreshTranslationFinance();
   translationState.currentSeed = { ...translationState.currentSeed, ...seed };
   translationState.currentJob = job;
+  applyTranslationCosts(seed);
+  refreshTranslationFinance();
   syncTranslationCompletionSurface();
+  if (currentCompletedTranslationJobRequiresArabicReview() && arabicReviewOwner !== arabicReviewRequestOwner()) {
+    await refreshArabicReviewState();
+  }
 }
 
 function currentArabicReviewRequestPayload(extra = {}) {
@@ -1590,7 +1654,9 @@ function currentArabicReviewRequestPayload(extra = {}) {
 function scheduleArabicReviewPoll(delayMs = 500) {
   stopArabicReviewPolling();
   translationState.arabicReviewPollTimer = window.setTimeout(() => {
+    const owner = arabicReviewRequestOwner();
     refreshArabicReviewState().catch((error) => {
+      if (owner !== arabicReviewRequestOwner()) return;
       applyActionFailureFeedback(error, {
         panelSlot: "translation-save",
         diagnosticsSlot: "translation-save",
@@ -1600,8 +1666,20 @@ function scheduleArabicReviewPoll(delayMs = 500) {
   }, Math.max(100, Number(delayMs) || 500));
 }
 
-async function refreshArabicReviewState({ allowRestore = false } = {}) {
+function refreshArabicReviewState(options = {}) {
+  const key = `${arabicReviewRequestOwner()}:${Boolean(options.allowRestore)}`;
+  if (arabicReviewRefreshes.has(key)) return arabicReviewRefreshes.get(key);
+  const pending = readArabicReviewState(options);
+  arabicReviewRefreshes.set(key, pending);
+  pending.finally(() => {
+    if (arabicReviewRefreshes.get(key) === pending) arabicReviewRefreshes.delete(key);
+  }).catch(() => {});
+  return pending;
+}
+
+async function readArabicReviewState({ allowRestore = false } = {}) {
   stopArabicReviewPolling();
+  const owner = arabicReviewRequestOwner();
   const reviewTargetKnown = translationState.currentJob
     ? currentCompletedTranslationJobRequiresArabicReview()
     : Boolean(currentArabicReviewState().completion_key) || allowRestore;
@@ -1621,9 +1699,11 @@ async function refreshArabicReviewState({ allowRestore = false } = {}) {
     ? `/api/translation/arabic-review/state?${params.toString()}`
     : "/api/translation/arabic-review/state";
   const payload = await fetchJson(url, appState);
+  if (owner !== arabicReviewRequestOwner()) return currentArabicReviewState();
   const review = normalizeArabicReviewState(payload.normalized_payload?.arabic_review);
   if (allowRestore && !translationState.currentJobId && review.required && !review.resolved && review.job_id) {
     const restored = await fetchJson(`/api/translation/jobs/${review.job_id}`, appState);
+    if (owner !== arabicReviewRequestOwner()) return currentArabicReviewState();
     renderTranslationJob(restored.normalized_payload?.job || null);
     return currentArabicReviewState();
   }
@@ -1651,13 +1731,16 @@ async function refreshArabicReviewState({ allowRestore = false } = {}) {
 }
 
 async function openArabicReviewInWord({ auto = false } = {}) {
+  const owner = arabicReviewRequestOwner();
   const payload = await fetchJson("/api/translation/arabic-review/open", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(currentArabicReviewRequestPayload()),
   });
+  if (owner !== arabicReviewRequestOwner()) return currentArabicReviewState();
   const review = normalizeArabicReviewState(payload.normalized_payload?.arabic_review);
   setArabicReviewState(review);
+  if (owner !== arabicReviewRequestOwner()) return currentArabicReviewState();
   setDiagnostics("translation-save", payload, {
     hint: review.message || (auto ? "Arabic DOCX review opened automatically." : "Arabic DOCX review opened in Word."),
     open: false,
@@ -1669,16 +1752,19 @@ async function openArabicReviewInWord({ auto = false } = {}) {
 }
 
 async function continueArabicReview(continuation) {
+  const owner = arabicReviewRequestOwner();
   const payload = await fetchJson("/api/translation/arabic-review/continue", appState, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(currentArabicReviewRequestPayload({ continuation })),
   });
+  if (owner !== arabicReviewRequestOwner()) return currentArabicReviewState();
   const review = normalizeArabicReviewState(payload.normalized_payload?.arabic_review);
   setArabicReviewState(review);
   if (review.resolved) {
     await refreshCurrentTranslationMetrics();
   }
+  if (owner !== arabicReviewRequestOwner()) return currentArabicReviewState();
   setDiagnostics("translation-save", payload, {
     hint: review.message || "Arabic DOCX review continuation recorded.",
     open: false,
@@ -1687,9 +1773,11 @@ async function continueArabicReview(continuation) {
 }
 
 async function restorePendingArabicReview() {
+  const owner = arabicReviewRequestOwner();
   try {
     await refreshArabicReviewState({ allowRestore: true });
   } catch (error) {
+    if (owner !== arabicReviewRequestOwner()) return;
     clearArabicReviewState();
     applyActionFailureFeedback(error, {
       panelSlot: "translation-save",
@@ -1810,6 +1898,33 @@ export function applyTranslationLaunch(launch) {
   renderTranslationPreparedState();
 }
 
+export async function restoreGmailTranslationJob(launch, { isCurrent = () => true } = {}) {
+  const owner = translationRequestOwner();
+  const runtimeMode = appState.runtimeMode;
+  const workspaceId = appState.workspaceId;
+  const job = await fetchGmailTranslationForRecovery(launch, fetchJson, appState);
+  if (!isCurrent() || owner !== translationRequestOwner() || runtimeMode !== appState.runtimeMode || workspaceId !== appState.workspaceId) {
+    throw new Error("The Gmail session changed while recovery was loading. Reopen the current step.");
+  }
+  dispatchNewJobTask("translation");
+  translationNavigationEpoch += 1;
+  stopPolling();
+  stopArabicReviewPolling();
+  clearManualSourceSelection();
+  translationState.currentRowId = null;
+  applyTranslationSeed(job.result?.save_seed || blankSaveSeed(), { rowId: null });
+  const config = job.config || {};
+  for (const key of ["output_dir", "target_lang", "effort", "effort_policy", "image_mode", "ocr_mode", "ocr_engine", "start_page", "end_page", "max_pages", "workers", "context_file", "glossary_file", "context_text"]) {
+    if (config[key] !== undefined) setFieldValue(`translation-${key.replaceAll("_", "-")}`, config[key] ?? "");
+  }
+  for (const key of ["page_breaks", "keep_intermediates"]) {
+    if (typeof config[key] === "boolean") setCheckbox(`translation-${key.replaceAll("_", "-")}`, config[key]);
+  }
+  setCheckbox("translation-resume", Boolean(job.actions?.resume));
+  renderTranslationJob(job);
+  return job;
+}
+
 export function maybeRestorePreparedTranslationLaunch(launch, { activeView = appState.activeView } = {}) {
   const normalizedLaunch = normalizePreparedTranslationLaunch(launch);
   if (!normalizedLaunch || String(activeView || "").trim() !== "new-job") {
@@ -1862,6 +1977,9 @@ function currentTranslationDeliveryFields() {
   if (state?.pending || state?.busy) {
     throw new Error("Finish or recover the current layout action before saving.");
   }
+  if (currentTranslationOutputReviewRequired()) {
+    throw new Error("Review the complete corrected output before saving the case.");
+  }
   if (!view || view.status === "unprepared") return {};
   if (!view.delivery || view.stale || view.delivery.stale || state?.verified !== true) {
     throw new Error("Review source layout and choose the current copy for delivery before saving.");
@@ -1870,8 +1988,10 @@ function currentTranslationDeliveryFields() {
 }
 
 export async function collectCurrentTranslationSaveValues() {
+  if (currentArabicReviewIsBlocking()) throw new Error(currentArabicReviewState().message || "Review the selected Arabic document before saving.");
   currentTranslationDeliveryFields();
   await refreshCurrentTranslationMetrics();
+  if (currentArabicReviewIsBlocking()) throw new Error(currentArabicReviewState().message || "Review the selected Arabic document before saving.");
   currentTranslationDeliveryFields();
   return collectTranslationSaveValues();
 }
@@ -1971,6 +2091,7 @@ function shouldOpenTranslationJobDiagnostics(job, recovery = deriveTranslationRe
 }
 
 function renderTranslationJob(job) {
+  if (translationState.currentJobId !== (job?.job_id || "")) translationNavigationEpoch += 1;
   translationState.currentJob = job || null;
   translationState.currentJobId = job?.job_id || "";
   if (job) {
@@ -2053,7 +2174,7 @@ function renderTranslationJob(job) {
     reviewExportAvailable: Boolean(job?.actions?.review_export),
   });
   if (job?.result?.save_seed) {
-    applyTranslationSeed(job.result.save_seed);
+    applyTranslationSeed(job.result.save_seed, { preserveCostEdits: true });
     setPanelStatus(
       "translation-save",
       "",
@@ -2079,7 +2200,9 @@ function renderTranslationJob(job) {
     stopPolling();
   }
   if (currentCompletedTranslationJobRequiresArabicReview()) {
+    const owner = arabicReviewRequestOwner();
     refreshArabicReviewState().catch((error) => {
+      if (owner !== arabicReviewRequestOwner()) return;
       clearArabicReviewState();
       applyActionFailureFeedback(error, {
         panelSlot: "translation-save",
@@ -2261,11 +2384,15 @@ async function pollCurrentJob() {
   if (!translationState.currentJobId) {
     return;
   }
+  const owner = translationRequestOwner();
+  const jobId = translationState.currentJobId;
   try {
-    const payload = await fetchJson(`/api/translation/jobs/${translationState.currentJobId}`, appState);
+    const payload = await fetchJson(`/api/translation/jobs/${jobId}`, appState);
+    if (owner !== translationRequestOwner()) return;
     renderTranslationJob(payload.normalized_payload.job || null);
     await refreshTranslationHistory();
   } catch (error) {
+    if (owner !== translationRequestOwner()) return;
     applyActionFailureFeedback(error, {
       panelSlot: "translation",
       diagnosticsSlot: "translation-job",
@@ -2418,6 +2545,9 @@ async function handleTranslationSave() {
     throw new Error(currentArabicReviewState().message || "Review the Arabic document in Word before you save the case record.");
   }
   await refreshCurrentTranslationMetrics();
+  if (currentArabicReviewIsBlocking()) {
+    throw new Error(currentArabicReviewState().message || "Review the selected Arabic document before saving.");
+  }
   refreshTranslationFinance();
   const deliveryFields = currentTranslationDeliveryFields();
   const payload = await fetchJson("/api/translation/save-row", appState, {
@@ -2459,16 +2589,39 @@ function sourceCardClickIsInteractive(target) {
 }
 
 export function initializeTranslationUi() {
+  for (const id of translationCostFieldIds) {
+    for (const event of ["input", "change"]) {
+      qs(id)?.addEventListener(event, () => {
+        if (!syncTranslationCostEdits()) translationCostEdits.fields.add(id);
+      });
+    }
+  }
   ordinaryLayoutUi = mountOrdinaryLayoutReview({
     root: qs("translation-ordinary-layout"),
     getScope: () => ({runtimeMode:appState.runtimeMode,workspaceId:appState.workspaceId}),
     getJob: () => translationState.currentJob,
     contentReviewBlocked: currentArabicReviewIsBlocking,
-    onDeliveryChange: (delivery, view) => {
+    onDeliveryChange: (delivery, view, { selectionChanged = true } = {}) => {
+      const changedFromCurrentJob = selectedTranslationIdentity() !== selectedTranslationIdentity(view);
       if (translationState.currentJob) translationState.currentJob.ordinary_layout = view;
+      if (!selectionChanged) {
+        syncTranslationCompletionSurface();
+        notifyTranslationUiStateChanged();
+        return;
+      }
+      // Invalidate before starting either asynchronous refresh. A selected correction
+      // has its own Word review even when the job and completion key stay the same.
+      syncTranslationCompletionSurface();
+      if (changedFromCurrentJob && currentCompletedTranslationJobRequiresArabicReview()) {
+        const reviewOwner = arabicReviewRequestOwner();
+        refreshArabicReviewState().catch((error) => {
+          if (reviewOwner !== arabicReviewRequestOwner()) return;
+          applyActionFailureFeedback(error, {panelSlot:"translation-save", diagnosticsSlot:"translation-save",
+            fallback:"The selected document's Arabic review could not be refreshed. Refresh it before saving."});
+        });
+      }
       setFieldValue("translation-word-count", delivery.word_count);
-      setFieldValue("translation-api-cost", "");
-      setFieldValue("translation-estimated-api-cost", "");
+      applyTranslationCosts({}, { reset: true });
       refreshTranslationFinance();
       notifyTranslationUiStateChanged();
       const owner = currentTranslationMetricsOwner();

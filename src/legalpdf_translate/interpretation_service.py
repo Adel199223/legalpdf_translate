@@ -296,7 +296,7 @@ def _capability_flags_from_settings_path(settings_path: Path) -> dict[str, Any]:
     )
     api_provider = (
         OcrApiProvider.GEMINI
-        if str(joblog_settings.get("ocr_api_provider", "openai")).strip().lower() == "gemini"
+        if str(joblog_settings.get("ocr_api_provider", "gemini")).strip().lower() == "gemini"
         else OcrApiProvider.OPENAI
     )
     return {

@@ -35,6 +35,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default=SHADOW_HOST, help="Bind host. Defaults to 127.0.0.1 only.")
     parser.add_argument("--port", type=int, default=SHADOW_DEFAULT_PORT, help="Bind port. Defaults to 8877.")
     parser.add_argument("--open", action="store_true", help="Open the browser after startup.")
+    parser.add_argument("--recovery-capsule", type=Path, help="Explicit local terminal recovery manifest.")
+    parser.add_argument("--recovery-sha256", help="Independently pinned SHA256 of the recovery manifest.")
+    parser.add_argument("--recovery-restore-missing-sources", action="store_true",
+        help="Explicitly restore missing owned Gmail temp sources from the pinned private backup; never overwrite.")
     return parser
 
 
@@ -69,6 +73,10 @@ def _run_browser_server(app, *, port: int) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    if bool(args.recovery_capsule) != bool(args.recovery_sha256):
+        parser.error("Recovery requires both --recovery-capsule and --recovery-sha256.")
+    if args.recovery_restore_missing_sources and not args.recovery_capsule:
+        parser.error("Source restoration requires a pinned recovery capsule.")
     if str(args.host).strip() != SHADOW_HOST:
         raise SystemExit("Shadow web must bind only to 127.0.0.1.")
 
@@ -101,6 +109,10 @@ def main(argv: list[str] | None = None) -> int:
 
     _configure_windows_asyncio_policy()
     app = create_shadow_app(repo_root=repo_root, port=int(args.port))
+    if args.recovery_capsule:
+        from legalpdf_translate.terminal_recovery import restore_app
+        restore_app(app, args.recovery_capsule, args.recovery_sha256,
+            restore_sources=args.recovery_restore_missing_sources)
     _run_browser_server(app, port=int(args.port))
     return 0
 

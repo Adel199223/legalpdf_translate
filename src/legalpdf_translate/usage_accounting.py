@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -177,10 +177,17 @@ class DispatchAccounting:
         historical_incomplete: bool = False,
         journal_name: str = "dispatch_accounting.json",
         pricing_archives: Sequence[PricingSnapshot | Mapping[str, Any]] = (),
+        _existing_journal_sha256: str | None = None,
     ) -> None:
         self.run_dir = Path(run_dir)
-        self.run_dir.mkdir(parents=True, exist_ok=True)
         self.journal_path = self.run_dir / journal_name
+        self._read_only_journal_sha256 = _existing_journal_sha256
+        if _existing_journal_sha256 is None:
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+        elif (not _SHA256.fullmatch(_existing_journal_sha256)
+                or not self.run_dir.is_dir() or not self.journal_path.is_file()
+                or budget_context is not None):
+            raise DispatchAccountingError("Pinned accounting restore requires an existing soft journal.")
         self.lock_path = self.journal_path.with_suffix(self.journal_path.suffix + ".lock")
         self.run_identity = _safe_mapping(run_identity, "run_identity")
         self.run_identity_hash = _fingerprint(self.run_identity)
@@ -205,16 +212,20 @@ class DispatchAccounting:
         self._instance_id = uuid4().hex
         self._recovered_in_flight = False
         self._persistence_failed = False
-        with _locked_path(self.lock_path):
+        with (nullcontext() if self._read_only_journal_sha256 else _locked_path(self.lock_path)):
             if self.journal_path.exists():
                 self._restore_saved_context()
                 state = self._load_unlocked()
+                from .semantic_review_billing import blocked
+                self._persistence_failed = blocked(state["events"])
                 self._recovered_in_flight = any(
                     event.get("event") == "begin"
                     and not _has_finish(state["events"], event.get("call_id"))
                     for event in state["events"]
                 )
             else:
+                if self._read_only_journal_sha256:
+                    raise DispatchAccountingError("Pinned dispatch journal is missing.")
                 now = _now()
                 self._save_unlocked(
                     {
@@ -319,6 +330,8 @@ class DispatchAccounting:
         route: str | None = None,
         base_url: str | None = None,
     ) -> DispatchTicket:
+        if self._read_only_journal_sha256:
+            raise DispatchAccountingError("Restored accounting is read-only.")
         binding = current_accounting_binding()
         resolved_purpose = purpose or (binding.purpose if binding is not None else None)
         resolved_page = page_number if page_number is not None else (
@@ -343,6 +356,14 @@ class DispatchAccounting:
                 "Dispatch accounting is not safe for another provider attempt."
             )
         limits = self.request_limits(provider_id, purpose_id, model_id)
+        from .semantic_review_billing import MODEL as semantic_model, strict_limits
+        if model_id == semantic_model:
+            from .semantic_review_model_policy import validate_policy, KEY
+            validate_policy(self.run_identity.get(KEY))
+            if purpose_id != "semantic_audit" or not strict_limits(limits):
+                raise DispatchAccountingError("Dedicated semantic review purpose/policy mismatch.")
+            if self.hard_budget:
+                raise DispatchAccountingError("Dedicated semantic review has no verified BLOCK reservation envelope.")
         if self.hard_budget:
             _validate_bounds_match_limits(safe_bounds, limits)
             if (tier != _requested_tier(provider_id, limits.get("requested_service_tier"))
@@ -404,6 +425,35 @@ class DispatchAccounting:
             reservation_id=reservation_id,
         )
 
+    def retain_semantic_response(self, ticket: DispatchTicket, raw: bytes):
+        """Publish exact raw BODY once before native billing validation/settlement."""
+        from .semantic_review_billing import parse_response_bytes, strict_limits
+        response, metadata = parse_response_bytes(raw)
+        with _locked_path(self.lock_path):
+            state = self._load_unlocked()
+            begin = _find_begin(state["events"], ticket.call_id)
+            if (begin is None or begin["request_hash"] != ticket.request_hash
+                    or not strict_limits(begin.get("bounds", {}))
+                    or re.fullmatch(r"[a-f0-9]{32}", ticket.call_id) is None):
+                raise DispatchAccountingError("Invalid native semantic response ticket.")
+            folder = self.run_dir / "provider_responses"
+            if folder.is_symlink():
+                raise DispatchAccountingError("Invalid native semantic response directory.")
+            folder.mkdir(exist_ok=True)
+            path = folder / (ticket.call_id + ".json")
+            if path.is_symlink():
+                raise DispatchAccountingError("Invalid native semantic response path.")
+            if path.exists():
+                if not path.is_file() or path.read_bytes() != raw:
+                    raise DispatchAccountingError("Native semantic response already differs.")
+            else:
+                staging = path.with_name(path.name + "." + uuid4().hex + ".pending")
+                with staging.open("xb") as stream:
+                    stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+                os.link(staging, path)
+                staging.unlink()
+        return response, {"path": "provider_responses/" + path.name, **metadata}
+
     def finish(
         self,
         ticket: DispatchTicket,
@@ -416,7 +466,10 @@ class DispatchAccounting:
         actual_service_tier: str | None = None,
         actual_billing_scope: str | None = None,
         currency: str | None = None,
+        semantic_response_evidence: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
+        if self._read_only_journal_sha256:
+            raise DispatchAccountingError("Restored accounting is read-only.")
         try:
             return self._finish(
                 ticket,
@@ -428,6 +481,7 @@ class DispatchAccounting:
                 actual_service_tier=actual_service_tier,
                 actual_billing_scope=actual_billing_scope,
                 currency=currency,
+                semantic_response_evidence=semantic_response_evidence,
             )
         except BaseException:
             # The transport may already have dispatched.  Keep any reservation
@@ -447,7 +501,10 @@ class DispatchAccounting:
         actual_service_tier: str | None = None,
         actual_billing_scope: str | None = None,
         currency: str | None = None,
+        semantic_response_evidence: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
+        if getattr(self, "_read_only_journal_sha256", None):
+            raise DispatchAccountingError("Restored accounting is read-only.")
         if not isinstance(ticket, DispatchTicket):
             raise DispatchAccountingError("finish requires a DispatchTicket.")
         outcome_id = _identifier(outcome, "outcome")
@@ -465,6 +522,16 @@ class DispatchAccounting:
             if outcome_id == "not_dispatched"
             else normalize_usage(usage, provider=ticket.provider)
         )
+        if ticket.requested_model == "gpt-6-astra":
+            # Invalid provider identities remain a settled unknown bill, never a
+            # storage exception which discards available charged usage/output.
+            def safe_identity(value, maximum, *, model=False):
+                return value if (type(value) is str and value and len(value) <= maximum
+                    and value.strip() == value and "\n" not in value and "\r" not in value
+                    and (not model or all(c.isalnum() or c in "._:-" for c in value))) else None
+            actual_model = safe_identity(actual_model, 200, model=True)
+            actual_service_tier = safe_identity(actual_service_tier, 200, model=True)
+            response_id = safe_identity(response_id, 512)
         actual_model_id = (
             _identifier(actual_model, "actual_model") if actual_model else None
         )
@@ -486,6 +553,16 @@ class DispatchAccounting:
             allowed_actual_models = begin_event.get("bounds", {}).get("allowed_actual_models", [])
             if not isinstance(allowed_actual_models, list):
                 allowed_actual_models = []
+            from .semantic_review_billing import strict_limits, response_billing_evidence
+            strict_semantic = strict_limits(begin_event.get("bounds", {}))
+            billing_evidence = None
+            if strict_semantic and outcome_id != "not_dispatched":
+                response, billing_evidence = response_billing_evidence(self.run_dir, semantic_response_evidence,
+                    max_output_tokens=begin_event["bounds"].get("max_output_tokens"),
+                    response_id=response_id_value, actual_model=actual_model_id,
+                    actual_service_tier=actual_service_tier,
+                    policy=begin_event["bounds"]["semantic_review_billing_policy"])
+                normalized = normalize_usage(response.get("usage"), provider=ticket.provider)
             cost, cost_status = self._price_usage(
                 normalized,
                 provider=ticket.provider,
@@ -501,6 +578,8 @@ class DispatchAccounting:
                 actual_currency=currency,
                 allowed_actual_service_tiers=begin_event.get("bounds", {}).get("allowed_actual_service_tiers", []),
             )
+            if billing_evidence is not None and billing_evidence["status"] != "available":
+                cost, cost_status = None, billing_evidence["status"]
             event = {
                 "event": "finish",
                 "call_id": ticket.call_id,
@@ -516,6 +595,8 @@ class DispatchAccounting:
                 "cost_status": cost_status,
                 "at": _now(),
             }
+            if billing_evidence is not None:
+                event["semantic_review_billing_evidence"] = billing_evidence
             existing = _find_finish(state["events"], ticket.call_id)
             if existing is not None:
                 if _completion_equivalent(existing, event):
@@ -566,10 +647,12 @@ class DispatchAccounting:
             except Exception:
                 self._persistence_failed = True
                 raise
+        if strict_semantic and cost is None:
+            self._persistence_failed = True
         return _json_copy(event)
 
     def summary(self) -> dict[str, Any]:
-        with _locked_path(self.lock_path):
+        with (nullcontext() if self._read_only_journal_sha256 else _locked_path(self.lock_path)):
             state = self._load_unlocked()
         return _summarize(
             state["events"],
@@ -637,7 +720,10 @@ class DispatchAccounting:
     def _load_unlocked(self) -> dict[str, Any]:
         self._validate_pricing_context()
         try:
-            state = json.loads(self.journal_path.read_text(encoding="utf-8"))
+            raw = self.journal_path.read_bytes()
+            if self._read_only_journal_sha256 and hashlib.sha256(raw).hexdigest() != self._read_only_journal_sha256:
+                raise DispatchAccountingError("Pinned dispatch journal changed.")
+            state = json.loads(raw)
         except (OSError, json.JSONDecodeError) as exc:
             raise DispatchAccountingError("Dispatch journal is unreadable.") from exc
         if not isinstance(state, dict) or state.get("schema_version") != ACCOUNTING_SCHEMA_VERSION:
@@ -664,6 +750,13 @@ class DispatchAccounting:
             raise DispatchAccountingError("Dispatch journal integrity check failed.")
         if not isinstance(state.get("events"), list):
             raise DispatchAccountingError("Dispatch journal events are malformed.")
+        from .semantic_review_billing import validate_retained_responses
+        try:
+            validate_retained_responses(self.run_dir, state["events"])
+        except (ValueError, TypeError, KeyError, OSError) as exc:
+            raise DispatchAccountingError("Native semantic response evidence is invalid.") from exc
+        if self._read_only_journal_sha256:
+            _validate_retained_events(state["events"])
         return state
 
     def _validate_pricing_context(self) -> None:
@@ -676,14 +769,21 @@ class DispatchAccounting:
             raise DispatchAccountingError("Immutable pricing context changed in memory.")
 
     def _append_begin_event(self, event: Mapping[str, Any], identifier: str) -> None:
+        if self._read_only_journal_sha256:
+            raise DispatchAccountingError("Restored accounting is read-only.")
         with _locked_path(self.lock_path):
             state = self._load_unlocked()
+            from .semantic_review_billing import blocked
+            if blocked(state["events"]):
+                raise DispatchAccountingError("Retained dedicated semantic billing is unknown; dispatch is blocked.")
             if any(item.get("call_id") == identifier for item in state["events"]):
                 raise DispatchAccountingError("Dispatch call_id already exists.")
             state["events"].append(dict(event))
             self._save_unlocked(state)
 
     def _save_unlocked(self, state: dict[str, Any]) -> None:
+        if self._read_only_journal_sha256:
+            raise DispatchAccountingError("Restored accounting is read-only.")
         if "pricing_catalog" not in state and not self._pricing_context_missing:
             state["pricing_catalog"] = self.pricing_snapshot.to_mapping() if self.pricing_snapshot else None
         state["updated_at"] = _now()
@@ -825,6 +925,70 @@ class MemoryDispatchAccounting:
                     self.pricing_snapshot.metadata() if self.pricing_snapshot else None
                 ),
             )
+
+
+def _validate_retained_events(events: list[Any]) -> None:
+    """Reject malformed retained evidence without repricing historical costs."""
+    begins, finishes = {}, {}
+    for event in events:
+        if not isinstance(event, dict) or event.get("event") not in {"begin", "finish"}:
+            raise DispatchAccountingError("Retained dispatch event is malformed.")
+        call_id = event.get("call_id")
+        target = begins if event["event"] == "begin" else finishes
+        if type(call_id) is not str or not call_id or call_id in target:
+            raise DispatchAccountingError("Retained dispatch call identity is ambiguous.")
+        if event["event"] == "begin":
+            for field in ("provider", "purpose", "requested_model"):
+                if type(event.get(field)) is not str:
+                    raise DispatchAccountingError("Retained dispatch identity is malformed.")
+                _identifier(event.get(field), field)
+            _request_hash(event.get("request_hash"))
+            _positive_int(event.get("attempt"), "attempt")
+            page = event.get("page_number")
+            if page is not None:
+                _positive_int(page, "page_number")
+            _safe_mapping(event.get("bounds"), "dispatch bounds")
+        target[call_id] = event
+    if set(finishes) - set(begins):
+        raise DispatchAccountingError("Retained dispatch finish has no begin event.")
+    response_ids = set()
+    for call_id, finish in finishes.items():
+        response_id = finish.get("response_id")
+        if response_id is not None:
+            if type(response_id) is not str or not response_id or response_id in response_ids:
+                raise DispatchAccountingError("Retained response identity is ambiguous.")
+            response_ids.add(response_id)
+        if finish.get("outcome") not in {"succeeded", "failed", "timeout", "refused", "cancelled", "not_dispatched"}:
+            raise DispatchAccountingError("Retained dispatch outcome is malformed.")
+        usage = finish.get("usage")
+        from .semantic_review_billing import strict_limits
+        begin = begins[call_id]
+        if strict_limits(begin.get("bounds", {})) and finish["outcome"] != "not_dispatched":
+            evidence = finish.get("semantic_review_billing_evidence")
+            if (type(evidence) is not dict or evidence.get("policy") != begin["bounds"]["semantic_review_billing_policy"]
+                    or set(evidence) != {"policy", "raw_usage", "raw_usage_sha256", "status", "response"}):
+                raise DispatchAccountingError("Retained dedicated semantic usage evidence is missing.")
+            if evidence["status"] != "available" and finish.get("cost_usd") is not None:
+                raise DispatchAccountingError("Unsupported dedicated semantic usage cannot certify a cost.")
+        cost = _optional_decimal(finish.get("cost_usd"))
+        if finish.get("cost_usd") is not None and cost is None:
+            raise DispatchAccountingError("Retained dispatch cost is malformed.")
+        if (finish.get("cost_status") == "available") != (cost is not None):
+            raise DispatchAccountingError("Retained dispatch cost status is inconsistent.")
+        if not isinstance(usage, dict) or usage.get("usage_status") not in {"available", "missing", "invalid"}:
+            raise DispatchAccountingError("Retained dispatch usage is malformed.")
+        if usage["usage_status"] != "available":
+            if cost is not None:
+                raise DispatchAccountingError("Incomplete retained usage cannot certify a known cost.")
+            continue
+        if any(type(usage.get(field)) is not int or usage[field] < 0 for field in TOKEN_FIELDS):
+            raise DispatchAccountingError("Retained dispatch token counts are malformed.")
+        # Journals already store the common normalized token representation.
+        normalized = normalize_usage(usage)
+        if normalized["usage_status"] != "available":
+            raise DispatchAccountingError("Retained dispatch token counts are inconsistent.")
+        if finish["outcome"] == "not_dispatched" and (cost != Decimal(0) or any(usage[field] for field in TOKEN_FIELDS)):
+            raise DispatchAccountingError("Undispatched retained attempt has nonzero usage or cost.")
 
 
 def _summarize(
@@ -972,6 +1136,48 @@ def _summarize(
 def _normalize_gemini_usage_input(usage: Any) -> Any:
     if usage is None:
         return None
+    # Already-normalized dict (e.g. from GeminiInteractionsClient)
+    if (
+        isinstance(usage, Mapping)
+        and ("input_tokens" in usage or "output_tokens" in usage)
+        and "total_input_tokens" not in usage
+        and "promptTokenCount" not in usage
+        and "prompt_token_count" not in usage
+    ):
+        return usage
+    # Interactions API / Decisions API Usage schema
+    if (
+        _first_field(usage, "total_input_tokens", "total_output_tokens", "total_thought_tokens", "total_cached_tokens")
+        is not None
+    ):
+        total_input = _first_field(usage, "total_input_tokens")
+        total_output = _first_field(usage, "total_output_tokens")
+        thoughts = _first_field(usage, "total_thought_tokens")
+        cached = _first_field(usage, "total_cached_tokens")
+        total = _first_field(usage, "total_tokens")
+        if total_output is None and total_input is not None and total is not None and total == total_input:
+            # Decisions API generates zero output tokens and may omit total_output_tokens.
+            output = 0
+            if thoughts is None:
+                thoughts = 0
+        elif total_output is not None:
+            if _token_count(total_output) is not None and (
+                thoughts is None or _token_count(thoughts) is not None
+            ):
+                output = total_output + (thoughts or 0)
+            else:
+                output = total_output
+        else:
+            output = None
+        return {
+            "input_tokens": total_input,
+            "output_tokens": output,
+            "total_tokens": total,
+            "reasoning_tokens": thoughts,
+            "cached_input_tokens": cached,
+            "cache_write_tokens": 0,
+        }
+    # Legacy generateContent usageMetadata
     prompt = _first_field(usage, "promptTokenCount", "prompt_token_count")
     candidates = _first_field(usage, "candidatesTokenCount", "candidates_token_count")
     thoughts = _first_field(usage, "thoughtsTokenCount", "thoughts_token_count")

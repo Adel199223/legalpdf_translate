@@ -357,7 +357,7 @@ def _translation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]
             "tradutor no âmbito do processo acima identificado.",
             "left",
         ),
-        (f"O documento traduzido contém {draft.word_count} palavras.", "left"),
+        (f"Total de palavras traduzidas: {draft.word_count}.", "left"),
         (
             f"Este serviço inclui a taxa IVA de {profile.iva_text} e {_irs_sentence_fragment(profile.irs_text)}.",
             "left",

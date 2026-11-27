@@ -146,6 +146,6 @@ def test_refresh_provider_controls_uses_selected_provider_defaults(monkeypatch) 
 
     QtSettingsDialog._refresh_provider_controls(fake)
 
-    assert fake.ocr_model_edit.placeholderText() == "gemini-3.1-flash-lite-preview"
+    assert fake.ocr_model_edit.placeholderText() == "gemini-4-neon"
     assert fake.ocr_env_edit.placeholderText() == "GEMINI_API_KEY"
     assert "OCR provider: gemini" in fake.provider_summary_label.text

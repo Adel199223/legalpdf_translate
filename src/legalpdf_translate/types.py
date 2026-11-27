@@ -49,6 +49,11 @@ class OcrApiProvider(str, Enum):
     GEMINI = "gemini"
 
 
+class TranslationApiProvider(str, Enum):
+    GEMINI = "gemini"
+    OPENAI = "openai"
+
+
 class BudgetExceedPolicy(str, Enum):
     WARN = "warn"
     BLOCK = "block"
@@ -91,6 +96,10 @@ class RunConfig:
     glossary_file: Path | None = None
     effort_policy: EffortPolicy = EffortPolicy.ADAPTIVE
     allow_xhigh_escalation: bool = False
+    translation_provider: TranslationApiProvider | None = None
+    translation_model: str | None = None
+    helper_thinking_level: str = "high"
+    gemini_decisions_advisory_enabled: bool = False
     budget_cap_usd: float | None = None
     cost_profile_id: str = "default_local"
     budget_on_exceed: BudgetExceedPolicy = BudgetExceedPolicy.WARN

@@ -1,0 +1,123 @@
+# LegalPDF Translate
+
+Windows-first Python app with a primary local browser interface, a secondary Qt/PySide6 shell, CLI helpers, and Gmail browser-extension/native-host bridge support for page-by-page legal PDF translation to DOCX.
+
+## Docs Onboarding
+- Canonical app knowledge: `APP_KNOWLEDGE.md`
+- Agent runbook: `agent.md`
+- Agent guardrails / compatibility entrypoint: `AGENTS.md`
+- Fresh-session handoff: `docs/assistant/HANDOFF.md`
+- Validation guide: `docs/assistant/VALIDATION.md`
+- Live Gmail testing guide: `docs/assistant/GMAIL_LIVE_TESTING.md`
+- PR #46 post-merge summary: `docs/assistant/PR46_POST_MERGE_SUMMARY.md`
+- Assistant docs index: `docs/assistant/INDEX.md`
+- Machine routing map: `docs/assistant/manifest.json`
+- Fresh-session roadmap resume: `docs/assistant/SESSION_RESUME.md`
+- Local harness sync from vendored templates: `docs/assistant/workflows/PROJECT_HARNESS_SYNC_WORKFLOW.md`
+
+## Requirements
+- Windows 11
+- Python 3.11.9 (tracked in `.python-version`)
+- uv 0.12.20 (tracked in `pyproject.toml`)
+- OpenAI API key
+
+## Beginner Safe Setup (Recommended)
+For development with Codex, first see the [workstation setup guide](docs/assistant/WORKSTATION_SETUP.md). It provides a tailored exact-version WinGet recipe and a read-only checker while preserving the locked Python setup. Node 24.14.0 and Dart 3.11.0 are tracked in `.node-version` and `.dart-version` and shared with CI.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_dev_workstation.ps1
+```
+
+Use `-ConfigurationOnly` to check recipe/pin consistency without probing tools, or `-AsJson` for structured results. These checks do not install software, change services or create an environment. Actual workstation provisioning is a separate reviewed operation; Word and Gmail setup remain manual.
+
+Use the locked setup script. It creates `.venv311`, installs the exact versions in the tracked `uv.lock`, and checks Python, imports and dependency compatibility. Local setup and Windows CI use the same inputs. The lock was seeded from the working Windows environment; routine setup does not upgrade dependencies or rewrite the lock.
+
+```powershell
+winget install --id astral-sh.uv --exact --version 0.12.20 --scope user
+powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1
+. .\.venv311\Scripts\Activate.ps1
+copy .env.example .env
+```
+
+The script requires the pinned Python to be installed and does not download or change Python automatically. Existing `.venv311` environments keep extra packages. If their Python differs from the pin, setup stops and requests an explicit rebuild.
+
+To test reconstruction separately, use `-VenvName .venv-rebuild`. Environment names must be `.venv`-prefixed directory names within this checkout; paths and linked directories are rejected. The script restores its temporary environment setting and working directory when it finishes.
+
+`-Recreate` preserves the previous environment as a sibling `.backup-*` directory. If replacement fails, it restores the previous environment and retains the incomplete candidate as `.failed-*`. Save and close app work before deliberately rebuilding an environment used by a running app. Do not remove retained environments until their contents are accounted for.
+
+The ignored `requirements_freeze.txt` is an older local snapshot, not the supported installation input. Dependency upgrades are separate changes: update the lock deliberately and validate a fresh environment before adopting them. Keep the current Python/package combination during ordinary setup.
+
+Set `OPENAI_API_KEY` in `.env` or environment.
+
+## Quick Start (Recommended Browser App)
+1. Activate the environment:
+```powershell
+. .\.venv311\Scripts\Activate.ps1
+```
+2. Start the primary local browser app:
+```powershell
+python -m legalpdf_translate.shadow_web.server --open
+```
+3. Use the normal daily-work URL:
+`http://127.0.0.1:8877/?mode=live&workspace=workspace-1#new-job`
+4. If you want the live browser app without keeping the terminal attached, run:
+```powershell
+.\.venv311\Scripts\python.exe tooling/launch_browser_app_live_detached.py
+```
+5. Gmail browser-extension/native-host handoff uses:
+`http://127.0.0.1:8877/?mode=live&workspace=gmail-intake#gmail-intake`
+
+The browser app is the normal day-to-day interface. The Qt shell remains supported as a secondary fallback, and the CLI remains available for scripted or batch work.
+
+## If Python/Pytest Suddenly Breaks
+If imports fail, first check the project's environment and recorded error. An import failure alone does not prove the machine Python installation is corrupted.
+
+For a deliberate rebuild from the tracked lock, run:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/setup_python311_env.ps1 -Recreate
+. .\.venv311\Scripts\Activate.ps1
+powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1
+```
+
+## Run Qt Shell (Secondary / Fallback)
+```powershell
+python -m legalpdf_translate.qt_app
+```
+
+Or, on Windows, double-click `Launch LegalPDF Translate.bat` in the repo root for the same canonical Qt launch path without typing the command manually.
+
+## Run CLI (Secondary)
+```powershell
+legalpdf-translate --pdf input.pdf --lang EN --outdir out --effort high --effort-policy adaptive --images off --max-pages 5 --resume true --page-breaks true --keep-intermediates true --context-file ""
+```
+
+## Build EXE
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build_qt.ps1
+```
+
+## Validate
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1 -Quick
+powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1
+powershell -ExecutionPolicy Bypass -File scripts/validate_dev.ps1 -Full
+```
+
+Start with `-Quick` for core logic and browser-state feedback. The default command retains the browser/API tier; `-Full` retains the broader selected integration coverage and runs its formatting files in two isolated processes. Use `-Full -Workers 1` for sequential diagnosis. Neither selected tier replaces complete-repository CI coverage. In the local test-performance measurement, Quick passed 87 tests with two DOM integration cases excluded only from that tier (10.72 seconds pytest; 16.202 seconds including the wrapper). Selected Full passed 659 tests in 838.559 seconds (13 minutes 58.56 seconds). The complete four-worker benchmark passed all 6,717 original cases plus 37 runner tests in 537.941 seconds (8 minutes 57.94 seconds), versus the 1,835.010-second baseline: 3.41x in one local comparison. The baseline overlapped short Quick/tool checks; no hosted-CI timing is established. See the [validation guide](docs/assistant/VALIDATION.md) for measured scope and evidence limits.
+
+For normal work, do not install or run project dev validation through bare/global Python. Keep validation inside `.venv311`.
+See `docs/assistant/VALIDATION.md` for targeted browser/Gmail/Qt commands and the known Dart fallback behavior.
+
+## Create Clean Review ZIP
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/create_review_bundle.ps1
+```
+
+This writes a clean review ZIP to your Windows Downloads folder, keeps `.env.example`, and excludes local `.env`, virtualenvs, caches, generated DOCX/PDF outputs, and other local clutter.
+
+## Project Harness Commands
+- `implement the template files` / `sync project harness`: apply the vendored templates in `docs/assistant/templates/` to this repo's local harness without editing the template folder itself.
+- `audit project harness`: inspect vendored-template drift without editing files.
+- `check project harness`: run harness validation only.
+- `resume master plan`: open `docs/assistant/SESSION_RESUME.md` first. If it shows active-roadmap state, continue into the linked tracker and wave; if it shows dormant roadmap state, default to normal ExecPlan flow unless the user explicitly asks to open a new roadmap.
+- `update codex bootstrap` / `UCBS`: maintain the reusable template system itself. Do not use this when you only want to sync this repo to its vendored templates.

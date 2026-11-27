@@ -102,7 +102,32 @@ def _safe_folio_wrapper(node):
     return span is not None and span["literal"] == "".join(t.text or "" for t in wrapper.iter(W + "t"))
 
 
+def _trailing_page_break(node):
+    """The only editable inline control: one page break after plain body text.
+
+    Reject wrappers, other controls and text after the break, including a break
+    embedded in a run. Return its run so replacement can retain its exact style.
+    """
+    if (node.find(W + "pPr/" + W + "sectPr") is not None
+            or any(child.tag not in {W + "pPr", W + "r", W + "proofErr"} for child in node)
+            or any(len(child) or child.text for child in node.findall(W + "proofErr"))):
+        return None
+    content = [child for run in node.findall(W + "r") for child in run if child.tag != W + "rPr"]
+    if (not content or content[-1].tag != W + "br"
+            or dict(content[-1].attrib) != {W + "type": "page"}
+            or len(content[-1]) or content[-1].text
+            or any(child.tag != W + "t" for child in content[:-1])
+            or any(len(child) for child in content[:-1])
+            or len(list(node.iter(W + "t"))) != len(content) - 1
+            or len(list(node.iter(W + "br"))) != 1
+            or not "".join(child.text or "" for child in content[:-1]).strip()):
+        return None
+    return content[-1].getparent()
+
+
 def _editable(node):
+    if _trailing_page_break(node) is not None:
+        return True
     return node.find(W + "pPr/" + W + "sectPr") is None and all(
         child.tag in {W + "pPr", W + "r", W + "proofErr"} or child.tag == W + "dir" and _safe_folio_wrapper(node)
         for child in node) and all(child.tag in {W + "rPr", W + "t"} for run in node.iter(W + "r") for child in run)
@@ -125,6 +150,20 @@ def checked_text(value):
 
 def _replace(node, text, language):
     """Keep pPr and one uniform character style; explicitly report style reset."""
+    control_run = _trailing_page_break(node)
+    if control_run is not None:
+        # Leave the historical plain-text path unchanged: saved corrections
+        # replay this function and compare the resulting package bytes.
+        retained = deepcopy(control_run)
+        for child in list(retained):
+            if child.tag == W + "t":
+                retained.remove(child)
+        control_run.remove(control_run.find(W + "br"))
+        reset = _replace(node, text, language)
+        # The plain path retains pPr, updating only text direction when needed.
+        # Do not restore an old LTR setting over newly corrected Arabic text.
+        node.append(retained)
+        return reset
     inherited_folio = bool(node.findall(W + "dir"))
     if inherited_folio and not _safe_folio_wrapper(node):
         fail("correction_paragraph_not_editable")
@@ -212,6 +251,8 @@ def apply_actions(raw, actions, language, selected_pages, *, paragraph_map=None)
         touched.add(pid)
         node, row = nodes[pid], by_id[pid]
         if not row["editable"] or provenance[pid].get("decorative_rule"):
+            fail("correction_paragraph_controls")
+        if kind != "replace" and _trailing_page_break(node) is not None:
             fail("correction_paragraph_controls")
         page, bbox = action["source_page"], action["source_bbox"]
         if type(page) is not int or page not in selected_pages:
@@ -310,6 +351,32 @@ def word_changes(base, working):
         fail("correction_word_structure_unsupported", 409)
     changes = []
     for old, new in word_paragraph_pairs(base,working,projection):
+        old_node = original_roots[old["part_uri"]]
+        new_node = edited_roots[new["part_uri"]]
+        for index in old["location"]:
+            old_node = old_node[index]
+        for index in new["location"]:
+            new_node = new_node[index]
+        if list(old_node.iter(W + "br")) or list(new_node.iter(W + "br")):
+            old_control, new_control = _trailing_page_break(old_node), _trailing_page_break(new_node)
+            if old_control is None or new_control is None:
+                # Skeleton comparison deliberately removes text. Keep its
+                # positions relative to breaks here, so an unchanged control
+                # cannot move into a paragraph's prefix or interior.
+                def break_tokens(node):
+                    tokens = []
+                    for child in node.iter():
+                        if child.tag == W + "t":
+                            value = child.text or ""
+                            if tokens and tokens[-1][0] == W + "t":
+                                tokens[-1] = (W + "t", tokens[-1][1] + value)
+                            else:
+                                tokens.append((W + "t", value))
+                        elif child.tag == W + "br":
+                            tokens.append((W + "br", tuple(sorted(child.attrib.items()))))
+                    return tokens
+                if break_tokens(old_node) != break_tokens(new_node):
+                    fail("correction_paragraph_controls")
         if old["text"] != new["text"]:
             checked_text(new["text"])
             if not old["editable"] or not new["editable"]:

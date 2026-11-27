@@ -205,6 +205,7 @@ function installEnvironment(url) {
   const fetchCalls = [];
   const fetchQueue = [];
   const scheduledTimeouts = [];
+  const timeoutCallbacks = [];
 
   function getElement(id) {
     if (!elements.has(id)) {
@@ -261,6 +262,7 @@ function installEnvironment(url) {
     removeEventListener() {},
     setTimeout(_callback, delay) {
       scheduledTimeouts.push(delay);
+      timeoutCallbacks.push({callback:_callback,delay});
       return 1;
     },
     clearTimeout() {},
@@ -309,6 +311,7 @@ function installEnvironment(url) {
     elements,
     fetchCalls,
     scheduledTimeouts,
+    timeoutCallbacks,
     enqueueFetch(handler) {
       fetchQueue.push(handler);
     },
@@ -1493,6 +1496,160 @@ function selectedLayout(job, selection = "a", generation = 1) {
     delivery:{kind:"reviewed",selection_id:selection.repeat(32),generation,word_count:216,stale:false}};
 }
 
+
+// Drive the actual mounted correction editor and its normal approval callbacks.
+function descendants(root) { return [root, ...(root.children || []).flatMap(descendants)]; }
+function control(root, text) {
+  const node=descendants(root).find(n=>n.tagName==="BUTTON"&&n.textContent===text);
+  if(!node||node.disabled)throw new Error(`Missing enabled correction control: ${text}`);
+  return node;
+}
+async function checkLabel(root,text) {
+  const label=descendants(root).find(n=>n.tagName==="LABEL"&&deepText(n).includes(text));
+  if(!label)throw new Error(`Missing correction check: ${text}`);
+  const input=label.children.find(n=>n.tagName==="INPUT");input.checked=true;await input.dispatch("change");
+}
+async function completionCorrectionScenario(language, {rejectOld=false, failLatest=false}={}) {
+  const scenario=await setupScenario(`selected-review-${language}-${rejectOld}-${failLatest}`);
+  const job=reviewJob({jobId:`tx-correction-${language}`,language});
+  job.ordinary_layout=selectedLayout(job,"a",1);
+  let current=structuredClone(job), resolved=true, holdNextReview=null, latestReview=null;
+  const reviewResponse=()=>responseJson({normalized_payload:{arabic_review:{required:true,resolved,
+    job_id:job.job_id,completion_key:`review-${job.job_id}`,status:resolved?"resolved":"pending",auto_open_pending:false}}});
+  const correctionView=()=>({source_pages:[1],source_findings:[],frozen:false,
+    parent:{selection_id:current.ordinary_layout.delivery.selection_id,delivery_generation:current.ordinary_layout.delivery_generation,sha256:"d".repeat(64)},
+    selected_kind:current.ordinary_layout.delivery.kind,output_review_required:Boolean(current.ordinary_layout.delivery.output_review_required),
+    paragraphs:[{paragraph_id:"p1",part_uri:"word/document.xml",text:"Fictional corrected text",editable:true}],drafts:[]});
+  const ordinary=value=>responseJson({normalized_payload:{ordinary_layout:value}});
+  const route=call=>{
+    const path=new URL(call.path,"http://localhost").pathname;
+    if(path==="/api/translation/arabic-review/state") {
+      if(holdNextReview){const pending=holdNextReview;holdNextReview=null;return pending.promise;}
+      if(latestReview)return latestReview.promise;
+      return reviewResponse();
+    }
+    if(path==="/api/translation/arabic-review/continue"){resolved=true;return reviewResponse();}
+    if(path===`/api/translation/jobs/${job.job_id}`)return responseJson({normalized_payload:{job:structuredClone(current)}});
+    if(path.endsWith("/layout"))return ordinary(structuredClone(current.ordinary_layout));
+    if(path.endsWith("/text-corrections")&&call.method!=="POST")return ordinary(correctionView());
+    if(path.endsWith("/text-corrections")&&call.method==="POST")return ordinary({draft_id:"e".repeat(32),changes:[{before:"Fictional old text",after:"Fictional corrected text"}]});
+    if(path.endsWith("/approve")){
+      current.ordinary_layout=selectedLayout(job,"f",2);current.ordinary_layout.delivery.kind="text_corrected";
+      current.ordinary_layout.delivery.output_review_required=true;resolved=false;return ordinary({});
+    }
+    if(path.endsWith("/output-review")){current.ordinary_layout.delivery.output_review_required=false;return ordinary({});}
+    throw new Error(`Unexpected synthetic review route: ${call.method} ${path}`);
+  };
+  for(let i=0;i<60;i++)scenario.env.enqueueFetch(route);
+  scenario.translationModule.renderTranslationJob(job);await settleReviewWork();
+  const root=scenario.env.element("translation-ordinary-layout");
+  const before={disabled:scenario.env.element("translation-save-row").disabled,
+    resolved:scenario.translationModule.getTranslationUiSnapshot().arabicReviewResolved};
+  let staleReview;
+  if(language==="AR"){
+    staleReview=deferred();holdNextReview=staleReview;
+    scenario.translationModule.renderTranslationJob(structuredClone(current));await settleReviewWork();
+    latestReview=deferred();
+  }
+  await control(root,"Correct translated text").click();
+  await control(root,"Review text changes saved in Word").click();
+  await checkLabel(root,"I compared every change with the source");
+  await checkLabel(root,"I approve all text changes shown above");
+  await control(root,"Approve changes").click();
+  await settleReviewWork();
+  const capture=()=>({disabled:scenario.env.element("translation-save-row").disabled,
+    snapshot:scenario.translationModule.getTranslationUiSnapshot(),
+    status:scenario.env.element("translation-save-status").textContent});
+  const immediate=capture();
+  try {await scenario.translationModule.collectCurrentTranslationSaveValues();immediate.collectError="";}
+  catch(error){immediate.collectError=error.message;}
+  let afterStale=null,afterPending=null;
+  if(language==="AR"){
+    if(rejectOld)staleReview.reject(new Error("Fictional old-selection review failed"));
+    else staleReview.resolve(responseJson({normalized_payload:{arabic_review:{required:true,resolved:true,status:"resolved",job_id:job.job_id}}}));
+    await settleReviewWork();afterStale=capture();
+    const pending=latestReview;latestReview=null;
+    if(failLatest)pending.reject(new Error("Fictional current-selection review failed"));else pending.resolve(reviewResponse());
+    await settleReviewWork();afterPending=capture();
+  }
+  await checkLabel(root,"I reviewed the entire corrected output, including its formatting");
+  await control(root,"Confirm output review").click();await settleReviewWork();
+  const afterOutput=capture();
+  if(language==="AR"){
+    await scenario.env.dispatch("translation-arabic-review-continue-without-changes","click");
+    await settleReviewWork();
+  }
+  return {before,immediate,afterStale,afterPending,afterOutput,final:capture(),requests:scenario.env.fetchCalls};
+}
+results.correctedSelectionReviews={};
+for(const lang of ["AR","EN","FR"])results.correctedSelectionReviews[lang]=await completionCorrectionScenario(lang);
+results.correctedReviewOldFailure=await completionCorrectionScenario("AR",{rejectOld:true});
+results.correctedReviewCurrentFailure=await completionCorrectionScenario("AR",{failLatest:true});
+{
+  const scenario=await setupScenario("metrics-discovers-selected-review");
+  let current=reviewJob({jobId:"tx-metrics-review"});current.ordinary_layout=selectedLayout(current,"a",1);
+  const route=call=>call.path.includes("arabic-review/state")
+    ?responseJson({normalized_payload:{arabic_review:{required:true,resolved:current.ordinary_layout.delivery_generation===1,
+      job_id:current.job_id,status:current.ordinary_layout.delivery_generation===1?"resolved":"pending",auto_open_pending:false}}})
+    :responseJson({normalized_payload:{job:structuredClone(current)}});
+  for(let i=0;i<20;i++)scenario.env.enqueueFetch(route);
+  scenario.translationModule.renderTranslationJob(structuredClone(current));await settleReviewWork();
+  current.ordinary_layout=selectedLayout(current,"f",2);
+  let error="";try{await scenario.translationModule.collectCurrentTranslationSaveValues();}catch(e){error=e.message;}
+  await settleReviewWork();
+  results.metricsSelectedReview={error,snapshot:scenario.translationModule.getTranslationUiSnapshot(),
+    disabled:scenario.env.element("translation-save-row").disabled,
+    reviewRequests:scenario.env.fetchCalls.filter(c=>c.path.includes("arabic-review/state")).length};
+}
+
+
+results.manualCosts = [];
+for (const action of ["save", "gmail-hook"]) {
+  for (const edits of [{api:".55", estimate:".66"}, {api:"0"}, {estimate:"0"}]) {
+    const scenario = await setupScenario(`manual-cost-${action}-${JSON.stringify(edits)}`);
+    const job = reviewJob({language:"EN"});
+    Object.assign(job.result.save_seed, {word_count:10,api_cost:.1,estimated_api_cost:.2});
+    scenario.translationModule.renderTranslationJob(job);
+    for (const [key, value] of Object.entries(edits)) {
+      const id = key === "api" ? "translation-api-cost" : "translation-estimated-api-cost";
+      scenario.env.element(id).value = value;
+      await scenario.env.dispatch(id, "input");
+    }
+    // Rendering another snapshot of the same job must keep the operator edits.
+    scenario.translationModule.renderTranslationJob(structuredClone(job));
+    const pending = deferred();
+    scenario.env.enqueueFetch(() => pending.promise);
+    const fresh = structuredClone(job);
+    Object.assign(fresh.result.save_seed, {word_count:9,api_cost:.25,estimated_api_cost:.35});
+    let submitted;
+    if (action === "save") {
+      scenario.env.enqueueFetch((call) => {
+        submitted = JSON.parse(call.body).form_values;
+        return responseJson({normalized_payload:submitted,saved_result:{row_id:93}});
+      });
+      scenario.env.enqueueFetch(() => historyResponse());
+    }
+    const saving = action === "save" ? scenario.env.dispatch("translation-save-row", "click")
+      : scenario.translationModule.collectCurrentTranslationSaveValues();
+    // A second edit while the recount is in flight must win as well.
+    if (edits.api === ".55") {
+      scenario.env.element("translation-api-cost").value = ".56";
+      await scenario.env.dispatch("translation-api-cost", "input");
+    }
+    pending.resolve(responseJson({normalized_payload:{job:fresh}}));
+    const values = action === "save" ? (await saving, submitted) : await saving;
+    results.manualCosts.push({action, edits, values,
+      readOnly:scenario.env.element("translation-api-cost").readOnly});
+    scenario.env.enqueueFetch(() => responseJson({normalized_payload:{job:fresh}}));
+    results.manualCosts.at(-1).again = await scenario.translationModule.collectCurrentTranslationSaveValues();
+    const next = reviewJob({jobId:"tx-cost-next",language:"EN"});
+    Object.assign(next.result.save_seed, {api_cost:.7,estimated_api_cost:.8});
+    scenario.translationModule.renderTranslationJob(next);
+    scenario.env.enqueueFetch(() => responseJson({normalized_payload:{job:next}}));
+    results.manualCosts.at(-1).next = await scenario.translationModule.collectCurrentTranslationSaveValues();
+  }
+}
+
 results.selectedDeliveryCosts = [];
 for (const estimate of [.13810825, null]) {
   const scenario = await setupScenario(`selected-cost-${estimate}`);
@@ -1504,6 +1661,10 @@ for (const estimate of [.13810825, null]) {
   scenario.env.element("translation-total-mode").value="manual";
   scenario.env.element("translation-expected-total").value="22.22";
   scenario.env.element("translation-amount-paid").value="3.21";
+  scenario.env.element("translation-api-cost").value=".55";
+  await scenario.env.dispatch("translation-api-cost", "input");
+  scenario.env.element("translation-estimated-api-cost").value=".66";
+  await scenario.env.dispatch("translation-estimated-api-cost", "input");
   const selected=structuredClone(job); selected.ordinary_layout=selectedLayout(job);
   // A normal job refresh discovers the selection and invokes the mounted
   // layout callback, without re-rendering the case form or reapplying its seed.
@@ -1513,6 +1674,7 @@ for (const estimate of [.13810825, null]) {
   const waiting={api:scenario.env.element("translation-api-cost").value,
     estimate:scenario.env.element("translation-estimated-api-cost").value};
   const authoritative=structuredClone(selected);
+  authoritative.layout_costs={operations:1};
   Object.assign(authoritative.result.save_seed,{word_count:216,api_cost:.13810825,estimated_api_cost:estimate});
   pending.resolve(responseJson({normalized_payload:{job:authoritative}}));
   await settleReviewWork();
@@ -1520,7 +1682,16 @@ for (const estimate of [.13810825, null]) {
     api:scenario.env.element("translation-api-cost").value,estimate:scenario.env.element("translation-estimated-api-cost").value,
     caseNumber:scenario.env.element("translation-case-number").value,rate:scenario.env.element("translation-rate-per-word").value,
     mode:scenario.env.element("translation-total-mode").value,total:scenario.env.element("translation-expected-total").value,
-    paid:scenario.env.element("translation-amount-paid").value,requests:scenario.env.fetchCalls.length});
+    paid:scenario.env.element("translation-amount-paid").value,requests:scenario.env.fetchCalls.length,
+    readOnly:scenario.env.element("translation-api-cost").readOnly,
+    estimateReadOnly:scenario.env.element("translation-estimated-api-cost").readOnly,
+    costNote:scenario.env.element("translation-api-cost-note").textContent});
+  const next=reviewJob({jobId:"tx-after-layout",language:"EN"});
+  Object.assign(next.result.save_seed,{api_cost:.7,estimated_api_cost:.8});
+  scenario.translationModule.renderTranslationJob(next);
+  results.selectedDeliveryCosts.at(-1).next={api:scenario.env.element("translation-api-cost").value,
+    estimate:scenario.env.element("translation-estimated-api-cost").value,
+    readOnly:scenario.env.element("translation-api-cost").readOnly};
 }
 
 {
@@ -1540,6 +1711,54 @@ for (const estimate of [.13810825, null]) {
   first.resolve(responseJson({normalized_payload:{job:older}}));await settleReviewWork();
   results.selectedDeliveryCostRace={api:scenario.env.element("translation-api-cost").value,
     estimate:scenario.env.element("translation-estimated-api-cost").value};
+}
+
+{
+  const scenario = await setupScenario("gmail-recover-failed");
+  const launch = preparedLaunch();
+  scenario.translationModule.applyTranslationLaunch(launch);
+  const job = {job_id:"tx-retained",job_kind:"translate",status:"failed",
+    status_text:"Translation failed on page 1",config:{...launch,effort:"high",workers:3},
+    progress:{selected_index:2,selected_total:3},result:{failed_page:1,completed_pages:2},
+    actions:{resume:true,rebuild:true},diagnostics:{},artifacts:{}};
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{active_jobs:[job]}}));
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{job}}));
+  await scenario.translationModule.restoreGmailTranslationJob(launch);
+  results.gmailRecoveredFailure = {...captureUi(scenario.env,scenario.translationModule),
+    requests:scenario.env.fetchCalls.map(call=>({method:call.method,path:call.path})),
+    resumeChecked:scenario.env.element("translation-resume").checked};
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{active_jobs:[]}}));
+  let missingError="";
+  try { await scenario.translationModule.restoreGmailTranslationJob(launch); } catch(error) { missingError=error.message; }
+  results.gmailMissingRecovery={error:missingError,snapshot:scenario.translationModule.getTranslationUiSnapshot()};
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{active_jobs:[job]}}));
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{job}}));
+  let staleError="";
+  try { await scenario.translationModule.restoreGmailTranslationJob(launch,{isCurrent:()=>false}); } catch(error) { staleError=error.message; }
+  results.gmailStaleRecovery={error:staleError,snapshot:scenario.translationModule.getTranslationUiSnapshot()};
+}
+
+{
+  const scenario=await setupScenario("gmail-recovery-late-poll");
+  const launch=preparedLaunch();
+  const old={job_id:"tx-old-poll",job_kind:"translate",status:"running",config:{...launch},actions:{cancel:true},result:{},diagnostics:{},artifacts:{}};
+  scenario.translationModule.renderTranslationJob(old);
+  const late=deferred();scenario.env.enqueueFetch(()=>late.promise);
+  const pending=scenario.env.timeoutCallbacks.findLast(item=>item.delay===1500).callback();
+  const retained={...old,job_id:"tx-retained-new",status:"failed",actions:{resume:true}};
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{active_jobs:[retained]}}));
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{job:retained}}));
+  await scenario.translationModule.restoreGmailTranslationJob(launch);
+  late.resolve(responseJson({normalized_payload:{job:old}}));await pending;
+  results.gmailLatePoll={snapshot:scenario.translationModule.getTranslationUiSnapshot(),requests:scenario.env.fetchCalls.length};
+  const delayed=deferred();
+  scenario.env.enqueueFetch(()=>responseJson({normalized_payload:{active_jobs:[retained]}}));
+  scenario.env.enqueueFetch(()=>delayed.promise);
+  const recovery=scenario.translationModule.restoreGmailTranslationJob(launch).catch(error=>error.message);
+  await waitForAsyncWork();
+  scenario.translationModule.renderTranslationJob({...retained,job_id:"tx-newer-choice"});
+  delayed.resolve(responseJson({normalized_payload:{job:retained}}));
+  results.gmailLateRecovery={error:await recovery,snapshot:scenario.translationModule.getTranslationUiSnapshot()};
 }
 
 console.log(JSON.stringify(results));
@@ -1615,8 +1834,29 @@ def test_selected_delivery_refreshes_costs_and_preserves_editable_finance_fields
         assert result["mode"] == "manual"
         assert result["total"] == "22.22"
         assert result["paid"] == "3.21"
+        assert result["readOnly"] is True
+        assert result["estimateReadOnly"] is True
+        assert result["costNote"] == "Computed from translation and layout usage."
+        assert result["next"] == {"api": "0.7", "estimate": "0.8", "readOnly": False}
     assert float(known["estimate"]) == .13810825
     assert incomplete["estimate"] == ""
+
+
+def test_save_and_gmail_hook_preserve_editable_costs_during_recount_and_reset_for_next_job():
+    results = _probe_results()["manualCosts"]
+    assert len(results) == 6
+    for result in results:
+        edits, values = result["edits"], result["values"]
+        assert float(values["word_count"]) == 9
+        assert float(values["api_cost"]) == (.56 if edits.get("api") == ".55" else
+                                              0 if "api" in edits else .25)
+        assert float(values["estimated_api_cost"]) == (.66 if edits.get("estimate") == ".66" else
+                                                        0 if "estimate" in edits else .35)
+        assert result["readOnly"] is False
+        assert result["again"]["api_cost"] == values["api_cost"]
+        assert result["again"]["estimated_api_cost"] == values["estimated_api_cost"]
+        assert float(result["next"]["api_cost"]) == .7
+        assert float(result["next"]["estimated_api_cost"]) == .8
 
 
 def test_older_selection_cost_response_cannot_overwrite_newer_delivery():
@@ -1706,6 +1946,30 @@ def test_translation_browser_idle_and_prepared_action_states() -> None:
     prepared_mismatch = results["preparedTargetMismatch"]
     assert prepared_mismatch["sourceCardTarget"] == "Current Gmail job target: EN"
     assert prepared_mismatch["sourceCardDefaultTarget"] == "Default target for new jobs: AR"
+
+
+def test_gmail_recovery_reopens_retained_failure_without_starting_or_resetting() -> None:
+    results = _probe_results()
+    recovered = results["gmailRecoveredFailure"]
+    assert recovered["snapshot"]["currentJobId"] == "tx-retained"
+    assert recovered["snapshot"]["currentJobStatus"] == "failed"
+    assert recovered["snapshot"]["hasPreparedLaunch"] is False
+    assert recovered["snapshot"]["translationResumeDisabled"] is False
+    assert recovered["resumeChecked"] is True
+    assert all(item["method"] == "GET" for item in recovered["requests"])
+    assert [item["path"].split("?")[0] for item in recovered["requests"]] == [
+        "/api/translation/history", "/api/translation/jobs/tx-retained",
+    ]
+    assert "unavailable" in results["gmailMissingRecovery"]["error"]
+    assert "changed" in results["gmailStaleRecovery"]["error"]
+    for key in ("gmailMissingRecovery", "gmailStaleRecovery"):
+        assert results[key]["snapshot"]["currentJobId"] == "tx-retained"
+        assert results[key]["snapshot"]["currentJobStatus"] == "failed"
+    assert results["gmailLatePoll"]["snapshot"]["currentJobId"] == "tx-retained-new"
+    assert results["gmailLatePoll"]["snapshot"]["currentJobStatus"] == "failed"
+    assert results["gmailLatePoll"]["requests"] == 3
+    assert "changed" in results["gmailLateRecovery"]["error"]
+    assert results["gmailLateRecovery"]["snapshot"]["currentJobId"] == "tx-newer-choice"
 
 
 def test_translation_browser_failed_local_replacement_restores_prepared_gmail_source() -> None:
@@ -2054,3 +2318,46 @@ def test_dashboard_presentation_helper_uses_beginner_overview_copy() -> None:
     assert "workspace" not in helper_text
     assert "artifacts" not in helper_text
     assert "Save to Job Log" not in helper_text
+
+
+def test_corrected_selection_invalidates_arabic_review_and_ignores_older_response():
+    result = _probe_results()["correctedSelectionReviews"]["AR"]
+    assert result["before"] == {"disabled": False, "resolved": True}
+    for stage in ("immediate", "afterStale", "afterPending", "afterOutput"):
+        assert result[stage]["disabled"] is True
+        assert result[stage]["snapshot"]["arabicReviewResolved"] is False
+    assert result["immediate"]["snapshot"]["arabicReviewState"] == "checking"
+    assert result["afterStale"]["snapshot"]["arabicReviewState"] == "checking"
+    assert result["afterPending"]["snapshot"]["arabicReviewState"] == "pending"
+    assert result["final"]["disabled"] is False
+    assert result["final"]["snapshot"]["arabicReviewResolved"] is True
+
+
+def test_complete_corrected_output_review_blocks_every_language_and_refreshes_same_selection():
+    for language, result in _probe_results()["correctedSelectionReviews"].items():
+        assert result["immediate"]["disabled"] is True
+        assert result["immediate"]["snapshot"]["ordinaryLayoutReady"] is False
+        assert "complete corrected output" in result["immediate"]["status"]
+        assert result["immediate"]["collectError"]
+        assert result["afterOutput"]["snapshot"]["ordinaryLayoutReady"] is True
+        assert result["immediate"]["snapshot"]["ordinaryLayout"]["delivery"]["selection_id"] == result["afterOutput"]["snapshot"]["ordinaryLayout"]["delivery"]["selection_id"]
+        if language != "AR":
+            assert result["afterOutput"]["disabled"] is False
+            assert not any("arabic-review" in request["path"] for request in result["requests"])
+
+
+def test_selected_arabic_review_errors_never_reuse_another_revision_or_enable_save():
+    for key in ("correctedReviewOldFailure", "correctedReviewCurrentFailure"):
+        result = _probe_results()[key]
+        for stage in ("immediate", "afterStale", "afterPending", "afterOutput"):
+            assert result[stage]["disabled"] is True
+            assert result[stage]["snapshot"]["arabicReviewResolved"] is False
+        assert result["final"]["disabled"] is False
+
+
+def test_metrics_discovery_of_new_selection_requests_latest_arabic_review():
+    result = _probe_results()["metricsSelectedReview"]
+    assert result["reviewRequests"] == 2
+    assert result["disabled"] is True
+    assert result["snapshot"]["arabicReviewState"] == "pending"
+    assert result["error"]

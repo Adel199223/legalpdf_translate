@@ -1,5 +1,13 @@
 # PDF to DOCX Translation User Guide
 
+Builds containing the source-line alignment update better distinguish ordinary body prose from deliberately centered text. Existing saved jobs keep their original formatting recipe. Word wrapping, indentation, spacing, emblems and footer position can still differ from the PDF, so inspect every output page. See [current build and tested cases](../HANDOFF.md).
+
+Builds containing the terminal-footer update keep identified source footer text after the complete text from that source page and reduce excess spacing in verified headings and form fields. Builds containing the later closing-group update also keep an eligible short closing/signature block together with its source footer. Wording and font sizes stay intact; the document can still span extra pages. Older saved layouts retain their saved behavior; inspect every page of the unreviewed Word copy. See [current build status](../HANDOFF.md).
+
+## When extracted text conflicts with the page image
+
+In builds containing the fresh source-authority repair, the app can independently reread a precisely identified source occurrence when extracted text and the page image disagree about a protected name, number or other literal. It can also check whether that exact reference has a printed pair of brackets or parentheses, even if extraction missed the pair. Repeated references are checked separately against their own source positions, so a pair cannot move to another identical reference. The app keeps the original evidence and uses the existing one repair allowance before asking for at most one replacement translation and a separate meaning check. An unclear, unavailable or ambiguous reading stops approval. Older saved jobs keep their own behavior. This can resolve a supported discrepancy, but it does not guarantee first-pass success or replace checking the wording and every Word page before delivery. The output still requires human review before Save or Gmail approval. Check [the current handoff](../HANDOFF.md) for the tested build and acceptance limits.
+
 ## Explicit source and formatting review
 
 The [reviewed-source and DOCX guide](REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md) covers **Review source before translating** and **Review DOCX formatting** in builds containing that implementation. Use it for explicit source decisions, independent source/translation ranges, tables, page-matched derivatives and exact revision recovery. Saved settings and the original output remain authoritative; no model/protocol promotion is implied. Check [the current handoff](../HANDOFF.md) for the verified build and acceptance limits. Earlier integration results below remain historical evidence.
@@ -42,15 +50,31 @@ When an optional layout instruction cannot safely fit its container, the app can
 
 **Image Auto** includes the whole page image in the initial translation request even when selectable or OCR text exists. **Image Always** also supplies it. Extracted text is an aid: outlined writing, notes inside images and other visual text can be absent from the text layer. **Image Off** sends text only and displays a coverage qualification. None of these settings certifies completeness; check both the PDF and final Word file.
 
+In builds containing the October 18 fresh-run fix, leaving **Resume** checked still starts the normal fresh translation and automatic layout when the run folder has no previous work. When a saved run exists, Resume keeps its saved translation and layout recipe; an older text-only run does not silently acquire a new paid layout stage.
+
 If automatic layout fails after a fully settled recorded attempt, **Recover Source Layout** can make a separate paid layout request using the already translated wording. The app shows its current per-page bound and keeps the earlier charge and result. If a complete saved response was rejected locally and now passes validation, a bounded continuation reuses it and requests only missing page layouts. Each charge is counted once. This explicit action also works after an exact same-checkpoint Resume. Pending or uncertain charges, changed evidence and already selected outputs need resolution rather than another paid attempt. **Rebuild DOCX** is local and makes no new provider request when the retained evidence is intact. If no automatic candidate is available, inspect the raw file and make a current delivery choice before saving.
 
 Keep the app running until an unfinished Gmail batch is finalized. Its active email session is held in memory; restarting the app does not restore that unfinished batch for normal Save/draft completion. Re-preparing the email starts a separate batch.
+
+## Reviewing an ordinary Arabic translation in Word
+
+The installed browser app produces editable Word output through ordinary **Start Translate**. Review the actual Word pages against the source before delivery. In the November 2 release, all three tested Arabic documents completed unattended; their case-specific results are in the [handoff](../HANDOFF.md). Longer translated text can move a closing group to a new page. Check that each heading, value, signature and printed folio still belongs to its original group. Rules, spacing and artwork can look different.
+
+Eligible ordinary Arabic jobs with 1–12 selected pages receive a separate source inventory, correction and independent meaning check. The primary translation keeps its saved model; the separate review uses its saved review model. Only correction receives the bounded job context and relevant preferred terms. Source meaning takes priority: explicit details and relationships must survive without inventing an interpretation. Every selected page must be covered. Image Off remains text only; page-image coverage depends on the saved image setting.
+
+An eligible fresh job has one automatic repair cycle when a complete review finds a repairable defect, or when a completed correction introduces an eligible consistency error such as repeated numbers. The replacement must pass all translation checks and a fresh independent review. The allowance does not reset on Resume. An unchanged repair, exhausted allowance, unresolved source or uncertain charge stops further work. Older saved jobs keep their original behavior and evidence.
+
+The formatted Word file remains **unreviewed** until you inspect its wording and every page. The installed workflow can restore safe paragraph order and eligible mixed-direction clock/folio display while preserving text. Layout warnings still need review. **Recover Source Layout** can reuse complete, settled page responses; when all required responses are valid, local recovery needs no new provider request. Missing pages may require the paid recovery already shown by the app. Check the saved quote and result rather than assuming every recovery is free.
+
+Use the normal review and delivery controls before Save or Gmail. Failed or partial files remain diagnostic evidence; a later successful candidate does not erase their history.
 
 ## Readable Word output and local rebuilds
 
 Translations remain editable Word files. The compact writer uses readable Arial 11 pt for Arabic and Times New Roman 10.5 pt for English/French, deliberate margins, intact accented Latin names and Word page numbers. Turn source-page breaks off for compact reflow; leave them on when you need a separate Word start for every source page. Fonts are not reduced and legal text is not shortened to force a page count.
 
-For new complete translations, an explicit matching source page label, including Arabic `ص. 1`, is kept without an additional generated counter. This conservative rule applies only when every selected page has a clear terminal label. Partial or ambiguous output keeps its normal numbering; older saved jobs retain their original assembly recipe.
+In the isolated October 20 update, a new complete ordinary translation can keep a clear terminal page label, including Arabic `ص. 1`, without an additional generated counter only when the original PDF independently proves matching lower-page labels for every selected page. Local numbering may restart between joined documents. Partial, ambiguous or unproven output keeps normal numbering; older saved jobs retain their original assembly recipe. Before this update, matching translated labels used the earlier saved numbering rules. Inspect actual Word pages and check [installed-build status](../HANDOFF.md).
+
+In builds containing the October 16 source-folio update, automatic layout can also keep printed source fractions without adding a duplicate Word counter, including a fraction at the end of a contact paragraph. This needs complete matching evidence for every selected page. Printed source numbering stays intact; uncertain pages and older saved candidates keep their original behavior. Inspect all actual output pages, because source numbering can differ from Word's final page count. Check [installed-build status](../HANDOFF.md).
 
 For saved runs with complete matching source/translation structure, the writer can preserve notice columns, tables, source-based paragraph gaps and real section headers/footers. Each joined document can have different headers, different footers or neither. Uncertain material stays in the text for review. Repeated translated labels use one recorded wording, with original variants retained separately for review.
 
@@ -70,7 +94,11 @@ Automatic Word-to-PDF export is not needed for translation DOCX creation. Transl
 
 ## Correct wording after translation
 
+In builds containing the October 12 repair, a text paragraph ending with one ordinary page break supports wording replacement while retaining that break. Adding or deleting that paragraph, moving the break, or changing fields and other unsupported controls remains blocked. After approval, inspect the entire corrected Word document again. Check [installed-build status](../HANDOFF.md) before assuming this repair is available.
+
 In builds containing the October 10 translation-review completion update, use **Correct translated text** to replace, add or remove wording in a completed ordinary translation. Compare with the source, review the before/after changes, approve the corrected copy, then inspect its complete Word layout. **Review text changes saved in Word** can import supported edits from the app's working copy for the same explicit approval. Rebuilding alone does not import Word edits. See the [correction steps](REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md#correct-wording-in-a-completed-translation) and [current installed-build status](../HANDOFF.md).
+
+In builds containing the October 15 repair, wording approval refreshes review status for that selected copy. Inspect the complete output and finish the separate Arabic Word review when required before Save or Gmail confirmation. Review of an earlier copy does not approve a later correction. While either required review remains pending, the result shows **Review required** and Save remains unavailable. Check [installed-build status](../HANDOFF.md).
 
 The chosen revision supplies the final word count, download and Gmail attachment. The original translation and API charges are retained. Source-image findings can help locate possibly missing text, but you must verify them against the source; no findings does not mean the translation is complete.
 
@@ -188,6 +216,10 @@ The updated translation guidance asks every language to preserve uncertainty, co
 ## Save to Job Log
 
 In builds containing the future-translation fixes, the standard rate is **EUR 0.027 per word for English, French and Arabic**, with totals rounded to cents. Counts and rates update the calculated total immediately; choose **Set total manually** when you intend a different fee, including zero. Existing saved rows retain their historical amounts and profit. API cost is USD and fees are EUR, so a new profit stays uncalculated. Check the [current handoff](../HANDOFF.md) for application status and the separate saved-rate correction.
+
+In builds containing the October 15 repair, manual API costs survive recount/Save for the same document, including explicit zero. They reset on another job or selected revision. Computed layout costs remain read-only. A manual estimate does not settle unknown historical charges. These fixes require a build verified in the [current handoff](../HANDOFF.md).
+
+The app counts whitespace-separated tokens in supported document stories; native Word can count punctuation differently. Review the displayed count before generating fees. Existing fee files/drafts do not update when you edit a historical row. Total wording supports one document or a combined batch.
 
 For completed translations, **Source layout and delivery** lets you review source associations, correct the geometry manually, build and inspect a separate formatted Word copy, then explicitly select it for normal saving and Gmail staging. The original remains preserved. See the [step-by-step review guide](REVIEWED_SOURCE_AND_DOCX_USER_GUIDE.md#review-a-completed-translations-layout). Once a layout review is prepared, resolve pending operations and choose a current delivery copy before saving.
 
@@ -320,6 +352,8 @@ This Gmail-draft branch always applies to translation honorários. Interpretatio
 - Gmail-intake interpretation notice exports create a threaded reply draft and attach the honorários PDF only
 
 ## Gmail Intake Batch Replies
+
+In builds containing the October 12 repair, **Resume Recovery** and **Continue Gmail step** reopen the retained run for the current attachment. They do not start a paid retry. Use **Resume Translation** afterward when you intend to retry failed pages. If the retained job is unavailable, recovery reports that condition without preparing a fresh run; **Redo current attachment** remains separate. A browser refresh and an app-server restart have different recovery limits; unfinished sessions in older builds are not restored automatically after a server restart.
 Use this when the source files already arrived in Gmail and you want one reply draft back in the same thread.
 
 ### Setup
@@ -350,6 +384,7 @@ Use this when the source files already arrived in Gmail and you want one reply d
 17. When all selected translation files are confirmed, the app can generate one honorários export using the combined translated word count for the batch.
 18. The honorários export retains the DOCX and makes one bounded attempt to generate and verify a sibling PDF with the same basename; it does not automatically retry a timeout.
 19. If translation honorários generation succeeds, the PDF exists and the Gmail connection permits draft creation, the app creates one reply draft in the original thread with all translated DOCXs plus that single honorários PDF.
+    In builds containing the October 17 wording repair, the opening uses `a tradução solicitada` for one translated DOCX and `as traduções solicitadas` for multiple DOCXs, excluding the fee PDF from that count. The original reply subject stays unchanged; a manual single-translation draft uses `Tradução` in its new subject. Existing drafts need separate editing; see [HANDOFF](../HANDOFF.md) for installed status.
 20. If interpretation honorários generation succeeds, the PDF exists and the Gmail connection permits draft creation, the app creates one reply draft in the original thread with the generated honorários PDF only.
 21. If preview or `Prepare selected` fails before a translation run exists, the Gmail diagnostics area now preserves the current selection/start-page state and offers `Generate Failure Report`.
 22. Before `Finalize Gmail Batch Reply`, the app now checks whether the real Word PDF export path is ready. If it says blocked, fix that readiness issue first instead of rerunning translation.
@@ -427,7 +462,7 @@ Queue mode writes these sidecar files next to the manifest:
 26. If the Gmail batch warns that case/court metadata differ, split that email into separate batches instead of forcing one reply.
 27. If you skip or fail honorários generation at the end of a Gmail batch, the app does not create the Gmail reply draft in V1.
 28. A WSL-only `gog` smoke is not enough for final Gmail intake validation. The signed-in browser, Windows app, and Windows `gog` must be checked on the same host.
-29. If translation itself fails, inspect `run_report.md` and `run_summary.json` first. Arabic failures now include `validator_defect_reason`, `ar_violation_kind`, and sample snippets. In Gmail batches, the current attachment stays in a recovery state until the rerun succeeds.
+29. If translation itself fails, inspect `run_report.md` and `run_summary.json` first. Arabic failures include `validator_defect_reason`, `ar_violation_kind`, and sample snippets. If the failed page already used an image, changing Images auto to always does not address the same validation failure; inspect the reported details. OCR advice remains separate. In Gmail batches, the current attachment stays in a recovery state until its translation succeeds.
 30. If the current Gmail attachment was already translated once and you want to run it again without closing the app, use `Redo Current Attachment` instead of `Reset Gmail Workspace`. `Redo` keeps the batch session and only resets the translation side for the current unconfirmed attachment. If a previous finalized batch is still recoverable, that recovered result should stay secondary and must not block a fresh extension handoff.
 31. If translation succeeded but finalization/draft behavior is wrong, inspect `_gmail_batch_sessions/<session_id>/gmail_batch_session.json` under the effective output folder before debugging Gmail transport or attachments again.
 32. If the Arabic review dialog says Word automation failed, stay on Windows: use `Open in Word` or the default Windows handler, save manually, then choose `I saved the Word file` if save detection misses (`Continue now` in older builds). WSL-only validation is not enough for this path.
@@ -468,7 +503,8 @@ suggestion uses local text; explicit autofill is a separate user action.
 - Workflow specifics: `docs/assistant/workflows/TRANSLATION_WORKFLOW.md`
 - Data/persistence behavior: `docs/assistant/workflows/PERSISTENCE_DATA_WORKFLOW.md`
 
-
 ## Opening an incomplete run
 
 Open **Recent Work**, expand **Translation Runs**, and choose **Open run**. The app takes you to that run. If a failed or cancelled run has a partial Word file, **Download partial DOCX** appears beside its status. It contains only the completed source-page translations and is clearly marked incomplete. Opening it does not restart translation. These fixes are available in canonical builds containing PR #300; check the [current handoff](../HANDOFF.md) for the verified build and testing limits.
+
+For an eligible retained run, explicit **Resume Translation** continues unfinished pages using the matching source and saved run settings while retaining completed pages and earlier charges. Availability depends on verified run evidence; not every incomplete run is resumable. Review every completed output before saving or finalizing Gmail. Check the [current handoff](../HANDOFF.md) for the verified installed build and testing limits.

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Quick guardrails for Codex/agent work in `legalpdf_translate`.
+Quick guardrails for coding agents (Antigravity and other coding agents) working in `legalpdf_translate`.
 
 - Primary runbook: `agent.md`
 - Canonical app architecture/status: `APP_KNOWLEDGE.md`
@@ -15,6 +15,11 @@ Quick guardrails for Codex/agent work in `legalpdf_translate`.
 - Current build/branch and acceptance status: `docs/assistant/HANDOFF.md`; distinguish unpublished integration work from canonical main.
 - Primary UI: local browser app; live/Gmail port `8877`; Gmail bridge port `8765`
 - Development UI review mode: browser `mode=shadow` with isolated app data
+
+## Translation quality work
+- Success means an ordinary Start produces editable Word output with accurate legal meaning, intact literals and the original relationships among headings, fields, rows, paragraphs, signatures and footers. Review the actual Word pages. Record appearance differences separately.
+- For a defect, use the smallest ordinary-path replay that can distinguish source extraction, translation and rendering. Check an unaffected control. Keep fresh-run acceptance and installed status separate. See `agent.md` under “Translation quality decisions”.
+- Resume from the short current handoff. Verify a claimed running job against its terminal evidence before acting. An expired spending permission stops new dispatch, while offline investigation and scoped documentation can continue.
 
 ## Approval Gates
 Ask before executing any of the following:
@@ -54,7 +59,8 @@ Ask before executing any of the following:
 ## Live vs Shadow Mode
 - Live Gmail extension intake must use canonical `main` at `C:\Users\FA507\.codex\legalpdf_translate`.
 - Feature branches and review worktrees should use browser `mode=shadow` and isolated workspaces for UI review.
-- Codex must not click the live Gmail extension or operate live Gmail unless the user explicitly authorizes that scope.
+- Coding agents must not click the live Gmail extension, operate live Gmail via Antigravity's built-in `browser` subagent / Playwright / Chrome DevTools, or use Antigravity's installed `gmail` plugin against live Gmail unless the user explicitly authorizes that scope.
+- Keep assistant-side Google Workspace plugins (`gmail`, `gdrive`, `gdocs`) strictly separate from the app's own Windows `gog` CLI helper.
 - Generated DOCX/PDF files must be manually reviewed before any Gmail draft is sent.
 
 ## Routing Rules
@@ -95,4 +101,7 @@ Standing user authorization (2026-09-16): perform useful Docs Sync autonomously.
 Use `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`. Keep architecture, current handoff, validation and relevant user guides coherent; record deferred gaps when another bounded task must finish first. This does not invoke UCBS or authorize vendored-template changes.
 
 ## Assistant and App Context
-The user's standing assistant preference is Astra Ultra for complex analysis, planning, and decisions, and GPT-6.1 Sol for implementation and extraction. Apply this preference when those assistant models and task routing are available. App translation models, effort, and protocol remain separate saved or explicit per-run choices. Discover tools available in the current session and use their current documentation. Do not infer model capabilities, credentials, browser state, or app ownership from stale inventories.
+- Antigravity loads `AGENTS.md` automatically as the workspace rule (do not add a duplicate `GEMINI.md`) and discovers progressive-disclosure workspace skills under `.agents/skills/` (`legalpdf-validate`, `legalpdf-browser-review`, `legalpdf-word-review`, `legalpdf-commit-publish`) that wrap canonical `docs/assistant/workflows/`.
+- In Antigravity, use Antigravity's native plan/execute mode and active session models for coding-agent work (historical Astra Ultra / GPT-6.1 Sol assistant routing applies only if a Codex session is used). App translation, OCR, and semantic-review models, effort, and protocols remain separate saved or explicit per-run choices.
+- Tool routing in Antigravity: use native file/terminal tools for code/tests, the built-in `browser` subagent or `chrome-devtools`/`playwright` MCP for isolated `mode=shadow` web UI inspection, `windows-desktop-control` MCP (`Screenshot` first; always release via `ControlStatus(release=true)`) for live Microsoft Word/Qt visual checks, and `openaiDeveloperDocs` MCP (`migrated-settings`) for official OpenAI API citations.
+- Discover tools, plugins, and MCP servers available in the current session and use their current documentation. Do not infer model capabilities, credentials, browser state, or app ownership from stale inventories.

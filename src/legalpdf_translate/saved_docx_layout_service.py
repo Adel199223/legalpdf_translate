@@ -830,7 +830,7 @@ class SavedDocxLayoutService:
             _fail("invalid_ordinary_binding")
         pages_selected = tuple(selected_pages) if type(selected_pages) in {list, tuple} else ()
         with self._scope(review_id) as folder:
-            manifest, snapshot, _ = self._load(folder)
+            manifest, snapshot, pages = self._load(folder)
             generations, _, _ = self._generations(folder)
             if expected_generation != len(generations):
                 _fail("generation_conflict", 409)
@@ -840,6 +840,44 @@ class SavedDocxLayoutService:
                 selected_pages=pages_selected, target_lang=manifest["target_lang"])
             if mapped.saved_snapshot != snapshot:
                 _fail("ordinary_snapshot_mismatch", 409)
+            from .ordinary_layout_reproposal import verify_evidence
+            verify_evidence(proposal_evidence, snapshot=snapshot,
+                frames=pages, source_pdf=_read(folder / "source.pdf", PDF_MAX_BYTES),
+                page_groups=mapped.page_groups, selected_pages=mapped.selected_pages,
+                decisions=generations[-1]["decisions"], expected_policy_fingerprint=policy_fingerprint,
+                expected_review_id=review_id)
+            from .ordinary_source_folio_proof import KEY, RECIPE_KEY, VERSION, derive_proof
+            from .ordinary_auto_layout import (_source_folio_direction_version,
+                _source_folio_policies, _clock_direction_version, _source_folio_inline_direction_version)
+            direction_key = "source_folio_direction_version"
+            expected_direction = (_source_folio_direction_version(policy_fingerprint)
+                if "source_evidence" in proposal_evidence else None)
+            if ((direction_key in proposal_evidence and expected_direction is None)
+                    or proposal_evidence.get(direction_key) != expected_direction):
+                _fail("ordinary_source_folio_direction_changed", 409)
+            clock_key = "clock_direction_version"
+            expected_clock = _clock_direction_version(policy_fingerprint) if "source_evidence" in proposal_evidence else None
+            if (clock_key in proposal_evidence and (expected_clock is None or proposal_evidence[clock_key] != expected_clock)
+                    or expected_clock is not None and proposal_evidence.get(clock_key) != expected_clock):
+                _fail("ordinary_source_clock_direction_changed", 409)
+            inline_key = "source_folio_inline_direction_version"
+            expected_inline = (_source_folio_inline_direction_version(policy_fingerprint)
+                if "source_evidence" in proposal_evidence else None)
+            if (inline_key in proposal_evidence and (expected_inline is None or proposal_evidence[inline_key] != expected_inline)
+                    or expected_inline is not None and (proposal_evidence.get(inline_key) != expected_inline
+                        or proposal_evidence.get(RECIPE_KEY) != VERSION)):
+                _fail("ordinary_source_inline_folio_direction_changed", 409)
+            from .ordinary_auto_layout_artifacts import _terminal_source_layout_context
+            _terminal_source_layout_context({**proposal_evidence,'policy_fingerprint':policy_fingerprint})
+            if KEY in proposal_evidence:
+                _fail("ordinary_source_folio_proof_untrusted", 409)
+            if RECIPE_KEY in proposal_evidence:
+                if (proposal_evidence[RECIPE_KEY] != VERSION
+                        or policy_fingerprint not in {p.split(":", 1)[1] for p in _source_folio_policies()}):
+                    _fail("ordinary_source_folio_recipe_changed", 409)
+                proposal_evidence = {**proposal_evidence, KEY: derive_proof(
+                    _read(folder / "source.pdf", PDF_MAX_BYTES), pages, pages_selected,
+                    mapped.source_pdf_sha256)}
             base = {"version": "ordinary_binding_v1", "review_id": review_id,
                 "raw_docx_sha256": mapped.raw_docx_sha256,
                 "raw_source_map_sha256": mapped.raw_source_map_sha256,
@@ -897,6 +935,11 @@ class SavedDocxLayoutService:
                 or evidence.get("proposal_evidence_sha256") != _sha(_encode(evidence.get("proposal_evidence")))
                 or evidence["proposal_evidence"].get("document_reviewed") is True):
             _fail("ordinary_binding_changed", 409)
+        from .ordinary_layout_reproposal import verify_evidence
+        verify_evidence(evidence["proposal_evidence"], snapshot=snapshot, frames=self._load(folder)[2],
+            source_pdf=_read(folder / "source.pdf", PDF_MAX_BYTES), page_groups=mapped.page_groups,
+            selected_pages=mapped.selected_pages, expected_policy_fingerprint=base["policy_fingerprint"],
+            expected_review_id=folder.name)
         return base, evidence, mapped
 
     def _verified_unreviewed_candidate(self, folder, attempt, manifest, snapshot, pages,
@@ -938,7 +981,8 @@ class SavedDocxLayoutService:
         artifact = AutoCandidateArtifact(values["docx"], values["source_map"], values["core_receipt"],
             _sha(values["docx"]), _sha(values["source_map"]), _sha(values["core_receipt"]))
         verify_unreviewed_candidate(_read(folder / "original.docx", DOCX_MAX_BYTES), mapped,
-            pages, decisions, artifact, proposal_evidence=evidence["proposal_evidence"])
+            pages, decisions, artifact, proposal_evidence=evidence["proposal_evidence"],
+            source_pdf_bytes=_read(folder / "source.pdf", PDF_MAX_BYTES), policy_fingerprint=base["policy_fingerprint"])
         receipt = _decode(values["receipt"])
         if (receipt != artifact.receipt | {"review_id": folder.name,
                 "candidate_id": intent["candidate_id"], "generation": generation,
@@ -1000,7 +1044,8 @@ class SavedDocxLayoutService:
             intent_raw = _write(attempt / "intent.json", intent)
             raw_docx = _read(folder / "original.docx", DOCX_MAX_BYTES)
             artifact = build_unreviewed_candidate(raw_docx, mapped, pages, decisions,
-                proposal_evidence=evidence["proposal_evidence"])
+                proposal_evidence=evidence["proposal_evidence"],
+                source_pdf_bytes=_read(folder / "source.pdf", PDF_MAX_BYTES), policy_fingerprint=base["policy_fingerprint"])
             receipt = artifact.receipt | {"review_id": review_id,
                 "candidate_id": candidate_id, "generation": expected_generation,
                 "policy_fingerprint": base["policy_fingerprint"], "provider_dispatch_count": 0}

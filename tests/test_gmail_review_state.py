@@ -93,13 +93,19 @@ results.stageTranslationRecovery = reviewModule.deriveGmailStage({{
     completed: false,
     current_item_number: 1,
     total_items: 2,
-    current_attachment: {{ attachment: {{ filename: "sentença 305.pdf" }} }},
+    session_id: "batch-a", selected_target_lang: "AR",
+    message: {{message_id: "msg-1", thread_id: "thread-1"}},
+    current_attachment: {{ attachment: {{ filename: "sentença 305.pdf", attachment_id: "att-1" }}, saved_path: "C:/tmp/source.pdf", start_page: 1 }},
   }},
   translationUi: {{
     currentJobStatus: "failed",
     currentJobKind: "translate",
     currentJobHasSaveSeed: false,
     currentJobRecoveryRequired: true,
+    currentJobId: "tx-retained",
+    runtimeJobs: [{{job_id: "tx-retained", job_kind: "translate", status: "failed", config: {{source_path: "C:/tmp/source.pdf", target_lang: "AR", start_page: 1,
+      gmail_batch_context: {{session_id: "batch-a", message_id: "msg-1", thread_id: "thread-1", attachment_id: "att-1"}}
+    }}}}],
     hasCompletionSurface: false,
     completionDrawerOpen: false,
   }},
@@ -1143,6 +1149,15 @@ const malformed = reviewModule.buildGmailReviewLoadResetState({
 
 const empty = reviewModule.buildGmailReviewLoadResetState();
 
+const historicalBootstrap = {
+  current_handoff_context: {message_id: "previous-message"},
+  handoff_session_id: "previous-handoff",
+  pending_intake_context: {message_id: "pending-message"},
+  pending_status: "warming",
+  pending_review_open: true,
+};
+const clearedHistoricalBootstrap = {...historicalBootstrap, ...loaded.bootstrapPatch};
+
 function summarize(state) {
   return {
     bootstrapPatch: state.bootstrapPatch,
@@ -1167,6 +1182,7 @@ console.log(JSON.stringify({
   unavailable: summarize(unavailable),
   malformed: summarize(malformed),
   empty: summarize(empty),
+  clearedHistoricalBootstrap,
 }));
 """
     results = run_browser_esm_json_probe(
@@ -1188,14 +1204,23 @@ console.log(JSON.stringify({
         "browserPdfStateIsMap": True,
         "browserPdfStateSize": 0,
     }
+    expected_bootstrap_reset = {
+        "current_handoff_context": {},
+        "handoff_session_id": "",
+        "pending_intake_context": {},
+        "pending_status": "",
+        "pending_review_open": False,
+    }
+    expected_bootstrap_keys = sorted([*expected_bootstrap_reset, "message_signature", "review_event_id"])
 
     assert results["exportType"] == "function"
     assert results["loaded"] == {
         "bootstrapPatch": {
+            **expected_bootstrap_reset,
             "review_event_id": f"evt-{malicious}",
             "message_signature": f"sig-{malicious}",
         },
-        "bootstrapKeys": ["message_signature", "review_event_id"],
+        "bootstrapKeys": expected_bootstrap_keys,
         "loadResult": {
             "ok": True,
             "status_message": f"Loaded {malicious}",
@@ -1213,22 +1238,28 @@ console.log(JSON.stringify({
     }
     assert results["unavailable"] == {
         "bootstrapPatch": {
+            **expected_bootstrap_reset,
             "review_event_id": 7,
             "message_signature": "sig-7",
         },
-        "bootstrapKeys": ["message_signature", "review_event_id"],
+        "bootstrapKeys": expected_bootstrap_keys,
         "loadResult": None,
         **expected_reset,
     }
     assert results["malformed"] == {
-        "bootstrapPatch": {},
-        "bootstrapKeys": ["message_signature", "review_event_id"],
+        "bootstrapPatch": expected_bootstrap_reset,
+        "bootstrapKeys": expected_bootstrap_keys,
         "loadResult": None,
         **expected_reset,
     }
     assert results["empty"] == {
-        "bootstrapPatch": {},
-        "bootstrapKeys": ["message_signature", "review_event_id"],
+        "bootstrapPatch": expected_bootstrap_reset,
+        "bootstrapKeys": expected_bootstrap_keys,
         "loadResult": None,
         **expected_reset,
+    }
+    assert results["clearedHistoricalBootstrap"] == {
+        **expected_bootstrap_reset,
+        "review_event_id": f"evt-{malicious}",
+        "message_signature": f"sig-{malicious}",
     }

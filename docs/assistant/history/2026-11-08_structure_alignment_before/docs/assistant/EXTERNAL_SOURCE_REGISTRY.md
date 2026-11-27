@@ -1,0 +1,347 @@
+# External Source Registry
+
+## Translation structure and harness review — 2026-11-02
+
+| Source | Use in this review | Verified |
+|---|---|---|
+| [OpenAI Codex best practices](https://learn.chatgpt.com/guides/best-practices) | Keep durable instructions concise, task-specific guidance linked, and completion criteria observable. | 2026-11-02 |
+| [OpenAI evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices) | Use task-specific examples, explicit success criteria and independent human assessment to calibrate automated checks. | 2026-11-02 |
+| [OpenAI Decisions guide](https://developers.openai.com/api/docs/guides/decisions) | Typed predicates, choices and scores suit bounded classification. Compare with the local quality screen before changing routing. | 2026-11-02 |
+| [PyMuPDF text extraction](https://pymupdf.readthedocs.io/en/latest/recipes-text.html#how-to-extract-text-in-natural-reading-order) and [Microsoft on PDF conversion](https://support.microsoft.com/en-gb/word/opening-pdfs-in-word?ver=15) | Reading order and document relationships may need to be inferred from positioned content. Compare with native Word rendering. | 2026-11-02 |
+| [Software Engineering at Google, Testing Overview](https://abseil.io/resources/swe-book/html/ch11.html) | Use fast focused feedback alongside larger real-path checks. | 2026-11-02 |
+| [OpenAI API pricing](https://developers.openai.com/api/docs/pricing) and [GPT-6 Astra model limits](https://developers.openai.com/api/docs/models/gpt-6-astra) | Reverified Standard pricing and model limits for the bounded release calls. Account, tier, payment and usage witnesses are retained privately. | 2026-11-02 |
+
+The [project decision](reviews/TRANSLATION_DIRECTION_2026-11-02.md) records our local interpretation and its evidence.
+
+## Prepaid funding boundary — 2026-10-22
+
+The official [prepaid billing guidance](https://help.openai.com/en/articles/8264644-setting-up-and-managing-prepaid-api-billing), verified 2026-10-22, explains that request cutoff may lag exhausted prepaid credit and a resulting negative balance can be deducted from a later purchase. This does not reconcile the current dashboard with the retained per-call ledger. Continued request acceptance is not proof of remaining allowance; no paid exhaustion probe, further top-up request or purchase is authorized. Current funding and stopping status belong to [HANDOFF](HANDOFF.md).
+
+## Strict OCR text transport — 2026-10-21
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/guides/structured-outputs#structured-outputs-vs-json-mode | Fresh OpenAI OCR transport envelope | Responses `text.format` supports strict JSON Schema, including the existing GPT-4o Mini family. The application requests one string field and independently validates the answered envelope before source capture; literal source fences remain inside that exact string. | 2026-10-21 |
+
+ROOT and the implementation author verified this official section through OpenAI Developer Docs. The pinned SDK serialization and fictional native accounting tests validate the local request path. This changes neither the OCR model nor source fidelity obligations. Saved policy absence preserves historical plain-text requests; old failed inventories remain failed. Retained acquisition evidence contains exact provider output strings and flags, not a claim of HTTP response byte retention. Current integration/application status remains in [HANDOFF](HANDOFF.md).
+
+## Prompt-cache compatibility and Codex assessment — 2026-10-21
+
+Official references were verified on 2026-10-21 by the retained read-only assessment `cache_architecture_review_01/assessment.md` and numeric-only `cache_usage.sanitized.json`. This is a narrow prospective billing-shape compatibility update, not an application or harness rewrite. Current application status belongs to [HANDOFF](HANDOFF.md).
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/changelog | Prompt-cache release date | The Responses 12-hour cache option is dated 2026-10-20. | 2026-10-21 |
+| https://developers.openai.com/api/docs/guides/prompt-caching | Default cache accounting | Omission retains the 30-minute default; 12 hours is explicit. Lifetime write details are nested under input token details. The prospective repair admits a validated optional breakdown only with zero 12-hour writes; it changes no TTL, price, prompt or model. | 2026-10-21 |
+| https://developers.openai.com/api/docs/pricing | Cache cost attribution | Reads and writes are input subsets; lifetime-specific write prices replace ordinary input for those tokens. Selected-sample calculations are not invoice reconciliation or demonstrated savings. | 2026-10-21 |
+| https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics | Possible later experiment | Comparison diagnostics do not reload response content; underlying baseline/new requests are still billed. No diagnostic request was made in the assessment. | 2026-10-21 |
+| https://developers.openai.com/api/docs/guides/your-data#storage-requirements-and-retention-controls-per-endpoint | Storage distinction | Response storage and cache KV state are distinct. Preserve store=False; cache TTL is not a deletion deadline or proof of organization retention entitlement. | 2026-10-21 |
+
+The retained assessment also records official Codex engineering and AGENTS-discovery guidance. It establishes no logged-in Codex indefinite TTL or repository-level 12-hour setting; preserve stable routing and scoped current-section reads. Exact source links remain in that assessment rather than expanding this registry validator's permitted URL families.
+
+Retained evidence covered 20 actual calls with zero new calls: seven semantic responses used the old usage shape, wrote 314,016 input tokens and had no cached reads. This supports compatibility first and a later measured write-avoidance experiment, not a 12-hour switch. Preserve old policy replay, unknown-charge stops, independent verification and zero-call Resume/Rebuild.
+
+## Ordinary semantic audit request — 2026-10-20
+
+Official OpenAI references verified 2026-10-20 for the isolated autonomous-draft-parity implementation:
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/guides/images-vision | Ordered source-page images | Responses input supports multiple image content parts, including base64 data URLs. The application's 12-page/image ceiling is a local bound, not a provider limit. | 2026-10-20 |
+| https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses | Semantic audit response shape | Responses supports strict JSON Schema output. Refusal and incomplete responses still require explicit handling; local source, page, literal and evidence validation remains necessary. | 2026-10-20 |
+
+These sources support request mechanics, not translation-quality claims. The new stage uses the saved translation model/effort, preserves Images Off as a text-only audit, and does not mark human review complete. Actual quality, cost and recovery behavior require the private fresh-run evidence and local tests recorded in the [active parity plan](exec_plans/completed/2026-10-20_autonomous_draft_parity.md). No dependency upgrade or saved production-default change follows.
+
+## Default OCR accounting policy — 2026-10-15
+
+Official OpenAI references verified 2026-10-15 for future scanned jobs:
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-4o-mini | Default OCR alias and capacities | `gpt-4o-mini` documents snapshot `gpt-4o-mini-2024-07-18`, image input, Responses support, 128,000 context and 16,384 maximum output tokens. | 2026-10-15 |
+| https://developers.openai.com/api/docs/pricing | Standard public USD attribution | Per million tokens: GPT-4o Mini input 0.15, cached input 0.075, output 0.60; GPT-5.2 input 1.75, cached input 0.175, output 14. Only actual default-tier usage at the verified public endpoint receives these prices. | 2026-10-15 |
+| https://developers.openai.com/api/docs/models/gpt-5.2 | Retained translation alias and capacities | Snapshot `gpt-5.2-2025-12-11`, 400,000 context and 128,000 maximum output remain documented. | 2026-10-15 |
+
+The refreshed ordinary catalog includes the default OCR alias and exact snapshot. This is public-price attribution rather than invoice reconciliation. Omitted request tier/output settings remain unchanged; no verified auto-tier or OCR image-token reservation bound is introduced. Unsupported returned models, tiers and endpoints remain unknown and block dependent paid layout. Existing run catalogs and unknown receipts remain frozen; this future-run fix does not retrospectively settle them. The [completed implementation plan](exec_plans/completed/2026-10-15_ocr_accounting_policy.md) records the bounded policy tests; [HANDOFF.md](HANDOFF.md) owns local application status.
+
+## Local Edge extension setup — 2026-10-10
+
+Microsoft's [sideload an extension guide](https://learn.microsoft.com/en-us/microsoft-edge/extensions/getting-started/extension-sideloading), verified 2026-10-10, requires Edge Developer mode before **Load unpacked**. LegalPDF Gmail Intake uses this local unpacked installation. The user enabled the extension manually; a genuine same-message handoff then passed on canonical main. This check did not change browser settings through automation or repeat translation/finalization.
+
+## Decisions API experiment — 2026-10-09
+
+Official references verified 2026-10-09: the [Decisions guide](https://developers.openai.com/api/docs/guides/decisions) documents text/image evidence, predicate/choice/score questions, currently gpt-6-luna, and USD0.10 per million input tokens with regional/long-context multipliers. The [create reference](https://developers.openai.com/api/reference/resources/decisions/methods/create) defines named typed answers, refusal and usage. The private experiment uses inline images, fixed choices and direct REST to preserve locked openai 2.36.0; no dependency upgrade follows.
+
+The preregistered six-case pilot now returned six typed results: 25/30 raw role labels agree with frozen labels; omission QA scores were 0.99 for the known bad output and 0.76 for the good output. Total usage is 18,622 input tokens, with estimated USD 0.0018622 input-only cost under the documented base rate, not an independently observed invoice. Exact raw responses and usage remain private under decisions_research_01/experiment_tools/live_sessions/pilot_01. Classification alone does not preserve physical layout, establish Word furniture or prove Arabic paragraph-boundary detection. Astra recommends no integration in this change: two real French sidebars were found, but a signature group was falsely classified as a sidebar; existing layout already captures the useful distinctions. The QA pair does not justify a reliable gate. Do not fit a post-hoc threshold or buy extra calls to improve this pilot retrospectively. The user's assistant model preference is unrelated to this API's model or saved app translation settings.
+
+Independent evaluation: private decisions_research_01/independent_evaluation_01.md (SHA-256 9c85e797ad29d20f93a05ebd2e3ae19658e221f9dca14ecd017d3201fae6b53c), detailed JSON SHA-256 67071b5f205edab520b07a0b6449c994a5b7e6322c8f902bf68904d9777962db. The six calls took 12.188 seconds total HTTP duration. This bounded negative/redundant result supports skipping integration now, without ruling out a differently preregistered future use.
+
+## Ordinary translation structure accounting — 2026-10-09
+
+Official OpenAI references were rechecked for the fresh ordinary post-translation
+layout policy. This updates only the bundled future-run price and capacity
+snapshot; each existing run retains its recorded catalog and actual returned
+model, tier and usage still require reconciliation.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-5.2 | GPT-5.2 public standard accounting | USD per million tokens: 1.75 input, 0.175 cached input, 14 output. Documented context is 400,000 tokens and maximum output is 128,000. Image input and Responses are supported. The ordinary layout reservation remains a conservative USD0.812 for a full 400,000 input tokens and a separate 8,000-output limit; it is neither expected nor measured cost. | 2026-10-09 |
+| https://developers.openai.com/api/docs/guides/images-vision | Source-image layout request bound | GPT-5.2 low/high/auto image handling documents a 2,048-pixel maximum dimension and 6,144-patch budget. The project retains its 10,000 image-token accounting bound; actual billing remains response-dependent. | 2026-10-09 |
+| https://developers.openai.com/api/docs/guides/structured-outputs | Strict layout proposal schema | Structured Outputs requires `additionalProperties: false` and supports numeric minimum/maximum in the applicable base-model schema. Local validation separately enforces exact paragraph coverage, ordering and safe phrase cuts. | 2026-10-09 |
+
+No app model, effort, service tier, endpoint or saved default changes follow from
+this public-source refresh. Expired future-run references must produce a visible
+preflight/fallback state rather than silently certifying an unformatted output.
+
+## Reproducible workstation recipe — 2026-09-30
+
+Official primary sources verified on 2026-09-30:
+
+- [WinGet Configuration overview](https://learn.microsoft.com/en-us/windows/package-manager/configuration/) and [commands](https://learn.microsoft.com/en-us/windows/package-manager/winget/configure): configuration support and explicit provisioning behavior. The read-only checker does not apply the recipe.
+- [Microsoft schema 0.2](https://aka.ms/configuration-dsc-schema/0.2): downloaded and validated locally with built-in PowerShell Test-Json; no provisioning processor was run. The recipe's WinGet >=1.12.440 floor is a conservative project choice, not a documented vendor minimum for that processor.
+- [Published Microsoft.WinGet.DSC 1.12.440 resource](https://www.powershellgallery.com/packages/Microsoft.WinGet.DSC/1.12.440/Content/Microsoft.WinGet.DSC.psm1) and [module manifest](https://www.powershellgallery.com/packages/Microsoft.WinGet.DSC/1.12.440/Content/Microsoft.WinGet.DSC.psd1): exact Version/Equals matching, UseLatest=false, supported settings, PowerShell >=7.2 and exact Microsoft.WinGet.Client 1.12.440 dependency. Set can uninstall/reinstall an existing differing version. Scope, Architecture and InstallerType are not resource settings.
+- [WinGet module directive parsing](https://github.com/microsoft/winget-cli/blob/master/src/Microsoft.Management.Configuration.Processor/PowerShell/Helpers/ConfigurationUnitAndModule.cs): `directives.version` selects the exact module version. [Parser](https://github.com/microsoft/winget-cli/blob/master/src/Microsoft.Management.Configuration/ConfigurationSetParser.cpp) and [YAML 1.2.2](https://yaml.org/spec/1.2.2/): JSON flow syntax is accepted YAML; this supports local stdlib parsing, not a performed runtime installation test.
+- [Configure validation command](https://github.com/microsoft/winget-cli/blob/master/src/AppInstallerCLICore/Commands/ConfigureValidateCommand.cpp) and [configuration validation workflow](https://github.com/microsoft/winget-cli/blob/master/src/AppInstallerCLICore/Workflows/ConfigurationFlow.cpp): online resource catalog discovery is distinct from this task's offline structure/pin checks.
+- Exact installer manifests: [Git 2.54.0](https://github.com/microsoft/winget-pkgs/blob/master/manifests/g/Git/Git/2.54.0/Git.Git.installer.yaml), [uv 0.12.20](https://github.com/microsoft/winget-pkgs/blob/master/manifests/a/astral-sh/uv/0.12.20/astral-sh.uv.installer.yaml), [Node 24.14.0](https://github.com/microsoft/winget-pkgs/blob/master/manifests/o/OpenJS/NodeJS/LTS/24.14.0/OpenJS.NodeJS.LTS.installer.yaml), [Dart 3.11.0](https://github.com/microsoft/winget-pkgs/blob/master/manifests/g/Google/DartSDK/3.11.0/Google.DartSDK.installer.yaml), [GitHub CLI 2.91.0](https://github.com/microsoft/winget-pkgs/blob/master/manifests/g/GitHub/cli/2.91.0/GitHub.cli.installer.yaml), [ripgrep 15.1.0](https://github.com/microsoft/winget-pkgs/blob/master/manifests/b/BurntSushi/ripgrep/MSVC/15.1.0/BurntSushi.ripgrep.MSVC.installer.yaml). Availability was verified, not actual installation; later availability must be rechecked without a latest-version fallback.
+- [setup-node](https://github.com/actions/setup-node) and [setup-dart](https://github.com/dart-lang/setup-dart): Node supports `.node-version` via node-version-file; Dart accepts an exact sdk input but has no version-file input, so CI reads `.dart-version` explicitly first. [GitHub environment files](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#environment-files): Windows PowerShell output uses explicit UTF-8 encoding.
+- [Python 3.11.9 release](https://www.python.org/downloads/release/python-3119/): exact Windows installer source for deliberate new-machine setup; Python is omitted from WinGet provisioning to preserve the existing project path.
+- [PowerShell 7.6.1.0 installer manifest](https://github.com/microsoft/winget-pkgs/blob/master/manifests/m/Microsoft/PowerShell/7.6.1.0/Microsoft.PowerShell.installer.yaml): maps to observed standalone PowerShell 7.6.1 and offers MSI/MSIX options. It is a separate explicit bootstrap choice, not a resource in this recipe.
+- [WinGet 1.29.380 enable workflow](https://github.com/microsoft/winget-cli/blob/v1.29.380/src/AppInstallerCLICore/Workflows/MSStoreInstallerHandler.cpp) and [full-package detection](https://github.com/microsoft/winget-cli/blob/v1.29.380/src/AppInstallerCommonCore/SelfManagement.cpp), rechecked 2026-09-30: `configure --enable` requests the full App Installer package through the Store, and configuration availability depends on its included remoting processor. This can hand off a self-update and shut down the caller. The authorized local enable attempt updated the package from 1.29.379.0 to 1.29.380.0; fresh online configuration validation then passed. This runtime evidence is distinct from the original source-only checks.
+
+No software installation, online WinGet processor validation, live Gmail/native/provider operation or hosted CI follows from these source checks. Node/Dart/tool versions are the observed local compatibility baseline, not blanket upgrade recommendations.
+
+## Locked Python setup — 2026-09-29
+
+Primary sources verified on 2026-09-29:
+
+- [uv resolution](https://docs.astral.sh/uv/concepts/resolution/): temporary constraints seed the installed versions; re-locking without upgrade preserves compatible existing selections. The temporary constraints were removed from project metadata after seeding.
+- [uv locking and syncing](https://docs.astral.sh/uv/concepts/projects/sync/): lock checks reject stale inputs, locked sync prevents lock updates, and inexact sync retains unrelated installed packages. Actual reconstruction and matching package versions are local test evidence, not facts established by the documentation.
+- [setup-uv](https://github.com/astral-sh/setup-uv): the official action example identifies v10.1.0 at `bec219d24cd3e171d82865faccec33120bb574f4` and supports explicit tool versions and lock-based cache inputs. The Windows jobs pin uv 0.12.20 and retain existing required job/shard contracts.
+
+Python 3.11.9 and package/build versions are the observed working baseline. They are deliberately preserved; no translation model, saved provider configuration, native policy or dependency upgrade follows.
+
+## Two unsent translation repeats — 2026-09-27
+
+Rechecked the official [GPT-5.2 model page](https://developers.openai.com/api/docs/models/gpt-5.2) for the [two-job retest](exec_plans/completed/2026-09-27_two_latest_unsent_retest.md). Standard USD per million tokens remains 1.75 input, 0.175 cached input and 14 output. The page lists a 400,000-token context, 128,000 maximum output tokens, high reasoning effort and snapshot `gpt-5.2-2025-12-11`.
+
+The fresh task preserves the existing provider-enforced 32,000-output limit and conservative 400,000-input reservation bound, giving a maximum reservation of USD1.148 per request. Reservations settle sequentially against reported usage; they are not expected charges. The lifetime ceiling remains USD15, with USD6.65216805 historical known spend and the unresolved USD0.119 hold preserved. The new allowance cannot exceed USD8.22883195. No saved model/default promotion or reconciliation of the old unknown charge follows from this source check. The exact registry beforeimage is preserved privately under `two_latest_unsent_retest_20260927_01/docs_beforeimages_01/`.
+
+## Test performance tooling — 2026-09-26
+
+Official sources checked for the [test performance plan](exec_plans/completed/2026-09-26_test_performance.md):
+
+- [pytest invocation and durations](https://docs.pytest.org/en/stable/how-to/usage.html): selected paths and `--durations` support measured feedback without removing assertions.
+- [GitHub workflow triggers](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow): separate matching push/PR events create separate runs; a main-only push filter retains PR and manual validation.
+- [GitHub concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency): workflow groups support cancelling superseded PR runs; the local configuration preserves main runs.
+- [GitHub contexts](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts), checked 2026-09-26: `github.run_id` stays fixed across reruns, while numeric `github.run_attempt` starts at 1 and increments per rerun. The local CI design uses attempt-qualified shard artifact names; latest-per-shard selection and strict rejection of a failed latest attempt are repository policy, not claims supplied by this reference.
+- [upload-artifact](https://github.com/actions/upload-artifact) and [download-artifact](https://github.com/actions/download-artifact): official usage examples specify v7 upload and v8 download; shard artifacts have unique names and reports only.
+
+These references support workflow mechanics. Actual speed, coverage and isolation require local/CI results; documentation is not evidence of an achieved speedup. No application dependency or provider configuration change follows.
+
+## Fresh Gmail completion reference — 2026-09-26
+
+Reopened the official [GPT-5.2 model page](https://developers.openai.com/api/docs/models/gpt-5.2): standard USD per million remains1.75 input,0.175 cached input and14 output; context400,000 and maximum output128,000 remain documented. High reasoning effort and snapshot `gpt-5.2-2025-12-11` remain listed. The local conservative reservation calculation therefore remains USD2.492 per ordinary request; this is an upper reservation, not expected spend. No model/default promotion follows.
+
+The [Gmail closeout plan](exec_plans/completed/2026-09-26_gmail_finalization_and_arabic_closeout.md) used a separately reviewed USD3/max4 sequential-reservation phase for one one-page job. Gmail05 settled one call at USD0.02977975; the old16-slot phase remains exhausted at USD0.23975525 actual. Original known3.92137740 + preserved hold0.119 + exhausted-phase actual0.23975525 + fresh cap3 gives USD7.28013265 maximum combined exposure under the unchanged USD10 ceiling. This arithmetic is local accounting, not provider-confirmed billing for the old unknown charge. The original phase identity and every ledger row remain intact. Exact registry beforeimages are retained privately under `docs_sync_ar02_gmail_closeout_01/`.
+
+## Gmail and formatting readiness reference — 2026-09-24
+
+The official [GPT-5.2 model page](https://developers.openai.com/api/docs/models/gpt-5.2) was searched and opened for the fresh [readiness plan](exec_plans/completed/2026-09-24_gmail_formatting_readiness.md). Standard USD per million tokens remains 1.75 input, 0.175 cached input and 14 output; documented capacities remain 400,000 context and 128,000 output tokens. Full conservative input plus output capacity gives USD2.492 per legacy request; the existing structured 24,000-output ceiling gives USD1.036. These are calculated reservation ceilings, not expected or actual charges.
+
+The explicitly authorized new tests use a proposed shared USD3 ordinary budget with explicit standard tier, while the original USD3.92137740 known spend and USD0.119 hold remain preserved. Combined maximum exposure is USD7.04037740 within the original USD10 limit. The new budget does not reopen the old blocked campaign, rewrite its ledger, establish old usage or change saved defaults. Runtime binding and actual results remain to be verified. The [prior registry beforeimage](history/2026-09-24_gmail_formatting_readiness/EXTERNAL_SOURCE_REGISTRY.md) retains earlier conditional proposals.
+
+## French uncertain-charge diagnosis and conditional retry — 2026-09-24
+
+Official pages below were opened on2026-09-24 for the isolated FRlong01 reconciliation. They explain API behavior and proposal bounds; none supplies account-specific billing or proves the historical transport cause. Installed SDK2.36.0 source remains the local runtime evidence; current Python docs may describe a newer SDK.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/reference/python | Transport diagnostics | SDK exceptions retain an underlying cause; returned request IDs aid support correlation. Local structured handling now retains only allowlisted class labels, never raw exception messages. | 2026-09-24 |
+| https://developers.openai.com/api/docs/guides/error-codes | Failure classification | APIConnectionError is a connection-error category. The label alone is insufficient to choose DNS, TLS, proxy, local network or provider outage as this case's cause. | 2026-09-24 |
+| https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage | Billing evidence | Usage/cost resources contain aggregated bucket results. A bucket total without a complete attribution bridge is not proof of one request's charge or refund. | 2026-09-24 |
+| https://developers.openai.com/api/docs/models/gpt-5.2 | Conditional bounded retry only | Published text rates per million are USD1.75 input,0.175 cached input and14 output. The retained20,000 input/6,000 inclusive-output bound is USD0.119 per call; a proposed13-call ceiling is USD1.547, subject to fresh approval-time verification and existing budget gates. | 2026-09-24 |
+
+No model, effort, protocol, endpoint or saved-default promotion follows. Missing usage stays unknown; the current hold/block remains in force. Original ledger rows and retained price snapshots are not rewritten by this public-source check.
+
+Purpose: record official primary sources used for material external behavior/capability decisions.
+
+## Normal-browser Arabic acceptance reference — 2026-09-17
+
+Resume verification,2026-09-24: the official [GPT-5.2 model page](https://developers.openai.com/api/docs/models/gpt-5.2) was checked again before the bounded FRlong case. Standard USD per million remains1.75 input,0.175 cached input and14 output. The existing high-effort/default-tier reservation and settlement rules remain valid. This recheck changes neither saved defaults nor the original USD10 lifetime/inclusive USD4 campaign ceilings.
+
+The official GPT-5.2 model page was searched and opened on 2026-09-17 for the scoped Arabic acceptance. Standard USD per million tokens remains 1.75 input, 0.175 cached input and 14 output: https://developers.openai.com/api/docs/models/gpt-5.2. The run explicitly uses high effort and the default service tier. Request reservations and actual usage settlement are recorded in the [Arabic browser acceptance plan](exec_plans/completed/2026-09-17_arabic_normal_browser_acceptance.md); this verification does not change saved defaults or expand the original USD10 lifetime budget. Earlier dated receipts remain historical evidence.
+
+The same official rates were rechecked on 2026-09-17 for the fresh multilingual acceptance preparation. The [isolated diagnostic-cost correction](exec_plans/completed/2026-09-17_measured_diagnostic_cost.md) uses that reference to correct the two stale GPT-5.2 legacy estimate entries to USD1.75 input and USD14 inclusive output. Legacy estimates remain unverified estimates for accounting purposes; measured diagnostic results instead reuse the persisted durable-accounting summary, including cached input and unknown coverage. No model, effort, service-tier default or budget allowance changes follow.
+
+## OpenAI Python SDK transport compatibility — 2026-09-16
+
+The versioned official SDK sources below were checked on 2026-09-16 after PR #296's fresh-install CI exposed an undeclared legacy HTTPX test dependency. This is dependency compatibility evidence, not provider dispatch or a model/default change.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://github.com/openai/openai-python/blob/v3.14.1/pyproject.toml | Publication dependency/CI correction | SDK 3.14.1 declares HTTPX2 as its default dependency rather than legacy HTTPX. Code/tests importing legacy HTTPX must declare that dependency themselves. | 2026-09-16 |
+| https://github.com/openai/openai-python/blob/v3.14.1/httpx2.md | SDK transport, TLS and compatibility review | HTTPX2 becomes the default client family and uses the OS certificate store instead of the prior certifi bundle. The guide documents explicit legacy-HTTPX client injection as a temporary runtime-only migration option, with typing limitations; that option is not adopted here. | 2026-09-16 |
+
+Repository decision: retain the locally validated SDK 2.36.0 transport family by declaring `openai>=2.36.0,<3`; explicitly declare development `httpx>=0.28.1,<0.29` and install `.[dev]` in CI. A future SDK 3 migration requires a separate review of transport types, mocking and TLS behavior. The dependency correction has its own validation and exact-head CI evidence; it does not extend the earlier 6,477-test receipt to a changed environment.
+
+## Current ordinary FR proposal reference — 2026-09-16
+
+The parent task rechecked the official pages below on 2026-09-16. These public facts inform a provisional, test-instrumented two-call proposal; they do not prove account access, authorize dispatch or promote a default. Earlier dated records remain historical evidence.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-5.6-terra | Ordinary FR proposal; explicit model/effort | Terra supports high and xhigh reasoning. Published short-context standard USD/million: input 2, cached input 0.20, output 12. The proposed run explicitly selects high; assistant model choice is separate. | 2026-09-16 |
+| https://developers.openai.com/api/docs/pricing | Ordinary FR proposal; conservative per-call reservation | Short-context cache-write input is 2.50 USD/million. Long-context input/cached/cache-write/output rates are 4/0.40/5/18. For the selected short-context default-tier bound, 50,000 input at 2.50 plus 24,000 inclusive output at 12 gives 0.413 USD per call and 0.826 USD for two calls; this is a reservation bound, not a measured bill. | 2026-09-16 |
+| https://developers.openai.com/api/docs/guides/reasoning | Ordinary FR proposal; inclusive output and settlement | The output budget includes reasoning and visible output. Incomplete responses can still incur output charges; missing visible text does not imply zero cost. | 2026-09-16 |
+
+## Paid AR4 approval-time public recheck — 2026-09-11 UTC
+
+Official GPT-5.2 model and Python Responses-create pages were opened again before
+the exact approved AR4 launch. USD/million1.75 input/0.175 cached/14 output and
+standard default-tier facts still matched the frozen proposal. No account/key
+probe or private query was used; model/defaults were unchanged. The subsequent
+local BootstrapDenied stop is not provider availability or pricing evidence.
+See the private paid_execution_ar4_20260911_01/public_facts_recheck.json record.
+
+## Fields
+- `source_url`: official source link
+- `contract_or_workflow`: policy/workflow impacted
+- `fact_summary`: concise verified fact used for decisions
+- `verification_date`: date the source was checked (`YYYY-MM-DD`)
+
+## Entries
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/guides/structured-outputs | `TRANSLATION_WORKFLOW.md`, structured-new-translations ExecPlan | Responses `text.format` supports JSON-schema output; refusal and incomplete responses require separate handling. Schema conformity does not establish source-block coverage or legal equivalence. No model/account or live-call acceptance is inferred. | 2026-09-09 |
+| https://developers.openai.com/api/reference/resources/responses/methods/create | `openai_docs_citation_freshness_policy`, `OPENAI_DOCS_CITATION_WORKFLOW.md` | Responses API `POST /responses` is the canonical create-response endpoint and supports model response creation with tools and structured outputs. | 2026-03-05 |
+| https://developers.openai.com/api/docs/guides/batch | `cloud_heavy_scoring_default_policy`, `CLOUD_MACHINE_EVALUATION_WORKFLOW.md` | Batch API supports asynchronous grouped requests and is positioned for non-immediate workloads with separate batch limits/pool behavior. | 2026-03-05 |
+| https://playwright.dev/docs/chrome-extensions | `browser_automation_reliability_policy`, `BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md` | Chrome extension testing requires Chromium with persistent context; side-load flags are not available in Chrome/Edge as described. | 2026-03-05 |
+| https://playwright.dev/docs/browsers | `browser_binary_strategy_policy`, `chromium_for_testing_conditional_install_policy` | Playwright versions depend on matching browser binaries and `npx playwright install` is the canonical install path. | 2026-03-05 |
+| https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts | `restricted_browser_page_policy`, `machine_operator_split_validation_policy` | Content scripts run in page context with isolated worlds and extension/page boundary constraints. | 2026-03-05 |
+| https://developer.chrome.com/blog/chrome-for-testing/ | `browser_binary_strategy_policy`, `automation_binary_provenance_packet_policy` | Chrome for Testing exists as a test-focused, versioned automation flavor to improve reproducibility versus auto-updating regular Chrome. | 2026-03-05 |
+| https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch | `cloud_scoring_preflight_gate_policy`, `CLOUD_MACHINE_EVALUATION_WORKFLOW.md` | `workflow_dispatch` enables manual workflow triggers and input passing via API/CLI/UI on default-branch-resident workflow definitions. | 2026-03-05 |
+| https://learn.microsoft.com/en-us/windows/wsl/tutorials/wsl-vscode | `workspace_provenance_lock_policy`, `BROWSER_AUTOMATION_ENV_PROVENANCE_WORKFLOW.md` | VS Code + WSL uses a split client/server model and supports opening WSL projects via `code .`, relevant to host/provenance controls. | 2026-03-05 |
+| https://platform.openai.com/docs/guides/images-vision | `ocr_api_fallback_cost_policy`, `OPENAI_DOCS_CITATION_WORKFLOW.md` | Vision requests expose image-detail tradeoffs relevant to OCR fallback cost/latency planning for required-only paid fallback paths. | 2026-03-05 |
+
+## Honorarios Native Export
+
+Honorarios native-export sources checked during the 2026-09-07 repair:
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://learn.microsoft.com/en-us/office/vba/api/word.documents.open | `HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md` | VBA documents read-only, no-MRU and hidden-open arguments; its optional tail differs from the PIA signature. | 2026-09-07 |
+| https://learn.microsoft.com/en-us/dotnet/api/microsoft.office.interop.word.documents.open?view=word-pia | `HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md` | PIA Open has XMLTransform at position 16; use the common first twelve arguments for this PowerShell COM path. | 2026-09-07 |
+| https://learn.microsoft.com/en-us/dotnet/api/microsoft.office.interop.word._document.exportasfixedformat?view=word-pia | `HOST_INTEGRATION_PREFLIGHT_WORKFLOW.md` | FixedFormatExtClassPtr is optional and selects an alternate renderer; native export omits it while keeping explicit protection/export settings. | 2026-09-07 |
+
+## Structured Ordinary-Use Readiness — 2026-09-10
+
+Read-only official web fallback was used because the OpenAI docs connector was
+unavailable. No connector/configuration change or provider call was made. These
+are public reference facts, not account-tier verification or paid authority.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-5.2 | Active structured ordinary-use ExecPlan; pricing provenance | Published standard USD/million: input 1.75, cached input 0.175, output 14; context 400,000 and max output 128,000. GPT-5.2 alias and 2025-12-11 snapshot are explicitly bound by the local policy. Actual tier, public API scope and USD must match; these model capacities are conservative ordinary bounds, not a small campaign allowance or permission to send. Local 30-day freshness expiry is our policy, not a provider promise; no model-default promotion. | 2026-09-10 |
+| https://developers.openai.com/api/reference/cli/resources/responses/methods/create | Dispatch accounting and hard reservations | Omitted service tier uses auto/project policy; the response reports actual processing tier, which may differ from requested tier. Provider/model-only pricing cannot establish complete tier-sensitive cost. | 2026-09-10 |
+| https://developers.openai.com/api/docs/guides/fast-mode | Tier-aware pricing and reservation readiness | Project policy can apply premium processing to omitted-tier requests; downgrade can return default and standard billing. Bound allowed tiers before hard-budget dispatch or block. | 2026-09-10 |
+| https://developers.openai.com/api/docs/guides/reasoning | Inclusive usage and conservative output caps | Reasoning is billed as output; max_output_tokens includes visible and nonvisible generation. Incomplete responses can incur charges without visible output. | 2026-09-10 |
+| https://developers.openai.com/api/docs/guides/images-vision | Future image/OCR request-bound evidence | GPT-5.2 image bounds use documented resolution/patch rules and token multipliers. No case-specific image-token bound, paid OCR route or permission is established by this reference alone. | 2026-09-10 |
+
+## Freshness Rule
+
+### V3 post-header-fix preparation refresh — 2026-09-11
+
+Official web fallback was used after connector discovery found no usable OpenAI
+docs tool. Both pages were opened and read; no private query data, account test,
+credential resolution or provider request was used. No model/default promotion.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-5.2 | V3 offline preparation and separate AR4 proposal | Reconfirmed GPT-5.2 standard USD/million: 1.75 input, 0.175 cached input, 14 output; context400000, model output128000, high effort and dated2025-12-11 alias. Keep existing24000 output cap; capacity arithmetic1.036/call,4.144/AR4,13.468/all13 is our conservative calculation, not measured cost or account availability. | 2026-09-11 |
+| https://developers.openai.com/api/reference/python/resources/responses/methods/create | Frozen request tier/storage/output controls | Explicit default requests standard processing/pricing; actual returned tier may differ. Output-token ceiling includes reasoning and visible tokens. Existing prepared requests retain explicit store=False and default; no ordinary-model or tier-default change. | 2026-09-11 |
+
+### Request preparation refresh — 2026-09-11
+
+Official public web pages only; no private document information, key/account test
+or provider request. Dates are Lisbon local (retrieval UTC date 2026-09-10).
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-5.2 | Structured acceptance request preparation | Rechecked GPT-5.2 rates: USD/million 1.75 input, 0.175 cached input, 14 output; 400000 context and 128000 model max output. Proposed reservation uses full input capacity plus existing 24000 output cap, with no cache discount assumption. No account/model availability or paid authority is established. | 2026-09-11 |
+| https://developers.openai.com/api/reference/cli/resources/responses/methods/create | Exact request bounds and tier | Explicit default requests standard processing/pricing; actual returned tier can differ. max_output_tokens includes reasoning and visible output. Ordinary auto and store=false remain unchanged; only a separately approved acceptance policy may pin default. | 2026-09-11 |
+| https://developers.openai.com/cookbook/examples/how_to_count_tokens_with_tiktoken | Conservative input reservation | Cookbook message counters are estimates and model/framing-dependent; this is not proof that local serialized bytes plus64 bounds complete GPT-5.2 Responses schema/framing. Use documented capacity fallback for the proposed pilot. | 2026-09-11 |
+| https://developers.openai.com/api/reference/cli/resources/responses/subresources/input_tokens/methods/count | Unused future count alternative | Official reference exposes POST /responses/input_tokens. Existence alone establishes neither free billing nor request/count parity. Not invoked; no new auth/provider authority is inferred. | 2026-09-11 |
+
+- If a decision depends on unstable facts (pricing, limits, schedules, product behavior), re-check sources and update `verification_date` before implementation or release decisions.
+
+### Frozen-caller preparation refresh — 2026-09-11 UTC
+
+Official model and Python Responses reference pages were fetched again for the
+new offline caller/preparation packet. No private query, account check or paid
+request; the existing key/model/effort/defaults are unchanged.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-5.2 | Private frozen-caller capacity proposal | Reconfirmed USD/million 1.75 input, 0.175 cached input, 14 output, 400000 context, 128000 maximum output and high effort. Full-capacity input plus unchanged 24000 inclusive output reserves USD1.036 per call without cache discount; this is a conditional bound, not actual cost or account availability. | 2026-09-11 |
+| https://developers.openai.com/api/reference/python/resources/responses/methods/create | Private exact-request and tier guards | Explicit default requests standard pricing; actual returned tier may differ and must be accounted. Output cap includes visible and reasoning tokens. Private requests retain store=false; no ordinary model/tier/default change. | 2026-09-11 |
+
+### Ordinary layout and semantic fidelity verification — 2026-09-27
+
+Official public sources were read after inspecting the local client and accounting
+contracts. No private source text, credentials or provider request was sent in
+this verification. These references support implementation decisions, not
+visual/translation acceptance or authority to replay any earlier operation.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-5.2 | Ordinary source-layout suggestion policy | Reconfirmed standard USD/million rates: input1.75, cached0.175, output14; context400000, output capacity128000, image input, Responses and structured output. The existing alias/snapshot pair remains5.2/2025-12-11. Full input capacity plus a separate8000 output limit gives our conservative USD0.812 page reservation; this is not measured cost or an account-availability guarantee. | 2026-09-27 |
+| https://developers.openai.com/api/docs/guides/images-vision | Layout image inputs | Current5.2 detail modes use2048-pixel maximum dimension and6144 patches; multiplier1.2. Image tokens are billed and count toward input limits. The implementation uses full context capacity as its reservation bound, not a hand-counted text/image approximation. | 2026-09-27 |
+| https://developers.openai.com/api/docs/guides/structured-outputs | Bounded style-only proposal schema | Reverified base-model support for numeric minimum/maximum and array minItems/maxItems; the guide excludes these additional bounds for fine-tuned models. Root must be an object, not anyOf; supported nested anyOf branches require all fields and additionalProperties:false. Local branches align heading role with level1-3/nullable size1-24 and nonheading roles with level0/null size; local bounds cover spacing0-72pt, columns2-3, widths10-90percent, gutter0-36pt and four normalized bbox values. Application checks still enforce width sums, exact paragraph coverage/order, protected spans and wording. No provider or rendered acceptance follows from schema validity. | 2026-09-27 |
+| https://developers.openai.com/api/reference/python/resources/responses/methods/create | Per-purpose request and accounting | Explicit default requests standard processing; returned service tier may differ and remains validated. Omitted tier uses auto. store=false is explicit for this separate operation; it does not modify saved translation defaults. | 2026-09-27 |
+
+### Compact semantic evidence schema — 2026-10-20
+
+Official Structured Outputs documentation was checked after local protocol review.
+No private document content or credential was sent in this public documentation lookup.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/guides/structured-outputs | Fresh caller-unit reference protocol | Schema limits include 1000 enum values across properties, 120000 total characters for names/enum/const strings, and 15000 enum characters for a single string enum exceeding 250 values. Object limits are 5000 properties and 10 nesting levels. The application must bound dynamic reference schemas and still validate source ownership and meaning; constrained references alone do not establish semantic correctness. | 2026-10-20 |
+
+### Reasoning-inclusive semantic inventory capacity - 2026-10-20
+
+Official model and reasoning documentation was verified through the OpenAI developer docs connector after the retained incomplete response was diagnosed. No private source text or credential was sent in this documentation lookup.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-5.2 | Bounded fresh source-inventory capacity | GPT-5.2 documents a 400000-token context and 128000-token maximum output. A separately saved 64000-token inventory allowance is within that model limit; this does not guarantee completion, account access or translation accuracy. Existing stages and older saved requests retain their own bounds. | 2026-10-20 |
+| https://developers.openai.com/api/docs/guides/reasoning | Output cap and incomplete responses | The maximum output allowance includes both reasoning and visible output. A response stopped at that cap is incomplete and must not be treated as valid completed evidence. The application retains the failed response and measured usage before a separate fresh experiment. | 2026-10-20 |
+
+### Prospective fixed-protocol model comparison - 2026-10-20
+
+The official model page was reopened after the larger-capacity source audit completed but failed source-meaning checks. These published facts support a bounded comparison, not an account-access, quality or production-default claim.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-5.6-sol | Prospective ordinary primary and semantic model comparison | The documented `gpt-5.6-sol` alias supports Responses, image input, structured outputs and high reasoning effort, with a 1050000-token context and 128000-token maximum output. No additional dated snapshot is assumed. | 2026-10-20 |
+| https://developers.openai.com/api/docs/models/gpt-5.6-sol | Separate comparison accounting | Published USD per million tokens is 4 input, 0.40 cached input and 20 output; cache writes cost 1.25 times uncached input. Requests above 272000 input tokens use twice the input and 1.5 times the output rate for the full request. Promotional pricing is stated to last at least through 2026-11-21. Actual model, tier, usage dimensions and supported band must match the private comparison's explicit catalog; unknown attribution stops further requests. Layout/OCR retain their separate model accounting. | 2026-10-20 |
+| https://developers.openai.com/api/docs/guides/prompt-caching | Cache-write usage attribution after first model comparison | The Responses usage input total includes cached reads and cache writes. Ordinary input is the total minus both subsets; each subset uses its own rate. Cache-write pricing replaces the ordinary-input rate for those tokens and is not an extra fee added to an already charged input token. Combined with the verified GPT-5.6 Sol rate, writes use USD5 per million within the comparison's admitted lower input band. The earlier unpriced response/journal stays intact; a separate offline attribution can cite the exact raw counts and verified formula. | 2026-10-20 |
+
+### Source-interpretation capability diagnostic and complete-page schema - 2026-10-20
+
+After inspecting the local request/client, official pages were opened to verify the new model and schema options. This establishes published capability and pricing, not account access or quality.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/models/gpt-6-astra | Private source-only capability diagnostic | The documented alias supports Responses, image input and structured outputs; context1050000, maximum output128000, effort low/medium/high/xhigh/max. Diagnostic preserves high effort and64000 cap and changes only model. Standard USD/million10 input,1 cached,12.50 write,50 output; above272000 input doubles input/cache and multiplies output1.5. Admit exact returned model/default tier and lower input band for attribution; unsupported identity/tier/dimensions stay unknown. Assistant Ultra is not an API effort claim. | 2026-10-20 |
+| https://developers.openai.com/api/docs/guides/prompt-caching | Diagnostic usage attribution | Inclusive input contains cache-read and cache-write subsets; ordinary input subtracts both. Writes use their own rate rather than an additive fee. Retain raw responses and original ledgers. | 2026-10-20 |
+| https://developers.openai.com/api/docs/guides/structured-outputs | Prospective complete-page response contract | Base model array minItems/maxItems are supported; these bounds are excluded for fine-tuned models. Exact array length and selected-page enum still need independent uniqueness/order/identity validation. Fresh version only; old requests replay unchanged. | 2026-10-20 |
+
+### Verification service-error diagnosis - 2026-10-20
+
+The actual execution11 verification returned HTTP520 without a model response. The pages below were reopened for error classification and retry boundaries. They do not establish this response's cause, whether it was processed, or its charge. Preserve the unknown accounting and original failed run; no retry-policy or model change follows from this lookup alone.
+
+| source_url | contract_or_workflow | fact_summary | verification_date |
+|---|---|---|---|
+| https://developers.openai.com/api/docs/guides/error-codes | Actual11 verification failure diagnosis | The official guide distinguishes billing/quota codes from server failures and recommends a brief wait before retrying documented500 errors. It does not specifically explain520. This provides general guidance only; an HTTP520 must not be relabelled as exhausted credits or a free request without concrete response evidence. | 2026-10-20 |
+| https://developers.openai.com/api/reference/python | Semantic transport retry and error evidence | The current Python documentation classifies statuses at least500 as InternalServerError and describes default bounded SDK retries, configurable with max_retries. Failed request IDs may be available through APIStatusError. The installed application explicitly disables semantic SDK retries and retains failed evidence; this lookup neither changes that choice nor proves a missing response identity/cost. | 2026-10-20 |

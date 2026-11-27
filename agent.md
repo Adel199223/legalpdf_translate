@@ -12,6 +12,18 @@ Operational runbook for coding agents in `legalpdf_translate`.
 2. Choose the correct workflow document in `docs/assistant/workflows/`.
 3. Run targeted tests first, then full regression if required by workflow.
 4. Keep changes scoped; avoid unrelated edits.
+- In Antigravity, `.agents/skills/` provides progressive-disclosure wrappers (`legalpdf-validate`, `legalpdf-browser-review`, `legalpdf-word-review`, `legalpdf-commit-publish`) pointing back to canonical `docs/assistant/workflows/`.
+
+## Translation quality decisions
+
+1. Name the user-visible failure. Record the document family, expected source relationship and the first place it breaks, whether in original visible evidence, extracted reading order, translated wording, layout assignment, or Word rendering. A diagnostic copy can explain a defect. Acceptance uses the file produced by ordinary Start.
+2. Keep three results visible separately: correctness of legal content and source relationships, fidelity of appearance in Word, and the build actually installed. For each result name the case, build and evidence type (synthetic test, retained-response replay, fresh run, or installed check). A later build can preserve a useful result without inheriting its fresh-run status.
+3. Reproduce the failure offline when retained evidence allows it. Test a counterexample that must keep its current behavior. When the same family fails again, compare the shared representation with an unseen example before adding another document-specific rule. Use focused feedback while iterating and schedule mandatory broad validation on the candidate whose results will be used.
+4. In the current handoff keep one row per case, the actual validation result, the next action and its authority. The active plan holds acceptance conditions and links back for status. Move superseded narratives to dated history. A receipt or process check supersedes a stale running label. Read old checkpoints only to answer a specific evidence question.
+
+For release review, bind the actual case ID, file and source-to-Word page map. If a helper rejects valid reflow or a later execution, retain that failure and check a narrow successor against both accepted artifacts and false-acceptance controls before considering another provider run.
+
+Apply stage and spending gates to the next operation. A routine offline replay, source comparison or documentation correction within an authorized scope can proceed. A genuinely new risk-triggered stage follows the staged workflow. Renew live-service, financial, destructive or publication authority where the proposed operation requires it.
 
 ## Approval Gates
 Ask before executing any of the following:
@@ -123,4 +135,4 @@ Standing user authorization (2026-09-16): perform useful Docs Sync autonomously.
 Follow `docs/assistant/workflows/DOCS_MAINTENANCE_WORKFLOW.md`, keeping current entry points and relevant user guides aligned. Record deferred gaps rather than repeatedly asking for permission. Do not apply templates or UCBS unless explicitly requested.
 
 ## Assistant model and available tools
-Use the user's standing assistant preference: Astra Ultra for complex analysis, planning, and decisions; GPT-6.1 Sol for implementation and extraction, when those assistant models and task routing are available. Keep assistant model selection separate from the app's translation-provider settings and evidence. Use tools available in the current session; inspect their documentation and actual app/build ownership. A static capability inventory or old screenshot does not establish current tool availability, model quality, credentials or live state.
+Rely on Antigravity's native plan/execute workflow and active session models for coding-agent tasks (historical Codex Astra Ultra / GPT-6.1 Sol routing applies only in Codex sessions). Keep coding-agent model selection separate from the app's translation, OCR, and semantic-review settings and evidence. In Antigravity, use native file/terminal tools for code/tests, `windows-desktop-control` MCP (`Screenshot` first; release via `ControlStatus(release=true)`) for live Microsoft Word or Qt visual checks, the built-in `browser` subagent / `playwright` / `chrome-devtools` MCP for isolated `mode=shadow` browser checks, and `openaiDeveloperDocs` MCP for OpenAI API citations; keep assistant-side Gmail plugins and browser automation off live Gmail without explicit user authorization. Inspect current tool documentation and actual app/build ownership; a static capability inventory or old screenshot does not establish current tool availability, model quality, credentials or live state.

@@ -40,6 +40,12 @@ from .glossary_builder import (
     suggestions_to_glossary_entries,
     update_builder_stats_from_page,
 )
+from .config import (
+    DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+    DEFAULT_TRANSLATION_PROVIDER,
+    GEMINI_MODEL,
+)
+from .gemini_client import normalize_gemini_thinking_level
 from .gmail_draft import assess_gmail_draft_prereqs
 from .gmail_focus_host import inspect_edge_native_host, maybe_ensure_edge_native_host_registered
 from .gmail_window_trace import arm_next_cold_start_window_trace, latest_window_trace_status
@@ -62,12 +68,24 @@ from .openai_client import (
     run_translation_auth_test,
 )
 from .output_paths import require_writable_output_dir
+from .provider_client import (
+    create_translation_client,
+    default_translation_model,
+    is_provider_auth_failure,
+    normalize_translation_provider,
+    provider_display_name,
+    resolve_translation_key_with_source,
+    run_provider_auth_test,
+)
 from .run_report import build_run_report_markdown
 from .secrets_store import (
+    delete_gemini_key,
     delete_ocr_key,
     delete_openai_key,
+    get_gemini_key,
     get_ocr_key,
     get_openai_key,
+    set_gemini_key,
     set_ocr_key,
     set_openai_key,
 )
@@ -100,6 +118,7 @@ _BROWSER_REPORT_FORBIDDEN_KEYS = {
     "authorization",
     "api_key",
     "openai_api_key",
+    "gemini_api_key",
     "ocr_api_key",
     "translation_key",
     "ocr_key",
@@ -423,11 +442,25 @@ def _normalize_string_list(value: object) -> list[str]:
 def _settings_form_payload(settings_path: Path) -> dict[str, object]:
     gui = load_gui_settings_from_path(settings_path)
     joblog = load_joblog_settings_from_path(settings_path)
+    translation_provider = normalize_translation_provider(
+        gui.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
+    )
+    translation_model = (
+        str(gui.get("translation_model", "") or "").strip()
+        or default_translation_model(translation_provider)
+    )
     return {
         "ui_theme": str(gui.get("ui_theme", "dark_futuristic") or "dark_futuristic"),
+        "translation_provider": translation_provider.value,
+        "translation_model": translation_model,
+        "helper_thinking_level": normalize_gemini_thinking_level(
+            gui.get("helper_thinking_level", DEFAULT_GEMINI_HELPER_THINKING_LEVEL),
+            default=DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+        ),
+        "gemini_decisions_advisory_enabled": bool(gui.get("gemini_decisions_advisory_enabled", False)),
         "default_lang": str(gui.get("default_lang", "EN") or "EN"),
-        "default_effort": str(gui.get("default_effort", "high") or "high"),
-        "default_effort_policy": str(gui.get("default_effort_policy", "adaptive") or "adaptive"),
+        "default_effort": str(gui.get("default_effort", "xhigh") or "xhigh"),
+        "default_effort_policy": str(gui.get("default_effort_policy", "fixed_xhigh") or "fixed_xhigh"),
         "default_images_mode": str(gui.get("default_images_mode", "off") or "off"),
         "default_outdir": str(gui.get("default_outdir", "") or ""),
         "default_workers": int(gui.get("default_workers", 3) or 3),
@@ -436,8 +469,8 @@ def _settings_form_payload(settings_path: Path) -> dict[str, object]:
         "default_page_breaks": bool(gui.get("default_page_breaks", True)),
         "ocr_mode_default": str(gui.get("ocr_mode_default", "auto") or "auto"),
         "ocr_engine_default": str(gui.get("ocr_engine_default", "local_then_api") or "local_then_api"),
-        "ocr_api_provider": str(gui.get("ocr_api_provider", gui.get("ocr_api_provider_default", "openai")) or "openai"),
-        "ocr_api_provider_default": str(gui.get("ocr_api_provider_default", "openai") or "openai"),
+        "ocr_api_provider": str(gui.get("ocr_api_provider", gui.get("ocr_api_provider_default", "gemini")) or "gemini"),
+        "ocr_api_provider_default": str(gui.get("ocr_api_provider_default", "gemini") or "gemini"),
         "ocr_api_base_url": str(gui.get("ocr_api_base_url", "") or ""),
         "ocr_api_model": str(gui.get("ocr_api_model", "") or ""),
         "ocr_api_key_env_name": str(gui.get("ocr_api_key_env_name", "") or ""),
@@ -445,7 +478,7 @@ def _settings_form_payload(settings_path: Path) -> dict[str, object]:
         "gmail_account_email": str(gui.get("gmail_account_email", "") or ""),
         "gmail_intake_bridge_enabled": bool(gui.get("gmail_intake_bridge_enabled", False)),
         "gmail_intake_port": int(gui.get("gmail_intake_port", 8765) or 8765),
-        "allow_xhigh_escalation": bool(gui.get("allow_xhigh_escalation", False)),
+        "allow_xhigh_escalation": bool(gui.get("allow_xhigh_escalation", True)),
         "diagnostics_admin_mode": bool(gui.get("diagnostics_admin_mode", True)),
         "diagnostics_include_sanitized_snippets": bool(gui.get("diagnostics_include_sanitized_snippets", False)),
         "diagnostics_verbose_metadata_logs": bool(gui.get("diagnostics_verbose_metadata_logs", False)),
@@ -464,6 +497,13 @@ def _settings_form_payload(settings_path: Path) -> dict[str, object]:
 def _stored_translation_key_available() -> bool:
     try:
         return bool(get_openai_key())
+    except RuntimeError:
+        return False
+
+
+def _stored_gemini_key_available() -> bool:
+    try:
+        return bool(get_gemini_key())
     except RuntimeError:
         return False
 
@@ -492,6 +532,13 @@ def _resolve_ocr_api_key_source_for_browser(
             shared_openai_key = None
         if shared_openai_key:
             return ("stored", "openai_api_key_fallback")
+    elif provider == OcrApiProvider.GEMINI:
+        try:
+            shared_gemini_key = get_gemini_key()
+        except RuntimeError:
+            shared_gemini_key = None
+        if shared_gemini_key:
+            return ("stored", "gemini_api_key_fallback")
     return resolve_ocr_api_key_source(config)
 
 
@@ -557,15 +604,20 @@ def document_runtime_state_payload() -> dict[str, object]:
 
 def _provider_state_payload(settings_path: Path) -> dict[str, object]:
     gui = load_gui_settings_from_path(settings_path)
-    provider = normalize_ocr_api_provider(gui.get("ocr_api_provider", gui.get("ocr_api_provider_default", "openai")))
+    provider = normalize_ocr_api_provider(gui.get("ocr_api_provider", gui.get("ocr_api_provider_default", "gemini")))
     config = OcrEngineConfig(
         policy=OcrEnginePolicy.LOCAL_THEN_API,
         api_provider=provider,
         api_base_url=str(gui.get("ocr_api_base_url", "") or "") or None,
         api_model=str(gui.get("ocr_api_model", "") or "") or None,
         api_key_env_name=str(gui.get("ocr_api_key_env_name", "") or "") or default_ocr_api_env_name(provider),
+        helper_thinking_level=normalize_gemini_thinking_level(
+            gui.get("helper_thinking_level", DEFAULT_GEMINI_HELPER_THINKING_LEVEL),
+            default=DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+        ),
     )
-    stored_translation_key = _stored_translation_key_available()
+    stored_openai_key = _stored_translation_key_available()
+    stored_gemini_key = _stored_gemini_key_available()
     stored_ocr_key = _stored_ocr_key_available()
     source = _resolve_ocr_api_key_source_for_browser(config)
     if source is None:
@@ -580,15 +632,34 @@ def _provider_state_payload(settings_path: Path) -> dict[str, object]:
         cache_scope=f"provider_state::{_word_pdf_cache_scope_token(settings_path)}",
         export_timeout_seconds=45.0,
     )
-    translation_key, translation_source = resolve_openai_key_with_source()
+    active_translation_provider = normalize_translation_provider(
+        gui.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
+    )
+    active_translation_model = (
+        str(gui.get("translation_model", "") or "").strip()
+        or default_translation_model(active_translation_provider)
+    )
+    translation_key, translation_source = resolve_translation_key_with_source(
+        active_translation_provider.value,
+        allow_gemini_ocr_fallback=True,
+    )
     if translation_source is None:
         translation_source_payload: dict[str, object] = {"kind": "missing", "name": ""}
     else:
         translation_source_payload = translation_source.to_payload()
+    stored_translation_key = (
+        stored_gemini_key if active_translation_provider.value == "gemini" else stored_openai_key
+    )
     return {
         "translation": {
+            "provider": active_translation_provider.value,
+            "model": active_translation_model,
+            "helper_thinking_level": config.helper_thinking_level,
+            "gemini_decisions_advisory_enabled": bool(gui.get("gemini_decisions_advisory_enabled", False)),
             "credentials_configured": translation_key is not None,
             "stored_credential_configured": stored_translation_key,
+            "gemini_stored_credential_configured": stored_gemini_key,
+            "openai_stored_credential_configured": stored_openai_key,
             "ocr_fallback_configured": stored_ocr_key,
             "effective_credential_source": translation_source_payload,
             "auth_test_supported": True,
@@ -600,7 +671,10 @@ def _provider_state_payload(settings_path: Path) -> dict[str, object]:
             "configured_env_name": config.api_key_env_name,
             "env_candidates": list(candidate_ocr_api_env_names(config)),
             "stored_credential_configured": stored_ocr_key,
-            "translation_fallback_configured": bool(provider == OcrApiProvider.OPENAI and stored_translation_key),
+            "translation_fallback_configured": bool(
+                (provider == OcrApiProvider.OPENAI and stored_openai_key)
+                or (provider == OcrApiProvider.GEMINI and stored_gemini_key)
+            ),
             "effective_credential_source": source_payload,
             "local_available": local_ocr_available(),
             "api_configured": source is not None,
@@ -744,14 +818,29 @@ def save_browser_settings(*, settings_path: Path, values: dict[str, object]) -> 
             raise ValueError("Default rates must map EN, FR and AR to nonnegative numbers.")
         for language, rate in supplied_rates.items():
             rates[language] = float(nonnegative_decimal(rate, f"{language} rate/word"))
-    provider_text = str(values.get("ocr_api_provider", "openai") or "openai")
-    provider = normalize_ocr_api_provider(provider_text)
+    provider_text = str(values.get("ocr_api_provider", "gemini") or "gemini")
+    provider = normalize_ocr_api_provider(provider_text, default=OcrApiProvider.GEMINI)
     ocr_env = str(values.get("ocr_api_key_env_name", "") or "").strip() or default_ocr_api_env_name(provider)
+    translation_provider = normalize_translation_provider(
+        values.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
+    )
+    translation_model = (
+        str(values.get("translation_model", "") or "").strip()
+        or default_translation_model(translation_provider)
+    )
+    helper_thinking_level = normalize_gemini_thinking_level(
+        values.get("helper_thinking_level", DEFAULT_GEMINI_HELPER_THINKING_LEVEL),
+        default=DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+    )
     gui_values = {
         "ui_theme": str(values.get("ui_theme", "dark_futuristic") or "dark_futuristic"),
+        "translation_provider": translation_provider.value,
+        "translation_model": translation_model,
+        "helper_thinking_level": helper_thinking_level,
+        "gemini_decisions_advisory_enabled": bool(values.get("gemini_decisions_advisory_enabled", False)),
         "default_lang": str(values.get("default_lang", "EN") or "EN").strip().upper(),
-        "default_effort": str(values.get("default_effort", "high") or "high").strip().lower(),
-        "default_effort_policy": str(values.get("default_effort_policy", "adaptive") or "adaptive").strip().lower(),
+        "default_effort": str(values.get("default_effort", "xhigh") or "xhigh").strip().lower(),
+        "default_effort_policy": str(values.get("default_effort_policy", "fixed_xhigh") or "fixed_xhigh").strip().lower(),
         "default_images_mode": str(values.get("default_images_mode", "off") or "off").strip().lower(),
         "default_outdir": str(values.get("default_outdir", "") or "").strip(),
         "default_workers": int(values.get("default_workers", 3) or 3),
@@ -769,7 +858,7 @@ def save_browser_settings(*, settings_path: Path, values: dict[str, object]) -> 
         "gmail_account_email": str(values.get("gmail_account_email", "") or "").strip(),
         "gmail_intake_bridge_enabled": bool(values.get("gmail_intake_bridge_enabled", False)),
         "gmail_intake_port": int(values.get("gmail_intake_port", 8765) or 8765),
-        "allow_xhigh_escalation": bool(values.get("allow_xhigh_escalation", False)),
+        "allow_xhigh_escalation": bool(values.get("allow_xhigh_escalation", True)),
         "diagnostics_admin_mode": bool(values.get("diagnostics_admin_mode", True)),
         "diagnostics_include_sanitized_snippets": bool(values.get("diagnostics_include_sanitized_snippets", False)),
         "diagnostics_verbose_metadata_logs": bool(values.get("diagnostics_verbose_metadata_logs", False)),
@@ -918,13 +1007,17 @@ def repair_browser_native_host(*, settings_path: Path) -> dict[str, object]:
 
 def run_ocr_provider_test(*, settings_path: Path) -> dict[str, object]:
     gui = load_gui_settings_from_path(settings_path)
-    provider = normalize_ocr_api_provider(gui.get("ocr_api_provider", gui.get("ocr_api_provider_default", "openai")))
+    provider = normalize_ocr_api_provider(gui.get("ocr_api_provider", gui.get("ocr_api_provider_default", "gemini")))
     config = OcrEngineConfig(
         policy=OcrEnginePolicy.LOCAL_THEN_API,
         api_provider=provider,
         api_base_url=str(gui.get("ocr_api_base_url", "") or "") or None,
         api_model=str(gui.get("ocr_api_model", "") or "") or None,
         api_key_env_name=str(gui.get("ocr_api_key_env_name", "") or "") or default_ocr_api_env_name(provider),
+        helper_thinking_level=normalize_gemini_thinking_level(
+            gui.get("helper_thinking_level", DEFAULT_GEMINI_HELPER_THINKING_LEVEL),
+            default=DEFAULT_GEMINI_HELPER_THINKING_LEVEL,
+        ),
     )
     source = _resolve_ocr_api_key_source_for_browser(config)
     if source is None:
@@ -932,6 +1025,8 @@ def run_ocr_provider_test(*, settings_path: Path) -> dict[str, object]:
         fallback_text = (
             "stored OpenAI translation key fallback, "
             if provider == OcrApiProvider.OPENAI
+            else "stored Gemini translation key fallback, "
+            if provider == OcrApiProvider.GEMINI
             else ""
         )
         return _provider_state_response(
@@ -949,6 +1044,8 @@ def run_ocr_provider_test(*, settings_path: Path) -> dict[str, object]:
     source_name = (
         "stored OpenAI translation key fallback"
         if source == ("stored", "openai_api_key_fallback")
+        else "stored Gemini translation key fallback"
+        if source == ("stored", "gemini_api_key_fallback")
         else "stored OCR key"
         if source[0] == "stored"
         else f"env {source[1]}"
@@ -958,17 +1055,20 @@ def run_ocr_provider_test(*, settings_path: Path) -> dict[str, object]:
     except Exception as exc:  # noqa: BLE001
         status_code = getattr(exc, "status_code", None)
         exception_class = type(exc).__name__
-        if provider == OcrApiProvider.OPENAI and is_openai_auth_failure(
+        if is_provider_auth_failure(
+            provider.value,
             exception_class=exception_class,
             status_code=status_code,
+            message=str(exc),
         ):
-            if source == ("stored", "openai_api_key_fallback"):
+            provider_label = "Gemini" if provider == OcrApiProvider.GEMINI else "OpenAI"
+            if source[1] in {"openai_api_key_fallback", "gemini_api_key_fallback"}:
                 message = (
-                    "OpenAI OCR authentication failed while using the stored OpenAI translation-key fallback. "
+                    f"{provider_label} OCR authentication failed while using the stored {provider_label} translation-key fallback. "
                     "Save a valid translation or OCR key in Browser Settings, then test again."
                 )
             else:
-                message = "OpenAI OCR authentication failed. Save or update the OCR key in Browser Settings, then test again."
+                message = f"{provider_label} OCR authentication failed. Save or update the OCR key in Browser Settings, then test again."
             return _provider_state_response(
                 settings_path=settings_path,
                 status="failed",
@@ -1024,42 +1124,85 @@ def run_gmail_draft_preflight(*, settings_path: Path) -> dict[str, object]:
 
 
 def run_translation_provider_test(*, settings_path: Path) -> dict[str, object]:
-    result = run_translation_auth_test()
+    gui = load_gui_settings_from_path(settings_path)
+    provider = normalize_translation_provider(gui.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER))
+    model = str(gui.get("translation_model", "") or "").strip() or default_translation_model(provider)
+    result = run_provider_auth_test(provider.value, model=model)
     status = "ok" if result.ok else ("unavailable" if result.status == "missing" else "failed")
     message = result.message
+    provider_label = provider_display_name(provider)
     if status == "failed" and result.status == "unauthorized":
-        message = "OpenAI authentication failed. Save a valid key in Browser Settings, test it, then start the translation again."
+        message = f"{provider_label} authentication failed. Save a valid key in Browser Settings, test it, then start the translation again."
     return _provider_state_response(
         settings_path=settings_path,
         status=status,
         message=message,
-        normalized_payload=result.to_payload(),
+        normalized_payload={
+            "provider": provider.value,
+            "model": model,
+            **result.to_payload(),
+        },
     )
 
 
-def save_browser_translation_key(*, settings_path: Path, key: object) -> dict[str, object]:
+def save_browser_translation_key(
+    *,
+    settings_path: Path,
+    key: object,
+    provider: object | None = None,
+) -> dict[str, object]:
+    gui = load_gui_settings_from_path(settings_path)
+    resolved_provider = normalize_translation_provider(
+        provider if provider not in (None, "") else gui.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
+    )
+    provider_label = provider_display_name(resolved_provider)
     cleaned = str(key or "").strip()
     if cleaned == "":
-        raise ValueError("OpenAI API key cannot be empty.")
-    set_openai_key(cleaned)
-    if not get_openai_key():
-        raise RuntimeError("Secure credential storage is unavailable on this system.")
+        raise ValueError(f"{provider_label} API key cannot be empty.")
+    if resolved_provider.value == "gemini":
+        set_gemini_key(cleaned)
+        if not get_gemini_key():
+            raise RuntimeError("Secure credential storage is unavailable on this system.")
+    else:
+        set_openai_key(cleaned)
+        if not get_openai_key():
+            raise RuntimeError("Secure credential storage is unavailable on this system.")
     _clear_word_pdf_export_cache_for_settings(settings_path=settings_path)
     return _provider_state_response(
         settings_path=settings_path,
-        message="Saved the OpenAI translation key to secure app storage for this machine. Run Test Translation Auth to confirm it.",
-        normalized_payload={"saved": True},
+        message=f"Saved the {provider_label} translation key to secure app storage for this machine. Run Test Translation Auth to confirm it.",
+        normalized_payload={"saved": True, "provider": resolved_provider.value},
     )
 
 
-def clear_browser_translation_key(*, settings_path: Path) -> dict[str, object]:
-    delete_openai_key()
+def clear_browser_translation_key(
+    *,
+    settings_path: Path,
+    provider: object | None = None,
+) -> dict[str, object]:
+    gui = load_gui_settings_from_path(settings_path)
+    resolved_provider = normalize_translation_provider(
+        provider if provider not in (None, "") else gui.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER)
+    )
+    provider_label = provider_display_name(resolved_provider)
+    if resolved_provider.value == "gemini":
+        delete_gemini_key()
+    else:
+        delete_openai_key()
     _clear_word_pdf_export_cache_for_settings(settings_path=settings_path)
     return _provider_state_response(
         settings_path=settings_path,
-        message="Cleared the stored OpenAI translation key from secure app storage for this machine.",
-        normalized_payload={"cleared": True},
+        message=f"Cleared the stored {provider_label} translation key from secure app storage for this machine.",
+        normalized_payload={"cleared": True, "provider": resolved_provider.value},
     )
+
+
+def save_browser_gemini_key(*, settings_path: Path, key: object) -> dict[str, object]:
+    return save_browser_translation_key(settings_path=settings_path, key=key, provider="gemini")
+
+
+def clear_browser_gemini_key(*, settings_path: Path) -> dict[str, object]:
+    return clear_browser_translation_key(settings_path=settings_path, provider="gemini")
 
 
 def save_browser_ocr_key(*, settings_path: Path, key: object) -> dict[str, object]:
@@ -1282,9 +1425,14 @@ def run_glossary_builder(
         terms = [row.source_term for row in surface if row.occurrences_corpus >= 2]
         if terms:
             cache = LemmaCache(cache_path=app_data_dir_from_settings_path(settings_path) / "lemma_cache.json")
+            builder_gui = load_gui_settings_from_path(settings_path)
+            lemma_client = create_translation_client(
+                provider=builder_gui.get("translation_provider", DEFAULT_TRANSLATION_PROVIDER),
+                model=str(builder_gui.get("translation_model", "") or "").strip() or None,
+            )
             lemma_result = batch_normalize_lemmas(
                 terms,
-                client=OpenAIResponsesClient(),
+                client=lemma_client,
                 effort=str(lemma_effort or "high").strip().lower() or "high",
                 cache=cache,
             )
@@ -1441,7 +1589,7 @@ def run_browser_calibration_audit(
     lang_code = str(target_lang or gui.get("default_lang", "EN") or "EN").strip().upper()
     if lang_code not in {"EN", "FR", "AR"}:
         raise ValueError("Calibration target language must be EN, FR, or AR.")
-    provider = normalize_ocr_api_provider(gui.get("ocr_api_provider", gui.get("ocr_api_provider_default", "openai")))
+    provider = normalize_ocr_api_provider(gui.get("ocr_api_provider", gui.get("ocr_api_provider_default", "gemini")))
     config = RunConfig(
         pdf_path=pdf_path,
         output_dir=output_dir,

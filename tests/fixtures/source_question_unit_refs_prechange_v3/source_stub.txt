@@ -1,0 +1,1 @@
+Fictional source binding for pure V3 replay fixture.

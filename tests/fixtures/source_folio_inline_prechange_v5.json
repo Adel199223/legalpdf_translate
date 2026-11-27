@@ -1,0 +1,299 @@
+{
+  "schema": "genuine-v5-inline-folio-prechange-v1",
+  "baseline_runtime_sha256": "6d6a8cf9fbf2e22eaa5c59ec9e9225c5c29e1aba1d0fb34fa880dff8eb0e4a97",
+  "fixture_input_sha256": "c61951f64880ce001c280db233100413c2a6a446473055ded9adf52540f3dff7",
+  "policy": "source_image_unreviewed_v1:5737c26b2a9de209b945de79eb74813e7b98e772214082e54d198494a58e6f15",
+  "instructions_sha256": "64bd523ddc088c76e0f402131bb36b6ec916bad34f0ebee0fcb101ade37ed260",
+  "proposal_schema_sha256": "ac99f1e814ebf6e4070ac60456d872b8285e409b945ba2a439faa49e12bb5e2a",
+  "maps": [
+    {
+      "policy": "source_image_unreviewed_v1:14d640f395b2b89659e014f32e328c2ea9176b4222538d82d0448b1656e109a4",
+      "band": "ordinary_metadata_band_normalization_v1",
+      "optional": "ordinary_optional_layout_hint_normalization_v2",
+      "clock": null,
+      "local_source_folio_proof": false,
+      "metadata": true
+    },
+    {
+      "policy": "source_image_unreviewed_v1:17b5eb837ee5767ceebb7a511df2084dd23fd84a9bc965cd757f01b68694f7d5",
+      "band": "ordinary_metadata_band_normalization_v1",
+      "optional": "ordinary_optional_layout_hint_normalization_v2",
+      "clock": null,
+      "local_source_folio_proof": false,
+      "metadata": true
+    },
+    {
+      "policy": "source_image_unreviewed_v1:1e4a11e243d8a6a27dd7fa30c54e4475dfae4a3f74a68e789eef1be15362ab4b",
+      "band": "ordinary_metadata_band_normalization_v3",
+      "optional": "ordinary_optional_layout_hint_normalization_v3",
+      "clock": null,
+      "local_source_folio_proof": true,
+      "metadata": true
+    },
+    {
+      "policy": "source_image_unreviewed_v1:1ec5f3d9e075b54232e5b8cc6a35fc78a8aba2812ebbdc1d0c97d9693eba6740",
+      "band": null,
+      "optional": "ordinary_optional_layout_hint_normalization_v2",
+      "clock": null,
+      "local_source_folio_proof": false,
+      "metadata": false
+    },
+    {
+      "policy": "source_image_unreviewed_v1:5737c26b2a9de209b945de79eb74813e7b98e772214082e54d198494a58e6f15",
+      "band": "ordinary_metadata_band_normalization_v5",
+      "optional": "ordinary_optional_layout_hint_normalization_v3",
+      "clock": "clock_h_colon_ltr_v1",
+      "local_source_folio_proof": true,
+      "metadata": true
+    },
+    {
+      "policy": "source_image_unreviewed_v1:7a2f8d7d4c43368ad58cc57f8b515f3386cbfbd4a0dd45054e68108d4e19a17a",
+      "band": "ordinary_metadata_band_normalization_v1",
+      "optional": "ordinary_optional_layout_hint_normalization_v3",
+      "clock": null,
+      "local_source_folio_proof": false,
+      "metadata": true
+    },
+    {
+      "policy": "source_image_unreviewed_v1:7dcb79d5cba51275f898bc8d5f5746ea96f5adfb32aadc5389a658e049702a15",
+      "band": null,
+      "optional": "ordinary_optional_layout_hint_normalization_v1",
+      "clock": null,
+      "local_source_folio_proof": false,
+      "metadata": false
+    },
+    {
+      "policy": "source_image_unreviewed_v1:8e3a25732055b8c87d1f0bfe37a6d1ec1b265ffd8eec73a1077538c8c85b974c",
+      "band": null,
+      "optional": "ordinary_optional_layout_hint_normalization_v2",
+      "clock": null,
+      "local_source_folio_proof": false,
+      "metadata": false
+    },
+    {
+      "policy": "source_image_unreviewed_v1:a1f0b680bfd07d5c2ca3a7d11d47939c96f8639271a38764897fdeabd346f81a",
+      "band": "ordinary_metadata_band_normalization_v4",
+      "optional": "ordinary_optional_layout_hint_normalization_v3",
+      "clock": "clock_h_colon_ltr_v1",
+      "local_source_folio_proof": true,
+      "metadata": true
+    },
+    {
+      "policy": "source_image_unreviewed_v1:b6277898f059d84cc7a7171d24663adb7f542534fa5ad5a98b5ae607289eb960",
+      "band": "ordinary_metadata_band_normalization_v2",
+      "optional": "ordinary_optional_layout_hint_normalization_v3",
+      "clock": null,
+      "local_source_folio_proof": true,
+      "metadata": true
+    },
+    {
+      "policy": "source_image_unreviewed_v1:bb15bab385eb54f074c00da06fdadfe607c48e2d1933532f590160d80f54ae01",
+      "band": "ordinary_metadata_band_normalization_v2",
+      "optional": "ordinary_optional_layout_hint_normalization_v3",
+      "clock": null,
+      "local_source_folio_proof": true,
+      "metadata": true
+    },
+    {
+      "policy": "source_image_unreviewed_v1:d3c89ef63893696d339f350c00500a4cd865f594ce56ed9a45472bb350b5e0b7",
+      "band": "ordinary_metadata_band_normalization_v3",
+      "optional": "ordinary_optional_layout_hint_normalization_v3",
+      "clock": "clock_h_colon_ltr_v1",
+      "local_source_folio_proof": true,
+      "metadata": true
+    },
+    {
+      "policy": "source_image_unreviewed_v1:e0c5fa5ea5ca1633d89daa45e93c3f5ce04b579f5916194cc5495f1b64c715d9",
+      "band": "ordinary_metadata_band_normalization_v1",
+      "optional": "ordinary_optional_layout_hint_normalization_v3",
+      "clock": null,
+      "local_source_folio_proof": true,
+      "metadata": true
+    }
+  ],
+  "cases": [
+    {
+      "fixture_case_index": 0,
+      "lang": "AR",
+      "evidence": {
+        "document_reviewed": false,
+        "policy_fingerprint": "5737c26b2a9de209b945de79eb74813e7b98e772214082e54d198494a58e6f15",
+        "rendered_layout_acceptance": "not_evaluated",
+        "source_evidence": {
+          "pages": [
+            {
+              "findings": [],
+              "layout": [
+                {
+                  "bbox": [
+                    0.1,
+                    0.9,
+                    0.9,
+                    0.99
+                  ],
+                  "kind": "source_footer",
+                  "paragraph_ids": [
+                    "p000002"
+                  ]
+                }
+              ],
+              "page_number": 1,
+              "source_coverage_verified": false
+            }
+          ],
+          "version": "ordinary_source_evidence_v1"
+        },
+        "source_folio_direction_version": "numeric_run_ltr_v3",
+        "version": "ordinary_auto_layout_evidence_v1",
+        "clock_direction_version": "clock_h_colon_ltr_v1",
+        "local_source_folio_proof_version": "ordinary_source_folio_span_proof_v1",
+        "local_source_folio_proof": {
+          "version": "ordinary_source_folio_span_proof_v1",
+          "source_pdf_sha256": "5462c7cf9a280ee5b8962a9db458040eb3542cef16efba72df6bae79aa86a537",
+          "selected_pages": [
+            1
+          ],
+          "frames": [
+            {
+              "page_number": 1,
+              "width_px": 595,
+              "height_px": 842,
+              "image_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "folios": [
+            {
+              "page_number": 1,
+              "fraction": null
+            }
+          ]
+        }
+      },
+      "candidate_docx_sha256": "affc6e02c9a9b72e45d48609a16514a5f91fd87cde7656c6038ba8acea61617d",
+      "candidate_map_sha256": "c29db33cfd02c865054c0eb14a2288418c13f01f8792d508b90b3b82b441897f",
+      "candidate_receipt_sha256": "a8bf0b8743993f77dbe7214d5f1ca2483c05fc6bff6cfe7927944901bef9ca8b"
+    },
+    {
+      "fixture_case_index": 1,
+      "lang": "EN",
+      "evidence": {
+        "document_reviewed": false,
+        "policy_fingerprint": "5737c26b2a9de209b945de79eb74813e7b98e772214082e54d198494a58e6f15",
+        "rendered_layout_acceptance": "not_evaluated",
+        "source_evidence": {
+          "pages": [
+            {
+              "findings": [],
+              "layout": [
+                {
+                  "bbox": [
+                    0.1,
+                    0.9,
+                    0.9,
+                    0.99
+                  ],
+                  "kind": "source_footer",
+                  "paragraph_ids": [
+                    "p000002"
+                  ]
+                }
+              ],
+              "page_number": 1,
+              "source_coverage_verified": false
+            }
+          ],
+          "version": "ordinary_source_evidence_v1"
+        },
+        "source_folio_direction_version": "numeric_run_ltr_v3",
+        "version": "ordinary_auto_layout_evidence_v1",
+        "clock_direction_version": "clock_h_colon_ltr_v1",
+        "local_source_folio_proof_version": "ordinary_source_folio_span_proof_v1",
+        "local_source_folio_proof": {
+          "version": "ordinary_source_folio_span_proof_v1",
+          "source_pdf_sha256": "9acd46724c01c2e837d13a4d73efca0490398eb5089f71fe118e1ab2ba12ce8c",
+          "selected_pages": [
+            1
+          ],
+          "frames": [
+            {
+              "page_number": 1,
+              "width_px": 595,
+              "height_px": 842,
+              "image_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "folios": [
+            {
+              "page_number": 1,
+              "fraction": null
+            }
+          ]
+        }
+      },
+      "candidate_docx_sha256": "1aeee0d53e1c29281caaf14712de1d90665da2054648eb1cb8a7c0b06db0ed32",
+      "candidate_map_sha256": "7e549eca705e6ab217b4dccb4f4b473a8ad8f3b238c684ba8f66fecf37a832f6",
+      "candidate_receipt_sha256": "1eebf5ad04b80777a1cc1abb9ab9b2046dede60fe6d9da1dc877c5a5b385d582"
+    },
+    {
+      "fixture_case_index": 2,
+      "lang": "FR",
+      "evidence": {
+        "document_reviewed": false,
+        "policy_fingerprint": "5737c26b2a9de209b945de79eb74813e7b98e772214082e54d198494a58e6f15",
+        "rendered_layout_acceptance": "not_evaluated",
+        "source_evidence": {
+          "pages": [
+            {
+              "findings": [],
+              "layout": [
+                {
+                  "bbox": [
+                    0.1,
+                    0.9,
+                    0.9,
+                    0.99
+                  ],
+                  "kind": "source_footer",
+                  "paragraph_ids": [
+                    "p000002"
+                  ]
+                }
+              ],
+              "page_number": 1,
+              "source_coverage_verified": false
+            }
+          ],
+          "version": "ordinary_source_evidence_v1"
+        },
+        "source_folio_direction_version": "numeric_run_ltr_v3",
+        "version": "ordinary_auto_layout_evidence_v1",
+        "clock_direction_version": "clock_h_colon_ltr_v1",
+        "local_source_folio_proof_version": "ordinary_source_folio_span_proof_v1",
+        "local_source_folio_proof": {
+          "version": "ordinary_source_folio_span_proof_v1",
+          "source_pdf_sha256": "7ddf10d124de5e3fc6b5a43a369bc348b57bf6cc26371bbcaa19e035b1ae5131",
+          "selected_pages": [
+            1
+          ],
+          "frames": [
+            {
+              "page_number": 1,
+              "width_px": 595,
+              "height_px": 842,
+              "image_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "folios": [
+            {
+              "page_number": 1,
+              "fraction": null
+            }
+          ]
+        }
+      },
+      "candidate_docx_sha256": "4eb6a561a2fac1f44199f5c84729df7f134e627029c83407c212c22f8423d185",
+      "candidate_map_sha256": "c88ab1feb9c20d4c73fa13d85ec754827cfcb506e95ff9e51a9c0798df5a47b5",
+      "candidate_receipt_sha256": "9583f201e951f33b889ca44a7da563dadb31217e8a93068e54d6ede6771d1310"
+    }
+  ]
+}
