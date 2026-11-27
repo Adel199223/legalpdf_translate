@@ -34,14 +34,19 @@ def test_default_uses_institution_and_contains_no_declaration_or_signature():
 
 
 @pytest.mark.parametrize("custom", ["", "Declaração revista para o presente processo."])
-def test_explicit_declaration_preserves_identity_and_only_adds_blank_signature(tmp_path, custom):
+def test_explicit_declaration_preserves_identity_and_closes_without_signature_line(tmp_path, custom):
     draft = _draft(include_translator_declaration=True, translator_declaration_text=custom)
-    path = generate_honorarios_docx(draft, tmp_path / "unsigned.docx")
+    path = generate_honorarios_docx(draft, tmp_path / "declaration.docx")
     texts = [p.text for p in Document(path).paragraphs]
     expected = custom or DEFAULT_TRANSLATOR_DECLARATION
     assert texts.count(expected) == 1
     assert texts.index(expected) < texts.index("Espera deferimento,")
-    assert texts[-1] == "Assinatura: ______________________________"
+    if not custom:
+        assert "desempenhar fielmente as funções que me são confiadas" in expected
+        assert "fiel, integral, exata e imparcial" in expected
+    assert texts[-3] == "Exemplo, 27 de setembro de 2026"
+    assert texts[-1] == "Ana Exemplo"
+    assert not any("Assinatura" in t or "____" in t for t in texts)
     assert "Nome: Ana Exemplo" in texts
     assert "Morada: Rua Exemplo 1" in texts
     assert "O Pagamento deverá ser efetuado para o seguinte IBAN: TEST-IBAN" in texts

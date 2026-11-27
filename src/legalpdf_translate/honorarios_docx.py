@@ -35,8 +35,10 @@ _INVALID_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _TRAILING_PREPOSITION_RE = re.compile(r"\b(?:de|do|da|dos|das)\s*$", re.IGNORECASE)
 _PREPOSITION_TOKENS = {"de", "do", "da", "dos", "das"}
 DEFAULT_TRANSLATOR_DECLARATION = (
-    "Comprometo-me, por minha honra, a desempenhar conscienciosamente as funções "
-    "de tradutor que me são confiadas no presente processo."
+    "Comprometo-me, por minha honra, a desempenhar fielmente as funções que me são confiadas.\n\n"
+    "Comprometo-me a traduzir de forma fiel, integral, exata e imparcial o conteúdo do documento, "
+    "sem acrescentar, omitir ou alterar o seu sentido, e a respeitar a confidencialidade das "
+    "informações de que tenha conhecimento no exercício destas funções."
 )
 _INCOMPLETE_LOCATION_TOKENS = {
     "audiencia",
@@ -379,7 +381,6 @@ def _translation_paragraph_texts(draft: HonorariosDraft) -> list[tuple[str, str]
         )
         closing = paragraphs.index(("Espera deferimento,", "center"))
         paragraphs[closing:closing] = [(declaration, "left"), ("", "left")]
-        paragraphs.extend([("", "left"), ("Assinatura: ______________________________", "center")])
     return paragraphs
 
 
