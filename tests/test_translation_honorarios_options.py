@@ -41,6 +41,9 @@ def test_explicit_declaration_preserves_identity_and_closes_without_signature_li
     expected = custom or DEFAULT_TRANSLATOR_DECLARATION
     assert texts.count(expected) == 1
     assert texts.index(expected) < texts.index("Espera deferimento,")
+    if not custom:
+        assert "desempenhar fielmente as funções que me são confiadas" in expected
+        assert "fiel, integral, exata e imparcial" in expected
     assert texts[-3] == "Exemplo, 27 de setembro de 2026"
     assert texts[-1] == "Ana Exemplo"
     assert not any("Assinatura" in t or "____" in t for t in texts)
