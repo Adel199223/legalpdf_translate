@@ -669,7 +669,7 @@ def test_assemble_structural_docx_multidoc_en_and_rtl_ar_form(tmp_path: Path) ->
         assert any(b.get("top") == "single" and b.get("bottom") == "single" and b.get("left") == "nil" for b in tbl_borders)
         footer_parts = [n for n in names if n.startswith("word/footer")]
         assert footer_parts
-        assert all("PAGE" in z.read(fn).decode("utf-8") and "NUMPAGES" in z.read(fn).decode("utf-8") for fn in footer_parts)
+        assert all("PAGE" in z.read(fn).decode("utf-8") and "SECTIONPAGES" in z.read(fn).decode("utf-8") for fn in footer_parts)
         settings_xml = z.read("word/settings.xml").decode("utf-8")
         assert 'compatibilityMode' in settings_xml and 'val="15"' in settings_xml
 
@@ -1139,3 +1139,148 @@ def test_rtl_crest_logical_jc_ppr_order_and_form_continuation_header(tmp_path: P
         assert sect2_body_text.count("شرطة الأمن العام") == 0
         # Ensure form_record section has titlePg (different first page header/footer)
         assert "titlePg" in doc_xml
+
+
+def test_rtl_token_punctuation_lrm_multi_section_and_empty_body_regressions(tmp_path: Path) -> None:
+    # 1. Empty body page containing only stationery + divider_stars must fail completeness validation.
+    header_only_payload = {
+        "page_archetype": "despacho",
+        "document_starts_here": False,
+        "continuation_from_previous": True,
+        "header_stationery": {
+            "present": True,
+            "style": "court_despacho_stationery",
+            "center_crest_present": True,
+            "center_institution_lines": ["النيابة العامة"],
+        },
+        "footer_stationery": {
+            "present": True,
+            "court_contact_lines": ["قصر العدل - [[7800-597 Beja]]"],
+            "page_counter_template": "{page} / {total}",
+        },
+        "regions": [
+            {
+                "kind": "flow_block",
+                "flow_items": [{"item_type": "divider_stars", "text": "* * *", "align": "center"}],
+            }
+        ],
+    }
+    with pytest.raises(StructuralValidationError) as exc_info:
+        parse_and_validate_structural_page(
+            json.dumps(header_only_payload, ensure_ascii=False),
+            lang=TargetLang.AR,
+        )
+    assert exc_info.value.code == "empty_structural_body"
+
+    # 2. Multi-section RTL DOCX keeps comma in RTL run after [[date]]، protects pure-LTR postal line with LRM,
+    # clones consistent continuation header from lead header when stamp differs, and uses SECTIONPAGES + w:start="1" + ltr slash counter.
+    sec1_doc = PageStructuralDocument.model_validate(
+        {
+            "page_archetype": "citius_notification",
+            "document_starts_here": True,
+            "footer_stationery": {"present": True, "page_counter_template": "صفحة {page} من {total}"},
+            "regions": [
+                {
+                    "kind": "two_col_panel",
+                    "left_width_pct": 50,
+                    "left_items": [
+                        {"text": "قصر العدل - [[Praça Dr. Mário Soares]]", "align": "right"},
+                        {"text": "[[7800-597 Beja]]", "align": "right"},
+                    ],
+                    "right_items": [{"text": "كتاب رسمي", "align": "left"}],
+                },
+                {
+                    "kind": "flow_block",
+                    "flow_items": [{"text": "في جلسة [[02-06-2026]]، صرّحت المجني عليها.", "align": "justify"}],
+                },
+            ],
+        }
+    )
+    sec2_p1 = PageStructuralDocument.model_validate(
+        {
+            "page_archetype": "despacho",
+            "document_starts_here": True,
+            "header_stationery": {
+                "present": True,
+                "style": "court_despacho_stationery",
+                "center_crest_present": True,
+                "top_left_stamp_lines": ["موقّع بتاريخ [[28-10-2026]]، من قبل"],
+                "center_institution_lines": ["النيابة العامة الموحدة"],
+            },
+            "footer_stationery": {
+                "present": True,
+                "court_contact_lines": ["قصر العدل - [[Praça Dr. Mário Soares - 7800-597 Beja]]"],
+                "page_counter_template": "{page} / {total}",
+            },
+            "regions": [{"kind": "flow_block", "flow_items": [{"text": "أولاً. تم الاطلاع.", "align": "justify"}]}],
+        }
+    )
+    sec2_p2 = PageStructuralDocument.model_validate(
+        {
+            "page_archetype": "despacho",
+            "document_starts_here": False,
+            "continuation_from_previous": True,
+            "header_stationery": {
+                "present": True,
+                "style": "court_despacho_stationery",
+                "center_crest_present": True,
+                "top_left_stamp_lines": [],
+                "center_institution_lines": ["مكتب مختلف غير موحد"],
+            },
+            "footer_stationery": {
+                "present": True,
+                "court_contact_lines": ["قصر العدل"],
+                "page_counter_template": "{page} / {total}",
+            },
+            "regions": [{"kind": "flow_block", "flow_items": [{"text": "ثانياً. متابعة الإجراءات.", "align": "justify"}]}],
+        }
+    )
+
+    out_docx = tmp_path / "audit_regressions.docx"
+    assemble_structural_docx(
+        [
+            StructuralPageBundle(1, sec1_doc),
+            StructuralPageBundle(2, sec2_p1),
+            StructuralPageBundle(3, sec2_p2),
+        ],
+        out_docx,
+        lang=TargetLang.AR,
+    )
+    with ZipFile(out_docx) as z:
+        doc_xml = z.read("word/document.xml").decode("utf-8")
+        assert 'w:start="1"' in doc_xml
+        # Arabic comma after [[02-06-2026]] must stay in an RTL run, not merged into LTR date run.
+        root = ET.fromstring(doc_xml)
+        comma_ok = False
+        postal_lrm_ok = False
+        for p_el in root.findall(f".//{_qn('p')}"):
+            runs = p_el.findall(f".//{_qn('r')}")
+            for r_el in runs:
+                txt = "".join(t.text or "" for t in r_el.findall(f".//{_qn('t')}"))
+                rpr = r_el.find(_qn("rPr"))
+                rtl_el = rpr.find(_qn("rtl")) if rpr is not None else None
+                rtl_val = rtl_el.attrib.get(_qn("val")) if rtl_el is not None else None
+                if "7800-597 Beja" in txt:
+                    assert "\u200e" in txt
+                    postal_lrm_ok = True
+                if txt.lstrip().startswith("،"):
+                    assert rtl_val == "1"
+                    comma_ok = True
+        assert postal_lrm_ok and comma_ok
+
+        # Section 2 continuation header should inherit lead wording instead of drifted wording.
+        hdr_texts = "\n".join(z.read(n).decode("utf-8") for n in z.namelist() if n.startswith("word/header"))
+        assert "النيابة العامة الموحدة" in hdr_texts
+        assert "مكتب مختلف غير موحد" not in hdr_texts
+
+        # Multi-section document uses SECTIONPAGES, and RTL slash counter uses non-bidi LTR paragraph.
+        ftr_xmls = [z.read(n).decode("utf-8") for n in z.namelist() if n.startswith("word/footer")]
+        assert any("SECTIONPAGES" in fxml for fxml in ftr_xmls)
+        slash_ftr = next(fxml for fxml in ftr_xmls if " / " in fxml)
+        slash_root = ET.fromstring(slash_ftr)
+        counter_p = next(
+            p for p in slash_root.findall(f".//{_qn('p')}")
+            if "/" in "".join(t.text or "" for t in p.findall(f".//{_qn('t')}"))
+        )
+        counter_ppr = counter_p.find(_qn("pPr"))
+        assert counter_ppr is not None and counter_ppr.find(_qn("bidi")) is None

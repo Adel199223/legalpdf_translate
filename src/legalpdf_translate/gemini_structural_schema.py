@@ -392,12 +392,12 @@ def build_structural_system_instructions(lang: TargetLang | str) -> str:
         "For the assigned source page (provided as an image and/or extracted text + geometry hints), produce ONE faithful, complete translation "
         "captured inside the exact JSON schema so the resulting Word document closely mirrors the original document's visual architecture.\n\n"
         "ARCHITECTURAL MAPPING RULES:\n"
-        "1. Translate EVERY readable element visible on the source page once (headers, stamps, metadata bars, left sidebars, main text, boxes, tables, footers, signatures, barcodes). Never drop, summarize, or invent text.\n"
+        "1. Translate EVERY readable element visible on the source page once (headers, stamps, metadata bars, left sidebars, main text, boxes, tables, footers, signatures, barcodes), from the very first top line of the page through the final signature block below any '*' or '* * *' divider. Never drop, summarize, or invent text.\n"
         "2. Recognize Portuguese legal archetypes and choose matching Word layout structures:\n"
         "   - 'citius_notification': Two-column notification/letter headers & Legal Aid sidebars -> put 2-column bands in regions of kind='two_col_panel' (left_items + right_items, accurate left_width_pct, border_style='left_shaded_panel' if shaded panel, vertical_divider=true if separated). Full-width horizontal divider bars go as horizontal_rule or border='top_bottom'. Put page-bottom court notes and page counter in footer_stationery with page_counter_template='Page {page}' (or translated equivalent using literal {page}/{total}, NEVER wrap {page} or counter digits in [[...]]).\n"
         "   - 'despacho': Repeating top stationery (agency title, crest, top-left electronic signature stamp) goes in header_stationery (NOT repeated inside flow body!). Repeating bottom address/page counter goes in footer_stationery with page_counter_template='Page {page} of {total}' (or translated equivalent with {page}/{total}). The full-width 1x3 (or 1x2) case/proceeding/reference band directly under header goes in kind='metadata_rule_band' with border_style='top_bottom_only' or 'top_bottom_inside_v'. Main narrative prose uses item_type='paragraph', align='justify', indent_style='first_line', first_line_indent_cm=1.25. Numbered/bulleted items use list_number/list_bullet with indent_style='hanging'. Section dividers like '* * *' use item_type='divider_stars'. Use font_preference='times_12' for EN/FR.\n"
         "   - 'form_record': Structured police/agency records -> bordered tables use kind='table' with border_style='full_grid' (or 'none' when source rows are borderless), accurate col_widths_pct, row cells with bold labels + values. Section headers with underlines/rules use heading_1/heading_2 with border='bottom'. Top agency crest/masthead belongs in header_stationery ONLY on page 1 of the form (center_crest_present=false on continuation pages), and continuation running top headers (e.g. 'NPP/NUIPC... | Polícia...') must go in header_stationery (NOT inside regions!). Put page footer notes and counter using literal {page}/{total} in footer_stationery.\n"
-        "3. Multi-document PDFs: set document_starts_here=true ONLY on page 1 OR when a brand-new legal document begins on this page (e.g. a Dispatch starts after a 2-page Citius Notification). Set continuation_from_previous=true when continuing running prose/form from the previous page, and do NOT emit duplicate body metadata_rule_band headers or duplicate top running page headers in regions.\n"
+        "3. Multi-document PDFs: set document_starts_here=true ONLY on page 1 OR when a brand-new legal document begins on this page (e.g. a Dispatch starts after a 2-page Citius Notification). Set continuation_from_previous=true when continuing running prose/form from the previous page; ALWAYS include every opening split-sentence continuation line at the top of the page AND never stop early at a '*' / '* * *' divider (translate all following paragraphs and closing signature blocks), while omitting duplicate body metadata_rule_band headers or duplicate top running page headers from regions.\n"
         "4. KEEP JSON COMPACT: omit optional defaulted fields and empty arrays! Put uniform paragraph text in `text` (plus `bold`/`italic`/`underline` when uniform), and use `runs` ONLY when bold/italic/underline changes mid-paragraph.\n\n"
         + lang_rules
         + "\n\n"
@@ -469,9 +469,9 @@ def build_structural_retry_prompt(
         )
         if tokens:
             hints.append("Required tokens to preserve: " + " | ".join(f"[[{t}]]" for t in tokens[:60]))
-    elif defect_code in {"incomplete_source_coverage", "incomplete_source_identifiers"}:
+    elif defect_code in {"incomplete_source_coverage", "incomplete_source_identifiers", "empty_structural_body"}:
         hints.append(
-            "CRITICAL COMPLETENESS RULE: Include ALL body paragraphs, numbered items, table rows, addresses, and numeric/case identifiers from the page."
+            "CRITICAL COMPLETENESS RULE: Include ALL body paragraphs, numbered items, table rows, headings, sections after '*' dividers, closing signature blocks, addresses, and numeric/case identifiers from the page."
         )
     return "\n".join(hints)
 
@@ -619,6 +619,48 @@ def flatten_structural_text(doc: PageStructuralDocument, *, unwrap_tokens: bool 
     return "\n".join(lines)
 
 
+def flatten_structural_body_text(doc: PageStructuralDocument, *, unwrap_tokens: bool = True) -> str:
+    """Extract readable body region lines (excluding stationery headers/footers and decorative dividers)."""
+    lines: list[str] = []
+
+    def add_line(text: str) -> None:
+        val = unwrap_internal_placeholders(text) if unwrap_tokens else text
+        val = " ".join(val.splitlines()).strip()
+        if val:
+            lines.append(val)
+
+    def add_paras(paras: Sequence[StyledParagraph]) -> None:
+        for para in paras:
+            if para.item_type in {"divider_stars", "horizontal_rule"}:
+                continue
+            add_line(para.plain_text())
+
+    for region in doc.regions:
+        if region.kind == "two_col_panel":
+            add_paras(region.left_items)
+            add_paras(region.right_items)
+        elif region.kind == "metadata_rule_band":
+            parts = []
+            for cell in region.metadata_cells:
+                cell_text = " | ".join(p.plain_text().strip() for p in cell.paragraphs if p.plain_text().strip())
+                if cell_text:
+                    parts.append(cell_text)
+            if parts:
+                add_line(" | ".join(parts))
+        elif region.kind == "table":
+            for row in region.table_rows:
+                row_parts = []
+                for cell in row.cells:
+                    cell_text = " ".join(p.plain_text().strip() for p in cell.paragraphs if p.plain_text().strip())
+                    row_parts.append(cell_text)
+                if any(row_parts):
+                    add_line(" | ".join(p for p in row_parts if p))
+        else:
+            add_paras(region.flow_items)
+
+    return "\n".join(lines)
+
+
 def parse_and_validate_structural_page(
     raw_output: str,
     *,
@@ -675,6 +717,14 @@ def parse_and_validate_structural_page(
 
     if not unwrapped_flat.strip():
         raise StructuralValidationError("empty_structural_output", retry_kind="completeness")
+
+    body_only = flatten_structural_body_text(doc, unwrap_tokens=True)
+    if not any(ch.isalnum() for ch in body_only):
+        raise StructuralValidationError(
+            "empty_structural_body",
+            retry_kind="completeness",
+            details={"reason": "No body prose, headings, or table content extracted from page regions"},
+        )
 
     # Deterministic content completeness guard against silent drops when extracted source is substantial.
     src_compact = "".join(source_text.split())

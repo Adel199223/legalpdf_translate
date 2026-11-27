@@ -17,9 +17,12 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
 from .docx_writer import (
+    _LRM,
     _append_block_text,
+    _classify_directional_char,
     _ensure_primary_compatibility_mode15,
     _is_rtl_target_lang,
+    _set_ltr_run_props,
     _set_rtl_visual_alignment,
     _verify_docx_visible_content,
     save_document_atomic,
@@ -430,14 +433,23 @@ def _render_styled_paragraph(
     _set_paragraph_borders(paragraph, border)
     _set_paragraph_shading(paragraph, spec.shading if spec.item_type != "callout_box" else (spec.shading if spec.shading != "none" else "light_gray"))
 
+    plain_para_check = unwrap_internal_placeholders(spec.plain_text()).strip()
+    pure_ltr_alnum_num_line = (
+        rtl
+        and bool(plain_para_check)
+        and not any(_classify_directional_char(ch) == "rtl" for ch in plain_para_check)
+        and any(ch.isdigit() for ch in plain_para_check)
+        and any(ch.isalpha() for ch in plain_para_check)
+    )
+
     for run_spec in spec.effective_runs():
-        visible_text = _cap_signature_underscores(unwrap_internal_placeholders(run_spec.text))
-        if not visible_text:
+        if not unwrap_internal_placeholders(run_spec.text).strip():
             continue
+        token_text = _cap_signature_underscores(run_spec.text)
         start_idx = len(paragraph.runs)
         _append_block_text(
             paragraph,
-            visible_text,
+            token_text,
             lang=lang,
             strip_bidi_controls=strip_bidi_controls,
             bold=run_spec.bold or spec.item_type in {"title", "heading_1"},
@@ -450,9 +462,18 @@ def _render_styled_paragraph(
                 size_pt=size_pt,
                 underline=run_spec.underline,
             )
+            if pure_ltr_alnum_num_line and added.text and not added.text.startswith(_LRM):
+                added.text = f"{_LRM}{added.text.strip(_LRM)}{_LRM}"
 
 
-def _insert_word_field(paragraph, field_name: str, *, font_name: str, size_pt: float) -> None:
+def _insert_word_field(
+    paragraph,
+    field_name: str,
+    *,
+    font_name: str,
+    size_pt: float,
+    ltr_run: bool = False,
+) -> None:
     begin = OxmlElement("w:fldChar")
     begin.set(qn("w:fldCharType"), "begin")
     instr = OxmlElement("w:instrText")
@@ -469,26 +490,51 @@ def _insert_word_field(paragraph, field_name: str, *, font_name: str, size_pt: f
         r._r.append(child)
     val_run = paragraph.add_run("1")
     _apply_run_typography(val_run, font_name=font_name, size_pt=size_pt)
+    if ltr_run:
+        _set_ltr_run_props(val_run)
     end_run = paragraph.add_run("")
     _apply_run_typography(end_run, font_name=font_name, size_pt=size_pt)
     end_run._r.append(end)
 
 
-def _add_footer_page_counter(paragraph, template: str, *, lang: TargetLang | str, strip_bidi_controls: bool, font_name: str, size_pt: float) -> None:
+def _is_pure_ltr_slash_counter(template: str) -> bool:
+    plain = unwrap_internal_placeholders(template).replace("{page}", "").replace("{total}", "")
+    return "/" in plain and not any(_classify_directional_char(ch) == "rtl" for ch in plain)
+
+
+def _add_footer_page_counter(
+    paragraph,
+    template: str,
+    *,
+    lang: TargetLang | str,
+    strip_bidi_controls: bool,
+    font_name: str,
+    size_pt: float,
+    use_section_pages: bool = False,
+) -> None:
     rtl = _is_rtl_target_lang(lang)
-    _set_paragraph_bidi(paragraph, rtl=rtl)
+    force_ltr_slash = rtl and _is_pure_ltr_slash_counter(template)
+    if force_ltr_slash:
+        _set_paragraph_bidi(paragraph, rtl=False)
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    else:
+        _set_paragraph_bidi(paragraph, rtl=rtl)
+    total_field = "SECTIONPAGES" if use_section_pages else "NUMPAGES"
     parts = template.split("{page}")
     for p_idx, part in enumerate(parts):
         if p_idx > 0:
-            _insert_word_field(paragraph, "PAGE", font_name=font_name, size_pt=size_pt)
+            _insert_word_field(paragraph, "PAGE", font_name=font_name, size_pt=size_pt, ltr_run=force_ltr_slash)
         sub_parts = part.split("{total}")
         for t_idx, sub in enumerate(sub_parts):
             if t_idx > 0:
-                _insert_word_field(paragraph, "NUMPAGES", font_name=font_name, size_pt=size_pt)
-            clean = unwrap_internal_placeholders(sub)
-            if clean:
+                _insert_word_field(paragraph, total_field, font_name=font_name, size_pt=size_pt, ltr_run=force_ltr_slash)
+            if force_ltr_slash and sub:
+                r = paragraph.add_run(unwrap_internal_placeholders(sub))
+                _apply_run_typography(r, font_name=font_name, size_pt=size_pt, color=RGBColor(0x40, 0x40, 0x40))
+                _set_ltr_run_props(r)
+            elif unwrap_internal_placeholders(sub):
                 start_idx = len(paragraph.runs)
-                _append_block_text(paragraph, clean, lang=lang, strip_bidi_controls=strip_bidi_controls)
+                _append_block_text(paragraph, sub, lang=lang, strip_bidi_controls=strip_bidi_controls)
                 for added in paragraph.runs[start_idx:]:
                     _apply_run_typography(added, font_name=font_name, size_pt=size_pt, color=RGBColor(0x40, 0x40, 0x40))
 
@@ -578,10 +624,9 @@ def _render_stationery_header(
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(0.5)
             p.paragraph_format.line_spacing = 1.0
-            clean = unwrap_internal_placeholders(line)
-            if clean:
+            if unwrap_internal_placeholders(line).strip():
                 start_idx = len(p.runs)
-                _append_block_text(p, clean, lang=lang, strip_bidi_controls=strip_bidi_controls)
+                _append_block_text(p, line, lang=lang, strip_bidi_controls=strip_bidi_controls)
                 for added in p.runs[start_idx:]:
                     _apply_run_typography(added, font_name=font_name, size_pt=7.5, color=RGBColor(0x40, 0x40, 0x40))
 
@@ -604,10 +649,9 @@ def _render_stationery_header(
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(1)
             p.paragraph_format.line_spacing = 1.05
-            clean = unwrap_internal_placeholders(line)
-            if clean:
+            if unwrap_internal_placeholders(line).strip():
                 start_idx = len(p.runs)
-                _append_block_text(p, clean, lang=lang, strip_bidi_controls=strip_bidi_controls, bold=(idx == 0))
+                _append_block_text(p, line, lang=lang, strip_bidi_controls=strip_bidi_controls, bold=(idx == 0))
                 for added in p.runs[start_idx:]:
                     _apply_run_typography(added, font_name=font_name, size_pt=10.5 if idx == 0 else 9.5)
         if header_spec.sub_line:
@@ -617,10 +661,9 @@ def _render_stationery_header(
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(0)
             p.paragraph_format.line_spacing = 1.05
-            clean = unwrap_internal_placeholders(header_spec.sub_line)
-            if clean:
+            if unwrap_internal_placeholders(header_spec.sub_line).strip():
                 start_idx = len(p.runs)
-                _append_block_text(p, clean, lang=lang, strip_bidi_controls=strip_bidi_controls)
+                _append_block_text(p, header_spec.sub_line, lang=lang, strip_bidi_controls=strip_bidi_controls)
                 for added in p.runs[start_idx:]:
                     _apply_run_typography(added, font_name=font_name, size_pt=9.0)
         return
@@ -641,10 +684,9 @@ def _render_stationery_header(
         _set_paragraph_alignment(p, "center", rtl=rtl)
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(1)
-        clean = unwrap_internal_placeholders(line)
-        if clean:
+        if unwrap_internal_placeholders(line).strip():
             start_idx = len(p.runs)
-            _append_block_text(p, clean, lang=lang, strip_bidi_controls=strip_bidi_controls, bold=(idx == 0))
+            _append_block_text(p, line, lang=lang, strip_bidi_controls=strip_bidi_controls, bold=(idx == 0))
             for added in p.runs[start_idx:]:
                 _apply_run_typography(added, font_name=font_name, size_pt=10.5 if idx == 0 else 9.5)
     if header_spec.sub_line:
@@ -654,10 +696,9 @@ def _render_stationery_header(
         _set_paragraph_alignment(p, "center", rtl=rtl)
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(1)
-        clean = unwrap_internal_placeholders(header_spec.sub_line)
-        if clean:
+        if unwrap_internal_placeholders(header_spec.sub_line).strip():
             start_idx = len(p.runs)
-            _append_block_text(p, clean, lang=lang, strip_bidi_controls=strip_bidi_controls)
+            _append_block_text(p, header_spec.sub_line, lang=lang, strip_bidi_controls=strip_bidi_controls)
             for added in p.runs[start_idx:]:
                 _apply_run_typography(added, font_name=font_name, size_pt=9.0)
     for line in header_spec.top_left_stamp_lines:
@@ -667,10 +708,9 @@ def _render_stationery_header(
         _set_paragraph_alignment(p, "left", rtl=rtl, explicit_override=True)
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(0.5)
-        clean = unwrap_internal_placeholders(line)
-        if clean:
+        if unwrap_internal_placeholders(line).strip():
             start_idx = len(p.runs)
-            _append_block_text(p, clean, lang=lang, strip_bidi_controls=strip_bidi_controls)
+            _append_block_text(p, line, lang=lang, strip_bidi_controls=strip_bidi_controls)
             for added in p.runs[start_idx:]:
                 _apply_run_typography(added, font_name=font_name, size_pt=8.0, color=RGBColor(0x40, 0x40, 0x40))
 
@@ -726,6 +766,7 @@ def _render_stationery_footer(
     strip_bidi_controls: bool,
     font_name: str,
     footer_part=None,
+    use_section_pages: bool = False,
 ) -> None:
     target_part = section.footer if footer_part is None else footer_part
     _clear_header_footer_part(target_part)
@@ -742,10 +783,9 @@ def _render_stationery_footer(
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(0.5)
         p.paragraph_format.line_spacing = 1.0
-        clean = unwrap_internal_placeholders(line)
-        if clean:
+        if unwrap_internal_placeholders(line).strip():
             start_idx = len(p.runs)
-            _append_block_text(p, clean, lang=lang, strip_bidi_controls=strip_bidi_controls)
+            _append_block_text(p, line, lang=lang, strip_bidi_controls=strip_bidi_controls)
             for added in p.runs[start_idx:]:
                 _apply_run_typography(added, font_name=font_name, size_pt=8.0, color=RGBColor(0x40, 0x40, 0x40))
     if footer_spec.legal_note:
@@ -756,10 +796,9 @@ def _render_stationery_footer(
         p.paragraph_format.space_before = Pt(0.5)
         p.paragraph_format.space_after = Pt(1)
         p.paragraph_format.line_spacing = 1.0
-        clean = unwrap_internal_placeholders(footer_spec.legal_note)
-        if clean:
+        if unwrap_internal_placeholders(footer_spec.legal_note).strip():
             start_idx = len(p.runs)
-            _append_block_text(p, clean, lang=lang, strip_bidi_controls=strip_bidi_controls)
+            _append_block_text(p, footer_spec.legal_note, lang=lang, strip_bidi_controls=strip_bidi_controls)
             for added in p.runs[start_idx:]:
                 _apply_run_typography(added, font_name=font_name, size_pt=7.5, color=RGBColor(0x40, 0x40, 0x40))
     counter_tpl = _normalize_footer_counter_template(footer_spec.page_counter_template)
@@ -776,6 +815,7 @@ def _render_stationery_footer(
             strip_bidi_controls=strip_bidi_controls,
             font_name=font_name,
             size_pt=8.0,
+            use_section_pages=use_section_pages,
         )
 
 
@@ -785,6 +825,7 @@ def _configure_structural_section(
     *,
     lang: TargetLang | str,
     different_first_page: bool = False,
+    restart_page_numbering: bool = False,
 ) -> int:
     rtl = _is_rtl_target_lang(lang)
     doc = bundle.document
@@ -798,6 +839,10 @@ def _configure_structural_section(
 
     for node in list(section._sectPr.findall(qn("w:pgNumType"))):
         section._sectPr.remove(node)
+    if restart_page_numbering:
+        pg_num = OxmlElement("w:pgNumType")
+        pg_num.set(qn("w:start"), "1")
+        section._sectPr.append(pg_num)
 
     # Archetype-calibrated clean margins
     if doc.page_archetype == "citius_notification":
@@ -1141,7 +1186,16 @@ def assemble_structural_docx(
                         or bool(header_spec.center_crest_present) != bool(m_hs.center_crest_present)
                         or m_hs.style != header_spec.style
                     ):
-                        cont_header_spec = m_hs
+                        if (
+                            header_spec.present
+                            and m_hs.style == header_spec.style
+                            and bool(header_spec.center_crest_present) == bool(m_hs.center_crest_present)
+                            and bool(header_spec.top_left_stamp_lines)
+                            and not m_hs.top_left_stamp_lines
+                        ):
+                            cont_header_spec = header_spec.model_copy(update={"top_left_stamp_lines": []})
+                        else:
+                            cont_header_spec = m_hs
 
         different_first_page = bool(
             len(group) > 1
@@ -1156,11 +1210,13 @@ def assemble_structural_docx(
             )
         )
 
+        use_section_pages = len(sections_groups) > 1
         usable_twips = _configure_structural_section(
             section,
             lead,
             lang=lang,
             different_first_page=different_first_page,
+            restart_page_numbering=(sec_idx > 0),
         )
 
         if different_first_page:
@@ -1204,6 +1260,7 @@ def assemble_structural_docx(
                 strip_bidi_controls=strip_bidi_controls,
                 font_name=font_name,
                 footer_part=section.first_page_footer,
+                use_section_pages=use_section_pages,
             )
             _render_stationery_footer(
                 section,
@@ -1212,6 +1269,7 @@ def assemble_structural_docx(
                 strip_bidi_controls=strip_bidi_controls,
                 font_name=font_name,
                 footer_part=section.footer,
+                use_section_pages=use_section_pages,
             )
         else:
             _render_stationery_header(
@@ -1229,6 +1287,7 @@ def assemble_structural_docx(
                 lang=lang,
                 strip_bidi_controls=strip_bidi_controls,
                 font_name=font_name,
+                use_section_pages=use_section_pages,
             )
 
         seen_meta_signatures: set[str] = set()
