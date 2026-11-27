@@ -12,7 +12,7 @@ from tooling import ci_test_evidence as evidence
 from tooling import test_shards
 
 
-def artifact(root, index, attempt=1, *, state="passed", count=4, nodes=None):
+def artifact(root, index, attempt=1, *, state="passed", count=evidence.SHARD_COUNT, nodes=None):
     nodes = nodes or [f"tests/test_file_{number}.py::test_case" for number in range(count)]
     plan = test_shards.make_plan(nodes, count)
     folder = root / f"pytest-shard-{index}-attempt-{attempt}"
@@ -34,8 +34,8 @@ def artifact(root, index, attempt=1, *, state="passed", count=4, nodes=None):
     return folder
 
 
-def complete_run(root):
-    return [artifact(root, index) for index in range(4)]
+def complete_run(root, count=evidence.SHARD_COUNT):
+    return [artifact(root, index, count=count) for index in range(count)]
 
 
 def hashes(root):
@@ -45,14 +45,17 @@ def hashes(root):
 
 def test_mixed_attempts_reconcile_a_failed_jobs_only_rerun_and_preserve_history(tmp_path):
     root = tmp_path / "artifacts"
-    for index in range(4):
+    for index in range(evidence.SHARD_COUNT):
         artifact(root, index, state="failed" if index == 1 else "passed")
     artifact(root, 1, 2)
     artifact(root, 3, 10)
     before = hashes(root)
     result = evidence.verify_artifacts(root, tmp_path / "verified")
-    assert result["status"] == "passed" and result["tests"] == 4
-    assert [item["attempt"] for item in result["selected_artifacts"]] == [1, 2, 1, 10]
+    expected_attempts = [1] * evidence.SHARD_COUNT
+    expected_attempts[1] = 2
+    expected_attempts[3] = 10
+    assert result["status"] == "passed" and result["tests"] == evidence.SHARD_COUNT
+    assert [item["attempt"] for item in result["selected_artifacts"]] == expected_attempts
     assert hashes(root) == before
 
 
@@ -71,19 +74,22 @@ def test_latest_unsuccessful_attempt_never_falls_back_to_an_older_pass(tmp_path,
 @pytest.mark.parametrize("missing", ["shard", "receipt", "latest_receipt"])
 def test_missing_shard_or_selected_receipt_refuses_verification(tmp_path, missing):
     root = tmp_path / "artifacts"
-    for index in range(3 if missing == "shard" else 4):
+    last = evidence.SHARD_COUNT - 1
+    for index in range(last if missing == "shard" else evidence.SHARD_COUNT):
         artifact(root, index)
     if missing == "receipt":
-        (root / "pytest-shard-3-attempt-1" / "result.json").unlink()
+        (root / f"pytest-shard-{last}-attempt-1" / "result.json").unlink()
     elif missing == "latest_receipt":
-        (root / "pytest-shard-3-attempt-2").mkdir()
+        (root / f"pytest-shard-{last}-attempt-2").mkdir()
     with pytest.raises(ValueError, match="missing"):
         evidence.verify_artifacts(root, tmp_path / "verified")
 
 
-@pytest.mark.parametrize("name", ["pytest-shard-4-attempt-1", "pytest-shard-0-attempt-0",
-                                  "pytest-shard-0-attempt--1", "pytest-shard-0-attempt-x",
-                                  "pytest-shard-0-attempt-1-extra", "pytest-shard-0"])
+@pytest.mark.parametrize("name", [
+    "pytest-shard-16-attempt-1", "pytest-shard-00-attempt-1", "pytest-shard-01-attempt-1",
+    "pytest-shard-0-attempt-0", "pytest-shard-0-attempt--1", "pytest-shard-0-attempt-x",
+    "pytest-shard-0-attempt-1-extra", "pytest-shard-0",
+])
 def test_malformed_matching_artifacts_fail_closed(tmp_path, name):
     complete_run(tmp_path)
     (tmp_path / name).mkdir()
@@ -101,18 +107,18 @@ def test_duplicate_integer_attempt_is_not_silently_selected(tmp_path):
 def test_unrelated_artifacts_are_ignored_and_matching_files_are_rejected(tmp_path):
     complete_run(tmp_path)
     (tmp_path / "validator-report").mkdir()
-    assert len(evidence.select_artifacts(tmp_path)) == 4
+    assert len(evidence.select_artifacts(tmp_path)) == evidence.SHARD_COUNT
     (tmp_path / "pytest-shard-0-attempt-2").write_text("not a directory", encoding="utf-8")
     with pytest.raises(ValueError, match="Malformed"):
         evidence.select_artifacts(tmp_path)
 
 
-def test_two_shard_plan_cannot_masquerade_as_four_artifacts(tmp_path):
+def test_two_shard_plan_cannot_masquerade_as_sixteen_artifacts(tmp_path):
     root = tmp_path / "artifacts"
     complete_run(root)
     target = root / "pytest-shard-0-attempt-1" / "plan.json"
     test_shards.write_json(target, test_shards.make_plan(["tests/a.py::test_a", "tests/b.py::test_b"], 2))
-    with pytest.raises(ValueError, match="four-shard"):
+    with pytest.raises(ValueError, match="16-shard"):
         evidence.verify_artifacts(root, tmp_path / "verified")
 
 
@@ -130,7 +136,7 @@ def test_artifact_shard_name_must_match_its_only_worker(tmp_path):
 def test_differing_latest_collection_cannot_merge_with_previous_shards(tmp_path):
     root = tmp_path / "artifacts"
     complete_run(root)
-    artifact(root, 2, 2, nodes=[f"tests/test_new_{number}.py::test_case" for number in range(4)])
+    artifact(root, 2, 2, nodes=[f"tests/test_new_{number}.py::test_case" for number in range(evidence.SHARD_COUNT)])
     with pytest.raises(ValueError, match="same tests"):
         evidence.verify_artifacts(root, tmp_path / "verified")
 
@@ -152,4 +158,17 @@ def test_cli_verifies_with_standard_library_only(tmp_path):
                              "--artifacts", str(root), "--output", str(tmp_path / "verified")],
                             capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
-    assert "Verified 4 tests across four shards" in result.stdout
+    assert f"Verified {evidence.SHARD_COUNT} tests across {evidence.SHARD_COUNT} shards" in result.stdout
+
+
+def test_explicit_four_shard_override_verifies_four_and_rejects_shard_four(tmp_path):
+    root = tmp_path / "artifacts"
+    complete_run(root, count=4)
+    result = subprocess.run([sys.executable, "-S", "-B", str(Path(evidence.__file__).resolve()),
+                             "--shard-count", "4", "--artifacts", str(root), "--output", str(tmp_path / "verified")],
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert "Verified 4 tests across 4 shards" in result.stdout
+    (root / "pytest-shard-4-attempt-1").mkdir()
+    with pytest.raises(ValueError, match="Malformed"):
+        evidence.select_artifacts(root, shard_count=4)
