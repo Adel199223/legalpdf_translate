@@ -301,7 +301,7 @@ def _build_run_config_from_args(
     decisions_advisory = (
         bool_from_text(decisions_raw)
         if decisions_raw is not None
-        else bool(settings.get("gemini_decisions_advisory_enabled", False))
+        else bool(settings.get("gemini_decisions_advisory_enabled", True))
     )
     return RunConfig(
         pdf_path=Path(pdf_arg).resolve(),

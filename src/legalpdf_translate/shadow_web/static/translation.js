@@ -1813,7 +1813,7 @@ function applyTranslationDefaults(defaults) {
   setFieldValue("translation-output-dir", defaults.output_dir || browserDefaultOutputDir() || "");
   setFieldValue("translation-target-lang", defaults.target_lang || "EN");
   setFieldValue("translation-effort", defaults.effort || "high");
-  setFieldValue("translation-effort-policy", defaults.effort_policy || "adaptive");
+  setFieldValue("translation-effort-policy", defaults.effort_policy || "fixed_xhigh");
   setFieldValue("translation-image-mode", defaults.image_mode || "off");
   setFieldValue("translation-ocr-mode", defaults.ocr_mode || "auto");
   setFieldValue("translation-ocr-engine", defaults.ocr_engine || "local_then_api");

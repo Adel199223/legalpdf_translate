@@ -8597,7 +8597,7 @@ class QtSettingsDialog(QDialog):
             )
         if hasattr(self, "gemini_decisions_advisory_check"):
             self.gemini_decisions_advisory_check.setChecked(
-                bool(settings.get("gemini_decisions_advisory_enabled", False))
+                bool(settings.get("gemini_decisions_advisory_enabled", True))
             )
         self.default_images_combo.setCurrentText(str(settings.get("default_images_mode", "off")))
         self.default_workers_combo.setCurrentText(str(settings.get("default_workers", 3)))

@@ -63,6 +63,7 @@ Ask before executing any of the following:
 - Coding agents must not click the live Gmail extension, operate live Gmail via Antigravity's built-in `browser` subagent / Playwright / Chrome DevTools, or use Antigravity's installed `gmail` plugin against live Gmail unless the user explicitly authorizes that scope.
 - Keep assistant-side Google Workspace plugins (`gmail`, `gdrive`, `gdocs`) strictly separate from the app's own Windows `gog` CLI helper.
 - Generated DOCX/PDF files must be manually reviewed before any Gmail draft is sent.
+- Keep Portuguese court reply Gmail drafts (both agent-prepared and app-generated) simple and concise matching the user's sent emails (`Bom dia,`, `Envio em anexo a tradução solicitada e o requerimento de honorários.`, an optional single sentence such as `Junto também o termo de compromisso.` only when an oath/declaration PDF is attached, `Estou à disposição para quaisquer esclarecimentos adicionais que se façam necessários.`, `Atenciosamente,\n<name>`); do not add verbose numbered attachment lists or fee/word-count/VAT/IRS/IBAN summaries already inside the attached `Requerimento de Honorários` PDF.
 
 ## Routing Rules
 - For support or non-technical explanations, route to:
