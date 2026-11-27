@@ -567,11 +567,8 @@ def _normalize_footer_counter_template(raw_tpl: str) -> str:
 
 
 def _usable_header_crest(crest_asset: HeaderCrestAsset | None) -> HeaderCrestAsset | None:
-    if crest_asset is None:
-        return None
-    if (crest_asset.width_pt / max(1.0, float(crest_asset.height_pt))) > 2.6:
-        return None
-    return crest_asset
+    _ = crest_asset
+    return None
 
 
 def _render_stationery_header(
@@ -590,12 +587,11 @@ def _render_stationery_header(
     if not header_spec.present:
         return
 
+    _ = crest_asset
     rtl = _is_rtl_target_lang(lang)
-    crest_to_use = _usable_header_crest(crest_asset)
     has_left_stamp = bool(header_spec.top_left_stamp_lines)
     has_center_block = bool(
-        (header_spec.center_crest_present and crest_to_use is not None)
-        or header_spec.center_institution_lines
+        header_spec.center_institution_lines
         or header_spec.sub_line
     )
 
@@ -633,14 +629,6 @@ def _render_stationery_header(
         center_cell = table.cell(0, 1)
         center_cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
         need_first = True
-        if header_spec.center_crest_present and crest_to_use is not None:
-            p = center_cell.paragraphs[0]
-            need_first = False
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p.paragraph_format.space_before = Pt(0)
-            p.paragraph_format.space_after = Pt(2)
-            crest_h_cm = max(0.85, min(1.55, float(crest_to_use.height_pt) / 28.3465))
-            p.add_run().add_picture(io.BytesIO(crest_to_use.image_bytes), height=Cm(crest_h_cm))
         for idx, line in enumerate(header_spec.center_institution_lines):
             p = center_cell.paragraphs[0] if need_first else center_cell.add_paragraph()
             need_first = False
@@ -669,14 +657,6 @@ def _render_stationery_header(
         return
 
     need_first = True
-    if header_spec.center_crest_present and crest_to_use is not None:
-        p = target_part.paragraphs[0]
-        need_first = False
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(2)
-        crest_h_cm = max(0.85, min(1.55, float(crest_to_use.height_pt) / 28.3465))
-        p.add_run().add_picture(io.BytesIO(crest_to_use.image_bytes), height=Cm(crest_h_cm))
     for idx, line in enumerate(header_spec.center_institution_lines):
         p = target_part.paragraphs[0] if need_first else target_part.add_paragraph()
         need_first = False
@@ -861,11 +841,11 @@ def _configure_structural_section(
         right_pt = max(54.0, min(74.0, doc.margins_pt.right))
         bottom_pt = max(48.0, min(72.0, doc.margins_pt.bottom))
         if doc.header_stationery.present and (
-            doc.header_stationery.center_crest_present
-            or doc.header_stationery.center_institution_lines
+            doc.header_stationery.center_institution_lines
             or doc.header_stationery.top_left_stamp_lines
+            or doc.header_stationery.sub_line
         ):
-            top_pt = max(106.0, min(148.0, max(doc.margins_pt.top, 112.0)))
+            top_pt = max(72.0, min(116.0, max(doc.margins_pt.top, 76.0)))
         else:
             top_pt = max(46.0, min(78.0, doc.margins_pt.top))
 
@@ -915,34 +895,12 @@ def _render_region(
         if region.vertical_divider and "insideV" not in bmap:
             bmap["insideV"] = ("single", "4", "BFBFBF")
 
-        if top_left_crest_asset is not None:
-            # Render top-left crest side-by-side with issuing agency details to mirror Citius letterheads.
-            # With rtl=True (bidiVisual), Word places cell 0 on the right beside agency text in cell 1.
-            crest_pct = max(12, min(16, int(round((float(top_left_crest_asset.width_pt) + 10.0) * 100.0 / max(200.0, usable_twips / _MARGIN_TWIPS_PER_PT)))))
-            left_body_pct = max(22, region.left_width_pct - crest_pct)
-            right_pct = max(20, 100 - crest_pct - left_body_pct)
-            table = document.add_table(rows=1, cols=3)
-            widths = _normalize_col_widths_twips([crest_pct, left_body_pct, right_pct], 3, usable_twips)
-            _configure_table_grid(table, widths, rtl=rtl, cell_pad_h=65, cell_pad_v=pad_v)
-            _set_table_borders(table, bmap)
-
-            logo_cell = table.cell(0, 0)
-            logo_cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
-            logo_p = logo_cell.paragraphs[0]
-            _set_paragraph_bidi(logo_p, rtl=rtl)
-            _set_paragraph_alignment(logo_p, "right" if rtl else "left", rtl=rtl, explicit_override=True)
-            logo_p.paragraph_format.space_before = Pt(0)
-            logo_p.paragraph_format.space_after = Pt(0)
-            crest_h_cm = max(0.85, min(1.55, float(top_left_crest_asset.height_pt) / 28.3465))
-            logo_p.add_run().add_picture(io.BytesIO(top_left_crest_asset.image_bytes), height=Cm(crest_h_cm))
-
-            col_pairs = ((1, region.left_items), (2, region.right_items))
-        else:
-            table = document.add_table(rows=1, cols=2)
-            widths = _normalize_col_widths_twips([region.left_width_pct, 100 - region.left_width_pct], 2, usable_twips)
-            _configure_table_grid(table, widths, rtl=rtl, cell_pad_h=95, cell_pad_v=pad_v)
-            _set_table_borders(table, bmap)
-            col_pairs = ((0, region.left_items), (1, region.right_items))
+        _ = top_left_crest_asset
+        table = document.add_table(rows=1, cols=2)
+        widths = _normalize_col_widths_twips([region.left_width_pct, 100 - region.left_width_pct], 2, usable_twips)
+        _configure_table_grid(table, widths, rtl=rtl, cell_pad_h=95, cell_pad_v=pad_v)
+        _set_table_borders(table, bmap)
+        col_pairs = ((0, region.left_items), (1, region.right_items))
 
         right_col_idx = col_pairs[-1][0]
         for col_idx, items in col_pairs:
@@ -1146,15 +1104,14 @@ def assemble_structural_docx(
             archetype=lead.document.page_archetype,
         )
 
-        # Pick strongest stationery specs within this document section
+        # Pick strongest stationery specs within this document section (logos/crests are never embedded)
         header_spec = lead.document.header_stationery
-        crest_asset = lead.crest_asset
-        if not header_spec.present or crest_asset is None:
+        crest_asset = None
+        if not header_spec.present:
             for member in group:
-                if not header_spec.present and member.document.header_stationery.present:
+                if member.document.header_stationery.present:
                     header_spec = member.document.header_stationery
-                if crest_asset is None and member.crest_asset is not None:
-                    crest_asset = member.crest_asset
+                    break
         footer_spec = lead.document.footer_stationery
         if not footer_spec.present:
             for member in group:
@@ -1183,13 +1140,11 @@ def assemble_structural_docx(
                     m_hs = member.document.header_stationery
                     if m_hs.present and (
                         bool(header_spec.top_left_stamp_lines) != bool(m_hs.top_left_stamp_lines)
-                        or bool(header_spec.center_crest_present) != bool(m_hs.center_crest_present)
                         or m_hs.style != header_spec.style
                     ):
                         if (
                             header_spec.present
                             and m_hs.style == header_spec.style
-                            and bool(header_spec.center_crest_present) == bool(m_hs.center_crest_present)
                             and bool(header_spec.top_left_stamp_lines)
                             and not m_hs.top_left_stamp_lines
                         ):
@@ -1303,7 +1258,6 @@ def assemble_structural_docx(
                 )
                 if should_break:
                     document.add_page_break()
-            used_left_crest = False
             regions_for_member = stripped_regions_by_member.get(member_idx, bundle.document.regions)
             for region in regions_for_member:
                 if region.kind == "metadata_rule_band":
@@ -1316,18 +1270,6 @@ def assemble_structural_docx(
                         continue
                     if sig:
                         seen_meta_signatures.add(sig)
-                left_crest_for_region: HeaderCrestAsset | None = None
-                if (
-                    not used_left_crest
-                    and member_idx == 0
-                    and region.kind == "two_col_panel"
-                    and bundle.crest_asset is not None
-                    and not header_spec.center_crest_present
-                ):
-                    cx = (bundle.crest_asset.bbox_norm[0] + bundle.crest_asset.bbox_norm[2]) * 0.5
-                    if cx < 0.34:
-                        left_crest_for_region = bundle.crest_asset
-                        used_left_crest = True
                 _render_region(
                     document,
                     region,
@@ -1336,7 +1278,7 @@ def assemble_structural_docx(
                     strip_bidi_controls=strip_bidi_controls,
                     font_name=font_name,
                     sizes_map=sizes_map,
-                    top_left_crest_asset=left_crest_for_region,
+                    top_left_crest_asset=None,
                     compact=(bundle.document.page_archetype in {"citius_notification", "form_record"}),
                 )
 
