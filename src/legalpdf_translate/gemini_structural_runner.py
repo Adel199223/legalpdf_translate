@@ -97,24 +97,16 @@ def save_page_structural_artifacts(
     document: PageStructuralDocument,
     flat_text: str,
 ) -> None:
+    _ = run_dir
     pages_dir.mkdir(parents=True, exist_ok=True)
-    crest_filename = _persist_crest_asset(run_dir, evidence.crest_asset)
+    # Never transfer or persist source logos/crests into translated artifacts.
     ev_meta: dict[str, Any] = {
         "page_number": int(page_number),
         "width_pt": float(evidence.page_width_pt),
         "height_pt": float(evidence.page_height_pt),
         "suggested_archetype": evidence.suggested_archetype,
-        "crest_filename": crest_filename or "",
+        "crest_filename": "",
     }
-    if evidence.crest_asset is not None:
-        ev_meta.update(
-            {
-                "crest_sha256": evidence.crest_asset.sha256,
-                "crest_width_pt": evidence.crest_asset.width_pt,
-                "crest_height_pt": evidence.crest_asset.height_pt,
-                "crest_bbox_norm": list(evidence.crest_asset.bbox_norm),
-            }
-        )
     structural_evidence_path(pages_dir, page_number).write_text(
         json.dumps(ev_meta, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -132,6 +124,7 @@ def load_structural_bundles(
     pages_dir: Path,
     page_numbers: Sequence[int],
 ) -> list[StructuralPageBundle]:
+    _ = run_dir
     bundles: list[StructuralPageBundle] = []
     for num in page_numbers:
         ir_path = structural_json_path(pages_dir, num)
@@ -139,19 +132,17 @@ def load_structural_bundles(
         ev_path = structural_evidence_path(pages_dir, num)
         width_pt = 595.3
         height_pt = 841.9
-        crest_asset: HeaderCrestAsset | None = None
         if ev_path.is_file():
             ev_data = json.loads(ev_path.read_text(encoding="utf-8"))
             width_pt = float(ev_data.get("width_pt") or width_pt)
             height_pt = float(ev_data.get("height_pt") or height_pt)
-            crest_asset = _load_crest_asset(run_dir, ev_data)
         bundles.append(
             StructuralPageBundle(
                 page_number=int(num),
                 document=doc,
                 width_pt=width_pt,
                 height_pt=height_pt,
-                crest_asset=crest_asset,
+                crest_asset=None,
             )
         )
     return bundles
@@ -195,8 +186,6 @@ def summarize_structural_run(bundles: Sequence[StructuralPageBundle]) -> dict[st
                 header_sections += 1
             if b.document.footer_stationery.present:
                 footer_sections += 1
-        if b.crest_asset is not None and b.document.header_stationery.center_crest_present:
-            crest_pages += 1
         for r in b.document.regions:
             if r.kind == "table":
                 table_count += 1

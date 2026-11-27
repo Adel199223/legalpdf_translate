@@ -659,7 +659,7 @@ def test_assemble_structural_docx_multidoc_en_and_rtl_ar_form(tmp_path: Path) ->
 
     with ZipFile(out_en) as z:
         names = z.namelist()
-        assert any(n.startswith("word/media/") for n in names)
+        assert not any(n.startswith("word/media/") for n in names)
         assert "word/header2.xml" in names
         assert "word/footer1.xml" in names and "word/footer2.xml" in names
         root = ET.fromstring(z.read("word/document.xml"))
@@ -789,13 +789,14 @@ def test_workflow_gemini_structural_pipeline_resume_partial_rebuild_and_decision
     assert (pages_dir / "page_0001.structural.json").is_file()
     assert (pages_dir / "page_0002.structural.json").is_file()
 
-    # Partial export and offline rebuild preserve rich structural crest & metadata rule table
+    # Partial export and offline rebuild preserve rich structural layout without transferring logos/crests
     partial = wf.export_partial_docx()
     assert partial is not None and partial.is_file()
     rebuilt = wf.rebuild_docx(config)
     assert rebuilt.is_file()
+    assert not (summary.run_dir / "structural_assets").exists()
     with ZipFile(rebuilt) as z:
-        assert any(n.startswith("word/media/") for n in z.namelist())
+        assert not any(n.startswith("word/media/") for n in z.namelist())
         assert "123/25.0T9BJA" in z.read("word/document.xml").decode("utf-8")
 
     # Resume with unchanged config makes zero additional API calls
@@ -974,7 +975,7 @@ def test_compact_styled_paragraph_text_and_top_left_crest_rendering(tmp_path: Pa
     out_docx = tmp_path / "top_left_crest.docx"
     assemble_structural_docx([StructuralPageBundle(1, parsed, crest_asset=ev.crest_asset)], out_docx, lang=TargetLang.EN)
     with ZipFile(out_docx) as z:
-        assert any(n.startswith("word/media/") for n in z.namelist())
+        assert not any(n.startswith("word/media/") for n in z.namelist())
         doc_xml = z.read("word/document.xml").decode("utf-8")
         assert "Public Prosecutor" in doc_xml
         assert "Notification of inquiry closure." in doc_xml
@@ -1118,8 +1119,8 @@ def test_rtl_crest_logical_jc_ppr_order_and_form_continuation_header(tmp_path: P
     )
     WNS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     with ZipFile(out_docx) as z:
-        # Top-left crest was embedded in RTL citius_notification too.
-        assert any(n.startswith("word/media/") for n in z.namelist())
+        # Logos/crests must never be embedded into translated DOCX outputs, even in RTL citius_notification/form_record.
+        assert not any(n.startswith("word/media/") for n in z.namelist())
         doc_xml = z.read("word/document.xml").decode("utf-8")
         assert "w:val=\"right\"" not in doc_xml
         assert "w:val=\"start\"" in doc_xml
