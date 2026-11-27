@@ -285,7 +285,7 @@ def _start(client, source, output, lang, *, start, end, image_mode, ocr_mode="of
     return response.json()["normalized_payload"]["job"]["job_id"]
 
 
-def _wait(manager, job_id, *, timeout_seconds=30):
+def _wait(manager, job_id, *, timeout_seconds=90):
     if type(timeout_seconds) is not int or not 0 < timeout_seconds <= 90:
         raise ValueError("Job settlement timeout must be a positive integer at most 90 seconds")
     deadline = time.monotonic() + timeout_seconds
