@@ -344,3 +344,42 @@ def test_run_glossary_builder_lemma_client_uses_gemini_by_default(
 
     assert result["status"] == "ok"
     assert created == [{"provider": "gemini", "model": "gemini-4-neon"}]
+
+
+def test_gemini_standard_service_tier_prices_without_mismatch(tmp_path: Path) -> None:
+    policy = gemini_accounting_policy()
+    accounting = DispatchAccounting(
+        tmp_path / "accounting",
+        run_identity={"case": "test"},
+        **policy.accounting_arguments(),
+    )
+    limits = accounting.request_limits("gemini", "translation", "gemini-4-neon")
+    ticket = accounting.begin(
+        provider="gemini",
+        requested_model="gemini-4-neon",
+        purpose="translation",
+        page_number=1,
+        request_hash="a" * 64,
+        requested_service_tier="default",
+        billing_scope="gemini_developer_api",
+        currency="USD",
+        route="interactions.create",
+        base_url="https://generativelanguage.googleapis.com",
+        bounds={**limits, "image_count": 1, "input_bytes": 1024},
+        attempt=1,
+    )
+    event = accounting.finish(
+        ticket,
+        outcome="succeeded",
+        usage={"input_tokens": 1000, "output_tokens": 500, "reasoning_tokens": 0, "total_tokens": 1500},
+        response_id="resp-std-1",
+        actual_model="gemini-4-neon",
+        actual_service_tier="standard",
+        actual_billing_scope="gemini_developer_api",
+        currency="USD",
+    )
+    assert event["cost_status"] == "available"
+    assert event["cost_usd"] is not None
+    summary = accounting.summary()
+    assert summary["coverage_status"] == "complete"
+    assert summary["cost_usd"] is not None

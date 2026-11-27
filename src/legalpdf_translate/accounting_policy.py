@@ -108,6 +108,17 @@ def gemini_accounting_policy() -> OrdinaryAccountingPolicy:
             "currency": "USD",
             "source_url": f"{pricing_source}#gemini-4-neon",
         },
+        "gemini:gemini-4-neon|standard|gemini_developer_api|USD": {
+            "input_per_1m": 3.0,
+            "cached_input_per_1m": 0.15,
+            "output_per_1m": 15.0,
+            "provider": "gemini",
+            "pricing_model": "gemini-4-neon",
+            "service_tier": "standard",
+            "billing_scope": "gemini_developer_api",
+            "currency": "USD",
+            "source_url": f"{pricing_source}#gemini-4-neon",
+        },
         "gemini:gemini-decision-1|default|gemini_developer_api|USD": {
             "input_per_1m": 0.10,
             "cached_input_per_1m": 0.10,
@@ -119,12 +130,23 @@ def gemini_accounting_policy() -> OrdinaryAccountingPolicy:
             "currency": "USD",
             "source_url": f"{pricing_source}#gemini-decision",
         },
+        "gemini:gemini-decision-1|standard|gemini_developer_api|USD": {
+            "input_per_1m": 0.10,
+            "cached_input_per_1m": 0.10,
+            "output_per_1m": 0.0,
+            "provider": "gemini",
+            "pricing_model": "gemini-decision-1",
+            "service_tier": "standard",
+            "billing_scope": "gemini_developer_api",
+            "currency": "USD",
+            "source_url": f"{pricing_source}#gemini-decision",
+        },
     }
     neon_limit = {
         "requested_model": "gemini-4-neon",
         "allowed_actual_models": ["gemini-4-neon"],
         "requested_service_tier": "default",
-        "allowed_actual_service_tiers": ["default"],
+        "allowed_actual_service_tiers": ["default", "standard"],
         "billing_scope": "gemini_developer_api",
         "currency": "USD",
         "allowed_base_urls": ["https://generativelanguage.googleapis.com"],
@@ -138,7 +160,7 @@ def gemini_accounting_policy() -> OrdinaryAccountingPolicy:
         "requested_model": "gemini-decision-1",
         "allowed_actual_models": ["gemini-decision-1"],
         "requested_service_tier": "default",
-        "allowed_actual_service_tiers": ["default"],
+        "allowed_actual_service_tiers": ["default", "standard"],
         "billing_scope": "gemini_developer_api",
         "currency": "USD",
         "allowed_base_urls": ["https://generativelanguage.googleapis.com"],
@@ -181,9 +203,15 @@ def with_semantic_review_policy(policy: OrdinaryAccountingPolicy, saved_policy) 
             "billing_scope": "gemini_developer_api", "currency": "USD", "source_url": source,
             "verified_at": "2026-11-26",
         }
+        pricing["models"][f"gemini:{GEMINI_MODEL}|standard|gemini_developer_api|USD"] = {
+            "input_per_1m": 3.0, "cached_input_per_1m": 0.15, "output_per_1m": 15.0,
+            "provider": "gemini", "pricing_model": GEMINI_MODEL, "service_tier": "standard",
+            "billing_scope": "gemini_developer_api", "currency": "USD", "source_url": source,
+            "verified_at": "2026-11-26",
+        }
         limits[f"gemini:semantic_audit:{GEMINI_MODEL}"] = {
             "requested_model": GEMINI_MODEL, "allowed_actual_models": [GEMINI_MODEL],
-            "requested_service_tier": "default", "allowed_actual_service_tiers": ["default"],
+            "requested_service_tier": "default", "allowed_actual_service_tiers": ["default", "standard"],
             "billing_scope": "gemini_developer_api", "currency": "USD",
             "allowed_base_urls": ["https://generativelanguage.googleapis.com"],
             "max_input_tokens": 1048576, "max_output_tokens": 65536,
