@@ -69,14 +69,20 @@ def gemini_layout_accounting_policy():
             "snapshot_id": "layout_gemini_standard_2026_11_26",
             "verified_at": "2026-11-26",
             "source": source,
-            "models": {f"gemini:{GEMINI_MODEL}|default|gemini_developer_api|USD": dict(rates)},
+            "models": {
+                f"gemini:{GEMINI_MODEL}|default|gemini_developer_api|USD": dict(rates),
+                f"gemini:{GEMINI_MODEL}|standard|gemini_developer_api|USD": {
+                    **rates,
+                    "service_tier": "standard",
+                },
+            },
         },
         limits={
             f"gemini:layout_suggestion:{GEMINI_MODEL}": {
                 "requested_model": GEMINI_MODEL,
                 "allowed_actual_models": [GEMINI_MODEL],
                 "requested_service_tier": "default",
-                "allowed_actual_service_tiers": ["default"],
+                "allowed_actual_service_tiers": ["default", "standard"],
                 "billing_scope": "gemini_developer_api",
                 "currency": "USD",
                 "allowed_base_urls": ["https://generativelanguage.googleapis.com"],

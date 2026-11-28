@@ -25,6 +25,8 @@ _MODEL_PRICES: dict[str, dict[str, float]] = {
     "o3-mini": {"input": 1.10, "output": 4.40, "reasoning": 4.40},
     "o4-mini": {"input": 1.10, "output": 4.40, "reasoning": 4.40},
     "gpt-5.2": {"input": 1.75, "output": 14.00, "reasoning": 14.00},
+    "gemini-4-neon": {"input": 3.00, "output": 15.00, "reasoning": 15.00},
+    "gemini-decision-1": {"input": 0.10, "output": 0.00, "reasoning": 0.00},
 }
 
 
