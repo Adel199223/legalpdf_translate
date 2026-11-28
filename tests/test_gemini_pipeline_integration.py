@@ -383,3 +383,75 @@ def test_gemini_standard_service_tier_prices_without_mismatch(tmp_path: Path) ->
     summary = accounting.summary()
     assert summary["coverage_status"] == "complete"
     assert summary["cost_usd"] is not None
+
+
+def test_gemini_layout_policy_accepts_default_and_standard_service_tiers(tmp_path: Path) -> None:
+    from legalpdf_translate.ordinary_layout_accounting import gemini_layout_accounting_policy
+
+    policy = gemini_layout_accounting_policy()
+    accounting = DispatchAccounting(
+        tmp_path / "layout_accounting",
+        run_identity={"case": "layout-tier-test"},
+        **policy.accounting_arguments(),
+    )
+    limits = accounting.request_limits("gemini", "layout_suggestion", "gemini-4-neon")
+    assert set(limits["allowed_actual_service_tiers"]) == {"default", "standard"}
+    ticket = accounting.begin(
+        provider="gemini",
+        requested_model="gemini-4-neon",
+        purpose="layout_suggestion",
+        page_number=1,
+        request_hash="b" * 64,
+        requested_service_tier="default",
+        billing_scope="gemini_developer_api",
+        currency="USD",
+        route="interactions.create",
+        base_url="https://generativelanguage.googleapis.com",
+        bounds={**limits, "image_count": 1, "input_bytes": 1024},
+        attempt=1,
+    )
+    event = accounting.finish(
+        ticket,
+        outcome="succeeded",
+        usage={"input_tokens": 1000, "output_tokens": 200, "reasoning_tokens": 0, "total_tokens": 1200},
+        response_id="resp-layout-std-1",
+        actual_model="gemini-4-neon",
+        actual_service_tier="standard",
+        actual_billing_scope="gemini_developer_api",
+        currency="USD",
+    )
+    from decimal import Decimal
+
+    assert event["cost_status"] == "available"
+    assert Decimal(str(event["cost_usd"])) == Decimal("0.006")
+    summary = accounting.summary()
+    assert summary["coverage_status"] == "complete"
+    assert Decimal(str(summary["cost_usd"])) == Decimal("0.006")
+
+
+def test_build_translation_config_defaults_gemini_decisions_advisory_to_true_and_honors_false(tmp_path: Path) -> None:
+    from legalpdf_translate.translation_service import build_translation_config
+
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}", encoding="utf-8")
+    source_pdf = tmp_path / "source.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    cfg_default = build_translation_config(
+        form_values={"source_path": str(source_pdf), "output_dir": str(out_dir), "target_lang": "AR"},
+        settings_path=settings_file,
+    )
+    assert cfg_default.gemini_decisions_advisory_enabled is True
+
+    cfg_false = build_translation_config(
+        form_values={
+            "source_path": str(source_pdf),
+            "output_dir": str(out_dir),
+            "target_lang": "AR",
+            "gemini_decisions_advisory_enabled": False,
+        },
+        settings_path=settings_file,
+    )
+    assert cfg_false.gemini_decisions_advisory_enabled is False

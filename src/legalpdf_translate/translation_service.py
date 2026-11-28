@@ -548,7 +548,7 @@ def _build_config_from_form(
     ).strip().lower()
     gemini_decisions_advisory = _coerce_bool(
         form_values.get("gemini_decisions_advisory_enabled", defaults.get("gemini_decisions_advisory_enabled")),
-        False,
+        True,
     )
     ocr_api_key_env_name = str(
         defaults.get("ocr_api_key_env_name")

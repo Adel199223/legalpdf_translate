@@ -60,6 +60,26 @@ def test_gpt52_legacy_estimates_use_current_public_standard_rates() -> None:
     assert rates.pricing_version == "legacy_unverified"
 
 
+def test_gemini_builtin_diagnostics_estimates_use_public_standard_rates() -> None:
+    neon_cost, neon_expl = estimate_cost(
+        model="gemini-4-neon",
+        input_tokens=1_000_000,
+        output_tokens=1_000_000,
+        reasoning_tokens=500_000,
+    )
+    assert neon_cost == 18.0
+    assert "gemini-4-neon" in neon_expl
+
+    dec_cost, dec_expl = estimate_cost(
+        model="gemini-decision-1",
+        input_tokens=1_000_000,
+        output_tokens=0,
+        reasoning_tokens=0,
+    )
+    assert dec_cost == 0.1
+    assert "gemini-decision-1" in dec_expl
+
+
 def test_estimate_cost_env_rates() -> None:
     cost, expl = estimate_cost(
         model="anything",
